@@ -2,16 +2,32 @@
 
 /// The region and jurisdiction a DataSource sits in.
 ///
-/// Data residency is a contractual and regulatory property, not a performance
-/// hint. Recording it on the DataSource means it can be reported, audited, and
-/// checked by reconciliation when placing a tenant — a tenant with an
-/// `au-only` requirement must not be bound to a DataSource in `us-west`, and
-/// that check needs somewhere to read the answer from.
+/// # What these values are
 ///
-/// The runtime does not enforce residency: by the time a binding exists the
-/// placement decision has been made, and re-deciding it per request would be
-/// both wasteful and too late. It exposes the value for telemetry and for the
-/// admin surface.
+/// **Resolved physical state, declared by the DataSource.** Not desired
+/// placement, not a policy, not an aspiration: this says where the data
+/// actually is, as reconciled. Whoever provisions the DataSource is asserting
+/// it, and it is expected to match reality.
+///
+/// That framing matters because it decides who consumes it:
+///
+/// | Consumer | Use |
+/// |---|---|
+/// | Reconciliation / placement | Satisfying a tenant's residency policy when choosing a DataSource |
+/// | Operators and audit | "Which tenants have data in the EU?" |
+/// | Platform telemetry | A label on internal spans (§29) |
+///
+/// # The runtime never decides anything from it
+///
+/// By the time a binding exists the placement decision has been made. Reading
+/// residency on the request path to pick or re-pick a DataSource would be
+/// placement, which belongs to the control plane — and would be both wasteful
+/// and too late. The runtime carries the value and reports it; nothing branches
+/// on it.
+///
+/// A tenant's residency *requirement* is deliberately not modelled here. That
+/// is tenant policy, it lives in the tenant definition, and reconciliation is
+/// what matches the two.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DataResidency {

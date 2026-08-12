@@ -11,8 +11,9 @@ use std::sync::Arc;
 use http::StatusCode;
 use serde_json::json;
 use support::{
-    app_with, body_json, data_sources, json_request, open_permissions, read_only_data_source, request,
-    resolver, tenant_on_replica, tenants, RecordingConnector,
+    app_with, body_json, data_sources, draining_data_source, json_request, open_permissions,
+    read_only_data_source, request, resolver, tenant_on_draining, tenant_on_replica, tenants,
+    RecordingConnector,
 };
 use tower::ServiceExt as _;
 
@@ -72,4 +73,87 @@ async fn reads_from_a_read_only_data_source_still_work() {
 
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(connector.query_count(), 1);
+}
+
+#[tokio::test]
+async fn draining_a_data_source_does_not_affect_tenants_already_on_it() {
+    // Item 6: accepts_new_tenants is control-plane only. It stops reconciliation
+    // placing *new* tenants; it must never appear on the request path. A tenant
+    // already bound keeps reading and writing exactly as before.
+    let mut bindings = tenants();
+    bindings.push(tenant_on_draining());
+
+    let mut sources = data_sources();
+    sources.push(draining_data_source());
+
+    let connector = RecordingConnector::new(vec![]);
+    let app = app_with(
+        resolver(bindings, sources),
+        Arc::clone(&connector),
+        open_permissions(),
+    );
+
+    let read = app
+        .clone()
+        .oneshot(request("GET", "/customers", json!({"tenant_id": "stayer"})))
+        .await
+        .unwrap();
+    assert_eq!(read.status(), StatusCode::OK);
+
+    let write = app
+        .oneshot(json_request(
+            "POST",
+            "/customers",
+            json!({"tenant_id": "stayer"}),
+            &json!({"name": "Alice"}),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(write.status(), StatusCode::CREATED);
+    assert_eq!(connector.mutation_count(), 1);
+}
+
+#[tokio::test]
+async fn the_two_capability_switches_are_independent_end_to_end() {
+    // Read-only refuses writes; draining does not. Proving the pair apart at
+    // the HTTP boundary, not just on the struct.
+    let mut bindings = tenants();
+    bindings.push(tenant_on_replica());
+    bindings.push(tenant_on_draining());
+
+    let mut sources = data_sources();
+    sources.push(read_only_data_source());
+    sources.push(draining_data_source());
+
+    let connector = RecordingConnector::new(vec![]);
+    let app = app_with(
+        resolver(bindings, sources),
+        Arc::clone(&connector),
+        open_permissions(),
+    );
+
+    let on_replica = app
+        .clone()
+        .oneshot(json_request(
+            "POST",
+            "/customers",
+            json!({"tenant_id": "reader"}),
+            &json!({"name": "Alice"}),
+        ))
+        .await
+        .unwrap();
+
+    let on_draining = app
+        .oneshot(json_request(
+            "POST",
+            "/customers",
+            json!({"tenant_id": "stayer"}),
+            &json!({"name": "Alice"}),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(on_replica.status(), StatusCode::METHOD_NOT_ALLOWED);
+    assert_eq!(on_draining.status(), StatusCode::CREATED);
 }

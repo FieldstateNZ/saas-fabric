@@ -20,8 +20,9 @@ mod requests;
 
 pub use connector::RecordingConnector;
 pub use fixtures::{
-    acme_data_source, catalog, data_sources, discriminator_data_source, field, read_only_data_source, tenant,
-    tenant_on_replica, tenant_with_missing_data_source, tenants,
+    acme_data_source, catalog, data_sources, discriminator_data_source, draining_data_source, field,
+    read_only_data_source, tenant, tenant_on_draining, tenant_on_replica, tenant_with_missing_data_source,
+    tenants,
 };
 pub use requests::{body_json, json_request, request};
 

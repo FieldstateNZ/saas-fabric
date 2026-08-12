@@ -36,7 +36,12 @@ fn data_source(id: &str, revision: u64, connection: &str, placement: PlacementCl
         placement,
         residency: DataResidency::in_region("au-east"),
         pool: PoolSettings::default(),
-        capabilities: DataSourceCapabilities::default(),
+        // Declared, not defaulted: capabilities fail closed, so a writable
+        // fixture has to say it is writable.
+        capabilities: DataSourceCapabilities {
+            writable: true,
+            accepts_new_tenants: true,
+        },
         labels: BTreeMap::new(),
     }
 }
@@ -56,10 +61,35 @@ pub fn read_only_data_source() -> DataSource {
     DataSource {
         capabilities: DataSourceCapabilities {
             writable: false,
-            ..DataSourceCapabilities::default()
+            accepts_new_tenants: true,
         },
         ..data_source("replica-01", 1, "replica-01", PlacementClass::Shared)
     }
+}
+
+/// A DataSource that is draining: writable, but closed to new placement.
+///
+/// The pair that must never be conflated — draining is a control-plane state
+/// and has to leave existing traffic untouched.
+pub fn draining_data_source() -> DataSource {
+    DataSource {
+        capabilities: DataSourceCapabilities {
+            writable: true,
+            accepts_new_tenants: false,
+        },
+        ..data_source("draining-01", 1, "draining-01", PlacementClass::Shared)
+    }
+}
+
+/// A tenant already bound to the draining DataSource.
+pub fn tenant_on_draining() -> TenantRuntimeBinding {
+    TenantRuntimeBinding::new(tenant("stayer"), BindingRevision::new(1)).with_data(
+        LogicalDataSourceName::try_new("primary").unwrap(),
+        TenantDataBinding::new(
+            DataSourceId::try_new("draining-01").unwrap(),
+            IsolationModel::Database,
+        ),
+    )
 }
 
 /// The standard DataSource set.

@@ -40,7 +40,10 @@ pub(crate) fn data_source(id: &str, revision: u64) -> DataSource {
         placement: PlacementClass::Dedicated,
         residency: DataResidency::in_region("au-east"),
         pool: PoolSettings::default(),
-        capabilities: DataSourceCapabilities::default(),
+        capabilities: DataSourceCapabilities {
+            writable: true,
+            accepts_new_tenants: true,
+        },
         labels: BTreeMap::new(),
     }
 }
@@ -50,7 +53,7 @@ pub(crate) fn read_only_data_source(id: &str) -> DataSource {
     DataSource {
         capabilities: DataSourceCapabilities {
             writable: false,
-            ..DataSourceCapabilities::default()
+            accepts_new_tenants: true,
         },
         ..data_source(id, 1)
     }

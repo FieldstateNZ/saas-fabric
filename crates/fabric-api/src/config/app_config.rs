@@ -1,14 +1,16 @@
-//! Everything the runtime plane needs to start.
+//! The shape of everything the runtime plane needs to start.
+//!
+//! The struct and its defaults only. Loading lives in
+//! [`loading`](super::loading) and the cross-cutting checks in
+//! [`validation`](super::validation) — three separable concerns that happen to
+//! share a type.
 
-use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 use fabric_connector_ndc::NdcConnectorConfig;
 use fabric_data_api::{DataApiConfig, ResourcePermissions};
 use fabric_identity::IdentityConfig;
 use fabric_tenant_runtime::RuntimeConfig;
-use figment::providers::{Env, Format as _, Toml};
-use figment::Figment;
 
 use crate::config::TokenConfig;
 
@@ -57,6 +59,12 @@ pub struct AppConfig {
 }
 
 impl Default for AppConfig {
+    /// The defaults a deployment inherits when it says nothing.
+    ///
+    /// Paths point at `/etc/fabric`, which is where a mounted `ConfigMap`
+    /// conventionally lands. `connectors` is empty and
+    /// [`validate`](super::validation) rejects that, so a process cannot start
+    /// with nothing to execute against.
     fn default() -> Self {
         Self {
             listen: "0.0.0.0:8080".to_owned(),
@@ -70,57 +78,5 @@ impl Default for AppConfig {
             permissions: ResourcePermissions::default(),
             connectors: Vec::new(),
         }
-    }
-}
-
-impl AppConfig {
-    /// Loads configuration from a file and the environment.
-    ///
-    /// Environment variables override the file, prefixed `FABRIC_` with `__`
-    /// for nesting: `FABRIC_DATA_API__MAX_LIMIT=200`.
-    ///
-    /// # Errors
-    ///
-    /// Returns a message if the file cannot be read or the result does not
-    /// deserialise.
-    pub fn load(path: &str) -> Result<Self, String> {
-        Figment::new()
-            .merge(Toml::file(path))
-            .merge(Env::prefixed("FABRIC_").split("__"))
-            .extract()
-            .map_err(|error| format!("could not load configuration from {path}: {error}"))
-    }
-
-    /// Checks settings that span domains.
-    ///
-    /// Each domain validates its own settings when it is built. What is left
-    /// for here is the cross-cutting cases no single domain can see.
-    ///
-    /// # Errors
-    ///
-    /// Returns a message describing the first problem found.
-    pub fn validate(&self) -> Result<(), String> {
-        if self.connectors.is_empty() {
-            return Err("at least one connector must be configured".to_owned());
-        }
-
-        let mut seen = BTreeSet::new();
-        for connector in &self.connectors {
-            if !seen.insert(connector.id.clone()) {
-                return Err(format!("connector id {} is configured twice", connector.id));
-            }
-
-            connector.validate()?;
-        }
-
-        if self.tenants_path == self.data_sources_path {
-            return Err(
-                "tenants_path and data_sources_path must differ: the two resources are reconciled \
-                 independently and cannot share a file"
-                    .to_owned(),
-            );
-        }
-
-        Ok(())
     }
 }

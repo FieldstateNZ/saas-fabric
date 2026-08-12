@@ -72,7 +72,7 @@ async fn changing_a_data_source_moves_every_tenant_on_it_with_no_tenant_edit() {
         }
     );
     // The tenant binding was never rewritten.
-    assert_eq!(target.revision(), BindingRevision::new(7));
+    assert_eq!(target.tenant_revision(), BindingRevision::new(7));
 }
 
 #[tokio::test]
@@ -101,7 +101,7 @@ async fn rebinding_a_tenant_moves_it_to_a_different_data_source() {
     let (target, spec) = connector.last_query();
 
     assert_eq!(target.data_source().as_str(), "shared-02");
-    assert_eq!(target.revision(), BindingRevision::new(8));
+    assert_eq!(target.tenant_revision(), BindingRevision::new(8));
     // Moving onto a shared table brings the isolation predicate with it.
     assert!(spec.filter.is_some());
 }
@@ -125,7 +125,7 @@ async fn a_stale_tenant_update_is_ignored_by_the_request_path() {
         .unwrap();
 
     let (target, _) = connector.last_query();
-    assert_eq!(target.revision(), BindingRevision::new(7));
+    assert_eq!(target.tenant_revision(), BindingRevision::new(7));
     assert_eq!(target.data_source().as_str(), "acme-prod");
 }
 

@@ -24,6 +24,7 @@ pub(crate) fn target_with(isolation: IsolationModel) -> ExecutionTarget {
         TenantId::try_new("acme").unwrap(),
         BindingRevision::new(1),
         DataSourceId::try_new("shared-02").unwrap(),
+        BindingRevision::new(9),
         ConnectorId::try_new("postgres").unwrap(),
         ConnectionSelector::Default,
         isolation,

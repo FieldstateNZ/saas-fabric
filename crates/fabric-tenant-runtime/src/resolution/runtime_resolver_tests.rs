@@ -47,7 +47,7 @@ fn the_target_carries_the_tenant_binding_revision_not_the_data_source_revision()
         .resolve_data_source(&tenant("acme"), &primary())
         .unwrap();
 
-    assert_eq!(resolved.target.revision(), BindingRevision::new(7));
+    assert_eq!(resolved.target.tenant_revision(), BindingRevision::new(7));
     assert_eq!(resolved.data_source.revision, BindingRevision::new(4));
 }
 
@@ -93,7 +93,7 @@ fn a_data_source_change_is_visible_without_touching_any_tenant_binding() {
 
     assert_eq!(outcome.target.connector().as_str(), "postgres-replacement");
     // The tenant binding was never rewritten.
-    assert_eq!(outcome.target.revision(), BindingRevision::new(1));
+    assert_eq!(outcome.target.tenant_revision(), BindingRevision::new(1));
 }
 
 #[test]
@@ -174,4 +174,57 @@ fn readiness_requires_both_registries() {
 
     // Tenants primed, data sources not: the plane cannot serve.
     assert!(!resolver.is_primed());
+}
+
+#[test]
+fn a_resolved_target_carries_both_revisions() {
+    // Item 10/11: a request is served by a pair of independently reconciled
+    // resources. Telemetry needs both numbers to answer "which exact
+    // configuration served this request?".
+    let outcome = healthy()
+        .resolve_data_source(&tenant("acme"), &primary())
+        .unwrap();
+
+    assert_eq!(outcome.target.tenant_revision(), BindingRevision::new(7));
+    assert_eq!(outcome.target.data_source_revision(), BindingRevision::new(4));
+}
+
+#[test]
+fn a_data_source_revision_bump_does_not_move_the_tenant_revision() {
+    let tenant_registry = Arc::new(TenantRegistry::new());
+    tenant_registry.apply_all(vec![tenant_binding("acme", 3, "shared-01")]);
+
+    let source_registry = Arc::new(DataSourceRegistry::new());
+    source_registry.apply_all(vec![data_source("shared-01", 1)]);
+
+    let resolver = RuntimeResolver::new(Arc::clone(&tenant_registry), Arc::clone(&source_registry));
+
+    // A pool resize, an endpoint correction, a credential rebinding: all of
+    // these bump only the DataSource.
+    assert!(source_registry.apply_one(data_source("shared-01", 2)));
+
+    let outcome = resolver.resolve_data_source(&tenant("acme"), &primary()).unwrap();
+
+    assert_eq!(outcome.target.data_source_revision(), BindingRevision::new(2));
+    assert_eq!(outcome.target.tenant_revision(), BindingRevision::new(3));
+}
+
+#[test]
+fn rebinding_a_tenant_moves_the_tenant_revision_and_the_data_source_id() {
+    let tenant_registry = Arc::new(TenantRegistry::new());
+    tenant_registry.apply_all(vec![tenant_binding("acme", 3, "shared-01")]);
+
+    let source_registry = Arc::new(DataSourceRegistry::new());
+    source_registry.apply_all(vec![data_source("shared-01", 1), data_source("shared-02", 6)]);
+
+    let resolver = RuntimeResolver::new(Arc::clone(&tenant_registry), Arc::clone(&source_registry));
+
+    assert!(tenant_registry.apply_one(tenant_binding("acme", 4, "shared-02")));
+
+    let outcome = resolver.resolve_data_source(&tenant("acme"), &primary()).unwrap();
+
+    assert_eq!(outcome.target.tenant_revision(), BindingRevision::new(4));
+    assert_eq!(outcome.target.data_source().as_str(), "shared-02");
+    // And it picks up the target DataSource's own revision, not the old one's.
+    assert_eq!(outcome.target.data_source_revision(), BindingRevision::new(6));
 }

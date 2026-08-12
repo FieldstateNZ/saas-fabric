@@ -5,7 +5,7 @@ use fabric_core::{BindingRevision, DataSourceId, TenantId};
 use crate::{ConnectionSelector, ConnectorId, IsolationModel};
 
 /// Everything the execution layer needs to know about *where* an operation
-/// runs.
+/// runs — and deliberately nothing more.
 ///
 /// This is the output of tenant resolution and the input to a
 /// [`DataConnector`](crate::DataConnector). Producing one is the end of the
@@ -15,20 +15,40 @@ use crate::{ConnectionSelector, ConnectorId, IsolationModel};
 /// bearer token → tenant_id → tenant binding → DataSource → ExecutionTarget
 /// ```
 ///
-/// Note that it takes both halves of that chain. The DataSource supplies the
-/// connector and the connection; the tenant binding supplies the isolation.
-/// Neither is sufficient alone, which is why a target can only be built by the
-/// runtime resolver and never by a caller.
+/// It takes both halves of that chain. The DataSource supplies the connector
+/// and connection; the tenant binding supplies the isolation. Neither is
+/// sufficient alone, which is why a target can only be built by the runtime
+/// resolver and never by a caller.
 ///
-/// It is carried separately from the operation itself
-/// ([`QuerySpec`](crate::QuerySpec)) on purpose: the operation describes *what*
-/// the caller asked for, while this describes *where* it goes and is internal
-/// (§29).
+/// # What is deliberately absent
+///
+/// No placement class, no residency, no operational labels, no pool settings,
+/// no `accepts_new_tenants`. Those are properties of the
+/// [`DataSource`](fabric_tenant_runtime::DataSource) that a connector has no
+/// use for, and shipping the whole DataSource down here would turn this type
+/// into a transport for platform configuration. It carries identifiers, one
+/// connection selector, and the isolation model — the minimum needed to execute
+/// safely.
+///
+/// # Two revisions
+///
+/// Both are carried, because a request is served by a *pair* of independently
+/// reconciled resources and diagnosing it needs both:
+///
+/// ```text
+/// tenant_id=acme tenant_revision=42
+/// data_source_id=sql-au-east-03 data_source_revision=7
+/// ```
+///
+/// A pool resize bumps the second and not the first; a tenant rebinding to a
+/// different DataSource bumps the first. Recording only one would leave half
+/// the changes invisible in a trace.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExecutionTarget {
     tenant: TenantId,
-    revision: BindingRevision,
+    tenant_revision: BindingRevision,
     data_source: DataSourceId,
+    data_source_revision: BindingRevision,
     connector: ConnectorId,
     connection: ConnectionSelector,
     isolation: IsolationModel,
@@ -39,16 +59,18 @@ impl ExecutionTarget {
     #[must_use]
     pub const fn new(
         tenant: TenantId,
-        revision: BindingRevision,
+        tenant_revision: BindingRevision,
         data_source: DataSourceId,
+        data_source_revision: BindingRevision,
         connector: ConnectorId,
         connection: ConnectionSelector,
         isolation: IsolationModel,
     ) -> Self {
         Self {
             tenant,
-            revision,
+            tenant_revision,
             data_source,
+            data_source_revision,
             connector,
             connection,
             isolation,
@@ -61,19 +83,29 @@ impl ExecutionTarget {
         &self.tenant
     }
 
-    /// The tenant binding revision this target was resolved from.
+    /// The revision of the tenant binding this target was resolved from.
     ///
-    /// Emitted in telemetry (§29) and used to detect a target resolved from a
-    /// binding that has since been replaced.
+    /// Changes when the tenant is rebound to a different DataSource, or its
+    /// isolation changes. Does **not** change when the DataSource it points at
+    /// is reconfigured.
     #[must_use]
-    pub const fn revision(&self) -> BindingRevision {
-        self.revision
+    pub const fn tenant_revision(&self) -> BindingRevision {
+        self.tenant_revision
     }
 
     /// The DataSource this operation runs against.
     #[must_use]
     pub const fn data_source(&self) -> &DataSourceId {
         &self.data_source
+    }
+
+    /// The revision of that DataSource's configuration.
+    ///
+    /// Changes on a pool resize, endpoint correction, credential rebinding or
+    /// connector change — none of which touch any tenant's revision.
+    #[must_use]
+    pub const fn data_source_revision(&self) -> BindingRevision {
+        self.data_source_revision
     }
 
     /// Which connector executes the operation.

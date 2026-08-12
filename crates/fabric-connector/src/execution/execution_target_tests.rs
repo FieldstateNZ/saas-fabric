@@ -15,6 +15,7 @@ fn target(connection: ConnectionSelector, isolation: IsolationModel) -> Executio
         TenantId::try_new("acme").unwrap(),
         BindingRevision::new(42),
         DataSourceId::try_new("sql-au-east-03").unwrap(),
+        BindingRevision::new(7),
         ConnectorId::try_new("postgres-au-east").unwrap(),
         connection,
         isolation,
@@ -64,5 +65,16 @@ fn a_target_carries_both_halves_of_the_resolution_chain() {
     assert_eq!(target.connector().as_str(), "postgres-au-east");
     // From the tenant binding.
     assert_eq!(target.tenant().as_str(), "acme");
-    assert_eq!(target.revision(), BindingRevision::new(42));
+    assert_eq!(target.isolation(), &IsolationModel::Database);
+}
+
+#[test]
+fn a_target_carries_both_revisions_independently() {
+    // A request is served by a pair of independently reconciled resources, and
+    // diagnosing "which exact configuration served this?" needs both numbers.
+    let target = target(ConnectionSelector::Default, IsolationModel::Database);
+
+    assert_eq!(target.tenant_revision(), BindingRevision::new(42));
+    assert_eq!(target.data_source_revision(), BindingRevision::new(7));
+    assert_ne!(target.tenant_revision(), target.data_source_revision());
 }

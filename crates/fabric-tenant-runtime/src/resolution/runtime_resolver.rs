@@ -98,6 +98,7 @@ impl RuntimeResolver {
             binding.tenant.clone(),
             binding.revision,
             data_source.id.clone(),
+            data_source.revision,
             data_source.connector.clone(),
             data_source.connection.clone(),
             data_binding.isolation.clone(),

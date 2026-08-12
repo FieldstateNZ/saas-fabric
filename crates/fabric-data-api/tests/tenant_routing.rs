@@ -74,7 +74,10 @@ async fn the_target_carries_the_tenant_binding_revision() {
         .await
         .unwrap();
 
-    assert_eq!(connector.last_query().0.revision(), BindingRevision::new(7));
+    assert_eq!(
+        connector.last_query().0.tenant_revision(),
+        BindingRevision::new(7)
+    );
 }
 
 #[tokio::test]

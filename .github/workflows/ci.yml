@@ -38,10 +38,26 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       # Workspace lints (crates/**/Cargo.toml -> [lints] workspace = true,
       # rooted in the workspace Cargo.toml) already deny unwrap/expect/panic/
-      # indexing and warn on missing_docs and clippy::pedantic. `-D warnings`
+      # indexing and missing_docs, and warn on clippy::pedantic. `-D warnings`
       # is what turns those (and everything else clippy reports) into a CI
       # failure instead of noise nobody reads.
       - run: cargo clippy --workspace --all-targets -- -D warnings
+
+  docs:
+    name: cargo doc
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # `missing_docs` is denied at compile time, so clippy already catches an
+      # undocumented item. What it does not catch is a documented one whose
+      # links have rotted -- an intra-doc link to a renamed type, or to an
+      # item that has since become crate-private. Only rustdoc sees those, and
+      # only as warnings unless they are promoted here.
+      - run: cargo doc --workspace --no-deps
+        env:
+          RUSTDOCFLAGS: -D warnings
 
   test:
     name: cargo test --workspace

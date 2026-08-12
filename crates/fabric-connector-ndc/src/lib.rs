@@ -22,7 +22,8 @@
 //! The specification itself is published, and implementing a published protocol
 //! for interoperability is a different act from incorporating someone's
 //! implementation of it. So the subset we need is written here, from the
-//! specification, and pinned to [`NDC_VERSION`].
+//! specification, and pinned to `NDC_VERSION` (crate-private -- the
+//! version is this crate's business, not its callers').
 //!
 //! That subset is a **closed list, not a starting point** — see the `wire`
 //! module's docs (`src/wire.rs`) for the policy on what happens when NDC can
@@ -57,7 +58,7 @@
 //!
 //! NDC connectors name their own comparison operators (`_eq`, `eq`, `equals` —
 //! it varies), but the `/schema` response declares each one's *semantics*.
-//! [`SchemaIndex`] reads that at startup and builds the mapping, so the platform
+//! `SchemaIndex` reads that at startup and builds the mapping, so the platform
 //! never hardcodes a vendor's operator spelling. An operator the connector does
 //! not declare is refused rather than guessed at.
 
@@ -76,7 +77,17 @@ mod wire;
 pub use config::{CollectionProcedures, NdcConnectorConfig, ProcedureBinding};
 pub use connector::NdcConnector;
 pub use registration::build_ndc_connector;
-pub use schema_index::{SchemaIndex, SemanticOperator};
+// Not `pub`. `SchemaIndex` holds the connector's own operator vocabulary --
+// the raw spellings it chose for `_eq` and friends -- which is an NDC concept
+// through and through, and ADR 0001 puts NDC concepts inside this crate.
+// Nothing outside it referenced this, so exporting it bought no caller
+// anything and cost the boundary its only structural guarantee.
+//
+// `NdcConnector::schema_index()` went with it. It existed "for diagnostics"
+// and had no caller; an accessor kept alive for a diagnostics surface nobody
+// has built is speculative API, and adding it back the day that surface
+// exists is a two-line change.
+pub(crate) use schema_index::SchemaIndex;
 
 /// The NDC specification version this client implements.
 ///
@@ -85,10 +96,10 @@ pub use schema_index::{SchemaIndex, SemanticOperator};
 /// than floating: our wire types are hand-written, so a connector speaking a
 /// version we have not read is a mismatch we want to hear about at boot rather
 /// than discover through a malformed response under load.
-pub const NDC_VERSION: &str = "0.2.13";
+pub(crate) const NDC_VERSION: &str = "0.2.13";
 
 /// The header carrying [`NDC_VERSION`].
-pub const NDC_VERSION_HEADER: &str = "X-Hasura-NDC-Version";
+pub(crate) const NDC_VERSION_HEADER: &str = "X-Hasura-NDC-Version";
 
 /// The event-ID domain number for this crate. See `fabric_core::event_id`.
 pub(crate) const DOMAIN_ID: u32 = 3;

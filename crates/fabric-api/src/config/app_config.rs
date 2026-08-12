@@ -103,7 +103,7 @@ impl Default for AppConfig {
     ///
     /// Paths point at `/etc/fabric`, which is where a mounted `ConfigMap`
     /// conventionally lands. `connectors` is empty and
-    /// [`validate`](super::validation) rejects that, so a process cannot start
+    /// `validation::validate` rejects that, so a process cannot start
     /// with nothing to execute against.
     fn default() -> Self {
         Self {

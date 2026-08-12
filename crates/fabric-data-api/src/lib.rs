@@ -66,11 +66,19 @@ pub use authorization::{OperationKind, ResourcePermissions};
 pub use catalog::{ResourceCatalog, ResourceDefinition};
 pub use config::DataApiConfig;
 pub use errors::DataApiError;
-pub use execution::DataApiService;
+// Not `pub`. `build_data_api` is the only supported way in, because it is
+// the only path that validates the configuration and refuses an empty
+// catalogue or connector registry first. A caller who could reach the
+// service or assemble the state directly could skip all of that.
+pub(crate) use execution::DataApiService;
 pub use models::{ListQuery, ListResponse, PagingInfo, RowResponse, WriteResponse};
 pub use registration::build_data_api;
-pub use routes::{data_routes, API_PREFIX};
-pub use state::DataApiState;
+// `API_PREFIX` stays public: the host needs it to reason about where this
+// router mounts, and a test asserts on it. `data_routes` does not, for the
+// reason above.
+pub(crate) use routes::data_routes;
+pub use routes::API_PREFIX;
+pub(crate) use state::DataApiState;
 
 /// The event-ID domain number for this crate. See `fabric_core::event_id`.
 pub(crate) const DOMAIN_ID: u32 = 4;

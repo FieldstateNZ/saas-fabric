@@ -43,12 +43,6 @@ impl NdcConnector {
             secrets,
         }
     }
-
-    /// The indexed schema, for diagnostics.
-    #[must_use]
-    pub const fn schema_index(&self) -> &SchemaIndex {
-        &self.schema
-    }
 }
 
 #[async_trait]

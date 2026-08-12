@@ -24,7 +24,8 @@ use crate::{ConnectionSelector, ConnectorId, IsolationModel};
 ///
 /// No placement class, no residency, no operational labels, no pool settings,
 /// no `accepts_new_tenants`. Those are properties of the
-/// [`DataSource`](fabric_tenant_runtime::DataSource) that a connector has no
+/// `DataSource` -- a `fabric-tenant-runtime` type this crate deliberately
+/// cannot see, since the dependency runs the other way -- that a connector has no
 /// use for, and shipping the whole DataSource down here would turn this type
 /// into a transport for platform configuration. It carries identifiers, one
 /// connection selector, and the isolation model — the minimum needed to execute

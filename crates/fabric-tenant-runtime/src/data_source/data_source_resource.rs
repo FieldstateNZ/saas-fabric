@@ -6,7 +6,6 @@ use fabric_connector::{ConnectionSelector, ConnectorId};
 use fabric_core::{BindingRevision, DataSourceId};
 
 use crate::data_source::{DataResidency, DataSourceCapabilities, PlacementClass, PoolSettings};
-use crate::resource::RegistryResource;
 
 /// A configured physical data destination, reusable across tenants.
 ///
@@ -98,19 +97,5 @@ impl DataSource {
             self.connector,
             self.connection.telemetry_label()
         )
-    }
-}
-
-impl RegistryResource for DataSource {
-    type Key = DataSourceId;
-
-    const KIND: &'static str = "data source";
-
-    fn key(&self) -> &Self::Key {
-        &self.id
-    }
-
-    fn revision(&self) -> BindingRevision {
-        self.revision
     }
 }

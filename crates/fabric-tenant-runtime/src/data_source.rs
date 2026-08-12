@@ -33,6 +33,7 @@ mod capabilities;
 mod data_source_resource;
 mod placement_class;
 mod pool_settings;
+mod registry_resource;
 mod residency;
 
 pub use capabilities::DataSourceCapabilities;

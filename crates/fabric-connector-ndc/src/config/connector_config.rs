@@ -1,4 +1,9 @@
-//! How to reach and use one NDC connector.
+//! The shape of one NDC connector instance's configuration.
+//!
+//! The struct and its defaults only. The checks live in
+//! [`connector_validation`](super::connector_validation), because what makes a
+//! configuration *safe* is a different concern from what it contains — and in
+//! this case a considerably more interesting one.
 
 use std::collections::BTreeMap;
 
@@ -58,50 +63,6 @@ pub struct NdcConnectorConfig {
 }
 
 impl NdcConnectorConfig {
-    /// Checks the configuration before the connector is built.
-    ///
-    /// # Errors
-    ///
-    /// Returns a message naming the offending setting.
-    pub fn validate(&self) -> Result<(), String> {
-        if self.endpoint.trim().is_empty() {
-            return Err(format!("connector {}: endpoint must not be empty", self.id));
-        }
-
-        if self.timeout_seconds == 0 {
-            return Err(format!(
-                "connector {}: timeout_seconds must be greater than zero",
-                self.id
-            ));
-        }
-
-        self.validate_predicate_arguments()
-    }
-
-    /// Requires every update and delete mapping to declare where the predicate
-    /// goes.
-    ///
-    /// This is the check that matters most in this file. Without somewhere to
-    /// put the predicate, the tenant scoping would vanish and a delete would
-    /// empty the table for every tenant on the DataSource.
-    fn validate_predicate_arguments(&self) -> Result<(), String> {
-        for (collection, procedures) in &self.procedures {
-            for (operation, binding) in procedures.predicate_bearing() {
-                let Some(binding) = binding else { continue };
-
-                if binding.filter_argument.is_none() {
-                    return Err(format!(
-                        "connector {}: {collection}.{operation} needs a filter_argument, otherwise the \
-                         tenant predicate would be dropped and the write would reach every tenant's rows",
-                        self.id
-                    ));
-                }
-            }
-        }
-
-        Ok(())
-    }
-
     /// Whether any collection is writable.
     #[must_use]
     pub fn has_writes(&self) -> bool {
@@ -110,78 +71,16 @@ impl NdcConnectorConfig {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::config::ProcedureBinding;
-
-    fn config_with(procedures: BTreeMap<String, CollectionProcedures>) -> NdcConnectorConfig {
-        NdcConnectorConfig {
+impl NdcConnectorConfig {
+    /// A minimal valid configuration, for tests in this module tree.
+    pub(super) fn for_test(procedures: BTreeMap<String, CollectionProcedures>) -> Self {
+        Self {
             id: ConnectorId::try_new("postgres").unwrap(),
             endpoint: "http://connector:8080".to_owned(),
-            timeout_seconds: 10,
+            timeout_seconds: default_timeout_seconds(),
             connection_name_argument: default_connection_name_argument(),
             connection_string_argument: default_connection_string_argument(),
             procedures,
         }
-    }
-
-    fn mapping(collection: &str, procedures: CollectionProcedures) -> BTreeMap<String, CollectionProcedures> {
-        BTreeMap::from([(collection.to_owned(), procedures)])
-    }
-
-    #[test]
-    fn a_connector_with_no_procedure_mappings_is_read_only() {
-        assert!(!config_with(BTreeMap::new()).has_writes());
-    }
-
-    #[test]
-    fn a_delete_mapping_without_a_filter_argument_is_rejected_at_startup() {
-        let config = config_with(mapping(
-            "customers",
-            CollectionProcedures {
-                delete: Some(ProcedureBinding {
-                    procedure: "delete_customers".to_owned(),
-                    payload_argument: None,
-                    filter_argument: None,
-                }),
-                ..CollectionProcedures::default()
-            },
-        ));
-
-        assert!(config.validate().unwrap_err().contains("filter_argument"));
-    }
-
-    #[test]
-    fn an_insert_mapping_needs_no_filter_argument() {
-        let config = config_with(mapping(
-            "customers",
-            CollectionProcedures {
-                insert: Some(ProcedureBinding {
-                    procedure: "insert_customers".to_owned(),
-                    payload_argument: Some("objects".to_owned()),
-                    filter_argument: None,
-                }),
-                ..CollectionProcedures::default()
-            },
-        ));
-
-        assert!(config.validate().is_ok());
-        assert!(config.has_writes());
-    }
-
-    #[test]
-    fn an_empty_endpoint_is_rejected() {
-        let mut config = config_with(BTreeMap::new());
-        config.endpoint = "  ".to_owned();
-
-        assert!(config.validate().is_err());
-    }
-
-    #[test]
-    fn a_zero_timeout_is_rejected() {
-        let mut config = config_with(BTreeMap::new());
-        config.timeout_seconds = 0;
-
-        assert!(config.validate().is_err());
     }
 }

@@ -17,6 +17,7 @@
 //! correct when an endpoint changes, and a thousand revisions bumped to do it.
 
 mod configuration_binding;
+mod registry_resource;
 mod storage_binding;
 mod tenant_data_binding;
 mod tenant_runtime_binding;

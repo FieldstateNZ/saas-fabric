@@ -5,7 +5,6 @@ use std::collections::BTreeMap;
 use fabric_connector::SecretRef;
 use fabric_core::{BindingRevision, DataSourceName, TenantId};
 
-use crate::resource::RegistryResource;
 use crate::tenant::{ConfigurationBinding, StorageBinding, TenantDataBinding};
 use crate::{ConfigurationError, ResolveError};
 
@@ -113,19 +112,5 @@ impl TenantRuntimeBinding {
         }
 
         Ok(())
-    }
-}
-
-impl RegistryResource for TenantRuntimeBinding {
-    type Key = TenantId;
-
-    const KIND: &'static str = "tenant";
-
-    fn key(&self) -> &Self::Key {
-        &self.tenant
-    }
-
-    fn revision(&self) -> BindingRevision {
-        self.revision
     }
 }

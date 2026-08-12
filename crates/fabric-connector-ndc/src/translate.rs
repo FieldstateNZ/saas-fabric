@@ -11,13 +11,21 @@
 //! implements — which areas matter most, and why.
 
 mod capabilities;
+#[cfg(test)]
+mod capabilities_tests;
 mod expression;
+#[cfg(test)]
+mod expression_tests;
 mod mutation;
 #[cfg(test)]
 mod mutation_tests;
 mod procedure_arguments;
 mod query;
+#[cfg(test)]
+mod query_tests;
 mod response;
+#[cfg(test)]
+mod response_tests;
 
 pub(crate) use capabilities::to_capabilities;
 pub(crate) use expression::to_expression;

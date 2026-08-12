@@ -1,16 +1,21 @@
 //! Structured log events for the Data API.
 //!
-//! The field set follows §29. Two rules shape it:
+//! The field set follows §29. Three rules shape it:
 //!
-//! - **Physical resource information stays in platform telemetry.** The
-//!   `physical_resource_identifier` field is emitted here because this *is*
-//!   platform telemetry; it never appears in a response.
+//! - **Application-facing concepts stay logical.** `tenant_id`,
+//!   `logical_resource`, `logical_data_source`, and `operation` are the
+//!   vocabulary an application itself could recognise — the same names it
+//!   uses when it makes the request.
+//! - **Physical resource information stays in platform telemetry.**
+//!   `data_source_id`, `data_source_revision`, `tenant_binding_revision`, and
+//!   `physical_resource_identifier` are emitted here because this *is*
+//!   platform telemetry; none of the four ever appears in a response.
 //! - **Secrets and connection strings never appear.** Not in a field, not in a
 //!   message, not inside an error being formatted. `ResolvedSecret` cannot print
 //!   itself, which makes that structurally hard to get wrong.
 
 use fabric_connector::ExecutionTarget;
-use fabric_core::{event_id, EventType, LogicalResourceName};
+use fabric_core::{event_id, EventType, LogicalDataSourceName, LogicalResourceName, TenantId};
 
 use crate::DOMAIN_ID;
 
@@ -21,6 +26,7 @@ use crate::DOMAIN_ID;
 /// requests that are actually sampled.
 pub(crate) fn operation_dispatched(
     resource: &LogicalResourceName,
+    logical_data_source: &LogicalDataSourceName,
     operation: &str,
     target: &ExecutionTarget,
 ) {
@@ -32,6 +38,7 @@ pub(crate) fn operation_dispatched(
         data_source_id = %target.data_source(),
         data_source_revision = target.data_source_revision().get(),
         logical_resource = %resource,
+        logical_data_source = %logical_data_source,
         operation,
         physical_resource_identifier = target.physical_resource_identifier(),
         "dispatching a data operation"
@@ -72,14 +79,34 @@ pub(crate) fn write_refused_by_data_source(resource: &LogicalResourceName, data_
 ///
 /// The single place every 5xx is recorded with its internal detail — the
 /// caller only receives a generic message, so if it is not logged here it is
-/// lost.
-pub(crate) fn request_failed(code: &str, detail: &str) {
+/// lost. `request_id` is the same id the caller was given in the response
+/// (§29, item 57), so a report that quotes it is one grep away from this
+/// line.
+pub(crate) fn request_failed(code: &str, detail: &str, request_id: &str) {
     tracing::error!(
         event = "data_api.request_failed",
         event_id = event_id(DOMAIN_ID, EventType::Error, 1),
         code,
         detail,
+        request_id,
         "data API request failed"
+    );
+}
+
+/// A request named a tenant this runtime does not know.
+///
+/// Externally indistinguishable from a disabled or never-provisioned tenant —
+/// all three answer the same 403 with the same message, which is the
+/// anti-enumeration measure. Internally they are not the same event: this one
+/// exists so an operator can see a stream of these and recognise probing,
+/// which a caller watching only status codes cannot learn is happening.
+pub(crate) fn unknown_tenant_probed(tenant: &TenantId, request_id: &str) {
+    tracing::warn!(
+        event = "data_api.unknown_tenant_probed",
+        event_id = event_id(DOMAIN_ID, EventType::Warning, 3),
+        tenant_id = %tenant,
+        request_id,
+        "a request named a tenant unknown to the runtime"
     );
 }
 

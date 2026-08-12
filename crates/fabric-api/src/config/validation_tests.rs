@@ -10,6 +10,13 @@ fn connector(id: &str) -> NdcConnectorConfig {
     serde_json::from_str(&format!(r#"{{"id":"{id}","endpoint":"http://connector"}}"#)).unwrap()
 }
 
+fn connector_with_timeout(id: &str, http_timeout_seconds: u64) -> NdcConnectorConfig {
+    serde_json::from_str(&format!(
+        r#"{{"id":"{id}","endpoint":"http://connector","http_timeout_seconds":{http_timeout_seconds}}}"#
+    ))
+    .unwrap()
+}
+
 fn config_with(connectors: Vec<NdcConnectorConfig>) -> AppConfig {
     AppConfig {
         connectors,
@@ -64,4 +71,70 @@ fn the_default_paths_already_differ() {
     let config = config_with(vec![connector("postgres")]);
 
     assert_ne!(config.tenants_path, config.data_sources_path);
+}
+
+#[test]
+fn the_default_request_timeout_already_covers_the_default_connector_timeout() {
+    // The shipped defaults must satisfy the relationship this validation
+    // enforces, or every fresh deployment would fail its own startup check.
+    let config = config_with(vec![connector("postgres")]);
+
+    assert!(config.validate().is_ok());
+}
+
+#[test]
+fn a_request_timeout_shorter_than_the_longest_connector_timeout_is_rejected() {
+    let config = AppConfig {
+        request_timeout_seconds: 5,
+        ..config_with(vec![connector_with_timeout("postgres", 10)])
+    };
+
+    let error = config.validate().unwrap_err();
+    assert!(error.contains("request_timeout_seconds"));
+}
+
+#[test]
+fn a_request_timeout_exactly_matching_the_longest_connector_timeout_is_accepted() {
+    let config = AppConfig {
+        request_timeout_seconds: 10,
+        ..config_with(vec![connector_with_timeout("postgres", 10)])
+    };
+
+    assert!(config.validate().is_ok());
+}
+
+#[test]
+fn the_longest_of_several_connector_timeouts_is_what_gets_compared() {
+    let config = AppConfig {
+        request_timeout_seconds: 20,
+        ..config_with(vec![
+            connector_with_timeout("fast", 5),
+            connector_with_timeout("slow", 25),
+        ])
+    };
+
+    assert!(config.validate().unwrap_err().contains("25"));
+}
+
+#[test]
+fn a_zero_request_timeout_is_rejected() {
+    let config = AppConfig {
+        request_timeout_seconds: 0,
+        ..config_with(vec![connector("postgres")])
+    };
+
+    assert!(config.validate().unwrap_err().contains("request_timeout_seconds"));
+}
+
+#[test]
+fn a_zero_connector_retry_interval_is_rejected() {
+    let config = AppConfig {
+        connector_retry_interval_seconds: 0,
+        ..config_with(vec![connector("postgres")])
+    };
+
+    assert!(config
+        .validate()
+        .unwrap_err()
+        .contains("connector_retry_interval_seconds"));
 }

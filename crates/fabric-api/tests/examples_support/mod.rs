@@ -2,6 +2,8 @@
 
 #![allow(dead_code, clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+pub mod stub_connector;
+
 use std::path::PathBuf;
 
 use fabric_api::config::AppConfig;

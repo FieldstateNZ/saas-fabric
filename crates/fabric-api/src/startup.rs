@@ -17,4 +17,5 @@ mod shutdown;
 mod token_reader;
 
 pub use application::{build, Application};
+pub use connectors::ConnectorRetryHandle;
 pub use shutdown::shutdown_signal;

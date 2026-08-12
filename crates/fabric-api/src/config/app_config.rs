@@ -56,6 +56,46 @@ pub struct AppConfig {
 
     /// The connectors this process can execute against.
     pub connectors: Vec<NdcConnectorConfig>,
+
+    /// How often the background retry loop attempts to renegotiate a
+    /// connector that failed at startup, in seconds (§35).
+    ///
+    /// Deliberately its own setting rather than reusing
+    /// [`RuntimeConfig::refresh_interval_seconds`]: that one bounds staleness
+    /// for two *local* file reads, while this one bounds how quickly the
+    /// platform notices a *remote* connector process has come back after
+    /// failing to negotiate. Different failure mode, different cost — this
+    /// one is an HTTP round trip per still-failed connector, per tick — so it
+    /// gets a knob of its own rather than silently inheriting one tuned for a
+    /// different job.
+    pub connector_retry_interval_seconds: u64,
+
+    /// The overall budget for one Data API request, in seconds.
+    ///
+    /// This is the **outermost** of three timeout scopes in this system, and
+    /// the only one this process owns directly:
+    ///
+    /// | Scope | Owned by | This example's default |
+    /// |---|---|---|
+    /// | Overall request budget | **here** — `AppConfig::request_timeout_seconds` | 30s |
+    /// | HTTP call to the connector | `fabric-connector-ndc`'s per-connector [`NdcConnectorConfig::http_timeout_seconds`] | 10s |
+    /// | Database execution inside the connector | the connector process's own configuration | not visible to SaaS Fabric at all |
+    ///
+    /// The second is a different crate's setting, configured per connector
+    /// instance in `[[connectors]]` — see that field's own docs for the full
+    /// three-clock breakdown from the connector's side. The third never
+    /// appears in SaaS Fabric configuration: once a query reaches the
+    /// connector process, how long the database may run it is that
+    /// process's business.
+    ///
+    /// **Must not be shorter than the longest configured connector
+    /// timeout.** If it were, this budget would always expire before a slow
+    /// connector's own timeout could ever fire, making the connector's
+    /// setting a dead letter and turning a slow-but-legitimate request into
+    /// an unexplained cutoff instead of the connector's own, clearer
+    /// failure. [`AppConfig::validate`] enforces this relationship at
+    /// startup rather than leaving it to be discovered under load.
+    pub request_timeout_seconds: u64,
 }
 
 impl Default for AppConfig {
@@ -77,6 +117,11 @@ impl Default for AppConfig {
             data_api: DataApiConfig::default(),
             permissions: ResourcePermissions::default(),
             connectors: Vec::new(),
+            connector_retry_interval_seconds: 30,
+            // 3x the connector default of 10s: enough headroom that raising a
+            // connector's own timeout a little never silently breaks this
+            // relationship, while still bounding the worst case.
+            request_timeout_seconds: 30,
         }
     }
 }

@@ -5,6 +5,7 @@ use axum::Json;
 use fabric_identity::TenantIdentity;
 use serde_json::{Map, Value};
 
+use crate::extraction::BoundedJson;
 use crate::handlers::parse_resource;
 use crate::{DataApiError, DataApiState, WriteResponse};
 
@@ -19,7 +20,7 @@ pub(crate) async fn update_resource(
     State(state): State<DataApiState>,
     identity: TenantIdentity,
     Path((resource, key)): Path<(String, String)>,
-    Json(body): Json<Value>,
+    BoundedJson(body): BoundedJson<Value>,
 ) -> Result<Json<WriteResponse>, DataApiError> {
     let resource = parse_resource(&resource)?;
     let changes = to_changes(body)?;

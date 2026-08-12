@@ -6,14 +6,17 @@ use fabric_identity::TenantIdentity;
 
 use crate::execution::prepared::Prepared;
 use crate::execution::row_mapping::key_filter;
-use crate::{logging, DataApiError, DataApiService, ListQuery, ListResponse, OperationKind, RowResponse};
+use crate::{
+    limits, logging, DataApiError, DataApiService, ListQuery, ListResponse, OperationKind, RowResponse,
+};
 
 impl DataApiService {
     /// Lists records.
     ///
     /// # Errors
     ///
-    /// Any [`DataApiError`].
+    /// Any [`DataApiError`], including [`DataApiError::BadRequest`] if `query`
+    /// exceeds a configured complexity bound (§28).
     pub async fn list(
         &self,
         identity: &TenantIdentity,
@@ -21,6 +24,11 @@ impl DataApiService {
         query: &ListQuery,
     ) -> Result<ListResponse, DataApiError> {
         let prepared = self.prepare(identity, resource_name, OperationKind::List)?;
+
+        // Complexity, not authorization: checked once the caller is known to
+        // be allowed here at all, and before anything is asked of a
+        // connector.
+        limits::enforce_query(query, &self.config)?;
 
         let limit = self.config.effective_limit(query.limit);
         let offset = query.offset.unwrap_or(0);
@@ -81,7 +89,7 @@ impl DataApiService {
     ) -> Result<QueryOutcome, DataApiError> {
         let target = &prepared.resolved.target;
 
-        logging::operation_dispatched(resource_name, operation, target);
+        logging::operation_dispatched(resource_name, &prepared.resource.data_source, operation, target);
 
         // `for_target` is what adds the tenant predicate under discriminator
         // isolation. Every read goes through it.

@@ -40,6 +40,30 @@ impl DataApiError {
             Self::Forbidden { .. } => StatusCode::FORBIDDEN,
             Self::BadRequest(_) => StatusCode::BAD_REQUEST,
 
+            // A connector we could not reach is not a defect in this process,
+            // and 500 tells the caller the wrong thing about it: 500 says
+            // "something here is broken, retrying will not help", when in
+            // fact the connector may be mid-restart and the very next attempt
+            // may succeed. 503 says exactly that, and is the status every
+            // client library, load balancer, and retry policy already treats
+            // as transient. §35 makes this a routine state rather than an
+            // exceptional one — a connector that failed startup negotiation
+            // stays registered and keeps being retried in the background —
+            // so the status a caller sees during that window should be the
+            // retryable one.
+            //
+            // It also matches `ResolveError::RuntimeUnavailable` above, which
+            // is the same shape of problem one layer up: the platform is
+            // temporarily unable to serve, not wrong.
+            Self::Connector(ConnectorError::Unreachable { .. }) => StatusCode::SERVICE_UNAVAILABLE,
+
+            // The rest of `is_internal` stays 500, and the distinction is
+            // deliberate. A malformed response or an unexpected rejection
+            // means the connector answered but not in a way we can act on —
+            // a version skew, a misconfiguration, a bug. Retrying that
+            // reproduces it, so advertising it as transient would send
+            // clients into a pointless loop against a fault only an operator
+            // can clear.
             Self::Connector(error) if error.is_internal() => StatusCode::INTERNAL_SERVER_ERROR,
             Self::Connector(_) => StatusCode::BAD_REQUEST,
         }

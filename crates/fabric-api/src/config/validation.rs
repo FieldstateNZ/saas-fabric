@@ -17,7 +17,8 @@ impl AppConfig {
     /// Returns a message describing the first problem found.
     pub fn validate(&self) -> Result<(), String> {
         self.validate_connectors()?;
-        self.validate_state_paths()
+        self.validate_state_paths()?;
+        self.validate_timeouts()
     }
 
     /// Requires at least one connector, all distinct and individually valid.
@@ -39,6 +40,49 @@ impl AppConfig {
             }
 
             connector.validate()?;
+        }
+
+        Ok(())
+    }
+
+    /// Requires the timeout settings this struct owns directly to be usable,
+    /// and to sit in the right relationship to each other (§36).
+    ///
+    /// `request_timeout_seconds` is the outermost of three timeout scopes —
+    /// see its rustdoc — and must never be shorter than the longest
+    /// configured connector timeout. If it were, the overall budget would
+    /// always cut a request off before that connector's own timeout could
+    /// fire, making the connector's setting unreachable and turning a
+    /// slow-but-legitimate request into an unexplained cutoff instead of the
+    /// connector's own clearer failure.
+    ///
+    /// `connector_retry_interval_seconds` just needs to be positive, for the
+    /// same reason [`RuntimeConfig::refresh_interval_seconds`](fabric_tenant_runtime::RuntimeConfig)
+    /// does: zero would spin the retry loop in a tight loop renegotiating a
+    /// connector that only just failed.
+    fn validate_timeouts(&self) -> Result<(), String> {
+        if self.request_timeout_seconds == 0 {
+            return Err("request_timeout_seconds must be greater than zero".to_owned());
+        }
+
+        if self.connector_retry_interval_seconds == 0 {
+            return Err("connector_retry_interval_seconds must be greater than zero".to_owned());
+        }
+
+        if let Some(longest) = self
+            .connectors
+            .iter()
+            .map(|connector| connector.http_timeout_seconds)
+            .max()
+        {
+            if self.request_timeout_seconds < longest {
+                return Err(format!(
+                    "request_timeout_seconds ({}) must be at least as long as the longest configured \
+                     connector timeout ({longest}s); otherwise the overall budget always expires before \
+                     that connector's own timeout could",
+                    self.request_timeout_seconds
+                ));
+            }
         }
 
         Ok(())

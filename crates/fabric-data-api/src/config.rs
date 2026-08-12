@@ -1,6 +1,12 @@
 //! Configuration for the Data API.
 
 /// Limits and defaults applied to Data API requests.
+///
+/// Two families live here. `default_limit`/`max_limit` bound how much data one
+/// response can carry; everything else bounds how much *work* a single
+/// request can demand before a connector is ever asked to do it — a
+/// multi-tenant service has to protect co-tenants from one caller's
+/// pathological request, not just from its own result size (§28).
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct DataApiConfig {
@@ -15,6 +21,40 @@ pub struct DataApiConfig {
     /// a multi-tenant system than in a single-tenant one — one tenant's
     /// unbounded scan is every co-tenant's latency.
     pub max_limit: u32,
+
+    /// The largest number of equality filters one list request may supply.
+    ///
+    /// Unlike `max_limit`, this is rejected rather than clamped: there is no
+    /// sensible way to silently drop a caller's filter and still answer the
+    /// query they asked for.
+    pub max_filters: u32,
+
+    /// The largest number of `sort` fields one list request may supply.
+    pub max_sort_fields: u32,
+
+    /// The largest number of `select` (projection) fields one list request
+    /// may supply.
+    pub max_select_fields: u32,
+
+    /// The deepest a filter tree may nest.
+    ///
+    /// The query language this crate parses is flat today — the deepest a
+    /// filter gets is an `And` of `Compare` clauses, which is depth two — so
+    /// this bound is inert in practice. It exists anyway so that if the query
+    /// language ever grows nested predicates, there is already a ceiling in
+    /// place rather than one added after the fact.
+    pub max_filter_depth: u32,
+
+    /// The largest request body, in bytes, this crate will read before
+    /// rejecting a request.
+    ///
+    /// Enforced while the body is being read (`extraction::BoundedJson`), not
+    /// by trusting a caller-supplied `Content-Length` — a body limit that only
+    /// checks the header is not a body limit.
+    pub max_request_body_bytes: u32,
+
+    /// The largest number of rows one `POST` may create.
+    pub max_mutation_batch_size: u32,
 }
 
 impl Default for DataApiConfig {
@@ -22,6 +62,12 @@ impl Default for DataApiConfig {
         Self {
             default_limit: 50,
             max_limit: 1000,
+            max_filters: 25,
+            max_sort_fields: 5,
+            max_select_fields: 50,
+            max_filter_depth: 4,
+            max_request_body_bytes: 1024 * 1024,
+            max_mutation_batch_size: 500,
         }
     }
 }
@@ -41,9 +87,14 @@ impl DataApiConfig {
 
     /// Checks the configuration before anything is built.
     ///
+    /// Every bound below has to be usable — zero would mean every request of
+    /// that shape is refused, which is almost certainly a misconfiguration
+    /// rather than an intention, and is cheaper to catch here than from a
+    /// flood of confused callers.
+    ///
     /// # Errors
     ///
-    /// Returns a message if the limits are unusable.
+    /// Returns a message naming the first unusable bound.
     pub fn validate(&self) -> Result<(), String> {
         if self.max_limit == 0 {
             return Err("data_api.max_limit must be greater than zero".to_owned());
@@ -51,6 +102,19 @@ impl DataApiConfig {
 
         if self.default_limit > self.max_limit {
             return Err("data_api.default_limit must not exceed max_limit".to_owned());
+        }
+
+        for (name, value) in [
+            ("max_filters", self.max_filters),
+            ("max_sort_fields", self.max_sort_fields),
+            ("max_select_fields", self.max_select_fields),
+            ("max_filter_depth", self.max_filter_depth),
+            ("max_request_body_bytes", self.max_request_body_bytes),
+            ("max_mutation_batch_size", self.max_mutation_batch_size),
+        ] {
+            if value == 0 {
+                return Err(format!("data_api.{name} must be greater than zero"));
+            }
         }
 
         Ok(())
@@ -86,6 +150,42 @@ mod tests {
         let config = DataApiConfig {
             default_limit: 100,
             max_limit: 10,
+            ..DataApiConfig::default()
+        };
+
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn the_defaults_are_themselves_valid() {
+        assert!(DataApiConfig::default().validate().is_ok());
+    }
+
+    #[test]
+    fn a_zero_complexity_bound_is_rejected_at_startup() {
+        let config = DataApiConfig {
+            max_filters: 0,
+            ..DataApiConfig::default()
+        };
+
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn a_zero_body_size_bound_is_rejected_at_startup() {
+        let config = DataApiConfig {
+            max_request_body_bytes: 0,
+            ..DataApiConfig::default()
+        };
+
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn a_zero_batch_size_bound_is_rejected_at_startup() {
+        let config = DataApiConfig {
+            max_mutation_batch_size: 0,
+            ..DataApiConfig::default()
         };
 
         assert!(config.validate().is_err());

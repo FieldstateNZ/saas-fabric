@@ -53,6 +53,8 @@ mod mutation;
 mod ordering;
 mod query;
 mod registry;
+#[cfg(test)]
+mod registry_tests;
 mod row;
 mod schema;
 mod secret;

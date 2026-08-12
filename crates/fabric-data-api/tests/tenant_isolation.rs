@@ -94,6 +94,41 @@ async fn a_created_record_is_stamped_with_the_tenant_discriminator() {
 }
 
 #[tokio::test]
+async fn a_batch_create_stamps_every_row_with_the_tenant_discriminator() {
+    // Item 21: the overwrite has to apply per row, not just to the first one
+    // — a caller batching hostile rows must not get even one of them through
+    // by hiding it behind a well-formed sibling.
+    let (app, connector) = app();
+
+    let response = app
+        .oneshot(json_request(
+            "POST",
+            "/customers",
+            json!({"tenant_id": "globex"}),
+            &json!([
+                {"name": "Alice", "tenant_key": "tenant-999"},
+                {"name": "Bob", "tenant_key": "tenant-111"},
+            ]),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::CREATED);
+
+    let MutationSpec::Insert { rows, .. } = connector.last_mutation().1 else {
+        panic!("expected an insert");
+    };
+
+    assert_eq!(rows.len(), 2);
+    for row in &rows {
+        assert_eq!(
+            row.get(&field("tenant_key")),
+            Some(&Value::String("tenant-482".to_owned()))
+        );
+    }
+}
+
+#[tokio::test]
 async fn an_update_cannot_move_a_record_to_another_tenant() {
     let (app, connector) = app();
 

@@ -229,7 +229,6 @@ dependencies = [
 name = "fabric-api"
 version = "0.1.0"
 dependencies = [
- "arc-swap",
  "async-trait",
  "axum",
  "fabric-connector",
@@ -243,6 +242,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "tower",
  "tower-http",
  "tracing",
  "tracing-subscriber",

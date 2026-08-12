@@ -100,8 +100,7 @@ fn the_header_never_overrides_the_token_even_when_it_is_only_ignored() {
         reject_tenant_header: false,
         ..IdentityConfig::default()
     };
-    let resolver =
-        IdentityResolver::new(config, Arc::new(TrustedIngressReader::new(Arc::new(FixedClock))));
+    let resolver = IdentityResolver::new(config, Arc::new(TrustedIngressReader::new(Arc::new(FixedClock))));
 
     let mut headers = headers_for(json!({"tenant_id": "acme"}));
     headers.insert("x-tenant-id", "globex".parse().unwrap());
@@ -123,8 +122,7 @@ fn a_configurable_claim_name_is_honoured() {
         tenant_claim: "https://example.com/tenant".to_owned(),
         ..IdentityConfig::default()
     };
-    let resolver =
-        IdentityResolver::new(config, Arc::new(TrustedIngressReader::new(Arc::new(FixedClock))));
+    let resolver = IdentityResolver::new(config, Arc::new(TrustedIngressReader::new(Arc::new(FixedClock))));
 
     let headers = headers_for(json!({"https://example.com/tenant": "acme"}));
     assert_eq!(resolver.resolve(&headers).unwrap().tenant().as_str(), "acme");

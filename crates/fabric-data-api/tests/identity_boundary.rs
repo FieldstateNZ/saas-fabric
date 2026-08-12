@@ -3,6 +3,7 @@
 mod support;
 
 use axum::body::Body;
+use fabric_data_api::API_PREFIX;
 use fabric_identity::encode_unsigned_token;
 use http::{Request, StatusCode};
 use serde_json::json;
@@ -21,7 +22,7 @@ async fn a_tenant_header_is_rejected_outright() {
 
     let request = Request::builder()
         .method("GET")
-        .uri("/customers")
+        .uri(format!("{API_PREFIX}/customers"))
         .header(
             "authorization",
             format!("Bearer {}", encode_unsigned_token(&claims)),
@@ -41,7 +42,12 @@ async fn a_request_with_no_token_is_rejected() {
     let (app, connector) = app();
 
     let response = app
-        .oneshot(Request::builder().uri("/customers").body(Body::empty()).unwrap())
+        .oneshot(
+            Request::builder()
+                .uri(format!("{API_PREFIX}/customers"))
+                .body(Body::empty())
+                .unwrap(),
+        )
         .await
         .unwrap();
 

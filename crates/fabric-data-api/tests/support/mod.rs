@@ -15,16 +15,20 @@
 )]
 
 mod connector;
+mod delayed_connector;
 mod fixtures;
 mod requests;
+mod tracing_capture;
 
 pub use connector::RecordingConnector;
+pub use delayed_connector::DelayedConnector;
 pub use fixtures::{
     acme_data_source, catalog, data_sources, discriminator_data_source, draining_data_source, field,
     read_only_data_source, tenant, tenant_on_draining, tenant_on_replica, tenant_with_missing_data_source,
     tenants,
 };
 pub use requests::{body_json, json_request, request};
+pub use tracing_capture::{capture, field_value, CapturedEvent};
 
 use std::sync::Arc;
 
@@ -68,11 +72,15 @@ pub fn resolver(bindings: Vec<TenantRuntimeBinding>, sources: Vec<DataSource>) -
     Arc::new(RuntimeResolver::new(tenant_registry, source_registry))
 }
 
-/// Builds the assembled router over a given resolver and connector.
-pub fn app_with(
+/// Builds the assembled router over a given resolver, connector, and Data API
+/// configuration — the general form every other `app*` builder in this module
+/// delegates to, so a test that needs a non-default limit does not have to
+/// duplicate the wiring.
+pub fn app_with_config(
     runtime: Arc<RuntimeResolver>,
-    connector: Arc<RecordingConnector>,
+    connector: Arc<dyn DataConnector>,
     permissions: ResourcePermissions,
+    config: &DataApiConfig,
 ) -> Router {
     let identity = build_identity(
         IdentityConfig::default(),
@@ -81,14 +89,24 @@ pub fn app_with(
     .unwrap();
 
     build_data_api(
-        &DataApiConfig::default(),
+        config,
         catalog(),
         permissions,
         runtime,
-        ConnectorRegistry::new().with(connector as Arc<dyn DataConnector>),
+        ConnectorRegistry::new().with(connector),
         identity,
     )
     .unwrap()
+}
+
+/// Builds the assembled router over a given resolver and connector, with the
+/// default Data API configuration.
+pub fn app_with(
+    runtime: Arc<RuntimeResolver>,
+    connector: Arc<RecordingConnector>,
+    permissions: ResourcePermissions,
+) -> Router {
+    app_with_config(runtime, connector, permissions, &DataApiConfig::default())
 }
 
 /// Permissions with scope checks off — most tests are about tenancy.

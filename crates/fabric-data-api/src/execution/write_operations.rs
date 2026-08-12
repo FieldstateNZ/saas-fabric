@@ -7,14 +7,15 @@ use serde_json::{Map, Value};
 
 use crate::execution::prepared::Prepared;
 use crate::execution::row_mapping::{key_filter, to_row};
-use crate::{logging, DataApiError, DataApiService, OperationKind, WriteResponse};
+use crate::{limits, logging, DataApiError, DataApiService, OperationKind, WriteResponse};
 
 impl DataApiService {
     /// Creates records.
     ///
     /// # Errors
     ///
-    /// Any [`DataApiError`].
+    /// Any [`DataApiError`], including [`DataApiError::BadRequest`] if `rows`
+    /// exceeds the configured maximum batch size (§28).
     pub async fn create(
         &self,
         identity: &TenantIdentity,
@@ -26,6 +27,8 @@ impl DataApiService {
         if rows.is_empty() {
             return Err(DataApiError::BadRequest("no records to create".to_owned()));
         }
+
+        limits::enforce_batch_size(rows.len(), &self.config)?;
 
         let spec = MutationSpec::Insert {
             collection: prepared.resource.collection.clone(),
@@ -97,7 +100,12 @@ impl DataApiService {
     ) -> Result<WriteResponse, DataApiError> {
         let target = &prepared.resolved.target;
 
-        logging::operation_dispatched(resource_name, spec.operation_name(), target);
+        logging::operation_dispatched(
+            resource_name,
+            &prepared.resource.data_source,
+            spec.operation_name(),
+            target,
+        );
 
         // `for_target` scopes the predicate and stamps the tenant discriminator
         // onto written rows. Every write goes through it.

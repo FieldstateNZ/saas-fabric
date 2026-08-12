@@ -52,10 +52,13 @@ mod catalog;
 mod config;
 mod errors;
 mod execution;
+mod extraction;
 mod handlers;
+mod limits;
 mod logging;
 mod models;
 mod registration;
+mod request_id;
 mod routes;
 mod state;
 
@@ -66,7 +69,7 @@ pub use errors::DataApiError;
 pub use execution::DataApiService;
 pub use models::{ListQuery, ListResponse, PagingInfo, RowResponse, WriteResponse};
 pub use registration::build_data_api;
-pub use routes::data_routes;
+pub use routes::{data_routes, API_PREFIX};
 pub use state::DataApiState;
 
 /// The event-ID domain number for this crate. See `fabric_core::event_id`.

@@ -5,7 +5,7 @@ use axum::Json;
 use fabric_connector::ConnectorError;
 use fabric_tenant_runtime::ResolveError;
 
-use crate::{logging, DataApiError};
+use crate::{logging, request_id, DataApiError};
 
 impl DataApiError {
     /// The message the caller sees.
@@ -42,17 +42,33 @@ impl DataApiError {
 impl IntoResponse for DataApiError {
     fn into_response(self) -> Response {
         let status = self.status();
+        let id = request_id::current();
 
-        if status.is_server_error() {
-            // Logged here rather than at the throw site, so there is exactly
-            // one place every 5xx is recorded with its full internal detail.
-            logging::request_failed(self.code(), &self.to_string());
+        match &self {
+            // §28's anti-enumeration measure: externally this looks exactly
+            // like any other unknown tenant. Internally it is its own event,
+            // so an operator can tell probing apart from a reconciliation
+            // failure without either changing what the caller sees.
+            Self::Resolve(ResolveError::UnknownTenant(tenant)) => {
+                logging::unknown_tenant_probed(tenant, &id);
+            }
+            // Everything else that reaches the caller as a 5xx is logged
+            // here, rather than at the throw site, so there is exactly one
+            // place every masked internal detail is recorded.
+            _ if status.is_server_error() => {
+                logging::request_failed(self.code(), &self.to_string(), &id);
+            }
+            _ => {}
         }
 
         let body = serde_json::json!({
             "error": {
                 "code": self.code(),
                 "message": self.public_message(),
+                // Safe to return unconditionally: it names nothing but this
+                // one request, and is either the caller's own header value
+                // echoed back or an id generated fresh for them.
+                "request_id": id,
             }
         });
 

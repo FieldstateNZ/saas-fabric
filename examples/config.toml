@@ -19,6 +19,22 @@ tenants_path = "examples/tenants.json"
 data_sources_path = "examples/data-sources.json"
 catalog_path = "examples/catalog.json"
 
+# How often the background loop retries a connector that failed to negotiate
+# at startup (§35). A separate knob from [tenant_runtime]'s refresh interval
+# below: that one bounds staleness for two local file reads, this one bounds
+# how quickly a remote connector process coming back gets noticed.
+connector_retry_interval_seconds = 30
+
+# The overall Data API request budget — the outermost of three timeout
+# scopes (§36). Must never be shorter than the longest `http_timeout_seconds`
+# among [[connectors]] below, or that connector's own timeout could never
+# fire before this one cuts the request off first. The other two scopes: the
+# HTTP call to a connector (each connector's own `http_timeout_seconds`,
+# below) and database execution inside the connector (that process's own
+# configuration, invisible to SaaS Fabric). See the timeout-ownership table
+# on `NdcConnectorConfig::http_timeout_seconds` for the full picture.
+request_timeout_seconds = 30
+
 [identity]
 # The canonical tenant claim (§10). Configurable, but should be standardised
 # across every platform service.
@@ -64,21 +80,6 @@ refresh_interval_seconds = 30
 # Refuse to start if bindings cannot be loaded. A process that can serve no
 # tenant should fail where the deployment pipeline will catch it.
 fail_fast_on_prime = true
-
-# How often the background loop retries a connector that failed to negotiate
-# at startup (§35). A separate knob from [tenant_runtime]'s refresh interval
-# above: that one bounds staleness for two local file reads, this one bounds
-# how quickly a remote connector process coming back gets noticed.
-connector_retry_interval_seconds = 30
-
-# The overall Data API request budget — the outermost of three timeout
-# scopes (§36). Must never be shorter than the longest `http_timeout_seconds`
-# among [[connectors]] below, or that connector's own timeout could never
-# fire before this one cuts the request off first. The other two scopes: the
-# HTTP call to a connector (each connector's own `http_timeout_seconds`,
-# below) and database execution inside the connector (that process's own
-# configuration, invisible to SaaS Fabric).
-request_timeout_seconds = 30
 
 [data_api]
 default_limit = 50

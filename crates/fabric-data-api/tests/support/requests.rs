@@ -1,6 +1,7 @@
 //! Building requests and reading responses.
 
 use axum::body::Body;
+use fabric_data_api::API_PREFIX;
 use fabric_identity::encode_unsigned_token;
 use http::Request;
 use serde_json::Value;
@@ -14,11 +15,18 @@ fn token_for(claims: Value) -> String {
     encode_unsigned_token(&object)
 }
 
+/// Every test in this suite writes resource-relative paths (`/customers`,
+/// not `/v1/data/customers`) so a version bump changes one function, not
+/// every call site.
+fn versioned(uri: &str) -> String {
+    format!("{API_PREFIX}{uri}")
+}
+
 /// A request carrying a bearer token and no body.
 pub fn request(method: &str, uri: &str, claims: Value) -> Request<Body> {
     Request::builder()
         .method(method)
-        .uri(uri)
+        .uri(versioned(uri))
         .header("authorization", format!("Bearer {}", token_for(claims)))
         .body(Body::empty())
         .unwrap()
@@ -28,7 +36,7 @@ pub fn request(method: &str, uri: &str, claims: Value) -> Request<Body> {
 pub fn json_request(method: &str, uri: &str, claims: Value, body: &Value) -> Request<Body> {
     Request::builder()
         .method(method)
-        .uri(uri)
+        .uri(versioned(uri))
         .header("authorization", format!("Bearer {}", token_for(claims)))
         .header("content-type", "application/json")
         .body(Body::from(body.to_string()))

@@ -56,10 +56,14 @@ async fn run(config_path: &str) -> Result<(), String> {
         .await
         .map_err(|error| format!("server error: {error}"));
 
-    // Stop the refreshers before returning, so the process does not linger with
-    // background tasks still polling.
+    // Stop the background tasks before returning, so the process does not
+    // linger with anything still polling.
     if let Err(error) = application.refresh.shutdown().await {
         tracing::warn!(event = "fabric.refresher_shutdown_failed", reason = %error);
+    }
+
+    if let Err(error) = application.connector_retry.shutdown().await {
+        tracing::warn!(event = "fabric.connector_retry_shutdown_failed", reason = %error);
     }
 
     result

@@ -67,6 +67,8 @@ mod connector;
 mod logging;
 mod registration;
 mod routing;
+#[cfg(test)]
+mod routing_tests;
 mod schema_index;
 mod translate;
 mod wire;

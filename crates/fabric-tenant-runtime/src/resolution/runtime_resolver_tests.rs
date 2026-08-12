@@ -154,6 +154,33 @@ fn a_binding_pointing_at_a_missing_data_source_fails_closed() {
 }
 
 #[test]
+fn a_data_source_removed_after_a_successful_resolve_fails_closed_rather_than_falling_back() {
+    // Item 51: unlike the test above, the DataSource genuinely existed and
+    // this tenant resolved against it. Deprovisioning it afterwards must
+    // still fail closed — never silently pick up a different DataSource for
+    // a binding that has not itself changed.
+    let tenant_registry = Arc::new(TenantRegistry::new());
+    tenant_registry.apply_all(vec![tenant_binding("acme", 1, "shared-01")]);
+
+    let source_registry = Arc::new(DataSourceRegistry::new());
+    source_registry.apply_all(vec![data_source("shared-01", 1)]);
+
+    let resolver = RuntimeResolver::new(Arc::clone(&tenant_registry), Arc::clone(&source_registry));
+
+    assert!(resolver.resolve_data_source(&tenant("acme"), &primary()).is_ok());
+
+    // The DataSource disappears from a subsequent full sync — deprovisioned,
+    // never touching the tenant binding.
+    source_registry.apply_all(vec![]);
+
+    let error = resolver
+        .resolve_data_source(&tenant("acme"), &primary())
+        .unwrap_err();
+
+    assert!(matches!(error, ResolveError::MissingDataSource { .. }));
+}
+
+#[test]
 fn a_read_only_data_source_is_reported_as_not_writable() {
     let resolver = resolver(
         vec![tenant_binding("acme", 1, "replica-01")],

@@ -81,9 +81,41 @@ fn an_empty_endpoint_is_rejected() {
 }
 
 #[test]
-fn a_zero_timeout_is_rejected() {
+fn a_zero_http_timeout_is_rejected() {
     let mut config = NdcConnectorConfig::for_test(BTreeMap::new());
-    config.timeout_seconds = 0;
+    config.http_timeout_seconds = 0;
 
     assert!(config.validate().is_err());
+}
+
+#[test]
+fn a_zero_connect_timeout_is_rejected() {
+    let mut config = NdcConnectorConfig::for_test(BTreeMap::new());
+    config.http_connect_timeout_seconds = 0;
+
+    assert!(config.validate().is_err());
+}
+
+#[test]
+fn a_connect_timeout_longer_than_the_total_timeout_is_rejected() {
+    // A connect timeout that outlasts the total timeout could never bind —
+    // the total timeout always fires first — so it is rejected as
+    // configuration that cannot mean what it says.
+    let mut config = NdcConnectorConfig::for_test(BTreeMap::new());
+    config.http_timeout_seconds = 5;
+    config.http_connect_timeout_seconds = 10;
+
+    assert!(config
+        .validate()
+        .unwrap_err()
+        .contains("http_connect_timeout_seconds"));
+}
+
+#[test]
+fn a_connect_timeout_equal_to_the_total_timeout_is_accepted() {
+    let mut config = NdcConnectorConfig::for_test(BTreeMap::new());
+    config.http_timeout_seconds = 5;
+    config.http_connect_timeout_seconds = 5;
+
+    assert!(config.validate().is_ok());
 }

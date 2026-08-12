@@ -1,5 +1,8 @@
 //! Wiring for the runtime plane.
 
+#[cfg(test)]
+mod registration_tests;
+
 use std::sync::Arc;
 
 use crate::resource::{RegistryResource, ResourceRefresher, ResourceRegistry, ResourceSource};

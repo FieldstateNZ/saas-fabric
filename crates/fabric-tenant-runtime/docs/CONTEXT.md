@@ -43,12 +43,19 @@ physical/provider concerns.
 
 ### Generic registry
 
-- `RegistryResource` — `type Key`, `const KIND`, `key()`, `revision()`.
+- `RegistryResource: Clone + PartialEq + Send + Sync + 'static` — `type Key`,
+  `const KIND`, `key()`, `revision()`. The `PartialEq` bound exists so the
+  apply path can detect a same-revision payload mismatch (item 50); both
+  concrete types already derived it.
 - `ResourceRegistry<T>` — `lookup()`, `apply_all()`, `apply_one()`,
   `invalidate()`, `subscribe()`, `is_primed()`, `len()`.
 - Aliases: `TenantRegistry`, `DataSourceRegistry`, `TenantChange`, `DataSourceChange`.
 - `LookupError::{Unavailable, NotFound}` — mapped to `ResolveError` by the resolver.
-- `ApplyReport { added, updated, removed, stale_ignored, unchanged }`, `is_noop()`.
+- `ApplyReport { added, updated, removed, stale_ignored, unchanged,
+  divergent_payload }`, `is_noop()`. `divergent_payload` counts (and a
+  warn log records) an incoming resource at the same revision as one held
+  but with a different payload — rejected, never applied; the revision is
+  the authority.
 - `ResourceChange<K> { key, kind, previous_revision, current_revision }`,
   `ChangeKind::{Added, Updated, Removed}`.
 - `ResourceSource<T>` (async trait) — `load()`, `describe()`.
@@ -79,12 +86,15 @@ resource/          generic lifecycle
   resource_kind.rs registry.rs (+ apply_all, apply_one, tests)
   snapshot.rs change.rs apply_report.rs lookup_error.rs
   source.rs refresher.rs (+ refresh_handle) sources/{in_memory,json_file}
+  registry/{apply,change,lookup,stale_revision,deletion,concurrency}_tests.rs
+  registry/test_resource.rs
 tenant/            tenant_runtime_binding, tenant_data_binding,
                    configuration_binding, storage_binding
 data_source/       data_source_resource, placement_class, residency,
                    pool_settings, capabilities
 resolution/        runtime_resolver, resolved_data_source
-config.rs errors/ logging.rs registration.rs testing.rs
+registration/      registration.rs (+ registration_tests.rs)
+config.rs errors/ logging.rs testing.rs
 ```
 
 ## Hard invariants — do not break
@@ -92,16 +102,27 @@ config.rs errors/ logging.rs registration.rs testing.rs
 1. **Unprimed ≠ empty.** `RuntimeUnavailable` (503) must stay distinguishable
    from `UnknownTenant`.
 2. **A load failure never touches a registry.** Never convert a read error into
-   `Ok(vec![])`.
-3. **Revisions only move forward.** Never apply an older revision.
+   `Ok(vec![])`. Always logged at error level — never silent.
+3. **Revisions only move forward.** Never apply an older revision. Never
+   apply a *matching* revision whose payload disagrees with what is held
+   either (item 50) — count it in `ApplyReport::divergent_payload` and
+   warn-log it instead.
 4. **Tenant bindings carry no physical configuration.** `deny_unknown_fields`
    enforces it; an example test asserts the shipped file mentions no connector,
    pool, or endpoint.
 5. **`RuntimeResolver` is the only way to build an `ExecutionTarget`.**
-6. **A missing DataSource fails closed.** Never fall back to another.
-7. **No control-plane access from a `ResourceSource`.** No Git, no Kubernetes.
+6. **A missing DataSource fails closed.** Never fall back to another — including
+   a DataSource that existed and was later removed while tenants stayed bound
+   to it.
+7. **No control-plane access from a `ResourceSource`.** No Git, no live
+   per-`load()` Kubernetes API call. `ResourceSource<T>` itself is fully
+   generic (`load()` + `describe()`); `JsonFileSource` is one adapter, not an
+   assumption baked into anything above `sources/`.
 8. **No fallback on resolution failure.** No default tenant, no first-available
    database.
 9. **Publish change events after the snapshot swap.**
 10. Physical detail never escapes upward except as an `ExecutionTarget` (which
     goes *down* to a connector) or a telemetry label.
+11. **DataSources prime before tenant bindings** (`registration.rs`), and a
+    snapshot swap is atomic — one reader never sees a half-applied mix of two
+    generations. See docs/README.md "Startup consistency model".

@@ -13,6 +13,10 @@ use crate::resource::{RegistryResource, ResourceRegistry};
 pub(super) struct TestResource {
     pub(super) key: String,
     pub(super) revision: BindingRevision,
+    /// Content beyond key and revision, so a test can construct two
+    /// resources that share both but differ in payload — the shape item
+    /// 50's divergent-payload guard exists to catch.
+    pub(super) payload: &'static str,
 }
 
 impl RegistryResource for TestResource {
@@ -29,11 +33,18 @@ impl RegistryResource for TestResource {
     }
 }
 
-/// A resource with the given key and revision.
+/// A resource with the given key and revision, and a fixed default payload.
 pub(super) fn resource(key: &str, revision: u64) -> TestResource {
+    resource_with_payload(key, revision, "default")
+}
+
+/// A resource with an explicit payload, for exercising the divergent-payload
+/// guard: two resources sharing a key and revision but not a payload.
+pub(super) fn resource_with_payload(key: &str, revision: u64, payload: &'static str) -> TestResource {
     TestResource {
         key: key.to_owned(),
         revision: BindingRevision::new(revision),
+        payload,
     }
 }
 

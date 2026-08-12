@@ -76,6 +76,22 @@ somewhere to put the predicate, the tenant scoping added by
 `MutationSpec::for_target` would silently vanish and the write would reach every
 tenant's rows. This is checked at config validation *and* again at translation.
 
+## Timeout ownership
+
+A request passing through this crate is bounded by three separate clocks,
+owned by three different places. `NdcConnectorConfig` only ever configures
+the first one:
+
+| Clock | Owner | Configured where |
+|---|---|---|
+| The HTTP call to the connector | This crate | `NdcConnectorConfig::http_timeout_seconds` (total) and `http_connect_timeout_seconds` (connect phase, a subset of the total) |
+| Database execution inside the connector | The connector itself | The connector process's own configuration — `ndc-postgres`'s statement timeout, for example. Not settable from here. |
+| The overall Data API request budget | The host application | `fabric-api`, which sees the whole request — auth, tenant resolution, and this HTTP call among other work — not just this one hop. |
+
+`http_connect_timeout_seconds` must not exceed `http_timeout_seconds` — it is
+a subset of the total call, not a second budget alongside it. Configuration
+validation rejects the combination where it would.
+
 ## What happened to connection pooling (§22)
 
 It moved into the connector process. That is a real consequence of this ADR, not

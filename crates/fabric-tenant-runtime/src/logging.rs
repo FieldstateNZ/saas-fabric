@@ -30,6 +30,29 @@ pub(crate) fn stale_resource_ignored<T: RegistryResource>(
     );
 }
 
+/// An incoming resource matched the revision already held, but not the
+/// payload.
+///
+/// See [`ApplyReport::divergent_payload`] for why this is rejected rather
+/// than accepted: the revision is the single source of truth for "did this
+/// resource change", so a payload that disagrees with it is a reconciliation
+/// bug — most likely a real edit that forgot to bump the revision — and is
+/// surfaced here rather than silently winning or silently losing.
+pub(crate) fn divergent_payload_at_same_revision<T: RegistryResource>(
+    key: &T::Key,
+    revision: BindingRevision,
+) {
+    tracing::warn!(
+        event = "runtime.divergent_payload_at_same_revision",
+        event_id = event_id(DOMAIN_ID, EventType::Warning, 4),
+        resource_kind = T::KIND,
+        resource_key = %key,
+        revision = revision.get(),
+        "ignoring a resource whose payload differs from what is held at the same revision; \
+         the revision was not bumped, so the payload change was not applied"
+    );
+}
+
 /// A new snapshot was installed.
 pub(crate) fn snapshot_applied<T: RegistryResource>(count: usize, report: &ApplyReport) {
     if report.is_noop() {

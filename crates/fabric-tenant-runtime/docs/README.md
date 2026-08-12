@@ -123,6 +123,53 @@ diagnostic answer to "which revision served this trace?".
 The two revisions are independent: resizing a pool bumps the DataSource's and no
 tenant's.
 
+### Same revision, different payload
+
+An incoming resource can arrive at *exactly* the revision already held but
+carrying different content — almost always a reconciler bug: a real change
+that forgot to bump the revision. `apply_all` and `apply_one` both refuse to
+apply it (the revision, not the payload, is the authority on whether
+something changed), but they no longer swallow it silently into "unchanged".
+It is counted in `ApplyReport::divergent_payload` and warn-logged by key,
+kind, and revision, so a reconciler that ships a change without bumping the
+revision leaves a trail instead of vanishing. See the rustdoc on
+`ApplyReport` for the full "why reject rather than accept" reasoning.
+
+### The source abstraction is genuinely generic
+
+`ResourceSource<T>` is the whole contract: `load() -> Result<Vec<T>, SourceError>`
+plus a `describe()` for logs. `JsonFileSource` is one adapter, not a
+foundation the rest of the runtime assumes. Nothing above the `sources/`
+directory reasons about paths, mounts, or file I/O — `ResourceRefresher`,
+`ResourceRegistry`, and `RuntimeResolver` only ever see the trait.
+
+Other adapters that would slot in without redesigning anything above
+`sources/`:
+
+- A Kubernetes watch over a CRD — **with a caveat**. `load()` must read an
+  already-synced local informer cache and return promptly from memory, never
+  make a live call to the API server per invocation. That is what keeps it
+  from becoming the control-plane dependency `ResourceSource`'s own docs
+  forbid (see the gotcha below): a warm local cache goes stale if the
+  connection to the API server drops, exactly like a stale file mount, and
+  staleness is a case this crate already handles everywhere. A synchronous
+  per-`load()` API request would not be — that is indistinguishable from the
+  Git-in-the-request-path shape §6 rules out.
+- A gRPC streaming client, reconnecting on failure and returning `Err` rather
+  than a partial set while disconnected.
+- A Unix domain socket to a local reconciler sidecar.
+- A client for a shared internal configuration service (an HTTP API in front
+  of the same reconciled state a file would otherwise hold) — acceptable on
+  the same terms as the Kubernetes case: it must not become something the
+  data plane cannot survive without.
+- A memory-mapped snapshot another process writes, for the lowest possible
+  read latency on the same host.
+
+Each only has to implement `load()` and `describe()` and uphold the one rule
+in `ResourceSource`'s own docs: never turn a read failure into `Ok(vec![])`,
+and never make freshness depend on a system that is allowed to be down while
+tenants keep working.
+
 ## Refresh: poll *and* trigger
 
 `RefreshHandle::refresh_now()` is the fast path — a reconciler that just changed
@@ -131,6 +178,69 @@ something says so and it lands in milliseconds.
 The interval poll is the safety net. Notifications get lost: a pod restarts
 mid-flight, a webhook 500s, a partition eats it. Without the poll, one lost
 notification strands a resource on stale state forever and nothing notices.
+
+## Startup consistency model
+
+DataSources and tenant bindings are reconciled **independently** — different
+sources, different schedules, different revisions. There is no cross-resource
+transaction. That means the runtime can, at any moment, hold DataSources at
+revision A and tenant bindings whose references were computed against a
+different, later or earlier, view of the DataSource fleet. This is not a bug
+to eliminate; it is the shape of having two independently reconciled
+resources at all (§6/ADR 0003), and every other guarantee in this section
+exists to make that shape safe rather than to make it disappear.
+
+**DataSources prime before tenant bindings.** `build_runtime`
+(`registration.rs`) loads the DataSource registry to completion before it
+loads the tenant registry — see `prime` being called for
+`data_source_source` first, `tenant_source` second. This is a real ordering,
+not a race resolved by luck: `TenantRegistry` cannot begin priming until
+`DataSourceRegistry`'s `load().await` has returned. The ordering guarantee is
+pinned by a test (`registration/registration_tests.rs`) that swaps in a
+source recording when each was asked to load, and asserts DataSources came
+first.
+
+Why this order and not the reverse: a tenant binding is close to useless
+without its DataSource resolvable, but a DataSource is perfectly well-formed
+on its own (nothing tenant-related references it yet). Priming DataSources
+first means that by the time the first tenant binding is visible, the
+DataSource it names has the best chance of already being loaded — narrowing,
+though not eliminating, the startup window where a resolve would otherwise
+fail.
+
+**Dangling bindings fail closed, always.** Even with the priming order
+above, a tenant binding can still reference a DataSource the registry does
+not currently hold — a DataSource genuinely removed while tenants remain
+bound to it, reconciliation racing across the two resources' own refresh
+intervals after startup, or (despite the ordering) a very early request
+landing between the two primes. Every one of these resolves to
+`ResolveError::MissingDataSource`. There is no fallback to a different
+DataSource and no default — see `resolution/runtime_resolver_tests.rs` for
+the case where a DataSource that genuinely existed is later removed while a
+tenant is still bound to it.
+
+**A failed refresh never clears a registry, and never does so quietly.**
+`ResourceSource::load` returning `Err` leaves the registry's current snapshot
+exactly as it was (`resource/refresher.rs`); only a successful load is ever
+applied. This is not silent tolerance of staleness — `logging::refresh_failed`
+logs at **error** level, naming the resource kind and the reason, and says
+explicitly that the last good snapshot is still serving. An operator reading
+logs always has a way to know the runtime is running on stale state; the
+runtime never manufactures a "closed" state out of an I/O error by emptying
+itself.
+
+**A transient inconsistent pairing cannot corrupt either registry.** The
+DataSource-A / tenant-B mismatch described above is a statement about the
+relationship *between* two registries, never about the internal state of
+either one. Each registry's own snapshot is always a complete, internally
+consistent whole — built off to one side and installed with a single atomic
+pointer store, so a reader never observes a half-applied mix of an old and a
+new snapshot (proven under real concurrency in
+`resource/registry/concurrency_tests.rs`, item 48). Cross-resource staleness
+can only ever produce one of two outcomes at the resolution seam: a
+successful resolve using whatever each registry currently and coherently
+holds, or a clean `MissingDataSource`/`UnboundDataSource` rejection. Neither
+outcome touches, corrupts, or partially updates a registry.
 
 ## Getting started
 
@@ -158,13 +268,23 @@ tasks.
   makes deprovisioning work, and it is why the point above matters so much.
 - **DataSources are primed before tenants.** A binding referencing a DataSource
   the registry has not loaded resolves to `MissingDataSource`, so this order
-  avoids a window of spurious 500s at startup.
+  avoids a window of spurious 500s at startup. See "Startup consistency
+  model" above.
+- **Same revision, different payload is rejected, not silently accepted.**
+  `apply_all`/`apply_one` never apply a payload that disagrees with a
+  revision already held — even the fresh one. It is counted in
+  `ApplyReport::divergent_payload` and warn-logged instead.
 - **`LogicalDataSourceName` vs `DataSourceId`.** The first is logical (`primary`), the
   second is a DataSource resource (`sql-au-east-03`). They are different types
   for a reason.
-- **A `ResourceSource` must not query the control plane.** A Git client or
-  Kubernetes watch here puts control-plane availability behind data-plane
-  availability. When Git is down, tenants should keep working.
+- **A `ResourceSource` must not query the control plane live, per load.** A
+  Git client, or a Kubernetes client making an API-server call inside
+  `load()`, puts control-plane availability behind data-plane freshness. When
+  Git is down, tenants should keep working. This is a constraint on what
+  `load()` may *do* on each call, not on what technology may back it — see
+  "The source abstraction is genuinely generic" above for the (narrow) shape
+  a Kubernetes-backed adapter would have to take to stay on the right side of
+  this rule.
 - **`writable: false` is enforced before the connector is called** — and is
   distinct from whether the connector supports mutations. Both are checked.
 - Log target is `fabric_tenant_runtime` (underscores). Events carry

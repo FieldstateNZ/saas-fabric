@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 
 use fabric_connector::{
-    CollectionName, ComparisonOperator, ConnectorError, ConnectorId, FieldName, Filter, MutationSpec, Row,
+    CollectionName, ComparisonOperator, ConnectorError, FieldName, Filter, MutationSpec, Row,
 };
 use serde_json::Value;
 
@@ -30,14 +30,7 @@ fn index() -> SchemaIndex {
 }
 
 fn config_with(procedures: CollectionProcedures) -> NdcConnectorConfig {
-    NdcConnectorConfig {
-        id: ConnectorId::try_new("postgres").unwrap(),
-        endpoint: "http://connector".to_owned(),
-        timeout_seconds: 10,
-        connection_name_argument: "connection_name".to_owned(),
-        connection_string_argument: "connection_string".to_owned(),
-        procedures: BTreeMap::from([("customers".to_owned(), procedures)]),
-    }
+    NdcConnectorConfig::for_test(BTreeMap::from([("customers".to_owned(), procedures)]))
 }
 
 fn collection() -> CollectionName {

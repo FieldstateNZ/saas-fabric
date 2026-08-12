@@ -13,7 +13,13 @@ impl<T: RegistryResource> ResourceRegistry<T> {
     /// one thing changed rather than republishing everything.
     ///
     /// Returns `false` if the incoming revision is not newer than what is held,
-    /// in which case nothing changes.
+    /// in which case nothing changes. That includes the revision matching
+    /// exactly: even if the payload differs, it is never applied here — the
+    /// revision remains the sole authority for "did this change" (item 50,
+    /// see [`ApplyReport::divergent_payload`](crate::resource::ApplyReport::divergent_payload)
+    /// on the full reasoning that `apply_all` shares). A same-revision
+    /// mismatch is logged at warn level rather than silently accepted or
+    /// silently dropped.
     ///
     /// On an unprimed registry this primes it with a single entry. That is
     /// intentional for tests and incremental-only deployments, but a production
@@ -28,8 +34,14 @@ impl<T: RegistryResource> ResourceRegistry<T> {
             .unwrap_or_default();
 
         let event = match next.get(resource.key()) {
-            Some(held) if resource.revision() <= held.revision() => {
+            Some(held) if resource.revision() < held.revision() => {
                 logging::stale_resource_ignored::<T>(resource.key(), resource.revision(), held.revision());
+                return false;
+            }
+            Some(held) if resource.revision() == held.revision() => {
+                if resource != **held {
+                    logging::divergent_payload_at_same_revision::<T>(resource.key(), resource.revision());
+                }
                 return false;
             }
             Some(held) => {

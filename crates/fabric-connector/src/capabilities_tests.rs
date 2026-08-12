@@ -78,3 +78,42 @@ fn a_delete_whose_predicate_the_backend_cannot_express_is_refused() {
 
     assert!(capabilities.ensure_supports_mutation(&spec).is_err());
 }
+
+#[test]
+fn an_update_whose_predicate_the_backend_cannot_express_is_refused() {
+    // Same hazard as the delete case: an update's filter is what stops it
+    // reaching another tenant's rows under discriminator isolation. If the
+    // backend cannot express it, approximating would be destructive, not
+    // merely wrong.
+    let capabilities = ConnectorCapabilities {
+        mutations: true,
+        ..ConnectorCapabilities::baseline()
+    };
+    let spec = MutationSpec::Update {
+        collection: collection(),
+        filter: Some(contains_filter()),
+        changes: Row::new(),
+    };
+
+    assert!(capabilities.ensure_supports_mutation(&spec).is_err());
+}
+
+#[test]
+fn an_update_or_delete_with_no_filter_is_not_refused_for_missing_capability() {
+    // `for_target` guarantees a tenant predicate is always present by the
+    // time a mutation reaches here under discriminator isolation, but this
+    // check must not itself require a filter to exist — a legitimately
+    // unfiltered mutation against a Database/Schema-isolated target is fine,
+    // and capability checking should not invent a reason to reject it.
+    let capabilities = ConnectorCapabilities {
+        mutations: true,
+        filtering: false,
+        ..ConnectorCapabilities::baseline()
+    };
+    let spec = MutationSpec::Delete {
+        collection: collection(),
+        filter: None,
+    };
+
+    assert!(capabilities.ensure_supports_mutation(&spec).is_ok());
+}

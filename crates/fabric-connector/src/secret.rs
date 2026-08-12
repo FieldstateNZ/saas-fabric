@@ -53,6 +53,19 @@ impl fmt::Display for SecretRef {
 /// Making the type incapable of printing itself means the accident cannot
 /// happen: reaching the secret requires calling [`ResolvedSecret::expose`],
 /// which is greppable and obvious in review.
+///
+/// # No `Display`
+///
+/// `ResolvedSecret` also does not implement [`std::fmt::Display`], and never
+/// should. `Debug` being redacted only closes one door — `{}` would still
+/// print the raw value if a `Display` impl existed. Pinned below with a
+/// doctest that must fail to compile, so an `impl Display for ResolvedSecret`
+/// added later cannot slip past review unnoticed:
+///
+/// ```compile_fail
+/// let secret = fabric_connector::ResolvedSecret::new("hunter2");
+/// println!("{secret}"); // ResolvedSecret has no Display impl — must not compile.
+/// ```
 #[derive(Clone, PartialEq, Eq)]
 pub struct ResolvedSecret(String);
 
@@ -100,31 +113,4 @@ pub trait SecretResolver: Send + Sync {
     /// be resolved. This fails the request closed — there is no fallback
     /// credential (§28).
     async fn resolve(&self, reference: &SecretRef) -> Result<ResolvedSecret, ConnectorError>;
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_resolved_secret_never_prints_its_value() {
-        let secret = ResolvedSecret::new("postgres://user:hunter2@db/acme");
-
-        let printed = format!("{secret:?}");
-
-        assert_eq!(printed, "ResolvedSecret(<redacted>)");
-        assert!(!printed.contains("hunter2"));
-    }
-
-    #[test]
-    fn the_value_is_reachable_only_through_expose() {
-        let secret = ResolvedSecret::new("hunter2");
-        assert_eq!(secret.expose(), "hunter2");
-    }
-
-    #[test]
-    fn a_secret_reference_is_not_itself_sensitive_and_prints_normally() {
-        let reference = SecretRef::new("tenant/acme/data-primary");
-        assert_eq!(format!("{reference}"), "tenant/acme/data-primary");
-    }
 }

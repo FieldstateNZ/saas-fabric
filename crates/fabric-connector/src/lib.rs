@@ -44,6 +44,8 @@ mod capabilities;
 mod capabilities_tests;
 mod connector;
 mod errors;
+#[cfg(test)]
+mod errors_tests;
 mod execution;
 mod filter;
 mod ids;
@@ -54,6 +56,8 @@ mod registry;
 mod row;
 mod schema;
 mod secret;
+#[cfg(test)]
+mod secret_tests;
 #[cfg(test)]
 mod testing;
 

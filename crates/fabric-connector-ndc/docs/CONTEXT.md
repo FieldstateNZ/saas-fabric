@@ -12,9 +12,13 @@ Wire types are hand-written in `src/wire/` from the published spec.
 - `NdcConnector` — implements `DataConnector`. `schema_index()` for diagnostics.
 - `build_ndc_connector(config, secrets) -> Result<Arc<NdcConnector>, String>` —
   async; does `GET /capabilities` + `GET /schema`, checks version, caches both.
-- `NdcConnectorConfig { id, endpoint, timeout_seconds (10), connection_name_argument
-  ("connection_name"), connection_string_argument ("connection_string"), procedures }`.
-  `validate()`, `has_writes()`.
+- `NdcConnectorConfig { id, endpoint, http_timeout_seconds (10),
+  http_connect_timeout_seconds (5), connection_name_argument ("connection_name"),
+  connection_string_argument ("connection_string"), procedures }`.
+  `validate()`, `has_writes()`. The two `http_*` fields bound only the HTTP hop
+  to the connector; database execution timeout is the connector's own
+  configuration, and the overall Data API request budget is the host's — see
+  the field docs on `http_timeout_seconds`.
 - `CollectionProcedures { insert, update, delete: Option<ProcedureBinding> }`,
   `is_writable()`.
 - `ProcedureBinding { procedure, payload_argument, filter_argument }`.
@@ -78,7 +82,15 @@ Wire types are hand-written in `src/wire/` from the published spec.
 
 ## Notes
 
-- Version check: major.minor must match; patch difference warns.
+- Version check: major.minor must match (either direction); patch difference
+  warns. `registration::check_version` returns `VersionOutcome::Matched` or
+  `VersionOutcome::PatchMismatch { connector_version }` rather than a bare
+  `Result<(), _>`, so the two accepted outcomes are distinguishable in tests
+  without a tracing subscriber.
+- `client::NdcHttpClient::decode_body` is the pure, non-async half of response
+  decoding (status + bytes → `T` or `ConnectorError`), split out of `decode`
+  specifically so a malformed `/capabilities` body is unit-testable without a
+  live connector.
 - `SchemaIndex::supported_operators()` is the *union* across scalar types
   (permissive); the authoritative per-field check is `operator_name()`, which
   fails closed.

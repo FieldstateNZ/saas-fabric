@@ -1,6 +1,38 @@
 //! What one application of reconciled state did.
 
 /// The outcome of applying a set of resources to a registry.
+///
+/// # Same revision, different payload — item 50
+///
+/// A resource can arrive at the exact revision already held but carrying a
+/// *different* payload. That should never happen if every publisher bumps
+/// the revision on every change, but "should never happen" is exactly the
+/// assumption a revision guard exists to police, not lean on. Before
+/// [`Self::divergent_payload`] existed, this case fell straight into
+/// [`Self::unchanged`]: a reconciler bug — a real content change that forgot
+/// to bump the revision — vanished with no error, no log line, nothing to
+/// grep for.
+///
+/// # Why reject rather than accept
+///
+/// Two ways to handle a same-revision mismatch were on the table: accept the
+/// incoming payload (the operator probably meant to change it), or keep what
+/// is held and just say so loudly. This picks the second, because accepting
+/// it makes the revision meaningless:
+///
+/// - [`ChangeKind::Updated`](crate::resource::ChangeKind::Updated) events
+///   only fire when the revision moves, so silently accepting a
+///   same-revision payload would leave *no transition event at all* — the
+///   one mechanism this crate has for telling attached state to let go
+///   (§19) would simply not fire.
+/// - Two publishers racing to write "revision 8" with different payloads
+///   would non-deterministically decide the outcome by arrival order, which
+///   is precisely the kind of behaviour §20 exists to rule out.
+///
+/// Rejecting is deterministic, keeps the revision as the single source of
+/// truth for "did this resource change" everywhere else in this crate, and
+/// leaves a trail: a distinct counter here, and a warn-level log naming the
+/// resource kind, key, and revision at the point of application.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ApplyReport {
     /// Resources the registry had not seen before.
@@ -16,8 +48,16 @@ pub struct ApplyReport {
     /// were therefore ignored.
     pub stale_ignored: usize,
 
-    /// Resources whose incoming copy matched what was already held.
+    /// Resources whose incoming copy matched what was already held — same
+    /// revision, same payload.
     pub unchanged: usize,
+
+    /// Resources at the **same** revision as what is held, but with a
+    /// **different** payload. Never applied — see the type-level docs above
+    /// for why rejecting is the correct side to fail on. Kept separate from
+    /// [`Self::unchanged`] so this case can never hide inside a "nothing
+    /// happened" count.
+    pub divergent_payload: usize,
 }
 
 impl ApplyReport {
@@ -26,6 +66,12 @@ impl ApplyReport {
     /// Used to decide between an info-level "snapshot applied" line and a
     /// debug-level "nothing changed" one. Most refreshes change nothing, and
     /// logging every one at info would bury the ones that matter.
+    ///
+    /// Only `added`, `updated`, and `removed` count as movement.
+    /// [`Self::divergent_payload`] deliberately does not: nothing in the
+    /// registry moved, the old payload is retained, and every occurrence
+    /// already gets its own warn-level log at the point it happens — so it
+    /// is never silently folded into either bucket here.
     #[must_use]
     pub const fn is_noop(&self) -> bool {
         self.added == 0 && self.updated == 0 && self.removed == 0
@@ -54,5 +100,19 @@ mod tests {
             ..ApplyReport::default()
         }
         .is_noop());
+    }
+
+    #[test]
+    fn a_divergent_payload_is_counted_separately_and_does_not_defeat_noop() {
+        // Nothing in the registry moved (the old payload wins), so the
+        // aggregate log line stays at debug — but the count is not zero, and
+        // the per-resource warn log fires independently of this.
+        let report = ApplyReport {
+            divergent_payload: 1,
+            ..ApplyReport::default()
+        };
+
+        assert!(report.is_noop());
+        assert_eq!(report.divergent_payload, 1);
     }
 }

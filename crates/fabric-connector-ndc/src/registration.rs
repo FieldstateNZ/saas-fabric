@@ -36,7 +36,12 @@ pub async fn build_ndc_connector(
         .await
         .map_err(|error| format!("connector {}: could not read capabilities: {error}", config.id))?;
 
-    check_version(config.id.as_str(), &capabilities.version)?;
+    match check_version(config.id.as_str(), &capabilities.version)? {
+        VersionOutcome::Matched => {}
+        VersionOutcome::PatchMismatch { connector_version } => {
+            logging::version_patch_mismatch(config.id.as_str(), &connector_version, NDC_VERSION);
+        }
+    }
 
     let schema: NdcSchemaResponse = client
         .get("/schema")
@@ -62,18 +67,50 @@ pub async fn build_ndc_connector(
     )))
 }
 
+/// What checking a connector's version against ours found.
+///
+/// A plain `Result<(), String>` would collapse "matched exactly" and "matched
+/// well enough to warn about" into the same success value, which leaves the
+/// caller unable to tell them apart without re-deriving the comparison
+/// itself. Naming both outcomes keeps the warning's trigger — a version that
+/// is *compatible but not identical* — a fact the type carries, not a side
+/// effect buried inside `check_version`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum VersionOutcome {
+    /// The connector's version matches [`NDC_VERSION`] exactly.
+    Matched,
+    /// Same major and minor, but a different patch. Accepted — the wire
+    /// format is stable within a minor version — but worth a warning so the
+    /// drift is visible to an operator.
+    PatchMismatch {
+        /// The version the connector reported.
+        connector_version: String,
+    },
+}
+
 /// Checks the connector's specification version against ours.
 ///
-/// A differing **patch** version is a warning: the wire format is stable within
-/// a minor version, and refusing to start over a patch bump would make every
-/// connector upgrade a coordinated release.
+/// A differing **patch** version is tolerated: the wire format is stable
+/// within a minor version, and refusing to start over a patch bump would make
+/// every connector upgrade a coordinated release. The caller is still told,
+/// via [`VersionOutcome::PatchMismatch`], so it can log the drift.
 ///
-/// A differing **major or minor** version is fatal. Our wire types are
-/// hand-written against one version of the specification, so a connector
-/// speaking a different one may serialise fields we do not read or expect
-/// fields we do not send — and the resulting failure would appear as malformed
-/// responses under load rather than as a clear error at boot.
-fn check_version(connector: &str, connector_version: &str) -> Result<(), String> {
+/// A differing **major or minor** version is fatal, in either direction —
+/// older or newer. Our wire types are hand-written against one version of the
+/// specification, so a connector speaking a different one may serialise
+/// fields we do not read or expect fields we do not send — and the resulting
+/// failure would appear as malformed responses under load rather than as a
+/// clear error at boot.
+///
+/// A version string that cannot be parsed as `major.minor[.patch]` is treated
+/// as its own opaque value rather than defaulted to anything — see
+/// [`minor_version`] — so it can only ever compare unequal to ours and is
+/// therefore rejected, never silently accepted.
+///
+/// # Errors
+///
+/// A message naming both versions, for an incompatible major/minor.
+fn check_version(connector: &str, connector_version: &str) -> Result<VersionOutcome, String> {
     let ours = minor_version(NDC_VERSION);
     let theirs = minor_version(connector_version);
 
@@ -84,11 +121,13 @@ fn check_version(connector: &str, connector_version: &str) -> Result<(), String>
         ));
     }
 
-    if connector_version != NDC_VERSION {
-        logging::version_patch_mismatch(connector, connector_version, NDC_VERSION);
+    if connector_version == NDC_VERSION {
+        return Ok(VersionOutcome::Matched);
     }
 
-    Ok(())
+    Ok(VersionOutcome::PatchMismatch {
+        connector_version: connector_version.to_owned(),
+    })
 }
 
 /// Extracts `major.minor` from a version string.
@@ -108,32 +147,100 @@ fn minor_version(version: &str) -> String {
 mod tests {
     use super::*;
 
+    // -- Supported version (exact match) -> accepted --------------------
+
     #[test]
-    fn the_pinned_version_matches_itself() {
-        assert!(check_version("postgres", NDC_VERSION).is_ok());
+    fn an_exact_version_match_is_accepted() {
+        assert_eq!(
+            check_version("postgres", NDC_VERSION),
+            Ok(VersionOutcome::Matched)
+        );
+    }
+
+    // -- Same major.minor, different patch -> accepted with a warning ---
+
+    #[test]
+    fn a_patch_difference_is_accepted_as_a_reportable_mismatch() {
+        // `PatchMismatch` carrying the connector's version is what
+        // `build_ndc_connector` matches on to log `version_patch_mismatch` —
+        // asserting the variant here is what proves the warning path is
+        // actually reached, independent of asserting on a tracing sink.
+        assert_eq!(
+            check_version("postgres", "0.2.9"),
+            Ok(VersionOutcome::PatchMismatch {
+                connector_version: "0.2.9".to_owned()
+            })
+        );
     }
 
     #[test]
-    fn a_patch_difference_is_tolerated() {
-        assert!(check_version("postgres", "0.2.9").is_ok());
+    fn a_patch_difference_the_other_direction_is_also_accepted() {
+        // 0.2.13 is our pinned patch; a connector ahead of it on the same
+        // minor is exactly as compatible as one behind it.
+        assert!(matches!(
+            check_version("postgres", "0.2.99"),
+            Ok(VersionOutcome::PatchMismatch { .. })
+        ));
     }
 
+    // -- Newer minor (0.3.x) -> rejected at startup with a clear error ---
+
     #[test]
-    fn a_minor_difference_is_fatal() {
+    fn a_newer_minor_version_is_rejected() {
         let error = check_version("postgres", "0.3.0").unwrap_err();
 
         assert!(error.contains("major/minor versions must match"));
+        assert!(error.contains("0.3.0"));
+    }
+
+    // -- Older minor (0.1.x) -> rejected at startup with a clear error ---
+
+    #[test]
+    fn an_older_minor_version_is_rejected() {
+        let error = check_version("postgres", "0.1.9").unwrap_err();
+
+        assert!(error.contains("major/minor versions must match"));
+        assert!(error.contains("0.1.9"));
+    }
+
+    // -- Newer major (1.x) -> rejected -----------------------------------
+
+    #[test]
+    fn a_newer_major_version_is_rejected() {
+        assert!(check_version("postgres", "1.0.0").is_err());
     }
 
     #[test]
-    fn a_major_difference_is_fatal() {
+    fn a_newer_major_version_is_rejected_even_if_the_minor_number_coincides() {
+        // Major takes precedence: "1.2" is not "compatible enough" just
+        // because its minor digit happens to equal ours.
         assert!(check_version("postgres", "1.2.13").is_err());
     }
+
+    // -- Malformed / unparseable version -> rejected, never silently -----
+    // -- accepted --------------------------------------------------------
 
     #[test]
     fn an_unparseable_version_does_not_pass_silently() {
         assert!(check_version("postgres", "experimental").is_err());
     }
+
+    #[test]
+    fn an_empty_version_does_not_pass_silently() {
+        assert!(check_version("postgres", "").is_err());
+    }
+
+    #[test]
+    fn a_version_with_a_non_numeric_minor_does_not_pass_silently() {
+        assert!(check_version("postgres", "0.x.13").is_err());
+    }
+
+    #[test]
+    fn a_version_with_only_a_major_component_does_not_pass_silently() {
+        assert!(check_version("postgres", "2").is_err());
+    }
+
+    // -- minor_version helper ---------------------------------------------
 
     #[test]
     fn extracts_major_and_minor() {

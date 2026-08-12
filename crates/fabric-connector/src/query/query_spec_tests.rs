@@ -1,23 +1,10 @@
 //! What `for_target` does to a read.
 
-use serde_json::Value;
-
-use crate::testing::{collection, discriminator_target, field, target_with};
-use crate::{ComparisonOperator, Filter, IsolationModel, QuerySpec, SchemaName};
+use crate::testing::{collection, discriminator_target, equals, field, target_with, tenant_predicate};
+use crate::{Filter, IsolationModel, QuerySpec, SchemaName};
 
 fn caller_filter() -> Filter {
-    Filter::Compare {
-        field: field("status"),
-        operator: ComparisonOperator::Equal,
-        value: Value::String("active".to_owned()),
-    }
-}
-
-fn tenant_predicate() -> Filter {
-    discriminator_target()
-        .isolation()
-        .tenant_predicate()
-        .expect("a discriminator target must produce a predicate")
+    equals("status", "active")
 }
 
 #[test]
@@ -65,11 +52,7 @@ fn a_discriminator_query_conjoins_the_tenant_predicate_with_the_caller_filter() 
 fn the_tenant_predicate_cannot_be_replaced_by_a_caller_filter_on_the_same_column() {
     // A caller filtering on the discriminator column must not widen its own
     // scope: both predicates survive, so the conjunction can only narrow.
-    let hostile = Filter::Compare {
-        field: field("tenant_key"),
-        operator: ComparisonOperator::Equal,
-        value: Value::String("tenant-999".to_owned()),
-    };
+    let hostile = equals("tenant_key", "tenant-999");
 
     let executed = QuerySpec::new(collection())
         .with_filter(hostile.clone())

@@ -7,13 +7,19 @@ use fabric_core::BindingRevision;
 
 /// A reconciled runtime resource.
 ///
-/// Two things are required, and they are the two the lifecycle turns on: an
-/// identity to look the resource up by, and a revision to decide whether an
-/// incoming copy is newer than the one held (§20).
+/// Three things are required, and they are what the lifecycle turns on: an
+/// identity to look the resource up by, a revision to decide whether an
+/// incoming copy is newer than the one held (§20), and equality.
+///
+/// The `PartialEq` bound exists for one reason: the apply path needs to tell
+/// a genuine no-op (same revision, same payload) apart from a same-revision
+/// payload that quietly diverged — a reconciler bug that forgot to bump the
+/// revision. See [`ApplyReport::divergent_payload`](crate::resource::ApplyReport::divergent_payload)
+/// for why that distinction is load-bearing rather than cosmetic.
 ///
 /// `KIND` exists so that log lines and errors can say *what* was not found
 /// without the generic code knowing anything else about the type.
-pub trait RegistryResource: Clone + Send + Sync + 'static {
+pub trait RegistryResource: Clone + PartialEq + Send + Sync + 'static {
     /// How this resource is addressed.
     type Key: Clone + Ord + Hash + Display + Send + Sync + 'static;
 

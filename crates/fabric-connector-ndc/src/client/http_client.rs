@@ -6,7 +6,8 @@ use fabric_connector::{ConnectorError, ConnectorId};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 
-use crate::client::error_mapping::{malformed, rejected, unreachable};
+use crate::client::error_mapping::unreachable;
+use crate::client::response_decoding::decode;
 use crate::{NdcConnectorConfig, NDC_VERSION, NDC_VERSION_HEADER};
 
 /// Talks to one NDC connector over HTTP.
@@ -33,12 +34,20 @@ pub(crate) struct NdcHttpClient {
 impl NdcHttpClient {
     /// Builds a client from configuration.
     ///
+    /// Applies both HTTP timeouts from [`NdcConnectorConfig`]: `.timeout(..)`
+    /// bounds the whole call, `.connect_timeout(..)` bounds the connect phase
+    /// specifically. Neither one reaches into the connector's own database
+    /// timeout or the host's overall request budget — see
+    /// [`NdcConnectorConfig::http_timeout_seconds`] for why those are
+    /// deliberately owned elsewhere.
+    ///
     /// # Errors
     ///
     /// Returns a message if the HTTP client cannot be constructed.
     pub(crate) fn new(config: &NdcConnectorConfig) -> Result<Self, String> {
         let http = reqwest::Client::builder()
-            .timeout(Duration::from_secs(config.timeout_seconds))
+            .timeout(Duration::from_secs(config.http_timeout_seconds))
+            .connect_timeout(Duration::from_secs(config.http_connect_timeout_seconds))
             .build()
             .map_err(|error| format!("could not build an HTTP client for {}: {error}", config.id))?;
 
@@ -61,7 +70,7 @@ impl NdcHttpClient {
             .await
             .map_err(|error| unreachable(&self.connector, error))?;
 
-        self.decode(response).await
+        decode(&self.connector, response).await
     }
 
     /// Issues a `POST` with a JSON body and decodes the response.
@@ -81,7 +90,7 @@ impl NdcHttpClient {
             .await
             .map_err(|error| unreachable(&self.connector, error))?;
 
-        self.decode(response).await
+        decode(&self.connector, response).await
     }
 
     /// Checks that the connector answers its health endpoint.
@@ -111,21 +120,5 @@ impl NdcHttpClient {
         self.http
             .request(method, format!("{}{path}", self.endpoint))
             .header(NDC_VERSION_HEADER, NDC_VERSION)
-    }
-
-    /// Turns a response into a decoded value, or the right error.
-    async fn decode<T: DeserializeOwned>(&self, response: reqwest::Response) -> Result<T, ConnectorError> {
-        let status = response.status();
-
-        let body = response
-            .bytes()
-            .await
-            .map_err(|error| unreachable(&self.connector, error))?;
-
-        if !status.is_success() {
-            return Err(rejected(&self.connector, status, &body));
-        }
-
-        serde_json::from_slice(&body).map_err(|error| malformed(&self.connector, error.to_string()))
     }
 }

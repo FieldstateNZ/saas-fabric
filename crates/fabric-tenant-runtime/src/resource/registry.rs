@@ -7,7 +7,13 @@ mod apply_tests;
 #[cfg(test)]
 mod change_tests;
 #[cfg(test)]
+mod concurrency_tests;
+#[cfg(test)]
+mod deletion_tests;
+#[cfg(test)]
 mod lookup_tests;
+#[cfg(test)]
+mod stale_revision_tests;
 #[cfg(test)]
 mod test_resource;
 

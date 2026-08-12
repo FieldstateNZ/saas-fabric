@@ -61,7 +61,7 @@ pub(crate) async fn request_arguments(
 #[cfg(test)]
 mod tests {
     use async_trait::async_trait;
-    use fabric_connector::{ConnectionName, ConnectorId, ResolvedSecret, SecretRef};
+    use fabric_connector::{ConnectionName, ResolvedSecret, SecretRef};
 
     use super::*;
 
@@ -81,14 +81,7 @@ mod tests {
     }
 
     fn config() -> NdcConnectorConfig {
-        NdcConnectorConfig {
-            id: ConnectorId::try_new("postgres").unwrap(),
-            endpoint: "http://connector:8080".to_owned(),
-            timeout_seconds: 10,
-            connection_name_argument: "connection_name".to_owned(),
-            connection_string_argument: "connection_string".to_owned(),
-            procedures: BTreeMap::new(),
-        }
+        NdcConnectorConfig::for_test(BTreeMap::new())
     }
 
     fn resolver() -> Arc<dyn SecretResolver> {

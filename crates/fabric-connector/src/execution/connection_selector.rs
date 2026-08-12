@@ -1,5 +1,8 @@
 //! Which connection, within a connector, a request should use.
 
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
+
 use crate::{ConnectionName, SecretRef};
 
 /// Selects the physical connection a request executes over.
@@ -44,14 +47,34 @@ pub enum ConnectionSelector {
 impl ConnectionSelector {
     /// A short, non-sensitive description for telemetry.
     ///
-    /// For [`Self::Secret`] this reports the *reference*, never the resolved
-    /// value — the reference is a path, and paths are safe to log (§29).
+    /// For [`Self::Secret`] this is deliberately **not** the reference path.
+    /// A reference such as `tenant/acme/data-primary` or
+    /// `vault/prod/high-value-client` is safe as an occasional diagnostic
+    /// value (§29 permits logging it when resolution genuinely fails — see
+    /// [`ConnectorError::SecretUnavailable`](crate::ConnectorError)), but a
+    /// telemetry label is attached to *every* request, not an occasional
+    /// failure. At that volume the path itself becomes the leak: it spells
+    /// out tenant names and vault layout to anything that reads the platform's
+    /// traces, which is a broader audience than the operators who are meant to
+    /// resolve secrets.
+    ///
+    /// So this hashes the reference instead. The digest is stable (the same
+    /// reference always labels the same way, so traces can still be grouped
+    /// and compared) and non-reversible in practice, without the path itself
+    /// ever leaving this method. Resolving the secret needs the real path —
+    /// use [`Self::secret_reference`] for that, never this label.
+    ///
+    /// The hash is [`DefaultHasher`], which is unkeyed and whose algorithm is
+    /// unspecified across Rust releases. That is fine for a label — it only
+    /// has to keep references apart from each other — but it must never be
+    /// treated as a security property (a determined party could still brute
+    /// force short, guessable references).
     #[must_use]
     pub fn telemetry_label(&self) -> String {
         match self {
             Self::Default => "default".to_owned(),
             Self::Named { name } => format!("named:{name}"),
-            Self::Secret { reference } => format!("secret:{reference}"),
+            Self::Secret { reference } => format!("secret:{:016x}", reference_digest(reference)),
         }
     }
 
@@ -60,6 +83,30 @@ impl ConnectionSelector {
     pub const fn needs_secret(&self) -> bool {
         matches!(self, Self::Secret { .. })
     }
+
+    /// The raw secret reference, for the one caller that must resolve it.
+    ///
+    /// Everywhere else — logs, spans, telemetry labels — should use
+    /// [`Self::telemetry_label`] instead. This accessor exists so the one
+    /// legitimate use (handing the reference to a
+    /// [`SecretResolver`](crate::SecretResolver)) has a named, greppable call
+    /// site rather than a pattern match repeated at every use.
+    #[must_use]
+    pub const fn secret_reference(&self) -> Option<&SecretRef> {
+        match self {
+            Self::Secret { reference } => Some(reference),
+            Self::Default | Self::Named { .. } => None,
+        }
+    }
+}
+
+/// A short, stable digest of a secret reference, for [`ConnectionSelector::telemetry_label`].
+///
+/// Not a security primitive — see the warning on that method.
+fn reference_digest(reference: &SecretRef) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    reference.hash(&mut hasher);
+    hasher.finish()
 }
 
 #[cfg(test)]
@@ -67,12 +114,57 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_telemetry_label_for_a_secret_reports_the_path_not_a_value() {
+    fn the_telemetry_label_for_a_secret_does_not_contain_the_raw_reference_path() {
+        // This is the opposite of what this test used to assert: the label
+        // must NOT leak the path, because it now runs on every request.
         let selector = ConnectionSelector::Secret {
             reference: SecretRef::new("tenant/acme/data-primary"),
         };
 
-        assert_eq!(selector.telemetry_label(), "secret:tenant/acme/data-primary");
+        let label = selector.telemetry_label();
+
+        assert!(!label.contains("tenant"));
+        assert!(!label.contains("acme"));
+        assert!(!label.contains("data-primary"));
+        assert!(label.starts_with("secret:"));
+    }
+
+    #[test]
+    fn the_telemetry_label_for_a_secret_is_stable_across_calls() {
+        // Traces group and compare by this label, so the same reference must
+        // always produce the same opaque label.
+        let selector = ConnectionSelector::Secret {
+            reference: SecretRef::new("tenant/acme/data-primary"),
+        };
+
+        assert_eq!(selector.telemetry_label(), selector.telemetry_label());
+    }
+
+    #[test]
+    fn the_telemetry_label_for_a_secret_differs_by_reference() {
+        // Not a security property (see the doc comment) — just enough to keep
+        // two tenants' labels from colliding in the common case.
+        let acme = ConnectionSelector::Secret {
+            reference: SecretRef::new("tenant/acme/data-primary"),
+        };
+        let globex = ConnectionSelector::Secret {
+            reference: SecretRef::new("tenant/globex/data-primary"),
+        };
+
+        assert_ne!(acme.telemetry_label(), globex.telemetry_label());
+    }
+
+    #[test]
+    fn the_raw_reference_is_still_reachable_through_the_explicit_accessor() {
+        let selector = ConnectionSelector::Secret {
+            reference: SecretRef::new("tenant/acme/data-primary"),
+        };
+
+        assert_eq!(
+            selector.secret_reference().map(SecretRef::as_str),
+            Some("tenant/acme/data-primary")
+        );
+        assert_eq!(ConnectionSelector::Default.secret_reference(), None);
     }
 
     #[test]

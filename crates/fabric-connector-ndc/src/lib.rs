@@ -24,6 +24,11 @@
 //! implementation of it. So the subset we need is written here, from the
 //! specification, and pinned to [`NDC_VERSION`].
 //!
+//! That subset is a **closed list, not a starting point** — see the `wire`
+//! module's docs (`src/wire.rs`) for the policy on what happens when NDC can
+//! express something this crate does not yet, and why an unsupported
+//! capability must fail rather than be approximated.
+//!
 //! Connector *processes* are a separate question and a much easier one: they
 //! are consumed over HTTP, never linked. `ndc-postgres` v3.1.0 is Apache-2.0.
 //! Verify any new connector's licence before adopting it — the licence of one

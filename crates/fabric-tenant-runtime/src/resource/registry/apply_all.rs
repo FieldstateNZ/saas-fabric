@@ -24,6 +24,16 @@ impl<T: RegistryResource> ResourceRegistry<T> {
     /// taken at face value. A source publishing a *truncated* set will remove
     /// resources. That is the price of supporting deprovisioning at all, and it
     /// is why a load failure must never be turned into an empty set.
+    ///
+    /// # Same revision, different payload
+    ///
+    /// An incoming copy at *exactly* the revision already held is never
+    /// applied, even if its payload differs from what is held — see
+    /// [`ApplyReport::divergent_payload`] for the full reasoning (item 50).
+    /// The short version: the revision is the authority on whether a
+    /// resource changed, so trusting a payload that disagrees with it would
+    /// make the revision guard meaningless. The mismatch is counted and
+    /// logged instead of being silently folded into "unchanged".
     pub fn apply_all(&self, incoming: Vec<T>) -> ApplyReport {
         let guard = self.snapshot.load();
         let current = guard.as_ref();
@@ -82,8 +92,18 @@ fn merge<T: RegistryResource>(
             logging::stale_resource_ignored::<T>(incoming.key(), incoming.revision(), held.revision());
             next.insert(incoming.key().clone(), Arc::clone(held));
         }
-        Some(held) => {
+        // Same revision, same payload: the ordinary no-op.
+        Some(held) if incoming == **held => {
             report.unchanged += 1;
+            next.insert(incoming.key().clone(), Arc::clone(held));
+        }
+        // Same revision, different payload: item 50. Never applied — the
+        // revision is the authority — but counted and logged so a
+        // reconciler bug (a real change that forgot to bump the revision)
+        // cannot vanish without a trace.
+        Some(held) => {
+            report.divergent_payload += 1;
+            logging::divergent_payload_at_same_revision::<T>(incoming.key(), incoming.revision());
             next.insert(incoming.key().clone(), Arc::clone(held));
         }
     }

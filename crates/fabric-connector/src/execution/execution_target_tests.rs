@@ -40,7 +40,7 @@ fn the_physical_identifier_describes_the_placement() {
 }
 
 #[test]
-fn the_physical_identifier_never_contains_a_credential() {
+fn the_physical_identifier_never_contains_a_credential_or_the_raw_secret_reference() {
     let target = target(
         ConnectionSelector::Secret {
             reference: SecretRef::new("tenant/acme/data-primary"),
@@ -50,10 +50,15 @@ fn the_physical_identifier_never_contains_a_credential() {
 
     let identifier = target.physical_resource_identifier();
 
-    // The reference is a path and is safe; there is no resolved value here at
-    // all, because a target holds a selector, never a secret.
-    assert!(identifier.contains("tenant/acme/data-primary"));
+    // There is no resolved value here at all, because a target holds a
+    // selector, never a secret. And unlike an older version of this test,
+    // the reference path itself must not appear either: it runs on every
+    // request and would leak tenant names and vault layout at that volume
+    // (see `ConnectionSelector::telemetry_label`).
     assert!(!identifier.contains("password"));
+    assert!(!identifier.contains("tenant/acme/data-primary"));
+    assert!(!identifier.contains("acme"));
+    assert!(identifier.contains("secret:"));
 }
 
 #[test]

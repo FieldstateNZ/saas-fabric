@@ -59,6 +59,8 @@ mod logging;
 mod readers;
 mod registration;
 mod resolver;
+#[cfg(test)]
+mod resolver_tests;
 mod token_reader;
 
 pub use claims::TokenClaims;

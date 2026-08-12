@@ -10,6 +10,8 @@ mod data_source_id;
 mod logical_data_source_name;
 mod logical_resource_name;
 pub(crate) mod slug;
+#[cfg(test)]
+mod slug_tests;
 
 pub use binding_revision::BindingRevision;
 pub use data_source_id::DataSourceId;

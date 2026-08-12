@@ -6,6 +6,9 @@
 //! rather than emitting something close. A predicate that gets quietly dropped
 //! in translation might be the one scoping rows to a tenant, and the resulting
 //! bug returns a `200` with too many rows — the hardest kind to notice.
+//!
+//! See the `wire` module's docs (`src/wire.rs`) for the full policy this
+//! implements — which areas matter most, and why.
 
 mod capabilities;
 mod expression;

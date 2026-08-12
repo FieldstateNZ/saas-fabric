@@ -6,11 +6,24 @@
 
 use fabric_core::{BindingRevision, DataSourceId, TenantId};
 
-use crate::{CollectionName, ConnectionSelector, ConnectorId, ExecutionTarget, FieldName, IsolationModel};
+use crate::{
+    CollectionName, ComparisonOperator, ConnectionSelector, ConnectorId, ExecutionTarget, FieldName, Filter,
+    IsolationModel,
+};
 
 /// A validated field name.
 pub(crate) fn field(name: &str) -> FieldName {
     FieldName::try_new(name).unwrap()
+}
+
+/// A `field = value` equality predicate, for building caller filters in
+/// adversarial tests without repeating the `Filter::Compare` shape everywhere.
+pub(crate) fn equals(field_name: &str, value: &str) -> Filter {
+    Filter::Compare {
+        field: field(field_name),
+        operator: ComparisonOperator::Equal,
+        value: serde_json::Value::String(value.to_owned()),
+    }
 }
 
 /// The collection every fixture operates on.
@@ -37,4 +50,15 @@ pub(crate) fn discriminator_target() -> ExecutionTarget {
         column: field("tenant_key"),
         value: "tenant-482".to_owned(),
     })
+}
+
+/// The predicate [`discriminator_target`] must produce.
+///
+/// Every adversarial test ultimately checks that this exact predicate
+/// survived a hostile caller filter, so it is worth building once.
+pub(crate) fn tenant_predicate() -> Filter {
+    discriminator_target()
+        .isolation()
+        .tenant_predicate()
+        .expect("a discriminator target must produce a predicate")
 }

@@ -33,6 +33,14 @@ impl DataApiError {
             Self::Resolve(ResolveError::UnboundDataSource { .. }) => StatusCode::INTERNAL_SERVER_ERROR,
             Self::Resolve(ResolveError::MissingDataSource { .. }) => StatusCode::INTERNAL_SERVER_ERROR,
 
+            // A binding asking for isolation the DataSource cannot provide is
+            // a reconciliation error like the two above, and 500 for the same
+            // reason: nothing the caller sent is wrong, and no retry will
+            // help until an operator fixes the binding. Deliberately not 503
+            // -- this does not resolve on its own, and telling a client to
+            // retry would turn one misconfigured tenant into a retry storm.
+            Self::Resolve(ResolveError::IsolationNotEnforceable { .. }) => StatusCode::INTERNAL_SERVER_ERROR,
+
             Self::UnknownResource(_) | Self::NotFound => StatusCode::NOT_FOUND,
             Self::OperationNotAllowed { .. } | Self::ResourceIsReadOnly { .. } => {
                 StatusCode::METHOD_NOT_ALLOWED
@@ -78,7 +86,9 @@ impl DataApiError {
             Self::Resolve(ResolveError::RuntimeUnavailable) => "runtime_unavailable",
             Self::Resolve(ResolveError::UnknownTenant(_)) => "unknown_tenant",
             Self::Resolve(
-                ResolveError::UnboundDataSource { .. } | ResolveError::MissingDataSource { .. },
+                ResolveError::UnboundDataSource { .. }
+                | ResolveError::MissingDataSource { .. }
+                | ResolveError::IsolationNotEnforceable { .. },
             ) => "internal",
             Self::UnknownResource(_) => "unknown_resource",
             Self::OperationNotAllowed { .. } => "operation_not_allowed",

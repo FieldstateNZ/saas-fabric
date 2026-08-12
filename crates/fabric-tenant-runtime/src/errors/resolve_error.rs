@@ -58,4 +58,49 @@ pub enum ResolveError {
         /// The DataSource the binding pointed at.
         data_source: DataSourceId,
     },
+
+    /// The binding asks for structural isolation from a DataSource that cannot
+    /// provide it.
+    ///
+    /// [`IsolationModel::Database`] and [`IsolationModel::Schema`] are
+    /// *structural*: they contribute no predicate, because the separation is
+    /// supposed to come from the connection reaching a different database or a
+    /// different schema. That works only if the connection differs per tenant
+    /// — and a [`DataSource`](crate::DataSource) carries exactly one
+    /// [`ConnectionSelector`](fabric_connector::ConnectionSelector), shared by
+    /// every tenant bound to it.
+    ///
+    /// So a DataSource declared [`PlacementClass::Shared`](crate::PlacementClass::Shared)
+    /// — one that reconciliation may place many tenants on — combined with
+    /// structural isolation means every one of those tenants issues the same
+    /// unfiltered query against the same connection. Not a degraded form of
+    /// isolation: none at all.
+    ///
+    /// This fails the request rather than serving it (§28). The alternative
+    /// considered and rejected was to serve it and log a warning, on the
+    /// grounds that most such deployments are probably single-tenant in
+    /// practice. "Probably" is not a property to bet a tenant boundary on, and
+    /// the failure mode is silent cross-tenant reads and writes rather than an
+    /// error anyone would notice.
+    ///
+    /// The fix is on the platform's side, not the caller's: bind the tenant to
+    /// a dedicated DataSource, or use
+    /// [`IsolationModel::Discriminator`](fabric_connector::IsolationModel::Discriminator),
+    /// which is the only model that carries its own predicate and is therefore
+    /// the only one safe to share.
+    ///
+    /// [`IsolationModel::Database`]: fabric_connector::IsolationModel::Database
+    /// [`IsolationModel::Schema`]: fabric_connector::IsolationModel::Schema
+    #[error(
+        "data source {data_source} is shared, so it cannot provide {isolation} isolation for \
+         tenant {tenant}; a shared data source requires discriminator isolation"
+    )]
+    IsolationNotEnforceable {
+        /// The tenant whose binding asked for it.
+        tenant: TenantId,
+        /// The DataSource that cannot provide it.
+        data_source: DataSourceId,
+        /// The isolation model that was asked for.
+        isolation: &'static str,
+    },
 }

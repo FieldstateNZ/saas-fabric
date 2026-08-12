@@ -29,6 +29,15 @@ What genuinely is portable:
   per-tenant schema and a shared table with a discriminator without an
   application change.
 
+  With one precondition, which this document previously omitted and an
+  adversarial review caught: `Database` and `Schema` isolation contribute no
+  predicate, so they are only enforceable where the *connection* differs per
+  tenant. A DataSource carries one connection, so those two models require a
+  DataSource that is not declared `Shared`. Resolution refuses the
+  combination rather than serving it unisolated. ADR 0006 has the reasoning,
+  including the honest note that `Schema` isolation is currently safe but
+  redundant — nothing yet routes a per-request schema.
+
 What is not:
 
 - **Datastore semantics.** Type systems, null handling, collation and ordering,

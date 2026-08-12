@@ -122,6 +122,18 @@ CONTROL_PLANE_CLIENTS = frozenset(
 )
 
 
+# The only files permitted to name the tenant header, because rejecting it is
+# what they do. Deliberately a file list rather than a crate: see the check.
+TENANT_HEADER_IS_REJECTED_IN = frozenset(
+    {
+        # Declares BANNED_TENANT_HEADER.
+        "crates/fabric-identity/src/config.rs",
+        # Reads it for one purpose: to refuse the request.
+        "crates/fabric-identity/src/resolver.rs",
+    }
+)
+
+
 class Failure:
     """One violated invariant, with enough context to act on."""
 
@@ -184,8 +196,20 @@ def load_graph() -> Graph:
 
 
 def source_files(crate: str):
-    """Every Rust source file in a crate."""
-    return sorted((CRATES / crate / "src").rglob("*.rs"))
+    """Every Rust source file in a crate, tests included.
+
+    `tests/` is scanned as well as `src/`. An integration test is compiled
+    Rust that can name whatever it likes, so a check that only looked at
+    `src/` would let an NDC type or a tenant header in through the back door
+    -- and a test is exactly where someone would first reach for one.
+    """
+    root = CRATES / crate
+    return sorted(
+        path
+        for directory in ("src", "tests", "benches", "examples")
+        if (root / directory).is_dir()
+        for path in (root / directory).rglob("*.rs")
+    )
 
 
 def strip_comments_and_docs(text: str) -> str:
@@ -275,56 +299,80 @@ def check_no_forbidden_dependencies(graph: Graph) -> list[Failure]:
     """No database driver and no control-plane client, anywhere."""
     failures = []
 
-    # Checked against the whole resolved graph, not per crate: a driver
-    # arriving transitively is exactly as linked as one declared directly, and
-    # would be far easier to miss in review.
-    for crate in graph.crates:
-        declared = graph.direct_dependencies(crate)
-
-        drivers = declared & DATABASE_DRIVERS
-        if drivers:
-            failures.append(
-                Failure(
-                    "The runtime plane opens no database connections (ADR 0001, section 2)",
-                    f"{crate} declares {sorted(drivers)}",
-                    "Physical connections belong to connector processes. A "
-                    "driver linked here means the platform could hand an "
-                    "application a connection, or open one on the request path.",
-                )
+    # Checked against the whole resolved graph, not per crate. A driver
+    # arriving transitively is exactly as linked as one declared directly --
+    # it compiles into the binary either way -- and it is far easier to miss
+    # in review, because no manifest in this repository mentions it.
+    drivers = graph.resolved_contains(DATABASE_DRIVERS)
+    if drivers:
+        failures.append(
+            Failure(
+                "The runtime plane opens no database connections (ADR 0001, section 2)",
+                f"the resolved graph contains {sorted(drivers)}; "
+                f"{describe_paths(graph, drivers)}",
+                "Physical connections belong to connector processes. A driver "
+                "linked here means the platform could hand an application a "
+                "connection, or open one on the request path.",
             )
+        )
 
-        control_plane = declared & CONTROL_PLANE_CLIENTS
-        if control_plane:
-            failures.append(
-                Failure(
-                    "Git and Kubernetes are never in the request path (section 6)",
-                    f"{crate} declares {sorted(control_plane)}",
-                    "Reconciled state is read from local files that the control "
-                    "plane writes. A client linked here means a handler could "
-                    "call the API server while serving a request, coupling every "
-                    "tenant's latency to the control plane's availability.",
-                )
+    control_plane = graph.resolved_contains(CONTROL_PLANE_CLIENTS)
+    if control_plane:
+        failures.append(
+            Failure(
+                "Git and Kubernetes are never in the request path (section 6)",
+                f"the resolved graph contains {sorted(control_plane)}; "
+                f"{describe_paths(graph, control_plane)}",
+                "Reconciled state is read from local files that the control "
+                "plane writes. A client linked here means a handler could call "
+                "the API server while serving a request, coupling every "
+                "tenant's latency to the control plane's availability.",
             )
+        )
 
     return failures
+
+
+def describe_paths(graph: "Graph", names: set) -> str:
+    """Says whether each name was declared directly or arrived transitively.
+
+    A transitive arrival is the harder case to act on, so the message has to
+    distinguish them rather than just naming the crate.
+    """
+    parts = []
+    for name in sorted(names):
+        declarers = [crate for crate in graph.crates if name in graph.direct_dependencies(crate)]
+        parts.append(f"{name} via {', '.join(declarers)}" if declarers else f"{name} transitively")
+    return "; ".join(parts)
 
 
 def check_tenant_header_is_never_a_source(graph: Graph) -> list[Failure]:
     """`X-Tenant-Id` is rejected, never read as an identity (section 11)."""
     failures = []
-    header = re.compile(r"[xX]-[tT]enant-[iI]d")
+    # Case-insensitive on purpose. HTTP header names are case-insensitive and
+    # `http` lowercases the lookup key, so `headers.get("X-TENANT-ID")` reads
+    # the very same header a case-sensitive pattern would miss.
+    header = re.compile(r"x-tenant-id", re.IGNORECASE)
 
     for crate in graph.crates:
         for path in source_files(crate):
-            text = path.read_text(encoding="utf-8")
-            if not header.search(text):
+            # Prose may discuss the header freely; the module docs explaining
+            # why it is refused are the reason anyone understands the rule.
+            code = strip_comments_and_docs(path.read_text(encoding="utf-8"))
+            if not header.search(code):
                 continue
 
-            # The header may only appear in the crate that rejects it, and in
-            # tests that prove the rejection. Anywhere else -- a handler, a
-            # resolver, a middleware -- would mean something is reading it.
+            # Scoped to the two files that reject it, not to the whole of
+            # `fabric-identity`. Exempting the entire crate would exempt the
+            # one crate where reading the header is even plausible, which is
+            # the opposite of what this check is for. Tests may name it
+            # anywhere, since asserting the rejection means writing it down.
             relative = path.relative_to(REPO_ROOT)
-            permitted = crate == "fabric-identity" or path.name.endswith("_tests.rs")
+            permitted = (
+                str(relative) in TENANT_HEADER_IS_REJECTED_IN
+                or "tests" in relative.parts
+                or path.name.endswith("_tests.rs")
+            )
 
             if not permitted:
                 failures.append(

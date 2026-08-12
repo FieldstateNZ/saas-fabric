@@ -5,6 +5,7 @@ use std::sync::Arc;
 use fabric_connector::ExecutionTarget;
 use fabric_core::{LogicalDataSourceName, TenantId};
 
+use crate::resolution::isolation_enforceability::check_isolation_is_enforceable;
 use crate::resource::LookupError;
 use crate::{
     DataSource, DataSourceRegistry, ResolveError, ResolvedDataSource, TenantRegistry, TenantRuntimeBinding,
@@ -90,6 +91,8 @@ impl RuntimeResolver {
         let binding = self.resolve_tenant(tenant)?;
         let data_binding = binding.data_binding(logical)?;
         let data_source = self.lookup_data_source(logical, &data_binding.data_source)?;
+
+        check_isolation_is_enforceable(&binding.tenant, &data_source, &data_binding.isolation)?;
 
         // The target is assembled from both halves: the DataSource supplies the
         // connector and connection, the tenant binding supplies the isolation.

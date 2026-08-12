@@ -63,7 +63,11 @@ pub fn read_only_data_source() -> DataSource {
             writable: false,
             accepts_new_tenants: true,
         },
-        ..data_source("replica-01", 1, "replica-01", PlacementClass::Shared)
+        // Dedicated, not shared: the tenant bound to it below uses
+        // `Database` isolation, which contributes no predicate, so a shared
+        // DataSource could not enforce it and resolution refuses the pair.
+        // Nothing about read-only capability depends on placement.
+        ..data_source("replica-01", 1, "replica-01", PlacementClass::Dedicated)
     }
 }
 
@@ -77,7 +81,9 @@ pub fn draining_data_source() -> DataSource {
             writable: true,
             accepts_new_tenants: false,
         },
-        ..data_source("draining-01", 1, "draining-01", PlacementClass::Shared)
+        // Dedicated for the same reason as `replica-01` above: draining is a
+        // capability state and is orthogonal to placement.
+        ..data_source("draining-01", 1, "draining-01", PlacementClass::Dedicated)
     }
 }
 

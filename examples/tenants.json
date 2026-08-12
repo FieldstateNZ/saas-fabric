@@ -5,7 +5,9 @@
     "data": {
       "primary": {
         "data_source": "sql-au-east-03",
-        "isolation": { "kind": "database" }
+        "isolation": {
+          "kind": "database"
+        }
       },
       "audit": {
         "data_source": "shared-audit-02",
@@ -16,33 +18,50 @@
         }
       }
     },
-    "configuration": { "store": "appconfig", "profile": "enterprise" },
+    "configuration": {
+      "store": "appconfig",
+      "profile": "enterprise"
+    },
     "secrets": "vault/tenants/acme",
-    "features": { "invoicing": true, "analytics": true }
+    "features": {
+      "invoicing": true,
+      "analytics": true
+    }
   },
-
   {
     "tenant": "globex",
     "revision": 7,
     "data": {
       "primary": {
-        "data_source": "shared-postgres-02",
-        "isolation": { "kind": "schema", "schema": "globex" }
+        "data_source": "globex-schema-01",
+        "isolation": {
+          "kind": "schema",
+          "schema": "globex"
+        }
       }
     },
-    "configuration": { "store": "appconfig", "profile": "standard" },
-    "features": { "invoicing": true, "analytics": false }
+    "configuration": {
+      "store": "appconfig",
+      "profile": "standard"
+    },
+    "features": {
+      "invoicing": true,
+      "analytics": false
+    }
   },
-
   {
     "tenant": "initech",
     "revision": 3,
     "data": {
       "primary": {
         "data_source": "initech-dedicated",
-        "isolation": { "kind": "database" }
+        "isolation": {
+          "kind": "database"
+        }
       }
     },
-    "features": { "invoicing": false }
+    "features": {
+      "invoicing": false
+    }
   }
 ]

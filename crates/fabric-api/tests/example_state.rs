@@ -8,10 +8,12 @@
 
 mod examples_support;
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use examples_support::{catalog, config, data_sources, raw, tenants};
-use fabric_core::LogicalDataSourceName;
+use fabric_connector::IsolationModel;
+use fabric_core::{DataSourceId, LogicalDataSourceName};
+use fabric_tenant_runtime::PlacementClass;
 
 #[test]
 fn the_example_data_sources_parse_and_validate() {
@@ -156,5 +158,44 @@ fn every_catalogued_logical_data_source_is_bound_by_at_least_one_tenant() {
             bound.contains(logical),
             "catalogue resource {name} needs logical data source {logical}, which no example tenant declares"
         );
+    }
+}
+
+#[test]
+fn no_example_binding_asks_for_isolation_its_data_source_cannot_provide() {
+    // The example shipped exactly this defect: `globex` on a `shared`
+    // DataSource under `schema` isolation, which contributes no predicate and
+    // shares one connection with every other tenant placed there. ADR 0006
+    // has the full account.
+    //
+    // `RuntimeResolver` refuses the combination at request time, so this test
+    // is not what makes the platform safe. It is what stops the *example* —
+    // the thing people copy — from teaching the mistake again, and it fails
+    // at build time rather than on someone's first request.
+    let placement: BTreeMap<DataSourceId, PlacementClass> = data_sources()
+        .iter()
+        .map(|source| (source.id.clone(), source.placement))
+        .collect();
+
+    for binding in tenants() {
+        for (logical, data) in &binding.data {
+            let Some(class) = placement.get(&data.data_source) else {
+                continue; // covered by the dangling-reference test above
+            };
+
+            let structural = matches!(
+                data.isolation,
+                IsolationModel::Database | IsolationModel::Schema { .. }
+            );
+
+            assert!(
+                !(structural && *class == PlacementClass::Shared),
+                "tenant {} binds {logical} to shared data source {}, which cannot enforce {} \
+                 isolation — a shared data source needs discriminator isolation (ADR 0006)",
+                binding.tenant,
+                data.data_source,
+                data.isolation.telemetry_label(),
+            );
+        }
     }
 }

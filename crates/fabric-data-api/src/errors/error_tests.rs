@@ -117,3 +117,92 @@ fn a_tenant_header_attempt_is_a_400() {
 
     assert_eq!(error.status(), StatusCode::BAD_REQUEST);
 }
+
+// -- Which connector failures are retryable, and which are not --------------
+//
+// The distinction is the whole reason `is_internal` is not a single status.
+// A caller, a proxy and an SDK retry policy all branch on 5xx-vs-503, so
+// getting it wrong either wastes a recoverable request or hammers a fault
+// only an operator can clear.
+
+#[test]
+fn an_unreachable_connector_is_a_retryable_503() {
+    // Under the partial-failure startup policy (§35) a connector that has not
+    // negotiated stays registered and is retried in the background, so this
+    // is a routine transient state rather than an exceptional one. 500 would
+    // tell every client the opposite.
+    let error = DataApiError::Connector(ConnectorError::Unreachable {
+        connector: ConnectorId::try_new("postgres").unwrap(),
+        source: Box::new(std::io::Error::other("connection refused")),
+    });
+
+    assert_eq!(error.status(), StatusCode::SERVICE_UNAVAILABLE);
+}
+
+#[test]
+fn an_unreachable_connector_still_names_no_infrastructure() {
+    // 503 is a more informative status, which makes it worth re-checking that
+    // it did not become a more informative *message*.
+    let error = DataApiError::Connector(ConnectorError::Unreachable {
+        connector: ConnectorId::try_new("postgres").unwrap(),
+        source: Box::new(std::io::Error::other(
+            "failed to connect to sql-au-east-03.internal:5432",
+        )),
+    });
+
+    let message = error.public_message();
+
+    assert!(!message.contains("sql-au-east-03"), "{message}");
+    assert!(!message.contains("5432"), "{message}");
+}
+
+#[test]
+fn a_malformed_connector_response_stays_a_500() {
+    // Deliberately *not* 503. A connector answering in a shape we cannot read
+    // means a version skew or a misconfiguration; it reproduces on every
+    // retry, so advertising it as transient would send clients into a loop
+    // against a fault only an operator can clear.
+    let error = DataApiError::Connector(ConnectorError::MalformedResponse {
+        connector: ConnectorId::try_new("postgres").unwrap(),
+        detail: "expected an object".to_owned(),
+    });
+
+    assert_eq!(error.status(), StatusCode::INTERNAL_SERVER_ERROR);
+}
+
+#[test]
+fn a_connector_rejection_stays_a_500() {
+    let error = DataApiError::Connector(ConnectorError::Rejected {
+        connector: ConnectorId::try_new("postgres").unwrap(),
+        message: "syntax error".to_owned(),
+    });
+
+    assert_eq!(error.status(), StatusCode::INTERNAL_SERVER_ERROR);
+}
+
+#[test]
+fn an_unenforceable_isolation_model_is_a_500_not_a_503() {
+    // A tenant bound to a shared DataSource under structural isolation is a
+    // reconciliation error: nothing the caller sent is wrong, and nothing
+    // resolves it on its own. 503 would invite a retry storm from one
+    // misconfigured binding.
+    let error = DataApiError::Resolve(ResolveError::IsolationNotEnforceable {
+        tenant: tenant(),
+        data_source: DataSourceId::try_new("shared-postgres-02").unwrap(),
+        isolation: "schema",
+    });
+
+    assert_eq!(error.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(error.code(), "internal");
+}
+
+#[test]
+fn an_unenforceable_isolation_model_names_no_infrastructure_to_the_caller() {
+    let error = DataApiError::Resolve(ResolveError::IsolationNotEnforceable {
+        tenant: tenant(),
+        data_source: DataSourceId::try_new("shared-postgres-02").unwrap(),
+        isolation: "schema",
+    });
+
+    assert_eq!(error.public_message(), "internal error");
+}

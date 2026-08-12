@@ -5,7 +5,8 @@ command below is reproducible from the repository root; nothing here is
 asserted without one.
 
 Last run: 2026-08-13, against commit `HEAD` of
-`claude/tenant-runtime-data-api-5ea0ca`.
+`claude/tenant-runtime-data-api-5ea0ca`, after the adversarial review that
+produced ADR 0006.
 
 ## Gates
 
@@ -13,7 +14,7 @@ Last run: 2026-08-13, against commit `HEAD` of
 | --- | --- | --- |
 | Formatting | `cargo fmt --all --check` | clean |
 | Lints | `cargo clippy --workspace --all-targets -- -D warnings` | 0 findings |
-| Tests | `cargo test --workspace` | 513 passing, 0 failing |
+| Tests | `cargo test --workspace` | 527 passing, 0 failing |
 | Docs | `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps` | 0 warnings |
 | Dependencies | `cargo deny check` | advisories, bans, licences, sources — all ok |
 | File sizes | `python3 scripts/check_file_sizes.py` | 0 over the 150-line limit |
@@ -136,7 +137,9 @@ Also checked structurally, because none of these can be caught by a test:
   `fabric-identity` does depend on Axum, deliberately — see the dependency
   document for why that is the crate's job rather than a leak.
 - **No database driver anywhere in the graph.** Checked against the full
-  resolved set, not just direct declarations. The runtime plane opens no
+  resolved set, not just direct declarations — a driver arriving transitively
+  compiles into the binary exactly as much as one declared directly, and no
+  manifest here would mention it. The runtime plane opens no
   database connections; every physical connection lives inside a connector
   process.
 - **No Kubernetes or Git client anywhere in the graph.** §6 keeps the control
@@ -156,6 +159,11 @@ Named here rather than left for a reader to discover.
 - **No load or concurrency testing beyond the registry.** The atomic-swap
   behaviour has a multi-threaded test; the HTTP surface under concurrent load
   does not.
+- **`IsolationModel::Schema` is safe but inert.** ADR 0006 closed the
+  configuration that made it dangerous; it did not make per-tenant schema
+  routing work. On a dedicated DataSource the variant behaves exactly like
+  `Database`, and the `schema` field is still read by nothing.
+
 - **Pagination determinism is the caller's responsibility.** The Data API
   cannot verify that a caller's sort is unique for a given collection, so it
   does not pretend to. Documented in `fabric-data-api`'s README.

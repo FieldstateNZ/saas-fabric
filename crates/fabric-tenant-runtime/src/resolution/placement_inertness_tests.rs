@@ -20,12 +20,15 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use fabric_connector::{ConnectionName, ConnectionSelector, ConnectorId};
+use fabric_connector::{ConnectionName, ConnectionSelector, ConnectorId, FieldName, IsolationModel};
 use fabric_core::BindingRevision;
 
 use crate::data_source::{DataResidency, DataSourceCapabilities, PlacementClass, PoolSettings};
+use crate::tenant::TenantDataBinding;
 use crate::testing::{data_source, data_source_id, primary, tenant, tenant_binding};
-use crate::{DataSource, DataSourceRegistry, ResolveError, RuntimeResolver, TenantRegistry};
+use crate::{
+    DataSource, DataSourceRegistry, ResolveError, RuntimeResolver, TenantRegistry, TenantRuntimeBinding,
+};
 
 /// A DataSource whose placement attributes are set to whatever the test needs.
 fn placed(
@@ -56,6 +59,36 @@ fn resolver(data_sources: Vec<DataSource>, bound_to: &str) -> RuntimeResolver {
     let tenants = Arc::new(TenantRegistry::new());
     tenants.apply_all(vec![tenant_binding("acme", 7, bound_to)]);
 
+    registry(tenants, data_sources)
+}
+
+/// The same, for a tenant on a `Shared` DataSource.
+///
+/// Structural isolation is refused there — see
+/// [`isolation_enforceability_tests`](super) — so a test about shared
+/// placement has to use the one model that is safe to share. Nothing about
+/// what these tests assert depends on which model it is.
+fn resolver_on_shared(data_sources: Vec<DataSource>, bound_to: &str) -> RuntimeResolver {
+    let tenants = Arc::new(TenantRegistry::new());
+    tenants.apply_all(vec![TenantRuntimeBinding::new(
+        tenant("acme"),
+        BindingRevision::new(7),
+    )
+    .with_data(
+        primary(),
+        TenantDataBinding::new(
+            data_source_id(bound_to),
+            IsolationModel::Discriminator {
+                column: FieldName::try_new("tenant_key").unwrap(),
+                value: "tenant-482".to_owned(),
+            },
+        ),
+    )]);
+
+    registry(tenants, data_sources)
+}
+
+fn registry(tenants: Arc<TenantRegistry>, data_sources: Vec<DataSource>) -> RuntimeResolver {
     let registry = Arc::new(DataSourceRegistry::new());
     registry.apply_all(data_sources);
 
@@ -151,7 +184,7 @@ fn a_binding_to_an_out_of_region_data_source_is_followed_not_corrected() {
 
 #[test]
 fn a_binding_to_a_shared_data_source_is_not_upgraded_to_a_dedicated_one() {
-    let runtime = resolver(
+    let runtime = resolver_on_shared(
         vec![
             placed(
                 "shared-postgres-02",
@@ -214,7 +247,7 @@ fn the_execution_target_carries_no_placement_attribute() {
     // this test pass or fail on whether the *identifier* happens to contain
     // the word "shared", which is a property of the name an operator chose,
     // not of what the target carries.
-    let runtime = resolver(
+    let runtime = resolver_on_shared(
         vec![placed(
             "pg-02",
             PlacementClass::Shared,

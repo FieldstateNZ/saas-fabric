@@ -60,6 +60,21 @@ impl IsolationModel {
     /// Returns `None` for [`Self::Database`] and [`Self::Schema`], where
     /// isolation is structural. Returns the discriminator equality for
     /// [`Self::Discriminator`].
+    ///
+    /// # "Structural" is a precondition, not a reassurance
+    ///
+    /// `None` here means *this type contributes nothing to the tenant
+    /// boundary* — the separation has to come from the connection reaching a
+    /// different database or schema. That is only true where the connection
+    /// actually differs per tenant, and a
+    /// `DataSource` carries exactly one connection shared by everyone bound
+    /// to it.
+    ///
+    /// So these two variants are safe only on a DataSource that is not
+    /// declared shared. `fabric-tenant-runtime`'s resolver enforces that and
+    /// refuses the combination; ADR 0006 records why, and what it cost to
+    /// find out. Nothing in *this* crate can check it — placement is not
+    /// visible from here, which is exactly why the check lives one layer up.
     #[must_use]
     pub fn tenant_predicate(&self) -> Option<Filter> {
         match self {

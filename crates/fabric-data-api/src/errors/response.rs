@@ -20,11 +20,17 @@ impl DataApiError {
             }
             Self::Resolve(ResolveError::UnknownTenant(_)) => "this tenant has no resources here".to_owned(),
 
-            // Both name platform topology — a logical data source the tenant
-            // never declared, or a DataSource id. Neither is an application's
-            // business (§2).
+            // All three name platform topology — a logical data source the
+            // tenant never declared, a DataSource id, or a DataSource id plus
+            // the isolation model it was asked for. None of that is an
+            // application's business (§2), and the isolation one is the
+            // sharpest of the three: it would tell a caller both which
+            // physical resource backs them and that its tenant boundary is
+            // currently misconfigured.
             Self::Resolve(
-                ResolveError::UnboundDataSource { .. } | ResolveError::MissingDataSource { .. },
+                ResolveError::UnboundDataSource { .. }
+                | ResolveError::MissingDataSource { .. }
+                | ResolveError::IsolationNotEnforceable { .. },
             ) => "internal error".to_owned(),
 
             // The connector's own text can name tables, schemas and servers.

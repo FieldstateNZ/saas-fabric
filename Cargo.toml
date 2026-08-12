@@ -36,7 +36,10 @@ fabric-identity = { path = "crates/fabric-identity" }
 fabric-tenant-runtime = { path = "crates/fabric-tenant-runtime" }
 
 [workspace.lints.rust]
-missing_docs = "warn"
+# Deny, not warn. Every public item in this workspace is documented today, so
+# this costs nothing to turn on and is the only setting that keeps it true —
+# a warning in a build that already prints warnings is a warning nobody reads.
+missing_docs = "deny"
 unsafe_code = "forbid"
 
 [workspace.lints.clippy]

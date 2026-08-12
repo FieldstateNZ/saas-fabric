@@ -87,3 +87,22 @@ jobs:
       # production .rs file under crates/ exceeds 150 lines and isn't in the
       # script's documented exemption list.
       - run: python3 scripts/check_file_sizes.py
+
+  architecture:
+    name: architectural invariants
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      # The invariants no unit test can catch, because the violation is the
+      # code compiling: NDC vocabulary escaping its crate, transport reaching
+      # a domain crate, a database driver or Kubernetes client entering the
+      # graph at all, X-Tenant-Id being read anywhere, or the dependency
+      # direction diverging from docs/architecture/crate-dependencies.md.
+      # Needs a toolchain because it reads `cargo metadata` rather than
+      # parsing manifests by hand.
+      - run: python3 scripts/check_architecture.py

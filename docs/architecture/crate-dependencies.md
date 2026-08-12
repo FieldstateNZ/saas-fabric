@@ -48,6 +48,18 @@ what will let the Configuration and Storage APIs reuse it unchanged.
 **`fabric-identity` does not depend on the Data API.** It derives a tenant
 identity context; who consumes it is not its business.
 
+It *does* depend on Axum, and that is deliberate rather than an oversight in
+the rule above. Turning an inbound HTTP request into a tenant identity is the
+crate's purpose: it owns the extractor that makes `TenantIdentity` a handler
+parameter, and the `IntoResponse` for the ways deriving one can fail. The
+transport-independent half — the resolver, the token readers, the
+configuration — takes an `http::HeaderMap` and knows nothing about a server.
+Moving the extractor into `fabric-data-api` would buy a tidier dependency
+list at the price of splitting identity extraction across two crates, which
+is the worse trade. `fabric-core`, `fabric-connector` and
+`fabric-tenant-runtime` remain transport-free, and that is what the
+architecture check enforces.
+
 **Only `fabric-api` depends on `fabric-connector-ndc`.** The protocol crate is
 wired in at the composition root and nowhere else. If any other crate ever needs
 it, NDC has leaked and the boundary has failed.

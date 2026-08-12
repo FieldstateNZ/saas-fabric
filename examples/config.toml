@@ -1,0 +1,98 @@
+# Example SaaS Fabric runtime plane configuration.
+#
+# Load with:  fabric-api examples/config.toml
+# Or:         FABRIC_CONFIG=examples/config.toml fabric-api
+#
+# Environment variables override the file, prefixed FABRIC_ with `__` for
+# nesting:  FABRIC_DATA_API__MAX_LIMIT=200
+
+listen = "0.0.0.0:8080"
+
+# Files that reconciliation writes and the runtime reads. Neither is queried
+# during request handling — see specification §6.
+bindings_path = "examples/bindings.json"
+catalog_path = "examples/catalog.json"
+
+[identity]
+# The canonical tenant claim (§10). Configurable, but should be standardised
+# across every platform service.
+tenant_claim = "tenant_id"
+subject_claim = "sub"
+roles_claim = "roles"
+
+# Reject requests carrying X-Tenant-Id rather than ignoring them (§11). The
+# header is never read as a tenant source either way; this decides whether an
+# attempt to use one is a 400 or is silent.
+reject_tenant_header = true
+
+[token]
+# RECOMMENDED. Verify bearer signatures against a JWKS document.
+#
+# §9 permits trusting the ingress, but §11's guarantee — that a caller cannot
+# choose its own tenant — only holds if the token itself is trustworthy inside
+# the trust boundary. Verification costs microseconds and closes the gap.
+mode = "validating"
+jwks_path = "/etc/fabric/jwks.json"
+issuers = ["https://id.example.com/realms/platform"]
+audiences = ["saas-fabric"]
+
+# The alternative, for a deployment relying entirely on network controls:
+#
+#   [token]
+#   mode = "trusted_ingress"
+#
+# It logs a warning on every start, because it is only sound while the
+# NetworkPolicy / mesh policy / mTLS controls §9 also requires are in place.
+
+[tenant_runtime]
+# The safety net, not the primary propagation mechanism. A reconciler that knows
+# a tenant changed should trigger a refresh; this bounds staleness if that
+# notification is ever lost.
+refresh_interval_seconds = 30
+
+# Refuse to start if bindings cannot be loaded. A process that can serve no
+# tenant should fail where the deployment pipeline will catch it.
+fail_fast_on_prime = true
+
+[data_api]
+default_limit = 50
+# A hard ceiling on how much work one request can ask a shared database for.
+# One tenant's unbounded scan is every co-tenant's latency.
+max_limit = 1000
+
+[permissions]
+require_scopes = true
+administrator_role = "platform-admin"
+
+# One entry per connector process. Each is negotiated once at startup:
+# GET /capabilities and GET /schema, both cached.
+[[connectors]]
+id = "postgres-au-east"
+endpoint = "http://ndc-postgres.data.svc.cluster.local:8080"
+timeout_seconds = 10
+
+# Request-level argument names for per-tenant connection routing (NDC 0.2.4).
+# These match ndc-postgres dynamic connections; nothing in the specification
+# fixes the names, so they are configurable.
+connection_name_argument = "connection_name"
+connection_string_argument = "connection_string"
+
+# Writes require an explicit procedure mapping. Core NDC 0.2 has no generic
+# insert/update/delete — the only mutation operation is invoking a procedure the
+# connector declares, and procedure names are the connector's to choose. Without
+# a mapping here the connector is read-only, which is the fail-closed default.
+[connectors.procedures.customers.insert]
+procedure = "insert_customers"
+payload_argument = "objects"
+
+[connectors.procedures.customers.update]
+procedure = "update_customers"
+payload_argument = "update_columns"
+# Mandatory for update and delete. Without somewhere to put the predicate, the
+# tenant scoping would be dropped and the write would reach every tenant's rows.
+# Startup validation rejects a mapping that omits it.
+filter_argument = "filter"
+
+[connectors.procedures.customers.delete]
+procedure = "delete_customers"
+filter_argument = "filter"

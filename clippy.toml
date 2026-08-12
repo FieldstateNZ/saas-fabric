@@ -1,0 +1,8 @@
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true
+allow-indexing-slicing-in-tests = true
+
+# Proper nouns that appear throughout the rustdoc. The trailing ".." keeps
+# clippy's own default list rather than replacing it.
+doc-valid-idents = ["SaaS", "PostgreSQL", "GitOps", "ArgoCD", "OpenTelemetry", "JWKS", "OIDC", "HashiCorp", "Keycloak", "NetworkPolicy", "ConfigMap", "Crossplane", ".."]

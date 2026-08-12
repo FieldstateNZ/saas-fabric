@@ -1,0 +1,28 @@
+[package]
+name = "fabric-data-api"
+description = "The Data API: tenant-scoped logical data resources over stable HTTP."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+fabric-connector.workspace = true
+fabric-core.workspace = true
+fabric-identity.workspace = true
+fabric-tenant-runtime.workspace = true
+
+axum.workspace = true
+http.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+async-trait.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tower = { workspace = true, features = ["util"] }
+
+[lints]
+workspace = true

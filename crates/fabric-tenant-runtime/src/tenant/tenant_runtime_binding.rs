@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 
 use fabric_connector::SecretRef;
-use fabric_core::{BindingRevision, DataSourceName, TenantId};
+use fabric_core::{BindingRevision, LogicalDataSourceName, TenantId};
 
 use crate::tenant::{ConfigurationBinding, StorageBinding, TenantDataBinding};
 use crate::{ConfigurationError, ResolveError};
@@ -34,7 +34,7 @@ pub struct TenantRuntimeBinding {
 
     /// Logical data source name to the DataSource it is bound to.
     #[serde(default)]
-    pub data: BTreeMap<DataSourceName, TenantDataBinding>,
+    pub data: BTreeMap<LogicalDataSourceName, TenantDataBinding>,
 
     /// Where this tenant's configuration lives.
     #[serde(default)]
@@ -70,7 +70,7 @@ impl TenantRuntimeBinding {
 
     /// Binds a logical data source name, returning the binding for chaining.
     #[must_use]
-    pub fn with_data(mut self, name: DataSourceName, binding: TenantDataBinding) -> Self {
+    pub fn with_data(mut self, name: LogicalDataSourceName, binding: TenantDataBinding) -> Self {
         self.data.insert(name, binding);
         self
     }
@@ -82,7 +82,7 @@ impl TenantRuntimeBinding {
     /// [`ResolveError::UnboundDataSource`] if this tenant has no binding for
     /// the name. There is deliberately no fallback to another logical name —
     /// §28 forbids quietly using "the first available database".
-    pub fn data_binding(&self, name: &DataSourceName) -> Result<&TenantDataBinding, ResolveError> {
+    pub fn data_binding(&self, name: &LogicalDataSourceName) -> Result<&TenantDataBinding, ResolveError> {
         self.data
             .get(name)
             .ok_or_else(|| ResolveError::UnboundDataSource {

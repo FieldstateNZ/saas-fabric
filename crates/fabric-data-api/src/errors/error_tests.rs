@@ -1,7 +1,7 @@
 //! What each failure tells the caller — and what it must not.
 
 use fabric_connector::{ConnectorError, ConnectorId};
-use fabric_core::{DataSourceId, DataSourceName, TenantId};
+use fabric_core::{DataSourceId, LogicalDataSourceName, TenantId};
 use fabric_identity::IdentityError;
 use fabric_tenant_runtime::ResolveError;
 use http::StatusCode;
@@ -39,7 +39,7 @@ fn an_unknown_tenant_message_does_not_echo_the_tenant_back() {
 fn a_missing_data_source_never_names_the_data_source_to_the_caller() {
     // The id is platform topology. Internally it is logged in full.
     let error = DataApiError::Resolve(ResolveError::MissingDataSource {
-        logical: DataSourceName::try_new("primary").unwrap(),
+        logical: LogicalDataSourceName::try_new("primary").unwrap(),
         data_source: DataSourceId::try_new("sql-au-east-03").unwrap(),
     });
 
@@ -52,7 +52,7 @@ fn a_missing_data_source_never_names_the_data_source_to_the_caller() {
 fn an_unbound_logical_data_source_is_an_internal_error() {
     let error = DataApiError::Resolve(ResolveError::UnboundDataSource {
         tenant: TenantId::try_new("acme").unwrap(),
-        logical: DataSourceName::try_new("audit").unwrap(),
+        logical: LogicalDataSourceName::try_new("audit").unwrap(),
     });
 
     assert_eq!(error.status(), StatusCode::INTERNAL_SERVER_ERROR);

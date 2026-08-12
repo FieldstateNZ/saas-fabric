@@ -7,15 +7,15 @@
 use std::collections::BTreeMap;
 
 use fabric_connector::{ConnectionName, ConnectionSelector, ConnectorId, IsolationModel};
-use fabric_core::{BindingRevision, DataSourceId, DataSourceName, TenantId};
+use fabric_core::{BindingRevision, DataSourceId, LogicalDataSourceName, TenantId};
 
 use crate::data_source::{DataResidency, DataSourceCapabilities, PlacementClass, PoolSettings};
 use crate::tenant::TenantDataBinding;
 use crate::{DataSource, TenantRuntimeBinding};
 
 /// The logical name every fixture binds.
-pub(crate) fn primary() -> DataSourceName {
-    DataSourceName::try_new("primary").unwrap()
+pub(crate) fn primary() -> LogicalDataSourceName {
+    LogicalDataSourceName::try_new("primary").unwrap()
 }
 
 /// A tenant id.

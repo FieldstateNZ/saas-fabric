@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use fabric_connector::ExecutionTarget;
-use fabric_core::{DataSourceName, TenantId};
+use fabric_core::{LogicalDataSourceName, TenantId};
 
 use crate::resource::LookupError;
 use crate::{
@@ -85,7 +85,7 @@ impl RuntimeResolver {
     pub fn resolve_data_source(
         &self,
         tenant: &TenantId,
-        logical: &DataSourceName,
+        logical: &LogicalDataSourceName,
     ) -> Result<ResolvedDataSource, ResolveError> {
         let binding = self.resolve_tenant(tenant)?;
         let data_binding = binding.data_binding(logical)?;
@@ -109,7 +109,7 @@ impl RuntimeResolver {
     /// Looks up a DataSource, mapping both failures onto the resolution error.
     fn lookup_data_source(
         &self,
-        logical: &DataSourceName,
+        logical: &LogicalDataSourceName,
         id: &fabric_core::DataSourceId,
     ) -> Result<Arc<DataSource>, ResolveError> {
         self.data_sources.lookup(id).map_err(|error| match error {

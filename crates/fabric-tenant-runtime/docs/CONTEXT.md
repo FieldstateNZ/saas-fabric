@@ -20,14 +20,14 @@ physical/provider concerns.
 
 - `RuntimeResolver::new(Arc<TenantRegistry>, Arc<DataSourceRegistry>)`.
   - `resolve_tenant(&TenantId) -> Result<Arc<TenantRuntimeBinding>, ResolveError>`
-  - **`resolve_data_source(&TenantId, &DataSourceName) -> Result<ResolvedDataSource, ResolveError>`**
+  - **`resolve_data_source(&TenantId, &LogicalDataSourceName) -> Result<ResolvedDataSource, ResolveError>`**
   - `tenants()`, `data_sources()`, `is_primed()` (conjunction of both).
 - `ResolvedDataSource { target: ExecutionTarget, data_source: Arc<DataSource> }`,
   `is_writable()`, `telemetry_label()`.
 
 ### Resources
 
-- `TenantRuntimeBinding { tenant, revision, data: BTreeMap<DataSourceName, TenantDataBinding>,
+- `TenantRuntimeBinding { tenant, revision, data: BTreeMap<LogicalDataSourceName, TenantDataBinding>,
   configuration, secrets, features, storage }`. `new`, `with_data`,
   `data_binding()`, `feature()`, `validate()`. Serde `deny_unknown_fields`.
 - `TenantDataBinding { data_source: DataSourceId, isolation: IsolationModel }`.

@@ -1,7 +1,7 @@
 //! What one logical resource is.
 
 use fabric_connector::{CollectionName, FieldName};
-use fabric_core::DataSourceName;
+use fabric_core::LogicalDataSourceName;
 
 use crate::OperationKind;
 
@@ -27,7 +27,7 @@ use crate::OperationKind;
 #[serde(deny_unknown_fields)]
 pub struct ResourceDefinition {
     /// The logical data source this resource lives in — `primary`, `audit`.
-    pub data_source: DataSourceName,
+    pub data_source: LogicalDataSourceName,
 
     /// The physical collection name the connector knows.
     ///

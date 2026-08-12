@@ -7,7 +7,7 @@
 use std::collections::BTreeMap;
 
 use fabric_connector::{ConnectionName, ConnectionSelector, ConnectorId, FieldName, IsolationModel};
-use fabric_core::{BindingRevision, DataSourceId, DataSourceName, TenantId};
+use fabric_core::{BindingRevision, DataSourceId, LogicalDataSourceName, TenantId};
 use fabric_data_api::ResourceCatalog;
 use fabric_tenant_runtime::{
     DataResidency, DataSource, DataSourceCapabilities, PlacementClass, PoolSettings, TenantDataBinding,
@@ -69,7 +69,7 @@ pub fn data_sources() -> Vec<DataSource> {
 
 /// The standard tenant set.
 pub fn tenants() -> Vec<TenantRuntimeBinding> {
-    let primary = DataSourceName::try_new("primary").unwrap();
+    let primary = LogicalDataSourceName::try_new("primary").unwrap();
 
     let acme = TenantRuntimeBinding::new(tenant("acme"), BindingRevision::new(7)).with_data(
         primary.clone(),
@@ -96,7 +96,7 @@ pub fn tenants() -> Vec<TenantRuntimeBinding> {
 /// A tenant bound to a DataSource that is not registered.
 pub fn tenant_with_missing_data_source() -> TenantRuntimeBinding {
     TenantRuntimeBinding::new(tenant("orphan"), BindingRevision::new(1)).with_data(
-        DataSourceName::try_new("primary").unwrap(),
+        LogicalDataSourceName::try_new("primary").unwrap(),
         TenantDataBinding::new(
             DataSourceId::try_new("never-deployed").unwrap(),
             IsolationModel::Database,
@@ -107,7 +107,7 @@ pub fn tenant_with_missing_data_source() -> TenantRuntimeBinding {
 /// A tenant bound to the read-only DataSource.
 pub fn tenant_on_replica() -> TenantRuntimeBinding {
     TenantRuntimeBinding::new(tenant("reader"), BindingRevision::new(1)).with_data(
-        DataSourceName::try_new("primary").unwrap(),
+        LogicalDataSourceName::try_new("primary").unwrap(),
         TenantDataBinding::new(
             DataSourceId::try_new("replica-01").unwrap(),
             IsolationModel::Database,

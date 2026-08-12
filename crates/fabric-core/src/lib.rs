@@ -9,6 +9,30 @@
 //! database call or an HTTP client here, it belongs in a domain crate instead —
 //! every crate in the workspace depends on this one, so anything added here is
 //! paid for everywhere.
+//!
+//! # The three names
+//!
+//! Three identifiers in this crate look alike and mean entirely different
+//! things. Getting them straight is the single most useful thing to know about
+//! the platform's model:
+//!
+//! ```text
+//! LogicalResourceName      customers, orders, auditEvents
+//!         ↓ catalogue                what an application addresses
+//! LogicalDataSourceName    primary, audit, analytics
+//!         ↓ tenant binding           which pool of data it belongs to
+//! DataSourceId             sql-au-east-03, shared-postgres-02
+//!         ↓ registry                 the configured physical resource
+//! DataSource               connector, connection, pool, region, placement
+//!         ↓
+//! Connector
+//! ```
+//!
+//! The first two are **intent** and are identical for every tenant. The third
+//! is a **physical resource** and differs per tenant — that difference is the
+//! whole of multi-tenancy in this platform, and it is confined to one hop.
+//!
+//! Applications see the first. They never see the third.
 
 mod clock;
 mod identifier_error;
@@ -27,5 +51,5 @@ pub mod naming {
 
 pub use clock::{Clock, SystemClock};
 pub use identifier_error::IdentifierError;
-pub use ids::{BindingRevision, DataSourceId, DataSourceName, LogicalResourceName, TenantId};
+pub use ids::{BindingRevision, DataSourceId, LogicalDataSourceName, LogicalResourceName, TenantId};
 pub use logging::{event_id, EventType};

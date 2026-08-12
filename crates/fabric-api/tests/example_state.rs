@@ -11,7 +11,7 @@ mod examples_support;
 use std::collections::BTreeSet;
 
 use examples_support::{catalog, config, data_sources, raw, tenants};
-use fabric_core::DataSourceName;
+use fabric_core::LogicalDataSourceName;
 
 #[test]
 fn the_example_data_sources_parse_and_validate() {
@@ -145,7 +145,7 @@ fn every_catalogued_logical_data_source_is_bound_by_at_least_one_tenant() {
     // its first request.
     let catalog = catalog();
 
-    let bound: BTreeSet<DataSourceName> = tenants()
+    let bound: BTreeSet<LogicalDataSourceName> = tenants()
         .iter()
         .flat_map(|binding| binding.data.keys().cloned())
         .collect();

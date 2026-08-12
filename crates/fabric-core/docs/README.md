@@ -11,7 +11,7 @@ can reasonably disagree about:
 | Type | Why it exists |
 |---|---|
 | `TenantId` | The value the entire runtime plane pivots on. Validated to a DNS-label character set so it is safe in a schema name, a pool key, and a metric label. |
-| `DataSourceName` | A *logical* data source (`primary`, `audit`). Intent, never infrastructure. |
+| `LogicalDataSourceName` | A *logical* data source (`primary`, `audit`). Intent, never infrastructure. |
 | `LogicalResourceName` | A logical resource an application addresses (`customers`). Arrives in the URL path, so it is validated on the way in. |
 | `BindingRevision` | Monotonic revision on every runtime binding. Drives cache invalidation, migration cut-over, and diagnostics. |
 | `event_id` / `EventType` | The structured event-ID scheme, so alert rules key off a stable number rather than log wording. |

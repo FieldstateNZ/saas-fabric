@@ -9,7 +9,7 @@ mod support;
 use std::sync::Arc;
 
 use fabric_connector::{ConnectionName, ConnectionSelector, ConnectorId, IsolationModel};
-use fabric_core::{BindingRevision, DataSourceId, DataSourceName};
+use fabric_core::{BindingRevision, DataSourceId, LogicalDataSourceName};
 use fabric_tenant_runtime::{
     DataSourceRegistry, RuntimeResolver, TenantDataBinding, TenantRegistry, TenantRuntimeBinding,
 };
@@ -83,7 +83,7 @@ async fn rebinding_a_tenant_moves_it_to_a_different_data_source() {
     let (app, connector) = app_over(&tenant_registry, &source_registry);
 
     let rebound = TenantRuntimeBinding::new(tenant("acme"), BindingRevision::new(8)).with_data(
-        DataSourceName::try_new("primary").unwrap(),
+        LogicalDataSourceName::try_new("primary").unwrap(),
         TenantDataBinding::new(
             DataSourceId::try_new("shared-02").unwrap(),
             IsolationModel::Discriminator {
@@ -112,7 +112,7 @@ async fn a_stale_tenant_update_is_ignored_by_the_request_path() {
     let (app, connector) = app_over(&tenant_registry, &source_registry);
 
     let stale = TenantRuntimeBinding::new(tenant("acme"), BindingRevision::new(2)).with_data(
-        DataSourceName::try_new("primary").unwrap(),
+        LogicalDataSourceName::try_new("primary").unwrap(),
         TenantDataBinding::new(
             DataSourceId::try_new("shared-02").unwrap(),
             IsolationModel::Database,

@@ -159,7 +159,7 @@ tasks.
 - **DataSources are primed before tenants.** A binding referencing a DataSource
   the registry has not loaded resolves to `MissingDataSource`, so this order
   avoids a window of spurious 500s at startup.
-- **`DataSourceName` vs `DataSourceId`.** The first is logical (`primary`), the
+- **`LogicalDataSourceName` vs `DataSourceId`.** The first is logical (`primary`), the
   second is a DataSource resource (`sql-au-east-03`). They are different types
   for a reason.
 - **A `ResourceSource` must not query the control plane.** A Git client or

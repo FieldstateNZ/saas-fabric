@@ -1,4 +1,4 @@
-//! The identity of a DataSource resource.
+//! The identity of a configured, physical DataSource resource.
 
 use std::fmt;
 
@@ -8,26 +8,39 @@ use crate::IdentifierError;
 /// Identifies a **DataSource** — a configured, reusable physical data
 /// destination.
 ///
-/// # Not to be confused with `DataSourceName`
-///
-/// The two sit on opposite sides of the abstraction and it is worth fixing the
-/// difference in mind:
-///
-/// | Type | Example | Meaning |
-/// |---|---|---|
-/// | [`DataSourceName`](crate::DataSourceName) | `primary`, `audit` | The **logical** name an application's resource is bound to. Intent. |
-/// | `DataSourceId` | `sql-au-east-03`, `shared-postgres-02` | The **DataSource resource** that logical name currently resolves to. |
-///
-/// The chain is:
+/// # Where this sits
 ///
 /// ```text
-/// tenant → logical binding (primary) → DataSource → connector → infrastructure
+/// LogicalResourceName      customers, orders, auditEvents
+///         ↓ catalogue
+/// LogicalDataSourceName    primary, audit, analytics
+///         ↓ tenant binding
+/// DataSourceId             sql-au-east-03, shared-postgres-02   ← this type
+///         ↓ registry
+/// DataSource               the configured physical resource
+///         ↓
+/// Connector
 /// ```
 ///
-/// A DataSource is shared: many tenants point at `shared-postgres-02`, which is
-/// what keeps connection counts bounded (§22). Applications never see this type
-/// — a `DataSourceId` reaching an application would leak exactly the placement
-/// detail §2 keeps internal.
+/// This type is **a physical resource**, not intent. It names something that
+/// exists whether or not any tenant uses it: a database server, a cluster, a
+/// schema-hosting instance. It is provisioned, monitored, patched and retired.
+///
+/// A DataSource is **shared** — many tenants point at `shared-postgres-02`,
+/// which is what keeps connection counts bounded (§22). Everything physical
+/// (connector, connection, pool, region, placement) belongs to the DataSource,
+/// never to the tenants bound to it.
+///
+/// # This is the only identifier a DataSource has
+///
+/// There is deliberately no second "DataSource name" concept. One configured
+/// resource, one canonical id.
+///
+/// # Applications never see this
+///
+/// Not the type, not the value. A `DataSourceId` reaching an application would
+/// leak exactly the placement detail §2 and §26 keep behind the Data API, so it
+/// appears in internal telemetry only.
 ///
 /// # Examples
 ///

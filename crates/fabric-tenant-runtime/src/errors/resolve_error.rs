@@ -1,6 +1,6 @@
 //! Why a tenant's runtime resources could not be resolved.
 
-use fabric_core::{DataSourceId, DataSourceName, TenantId};
+use fabric_core::{DataSourceId, LogicalDataSourceName, TenantId};
 
 /// A failure somewhere along the tenant → DataSource chain.
 ///
@@ -42,7 +42,7 @@ pub enum ResolveError {
         /// The tenant that was resolved.
         tenant: TenantId,
         /// The logical name that was missing.
-        logical: DataSourceName,
+        logical: LogicalDataSourceName,
     },
 
     /// The binding names a DataSource the runtime does not have.
@@ -54,7 +54,7 @@ pub enum ResolveError {
     #[error("logical data source {logical} is bound to unknown data source {data_source}")]
     MissingDataSource {
         /// The logical name that was being resolved.
-        logical: DataSourceName,
+        logical: LogicalDataSourceName,
         /// The DataSource the binding pointed at.
         data_source: DataSourceId,
     },

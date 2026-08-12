@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use fabric_core::{BindingRevision, DataSourceName};
+use fabric_core::{BindingRevision, LogicalDataSourceName};
 
 use crate::testing::{data_source, primary, read_only_data_source, tenant, tenant_binding};
 use crate::{DataSourceRegistry, ResolveError, RuntimeResolver, TenantRegistry};
@@ -126,7 +126,7 @@ fn an_unknown_tenant_is_rejected() {
 fn a_logical_name_the_tenant_never_declared_is_rejected_rather_than_falling_back() {
     // The tenant has exactly one binding. Asking for another must not quietly
     // return it — §28 forbids "the first available database".
-    let audit = DataSourceName::try_new("audit").unwrap();
+    let audit = LogicalDataSourceName::try_new("audit").unwrap();
 
     assert_eq!(
         healthy()

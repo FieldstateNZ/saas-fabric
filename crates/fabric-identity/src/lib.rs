@@ -32,15 +32,22 @@
 //!
 //! # Choosing a token reader
 //!
-//! [`TokenReader`] has two implementations, and the choice is a genuine
-//! security decision — see the type-level documentation on each:
+//! [`TrustedIngressReader`] is the canonical implementation and the default. It
+//! follows the architectural contract directly: the edge authenticates, the
+//! runtime consumes the result. It parses claims and checks expiry, and does
+//! not re-validate what the gateway has already validated.
 //!
-//! - [`TrustedIngressReader`] — decodes claims without verifying the signature.
-//!   This is the posture §9 describes, and it is only sound when the network
-//!   controls in §9 are actually in place.
-//! - [`ValidatingReader`] — verifies the signature against configured keys.
-//!   Recommended. It costs very little and it makes §11's guarantee hold even
-//!   if something inside the trust boundary is compromised.
+//! [`ValidatingReader`] adds signature verification for deployments that want
+//! **defence in depth** — a second layer over sound network policy, not a
+//! replacement for it. If an untrusted client can reach the runtime directly,
+//! that is a network policy failure and belongs to be fixed there; verifying
+//! signatures here would mask it while leaving every other unauthenticated path
+//! into the plane open.
+//!
+//! Neither reader performs issuer discovery, JWKS fetching, or anything else
+//! that would make this crate a partial identity provider. Even in
+//! defence-in-depth mode, keys arrive as a snapshot built outside the request
+//! path.
 
 mod bearer;
 mod claims;

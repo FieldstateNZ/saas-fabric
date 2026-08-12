@@ -3,6 +3,8 @@
 
 mod connection_selector;
 mod execution_target;
+#[cfg(test)]
+mod execution_target_tests;
 mod isolation_model;
 
 pub use connection_selector::ConnectionSelector;

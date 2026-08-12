@@ -6,12 +6,24 @@ Answers one question: **which tenant does this request represent?**
 
 It is not authentication. Authentication happens at the platform edge, in the
 gateway, against whichever identity provider the deployment uses. By the time a
-request reaches the runtime plane it has already been authenticated
-(specification §8, §9).
+request reaches the runtime plane it has already been authenticated (§8, §9).
 
-This crate reads an *already-established* identity. Specification §12 is
-explicit that parsing claims out of a token does not make a component
-responsible for authentication.
+This crate reads an *already-established* identity. §12 is explicit that parsing
+claims out of a token does not make a component responsible for authentication.
+
+## The architectural contract
+
+```
+internet
+   → Envoy / gateway authenticates the caller and validates the bearer
+   → ────────── platform trust boundary ──────────
+   → SaaS Fabric consumes the established identity
+   → tenant_id is read from the bearer token
+```
+
+SaaS Fabric is **authentication-agnostic**. The identity implementation can be
+Keycloak, Entra ID, Auth0, a customer's own broker, or an OIDC broker in front
+of several, and nothing in the runtime plane changes (§24).
 
 ## The flow
 
@@ -31,43 +43,59 @@ Step 1 is first on purpose. A caller sending `X-Tenant-Id: globex` with a token
 saying `acme` should be told it is wrong, not handed `acme` data and left
 believing the header worked.
 
-## Choosing a token reader — read this before deploying
+## Token readers
 
-`TokenReader` has two implementations and the choice is a real security
-decision.
-
-| Reader | Verifies signature | Use when |
+| Reader | Verifies signature | Role |
 |---|---|---|
-| `ValidatingReader` | Yes | **Recommended.** Always, unless you have a specific reason not to. |
-| `TrustedIngressReader` | No | The §9 posture: you are relying entirely on network controls to keep untrusted callers away from the runtime. |
+| `TrustedIngressReader` | No | **The default and the canonical architecture.** |
+| `ValidatingReader` | Yes | Optional defence in depth. |
 
-### Why the default recommendation is to verify
+### Trusted ingress is the normal posture
 
-§11 bans the `X-Tenant-Id` header so a caller cannot pick its own tenant. That
-guarantee only holds if the token is trustworthy. If the runtime merely *decodes*
-a token without checking its signature, then anything that can reach a runtime
-pod — a server-side request forgery in a business application, a compromised
-sidecar, lateral movement inside the mesh — can mint `{"tenant_id":"globex"}`
-and be believed.
+The gateway has already validated the token. Re-validating in the runtime
+repeats work the edge exists to do, and pulls identity-provider concerns —
+issuer discovery, JWKS lifecycle, realm knowledge — into a plane that §24
+requires to stay independent of any identity implementation.
 
-An unverified token is exactly as caller-controlled as the banned header. It
-just looks official.
+`TrustedIngressReader` parses claims and checks expiry. That is the whole job.
 
-Verification costs a public-key operation against keys already in memory. No
-network call, no identity-provider coupling — it needs a JWKS document, not a
-vendor (§24).
+The posture depends on the other half of §9: protected runtime APIs must not be
+reachable through an untrusted path, enforced with `NetworkPolicy`, private
+cluster networking, service mesh policy, mTLS, or ingress-only exposure.
 
-`TrustedIngressReader` still rejects expired tokens, because that costs one
-comparison.
+**If an untrusted client can reach the runtime directly, that is a network
+policy failure, and it belongs to be fixed there.** Verifying signatures inside
+the runtime would mask the failure while leaving every other unauthenticated
+path into the plane wide open. Independent OIDC validation is not the
+architectural answer to a missing boundary.
+
+### When to add `ValidatingReader`
+
+As a *second layer over* sound network policy — not instead of it. Reasonable
+cases: a regulated environment where an auditor expects verification at more
+than one hop, or a migration period where the ingress guarantee is not yet
+fully trusted.
+
+Even then the runtime takes on no identity-provider lifecycle. Keys come from a
+JWKS document read once at startup; there is no discovery and no fetching.
+Rotation means building a new `VerificationKeys` and swapping the reader.
 
 ## Getting started
+
+The default posture needs no key material:
+
+```rust,ignore
+let reader = Arc::new(TrustedIngressReader::new(SystemClock::shared()));
+let resolver = build_identity(IdentityConfig::default(), reader)?;
+```
+
+Defence in depth, where a deployment wants it:
 
 ```rust,ignore
 let keys = VerificationKeys::from_jwks_json(&jwks_document)?;
 let reader = Arc::new(
     ValidatingReader::new(keys).with_issuers(&["https://id.example.com".to_owned()]),
 );
-
 let resolver = build_identity(IdentityConfig::default(), reader)?;
 ```
 
@@ -87,17 +115,16 @@ Because it is an extractor, a handler cannot run without a resolved tenant.
 
 - **The crate is `fabric-identity`; the log filter target is `fabric_identity`.**
   `RUST_LOG=info,fabric_identity=debug`.
-- **`TenantIdentity` has no setter for `tenant`.** That is deliberate — §11
-  requires one authoritative source. Authorization code may read `roles` and
-  `scopes`, but per §23 nothing it decides can change the tenant.
+- **`TenantIdentity` has no setter for `tenant`.** §11 requires one
+  authoritative source. Authorization may read `roles` and `scopes`, but per §23
+  nothing it decides can change the tenant.
 - **A non-string `tenant_id` claim reads as absent**, not coerced. A token with
   `"tenant_id": 42` is a misconfigured provider and should fail loudly.
 - **The rejected tenant value is never logged.** It is attacker-controlled;
   writing it into the log stream invites log injection and pollutes
   tenant-filtered queries.
-- **`VerificationKeys` is a snapshot.** On key rotation, build a new one and
-  swap the reader. Do not add a JWKS fetch to the request path — that is the
-  same mistake as putting Git in the request path (§6).
+- **Expiry is checked in both postures.** Replaying a captured expired token is
+  cheap and refusing it costs one comparison.
 - **With several keys configured and a token carrying no `kid`, verification
   fails.** Trying each key in turn would convert a misconfigured provider into a
   silent accept.

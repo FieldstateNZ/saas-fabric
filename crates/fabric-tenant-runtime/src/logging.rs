@@ -1,115 +1,108 @@
-//! Structured log events for the tenant runtime.
+//! Structured log events for the runtime plane.
+//!
+//! The registry lifecycle is generic over the resource type, so these helpers
+//! are too: `T::KIND` supplies the `resource_kind` field, which is what lets a
+//! single set of events cover both tenant bindings and data sources without
+//! either losing its identity in the logs.
 
-use fabric_core::{event_id, BindingRevision, EventType, TenantId};
+use fabric_core::{event_id, BindingRevision, EventType};
 
-use crate::{ApplyReport, DOMAIN_ID};
+use crate::resource::{ApplyReport, RegistryResource};
+use crate::DOMAIN_ID;
 
-/// A request arrived before the registry had loaded anything.
-///
-/// Warning rather than error: it is expected briefly during a cold start. A
-/// sustained stream of these means the binding source is not reachable and the
-/// process should not be in the load balancer.
-pub(crate) fn resolve_before_prime(tenant: &TenantId) {
-    tracing::warn!(
-        event = "tenant_runtime.resolve_before_prime",
-        event_id = event_id(DOMAIN_ID, EventType::Warning, 1),
-        tenant_id = %tenant,
-        "tenant resolution attempted before the registry was primed; returning service unavailable"
-    );
-}
-
-/// A request named a tenant the registry does not hold.
-pub(crate) fn unknown_tenant(tenant: &TenantId) {
-    tracing::warn!(
-        event = "tenant_runtime.unknown_tenant",
-        event_id = event_id(DOMAIN_ID, EventType::Warning, 2),
-        tenant_id = %tenant,
-        "no runtime binding for tenant; rejecting"
-    );
-}
-
-/// An incoming binding was older than the one already held.
+/// An incoming resource was older than the one already held.
 ///
 /// Worth noticing: it usually means two sources are publishing, or one is
 /// reading a replica that has fallen behind.
-pub(crate) fn stale_binding_ignored(tenant: &TenantId, incoming: BindingRevision, held: BindingRevision) {
+pub(crate) fn stale_resource_ignored<T: RegistryResource>(
+    key: &T::Key,
+    incoming: BindingRevision,
+    held: BindingRevision,
+) {
     tracing::warn!(
-        event = "tenant_runtime.stale_binding_ignored",
+        event = "runtime.stale_resource_ignored",
         event_id = event_id(DOMAIN_ID, EventType::Warning, 3),
-        tenant_id = %tenant,
+        resource_kind = T::KIND,
+        resource_key = %key,
         incoming_revision = incoming.get(),
         held_revision = held.get(),
-        "ignoring a binding older than the one held"
+        "ignoring a resource older than the one held"
     );
 }
 
 /// A new snapshot was installed.
-pub(crate) fn snapshot_applied(tenant_count: usize, report: &ApplyReport) {
+pub(crate) fn snapshot_applied<T: RegistryResource>(count: usize, report: &ApplyReport) {
     if report.is_noop() {
         tracing::debug!(
-            event = "tenant_runtime.snapshot_unchanged",
+            event = "runtime.snapshot_unchanged",
             event_id = event_id(DOMAIN_ID, EventType::Debug, 1),
-            tenant_count,
-            "refresh produced no binding changes"
+            resource_kind = T::KIND,
+            count,
+            "refresh produced no changes"
         );
         return;
     }
 
     tracing::info!(
-        event = "tenant_runtime.snapshot_applied",
+        event = "runtime.snapshot_applied",
         event_id = event_id(DOMAIN_ID, EventType::Success, 1),
-        tenant_count,
+        resource_kind = T::KIND,
+        count,
         added = report.added,
         updated = report.updated,
         removed = report.removed,
         stale_ignored = report.stale_ignored,
-        "installed a new tenant binding snapshot"
+        "installed a new snapshot"
     );
 }
 
-/// The registry loaded bindings for the first time.
-pub(crate) fn primed(source: &str, tenant_count: usize) {
+/// A registry loaded for the first time.
+pub(crate) fn primed<T: RegistryResource>(source: &str, count: usize) {
     tracing::info!(
-        event = "tenant_runtime.primed",
+        event = "runtime.primed",
         event_id = event_id(DOMAIN_ID, EventType::Success, 2),
+        resource_kind = T::KIND,
         source,
-        tenant_count,
-        "tenant runtime primed and ready to serve"
+        count,
+        "registry primed"
     );
 }
 
 /// A refresh failed.
 ///
 /// Error rather than warning, and deliberately explicit that the previous
-/// snapshot is still serving — the single most useful thing for whoever reads
-/// this at three in the morning.
-pub(crate) fn refresh_failed(source: &str, error: &dyn std::error::Error) {
+/// snapshot is still serving — the most useful thing for whoever reads this at
+/// three in the morning.
+pub(crate) fn refresh_failed<T: RegistryResource>(source: &str, error: &dyn std::error::Error) {
     tracing::error!(
-        event = "tenant_runtime.refresh_failed",
+        event = "runtime.refresh_failed",
         event_id = event_id(DOMAIN_ID, EventType::Error, 1),
+        resource_kind = T::KIND,
         source,
         reason = %error,
-        "failed to refresh tenant bindings; continuing to serve the last good snapshot"
+        "refresh failed; continuing to serve the last good snapshot"
     );
 }
 
-/// The background refresher started.
-pub(crate) fn refresher_started(source: &str, interval_seconds: u64) {
+/// A background refresher started.
+pub(crate) fn refresher_started<T: RegistryResource>(source: &str, interval_seconds: u64) {
     tracing::info!(
-        event = "tenant_runtime.refresher_started",
+        event = "runtime.refresher_started",
         event_id = event_id(DOMAIN_ID, EventType::Success, 3),
+        resource_kind = T::KIND,
         source,
         interval_seconds,
-        "tenant binding refresher started"
+        "refresher started"
     );
 }
 
-/// The background refresher stopped.
-pub(crate) fn refresher_stopped(source: &str) {
+/// A background refresher stopped.
+pub(crate) fn refresher_stopped<T: RegistryResource>(source: &str) {
     tracing::info!(
-        event = "tenant_runtime.refresher_stopped",
+        event = "runtime.refresher_stopped",
         event_id = event_id(DOMAIN_ID, EventType::Success, 4),
+        resource_kind = T::KIND,
         source,
-        "tenant binding refresher stopped"
+        "refresher stopped"
     );
 }

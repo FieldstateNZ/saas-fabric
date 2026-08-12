@@ -8,9 +8,15 @@
 
 listen = "0.0.0.0:8080"
 
-# Files that reconciliation writes and the runtime reads. Neither is queried
-# during request handling — see specification §6.
-bindings_path = "examples/bindings.json"
+# Files that reconciliation writes and the runtime reads. None is queried during
+# request handling — see specification §6.
+#
+# Tenant bindings and DataSources are separate files because they are separate
+# resources with separate lifecycles. A DataSource is shared by many tenants:
+# resizing its pool or correcting its connection rewrites one record here and
+# leaves every tenant binding — and every tenant revision — untouched.
+tenants_path = "examples/tenants.json"
+data_sources_path = "examples/data-sources.json"
 catalog_path = "examples/catalog.json"
 
 [identity]
@@ -26,23 +32,28 @@ roles_claim = "roles"
 reject_tenant_header = true
 
 [token]
-# RECOMMENDED. Verify bearer signatures against a JWKS document.
+# The canonical posture (§8, §9). The gateway authenticates the caller and
+# validates the bearer token; the runtime consumes the identity it established
+# and reads tenant_id from the token. SaaS Fabric is authentication-agnostic.
 #
-# §9 permits trusting the ingress, but §11's guarantee — that a caller cannot
-# choose its own tenant — only holds if the token itself is trustworthy inside
-# the trust boundary. Verification costs microseconds and closes the gap.
-mode = "validating"
-jwks_path = "/etc/fabric/jwks.json"
-issuers = ["https://id.example.com/realms/platform"]
-audiences = ["saas-fabric"]
+# This depends on the other half of §9: protected runtime APIs must not be
+# reachable through an untrusted path. Enforce that with NetworkPolicy, private
+# cluster networking, service mesh policy, mTLS, or ingress-only exposure.
+mode = "trusted_ingress"
 
-# The alternative, for a deployment relying entirely on network controls:
+# Optional defence in depth — a second layer over sound network policy, not a
+# replacement for it. Use where an environment genuinely expects verification at
+# more than one hop:
 #
 #   [token]
-#   mode = "trusted_ingress"
+#   mode = "validating"
+#   jwks_path = "/etc/fabric/jwks.json"
+#   issuers = ["https://id.example.com/realms/platform"]
+#   audiences = ["saas-fabric"]
 #
-# It logs a warning on every start, because it is only sound while the
-# NetworkPolicy / mesh policy / mTLS controls §9 also requires are in place.
+# Even then the runtime performs no issuer discovery and no JWKS fetching: the
+# document is read once at startup, so identity-provider lifecycle stays with
+# the identity provider (§24).
 
 [tenant_runtime]
 # The safety net, not the primary propagation mechanism. A reconciler that knows

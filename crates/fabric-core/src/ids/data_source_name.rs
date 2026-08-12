@@ -10,8 +10,12 @@ use crate::IdentifierError;
 /// This is intent, not infrastructure. The same `primary` resolves to a
 /// dedicated Azure SQL database for one tenant and a schema on a shared
 /// PostgreSQL cluster for another; the application contract does not change.
-/// The physical side of that mapping lives in the tenant's runtime binding and
-/// is never exposed through this type.
+///
+/// A tenant's runtime binding maps this logical name onto a
+/// [`DataSourceId`](crate::DataSourceId) — the DataSource resource that
+/// actually owns the connector, connection, and placement. Keep the two
+/// straight: this type is what an application's catalogue entry refers to, and
+/// `DataSourceId` is what the platform resolves it to.
 ///
 /// # Examples
 ///

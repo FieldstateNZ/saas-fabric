@@ -1,6 +1,6 @@
 //! The fully resolved physical destination for one operation.
 
-use fabric_core::{BindingRevision, TenantId};
+use fabric_core::{BindingRevision, DataSourceId, TenantId};
 
 use crate::{ConnectionSelector, ConnectorId, IsolationModel};
 
@@ -12,18 +12,23 @@ use crate::{ConnectionSelector, ConnectorId, IsolationModel};
 /// chain the platform owns:
 ///
 /// ```text
-/// bearer token → tenant_id → TenantRuntimeBinding → logical data source
-///              → ExecutionTarget → connector
+/// bearer token → tenant_id → tenant binding → DataSource → ExecutionTarget
 /// ```
+///
+/// Note that it takes both halves of that chain. The DataSource supplies the
+/// connector and the connection; the tenant binding supplies the isolation.
+/// Neither is sufficient alone, which is why a target can only be built by the
+/// runtime resolver and never by a caller.
 ///
 /// It is carried separately from the operation itself
 /// ([`QuerySpec`](crate::QuerySpec)) on purpose: the operation describes *what*
-/// the caller asked for and could in principle be logged verbatim, while this
-/// describes *where* it goes and is internal (§29).
+/// the caller asked for, while this describes *where* it goes and is internal
+/// (§29).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExecutionTarget {
     tenant: TenantId,
     revision: BindingRevision,
+    data_source: DataSourceId,
     connector: ConnectorId,
     connection: ConnectionSelector,
     isolation: IsolationModel,
@@ -35,6 +40,7 @@ impl ExecutionTarget {
     pub const fn new(
         tenant: TenantId,
         revision: BindingRevision,
+        data_source: DataSourceId,
         connector: ConnectorId,
         connection: ConnectionSelector,
         isolation: IsolationModel,
@@ -42,6 +48,7 @@ impl ExecutionTarget {
         Self {
             tenant,
             revision,
+            data_source,
             connector,
             connection,
             isolation,
@@ -54,13 +61,19 @@ impl ExecutionTarget {
         &self.tenant
     }
 
-    /// The binding revision this target was resolved from.
+    /// The tenant binding revision this target was resolved from.
     ///
-    /// Emitted in telemetry (§29) and used to detect that a target was resolved
-    /// from a binding that has since been replaced.
+    /// Emitted in telemetry (§29) and used to detect a target resolved from a
+    /// binding that has since been replaced.
     #[must_use]
     pub const fn revision(&self) -> BindingRevision {
         self.revision
+    }
+
+    /// The DataSource this operation runs against.
+    #[must_use]
+    pub const fn data_source(&self) -> &DataSourceId {
+        &self.data_source
     }
 
     /// Which connector executes the operation.
@@ -83,67 +96,18 @@ impl ExecutionTarget {
 
     /// An opaque identifier for the physical resource, for internal telemetry.
     ///
-    /// Specification §29 lists `physical_resource_identifier` as a telemetry
-    /// field and requires that it normally stay inside platform telemetry.
-    /// Nothing sensitive is included — connector id, connection *label*, and
+    /// §29 lists `physical_resource_identifier` as a telemetry field and
+    /// requires that it normally stay inside platform telemetry. Nothing
+    /// sensitive is included — DataSource, connector, connection *label*, and
     /// isolation model, never a credential.
     #[must_use]
     pub fn physical_resource_identifier(&self) -> String {
         format!(
-            "{}/{}/{}",
+            "{}/{}/{}/{}",
+            self.data_source,
             self.connector,
             self.connection.telemetry_label(),
             self.isolation.telemetry_label()
         )
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::{ConnectionName, SchemaName, SecretRef};
-
-    fn target(connection: ConnectionSelector, isolation: IsolationModel) -> ExecutionTarget {
-        ExecutionTarget::new(
-            TenantId::try_new("acme").unwrap(),
-            BindingRevision::new(42),
-            ConnectorId::try_new("postgres-au-east").unwrap(),
-            connection,
-            isolation,
-        )
-    }
-
-    #[test]
-    fn the_physical_identifier_describes_the_placement() {
-        let target = target(
-            ConnectionSelector::Named {
-                name: ConnectionName::try_new("shared-02").unwrap(),
-            },
-            IsolationModel::Schema {
-                schema: SchemaName::try_new("acme").unwrap(),
-            },
-        );
-
-        assert_eq!(
-            target.physical_resource_identifier(),
-            "postgres-au-east/named:shared-02/schema"
-        );
-    }
-
-    #[test]
-    fn the_physical_identifier_never_contains_a_credential() {
-        let target = target(
-            ConnectionSelector::Secret {
-                reference: SecretRef::new("tenant/acme/data-primary"),
-            },
-            IsolationModel::Database,
-        );
-
-        let identifier = target.physical_resource_identifier();
-
-        // The reference is a path and is safe; there is no resolved value here
-        // at all, because a target holds a selector, never a secret.
-        assert!(identifier.contains("tenant/acme/data-primary"));
-        assert!(!identifier.contains("password"));
     }
 }

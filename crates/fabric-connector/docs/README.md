@@ -31,7 +31,7 @@ to state and easy to break by accident.
 | `QuerySpec` / `MutationSpec` | Neutral operation model. |
 | `Filter` / `ComparisonOperator` | Neutral predicate AST. |
 | `SortField` / `Row` | Ordering and records. |
-| `ExecutionTarget` | Where a tenant's data physically lives. |
+| `ExecutionTarget` | Where a tenant's data physically lives. Built only by the runtime resolver, from both a DataSource and a tenant binding. |
 | `IsolationModel` | Dedicated database, per-tenant schema, or discriminator (§18). |
 | `ConnectionSelector` | Which connection within a connector. |
 | `ConnectorCapabilities` | What a backend can actually do. |
@@ -84,6 +84,8 @@ nothing logged. §28 requires failing closed.
   `.expose()`, which is greppable.
 - `ExecutionTarget` holds a `ConnectionSelector`, never a resolved credential.
   Resolution happens in the connector implementation, as late as possible.
+- `ExecutionTarget` carries a `DataSourceId` for telemetry (§29). It never
+  reaches an application — see ADR 0003.
 - `QueryOutcome::total_count` of `None` means "not counted", **not** zero.
   Counting is expensive and connectors may decline.
 - `for_target` does *not* rewrite the collection name to add a schema.

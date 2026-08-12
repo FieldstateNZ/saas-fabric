@@ -7,6 +7,8 @@
 
 mod comparison_operator;
 mod filter_expression;
+#[cfg(test)]
+mod filter_expression_tests;
 
 pub use comparison_operator::ComparisonOperator;
 pub use filter_expression::Filter;

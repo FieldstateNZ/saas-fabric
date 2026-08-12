@@ -10,6 +10,9 @@
 mod capabilities;
 mod expression;
 mod mutation;
+#[cfg(test)]
+mod mutation_tests;
+mod procedure_arguments;
 mod query;
 mod response;
 

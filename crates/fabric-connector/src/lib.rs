@@ -40,6 +40,8 @@
 //! cross-tenant data leak waiting to happen, so this path fails closed (§28).
 
 mod capabilities;
+#[cfg(test)]
+mod capabilities_tests;
 mod connector;
 mod errors;
 mod execution;
@@ -52,6 +54,8 @@ mod registry;
 mod row;
 mod schema;
 mod secret;
+#[cfg(test)]
+mod testing;
 
 pub use capabilities::ConnectorCapabilities;
 pub use connector::DataConnector;

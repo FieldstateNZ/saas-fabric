@@ -8,8 +8,12 @@ workspace crate depends on it.
 - `TenantId` — newtype over `String`. `try_new` enforces DNS-label rules:
   1..=63 bytes, `[a-z0-9-]`, must start and end alphanumeric. Serde uses
   `try_from = "String"` so deserialisation validates too. `Ord + Hash`.
-- `DataSourceName` — newtype over `String`. Identifier rules: 1..=63 bytes,
-  `[A-Za-z0-9_-]`, must start with an ASCII letter. Mixed case allowed.
+- `DataSourceName` — the **logical** name an application's resource is bound
+  to (`primary`, `audit`). Identifier rules: 1..=63 bytes, `[A-Za-z0-9_-]`,
+  must start with an ASCII letter.
+- `DataSourceId` — the **DataSource resource** that logical name resolves to
+  (`sql-au-east-03`). Same rules. **Do not confuse the two**: one is intent,
+  the other is a configured physical destination (ADR 0003).
 - `LogicalResourceName` — same rules as `DataSourceName`. Separate type so the
   compiler stops you passing a resource where a data source belongs.
 - `BindingRevision` — newtype over `u64`. `ZERO`, `new`, `get`, `next`

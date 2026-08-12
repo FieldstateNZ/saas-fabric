@@ -51,6 +51,21 @@ pub(crate) fn operation_forbidden(resource: &str, operation: &str, subject: &str
     );
 }
 
+/// A write was refused because the DataSource does not accept writes.
+///
+/// The DataSource label is logged — it is the thing an operator needs — and
+/// never returned to the caller, who is told only that the resource is
+/// read-only (§2, §29).
+pub(crate) fn write_refused_by_data_source(resource: &LogicalResourceName, data_source: &str) {
+    tracing::warn!(
+        event = "data_api.write_refused_by_data_source",
+        event_id = event_id(DOMAIN_ID, EventType::Warning, 2),
+        logical_resource = %resource,
+        data_source,
+        "refusing a write: this data source is not writable"
+    );
+}
+
 /// A request failed with a server error.
 ///
 /// The single place every 5xx is recorded with its internal detail — the

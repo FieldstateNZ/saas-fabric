@@ -28,12 +28,16 @@ Wire types are hand-written in `src/wire/` from the published spec.
 ## Internal modules
 
 - `wire/` — `query.rs`, `expression.rs`, `mutation.rs`, `response.rs`,
-  `negotiation.rs`. All `pub(crate)`. Field names mirror NDC exactly.
-- `translate/` — `query.rs`, `expression.rs`, `mutation.rs`, `response.rs`,
-  `capabilities.rs`.
+  `capabilities.rs`, `schema.rs`, `ndc_type.rs`. All `pub(crate)`. Field names
+  mirror NDC exactly.
+- `translate/` — `query.rs`, `expression.rs`, `mutation.rs`,
+  `procedure_arguments.rs`, `response.rs`, `capabilities.rs`.
+- `schema_index/` — `schema_index_type.rs`, `semantic_operator.rs`,
+  `operator_index.rs`, `collection_index.rs`.
+- `config/` — `connector_config.rs`, `procedures.rs`.
+- `client/` — `http_client.rs`, `error_mapping.rs`.
 - `routing.rs` — `request_arguments(config, selector, secrets)`.
-- `client.rs` — `NdcHttpClient`: `get`, `post`, `health`, error mapping.
-- `schema_index.rs`, `config.rs`, `connector.rs`, `logging.rs`, `registration.rs`.
+- `connector.rs`, `logging.rs`, `registration.rs`.
 
 ## Protocol facts worth remembering
 

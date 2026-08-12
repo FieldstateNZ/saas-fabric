@@ -150,6 +150,13 @@ placing the assembled string in a tracing field).
   preventing `replicas × tenants` connection growth — still holds, and holds
   better: pools live in a small number of connector processes rather than in
   every application replica. The mechanism is just no longer ours to write.
+
+  Since [ADR 0003](0003-data-sources-are-first-class-resources.md), the intended
+  sizing is at least *declared* somewhere the platform can see it:
+  `DataSource.pool` states what a given database's pool should be, and
+  reconciliation applies it to the connector. That does not move the mechanism
+  back into this process, but it does mean a reviewer asking "does §22 hold for
+  `shared-postgres-02`?" has one object to look at.
 - **We own our wire types.** They can drift from the specification. Mitigated by
   pinning to 0.2.13, asserting the negotiated version against
   `/capabilities` at startup, and keeping the implemented subset small.

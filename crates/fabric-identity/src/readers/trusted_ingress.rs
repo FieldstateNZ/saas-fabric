@@ -1,59 +1,68 @@
-//! A reader that trusts the ingress and does not verify signatures.
+//! The canonical reader: consume the identity the ingress already established.
 
 use std::sync::Arc;
 
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use base64::Engine as _;
 use fabric_core::Clock;
-use serde_json::{Map, Value};
 
+use crate::readers::expiry::ensure_not_expired;
+use crate::readers::jwt_payload::decode_payload;
 use crate::{IdentityError, TokenClaims, TokenReader};
 
-/// Decodes token claims **without verifying the signature**.
+/// Reads the claims of a bearer token the platform edge has already validated.
 ///
-/// # When this is correct
+/// # This is the normal posture
 ///
-/// This is the posture specification §9 describes: a request that reaches the
-/// runtime has already passed through a trusted ingress that authenticated the
-/// caller and validated the token, so re-validating is redundant work.
+/// It follows the architectural contract directly (§8, §9):
 ///
-/// That reasoning holds **only** while §9's other requirement holds — that
-/// protected runtime APIs cannot be reached through an untrusted path, enforced
-/// by `NetworkPolicy`, mesh policy, mTLS, or equivalent. This reader is sound
-/// exactly as far as those controls are.
+/// ```text
+/// internet → gateway authenticates and validates the bearer
+///          → platform trust boundary
+///          → the runtime consumes an established identity
+/// ```
 ///
-/// # Why [`ValidatingReader`](crate::ValidatingReader) is the better default
+/// A request that reaches the runtime has already passed a trusted ingress.
+/// Re-validating the token here would re-do work the edge exists to do, and
+/// would pull identity-provider concerns — issuer discovery, JWKS lifecycle,
+/// realm knowledge — into a plane that §24 requires to stay independent of any
+/// identity implementation.
 ///
-/// §11 bans the `X-Tenant-Id` header so that a caller cannot choose its own
-/// tenant. An unverified token grants precisely the capability the header ban
-/// removes: anything that can reach a runtime pod — a server-side request
-/// forgery in a business application, a compromised sidecar, lateral movement
-/// inside the mesh — can mint `{"tenant_id":"globex"}` and be believed. An
-/// unverified token is as caller-controlled as a header; it just looks
-/// official.
+/// So this reader parses claims and nothing more. Per §12, parsing claims does
+/// not make a component responsible for authentication.
 ///
-/// Signature verification against keys already in memory costs microseconds and
-/// closes that path. It does not make the runtime responsible for
-/// authentication (§12 is explicit that parsing claims does not), and it does
-/// not couple the runtime to any identity provider (§24) — it needs a public
-/// key, not a vendor.
+/// # The boundary this depends on
+///
+/// The posture is sound because §9 also requires that protected runtime APIs
+/// cannot be reached through an untrusted path — `NetworkPolicy`, private
+/// cluster networking, service mesh policy, mTLS, or ingress-only exposure.
+///
+/// If an untrusted client can reach this service directly, that is a network
+/// policy failure, and the fix belongs there. Verifying signatures inside the
+/// runtime would mask the failure rather than repair it, and would leave every
+/// other unauthenticated path into the plane still open.
+///
+/// [`ValidatingReader`](crate::ValidatingReader) exists for deployments that
+/// want signature verification as **defence in depth** — a second layer over
+/// sound network policy, not a substitute for it.
 ///
 /// # What is still checked
 ///
-/// Expiry. A token past its `exp` is rejected even here, because replaying a
-/// captured expired token is cheap and refusing it costs one comparison.
+/// Expiry. Replaying a captured expired token is cheap and refusing it costs
+/// one comparison.
 pub struct TrustedIngressReader {
     clock: Arc<dyn Clock>,
     leeway_seconds: i64,
 }
 
 impl TrustedIngressReader {
-    /// Builds the reader with the default 60-second expiry leeway.
+    /// The default clock-skew allowance applied to `exp`.
+    const DEFAULT_LEEWAY_SECONDS: i64 = 60;
+
+    /// Builds the reader with the default expiry leeway.
     #[must_use]
     pub fn new(clock: Arc<dyn Clock>) -> Self {
         Self {
             clock,
-            leeway_seconds: 60,
+            leeway_seconds: Self::DEFAULT_LEEWAY_SECONDS,
         }
     }
 
@@ -63,76 +72,20 @@ impl TrustedIngressReader {
         self.leeway_seconds = leeway_seconds;
         self
     }
-
-    /// Splits a JWT and returns its payload segment.
-    ///
-    /// Requires exactly three segments. A two-segment value is not an
-    /// unsigned JWT we should tolerate — it is a malformed token.
-    fn payload_segment(token: &str) -> Result<&str, IdentityError> {
-        let mut segments = token.split('.');
-
-        match (segments.next(), segments.next(), segments.next(), segments.next()) {
-            (Some(_header), Some(payload), Some(_signature), None) if !payload.is_empty() => Ok(payload),
-            _ => Err(IdentityError::MalformedToken),
-        }
-    }
-
-    /// Rejects a token whose `exp` has passed, allowing for clock skew.
-    ///
-    /// A token with no `exp` is accepted: the specification does not require
-    /// one, and the ingress is the component responsible for policy about which
-    /// tokens are acceptable.
-    fn check_expiry(&self, claims: &TokenClaims) -> Result<(), IdentityError> {
-        let Some(expiry) = claims.unix_seconds("exp") else {
-            return Ok(());
-        };
-
-        let now = i64::try_from(self.clock.now_unix_seconds()).unwrap_or(i64::MAX);
-
-        if now.saturating_sub(self.leeway_seconds) > expiry {
-            return Err(IdentityError::ExpiredToken);
-        }
-
-        Ok(())
-    }
 }
 
 impl TokenReader for TrustedIngressReader {
     fn read(&self, token: &str) -> Result<TokenClaims, IdentityError> {
-        let payload = Self::payload_segment(token)?;
+        let claims = decode_payload(token)?;
 
-        let decoded = URL_SAFE_NO_PAD
-            .decode(payload)
-            .map_err(|_| IdentityError::MalformedToken)?;
-
-        let value: Value = serde_json::from_slice(&decoded).map_err(|_| IdentityError::MalformedToken)?;
-
-        let Value::Object(object) = value else {
-            return Err(IdentityError::MalformedToken);
-        };
-
-        let claims = TokenClaims::new(object);
-        self.check_expiry(&claims)?;
+        ensure_not_expired(&claims, self.clock.as_ref(), self.leeway_seconds)?;
 
         Ok(claims)
     }
 
     fn describe(&self) -> &'static str {
-        "trusted-ingress (signature NOT verified)"
+        "trusted-ingress"
     }
-}
-
-/// Builds an unsigned-but-well-formed JWT for tests elsewhere in the workspace.
-///
-/// Lives here rather than in a test module because the Data API integration
-/// tests need it too, and duplicating base64 assembly across crates is how the
-/// two copies drift apart.
-#[must_use]
-pub fn encode_unsigned_token(claims: &Map<String, Value>) -> String {
-    let header = URL_SAFE_NO_PAD.encode(br#"{"alg":"none","typ":"JWT"}"#);
-    let payload = URL_SAFE_NO_PAD.encode(serde_json::Value::Object(claims.clone()).to_string());
-
-    format!("{header}.{payload}.signature-not-verified")
 }
 
 #[cfg(test)]
@@ -140,9 +93,8 @@ mod tests {
     use std::time::Instant;
 
     use super::*;
+    use crate::readers::encode_unsigned_token;
 
-    /// A clock frozen at a chosen wall-clock second, so expiry tests do not
-    /// sleep and do not depend on when they run.
     struct FrozenClock(u64);
 
     impl Clock for FrozenClock {
@@ -164,41 +116,16 @@ mod tests {
     }
 
     #[test]
-    fn reads_the_tenant_claim_from_a_well_formed_token() {
+    fn reads_the_tenant_claim_from_an_established_identity() {
         let claims = reader_at(1_000).read(&token(r#"{"tenant_id":"acme"}"#)).unwrap();
+
         assert_eq!(claims.string("tenant_id"), Some("acme"));
-    }
-
-    #[test]
-    fn rejects_a_token_that_is_not_three_segments() {
-        assert_eq!(
-            reader_at(1_000).read("only.two").unwrap_err(),
-            IdentityError::MalformedToken
-        );
-    }
-
-    #[test]
-    fn rejects_a_payload_that_is_not_base64() {
-        assert_eq!(
-            reader_at(1_000)
-                .read("header.!!!not-base64!!!.signature")
-                .unwrap_err(),
-            IdentityError::MalformedToken
-        );
-    }
-
-    #[test]
-    fn rejects_a_payload_that_is_json_but_not_an_object() {
-        let payload = URL_SAFE_NO_PAD.encode("[1,2,3]");
-        assert_eq!(
-            reader_at(1_000).read(&format!("h.{payload}.s")).unwrap_err(),
-            IdentityError::MalformedToken
-        );
     }
 
     #[test]
     fn rejects_an_expired_token_even_though_it_does_not_verify_signatures() {
         let expired = token(r#"{"tenant_id":"acme","exp":1000}"#);
+
         assert_eq!(
             reader_at(5_000).read(&expired).unwrap_err(),
             IdentityError::ExpiredToken
@@ -206,13 +133,17 @@ mod tests {
     }
 
     #[test]
-    fn accepts_a_token_that_expired_within_the_leeway_window() {
-        let expired = token(r#"{"tenant_id":"acme","exp":1000}"#);
-        assert!(reader_at(1_030).read(&expired).is_ok());
+    fn rejects_a_malformed_token() {
+        assert_eq!(
+            reader_at(1_000).read("not-a-jwt").unwrap_err(),
+            IdentityError::MalformedToken
+        );
     }
 
     #[test]
-    fn accepts_a_token_with_no_expiry_claim() {
-        assert!(reader_at(5_000).read(&token(r#"{"tenant_id":"acme"}"#)).is_ok());
+    fn describes_itself_without_alarm() {
+        // Correctly-configured trusted ingress is the normal posture, so the
+        // description is neutral rather than a warning.
+        assert_eq!(reader_at(1_000).describe(), "trusted-ingress");
     }
 }

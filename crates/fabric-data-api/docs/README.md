@@ -20,12 +20,17 @@ model it is getting (§2, §26).
 
 ```
 POST /data/customers
-  → tenant_id from the bearer token        (fabric-identity, §10)
-  → runtime binding for that tenant        (fabric-tenant-runtime, §7)
-  → catalogue: customers → data source + collection   (§15)
-  → binding: data source → ExecutionTarget (§16, §17)
-  → connector executes                     (fabric-connector)
+  → tenant_id from the bearer token          (fabric-identity, §10)
+  → catalogue: customers → logical data source + collection   (§15)
+  → tenant binding: logical name → DataSource (fabric-tenant-runtime)
+  → DataSource: connector + connection        (ADR 0003)
+  → connector executes                        (fabric-connector)
 ```
+
+The middle two steps belong to `RuntimeResolver`, which this crate holds rather
+than reaching into registries itself. That keeps the tenant → DataSource walk in
+one place with one set of error mappings, and leaves this crate responsible for
+the two ends: what a logical resource means, and what a caller may do with it.
 
 Every arrow is an in-memory lookup. Nothing reads Git, queries Kubernetes, or
 opens a connection (§6).
@@ -81,10 +86,25 @@ their own tenant*.
 | `X-Tenant-Id` present | 400 | (§11) — rejected, not ignored |
 | Runtime not primed | 503 | retryable; **not** "unknown tenant" |
 | Unknown tenant | 403 | 404 would let callers enumerate tenants |
+| Tenant declared no such logical source | 500 | reconciliation gap; message is "internal error" |
+| Binding names a missing DataSource | 500 | reconciliation gap; the id never reaches the caller |
+| DataSource is read-only | 405 | placement, not catalogue — see below |
 | Uncatalogued resource | 404 | true regardless of tenant, so leaks nothing |
 | Operation not in catalogue | 405 | |
 | Scope refused | 403 | |
 | Connector rejected | 500 + generic message | its text names tables and servers |
+
+## Read-only DataSources
+
+`OperationNotAllowed` (405) says the *catalogue* does not expose this verb.
+`ResourceIsReadOnly` (405) says this *tenant's placement* does not — the same
+catalogue entry is writable for a tenant on a primary and read-only for one on a
+replica.
+
+The check happens in `prepare`, before the connector is called, and it is
+distinct from whether the connector supports mutations. Both are checked, and
+either saying no is a no (§28). The message says only "read-only": which
+DataSource, and why, stays internal.
 
 ## Gotchas
 

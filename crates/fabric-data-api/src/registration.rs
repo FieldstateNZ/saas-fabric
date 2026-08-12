@@ -5,31 +5,23 @@ use std::sync::Arc;
 use axum::Router;
 use fabric_connector::ConnectorRegistry;
 use fabric_identity::IdentityResolver;
-use fabric_tenant_runtime::TenantRuntimeRegistry;
+use fabric_tenant_runtime::RuntimeResolver;
 
 use crate::{data_routes, logging, DataApiConfig, DataApiService, ResourceCatalog, ResourcePermissions};
 
 /// Validates configuration, builds the service, and returns its router.
 ///
-/// # Startup validation
-///
-/// Every catalogue entry is checked against the connectors that were actually
-/// registered — not for the collection's existence, which is per-connector and
-/// per-tenant, but for the things that are knowable at boot. A catalogue
-/// pointing at a data source no tenant declares is a silent 500 waiting for its
-/// first request; catching what we can here moves those failures to deployment
-/// time.
-///
 /// # Errors
 ///
-/// Returns a message if configuration is invalid or the catalogue is empty. An
-/// empty catalogue means the Data API can serve nothing, which is almost
-/// certainly a mistake in how it was configured rather than an intention.
+/// Returns a message if configuration is invalid, the catalogue is empty, or no
+/// connectors are registered. All three mean the Data API can serve nothing,
+/// which is almost certainly a mistake in how it was configured rather than an
+/// intention — and finding out at startup beats finding out per request.
 pub fn build_data_api(
     config: &DataApiConfig,
     catalog: ResourceCatalog,
     permissions: ResourcePermissions,
-    tenants: Arc<TenantRuntimeRegistry>,
+    runtime: Arc<RuntimeResolver>,
     connectors: ConnectorRegistry,
     identity: Arc<IdentityResolver>,
 ) -> Result<Router, String> {
@@ -46,7 +38,7 @@ pub fn build_data_api(
     logging::data_api_ready(catalog.len(), connectors.len());
 
     let service = Arc::new(DataApiService::new(
-        tenants,
+        runtime,
         connectors,
         catalog,
         permissions,

@@ -6,11 +6,13 @@
 //! API interpolate a tenant's schema name into SQL without a second thought.
 
 mod binding_revision;
+mod data_source_id;
 mod data_source_name;
 mod logical_resource_name;
 pub(crate) mod slug;
 
 pub use binding_revision::BindingRevision;
+pub use data_source_id::DataSourceId;
 pub use data_source_name::DataSourceName;
 pub use logical_resource_name::LogicalResourceName;
 

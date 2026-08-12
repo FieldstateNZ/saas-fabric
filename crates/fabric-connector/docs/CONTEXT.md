@@ -11,8 +11,12 @@ The neutral data-execution boundary. Depends on `fabric-core`, `async-trait`,
   `capabilities()`/`schema()` return references — must be cached, no I/O per call.
 - `ConnectorRegistry` — `new()`, `with(Arc<dyn DataConnector>)`, `get(&ConnectorId)`,
   `all()`. Fixed at startup. `get` fails closed with `UnknownConnector`.
-- `ExecutionTarget::new(tenant, revision, connector, connection, isolation)` +
-  accessors + `physical_resource_identifier()` (telemetry, no secrets).
+- `ExecutionTarget::new(tenant, revision, data_source, connector, connection, isolation)`
+  + accessors + `physical_resource_identifier()` (telemetry, no secrets).
+  Six arguments because it is assembled from **both** halves of the resolution
+  chain: `data_source`/`connector`/`connection` from the DataSource,
+  `tenant`/`revision`/`isolation` from the tenant binding (ADR 0003). Only
+  `fabric_tenant_runtime::RuntimeResolver` builds one.
 - `IsolationModel` — `Database` | `Schema{schema}` | `Discriminator{column, value}`.
   `tenant_predicate() -> Option<Filter>`, `schema()`, `telemetry_label()`.
 - `ConnectionSelector` — `Default` | `Named{name}` | `Secret{reference}`.
@@ -27,6 +31,8 @@ The neutral data-execution boundary. Depends on `fabric-core`, `async-trait`,
   `referenced_operators()`.
 - `ComparisonOperator` — Equal, NotEqual, LessThan, LessThanOrEqual, GreaterThan,
   GreaterThanOrEqual, Contains (substring, not SQL LIKE).
+- Inline tests live in sibling `*_tests.rs` modules with a shared `testing.rs`
+  fixture, so the type files stay small.
 - `ConnectorCapabilities` — `filtering`, `ordering`, `paging`, `mutations`,
   `transactional_mutations`, `total_count`, `comparisons: BTreeSet<_>`.
   `baseline()`, `ensure_supports_query()`, `ensure_supports_mutation()`.

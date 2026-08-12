@@ -27,5 +27,5 @@ pub mod naming {
 
 pub use clock::{Clock, SystemClock};
 pub use identifier_error::IdentifierError;
-pub use ids::{BindingRevision, DataSourceName, LogicalResourceName, TenantId};
+pub use ids::{BindingRevision, DataSourceId, DataSourceName, LogicalResourceName, TenantId};
 pub use logging::{event_id, EventType};

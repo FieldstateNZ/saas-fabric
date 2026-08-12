@@ -1,35 +1,37 @@
-//! Configuration for the tenant runtime.
+//! Configuration for the runtime plane.
 
-/// How the runtime keeps its bindings current.
+/// How the runtime keeps its reconciled state current.
+///
+/// One setting pair for both registries. They have the same failure modes and
+/// the same staleness tolerance, and giving them separate knobs would invite a
+/// deployment where DataSources refresh every thirty seconds and tenants every
+/// hour — which produces exactly the window where a tenant binding references a
+/// DataSource the runtime has already forgotten.
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(deny_unknown_fields, default)]
-pub struct TenantRuntimeConfig {
-    /// How often the background refresher reloads bindings, in seconds.
+pub struct RuntimeConfig {
+    /// How often the background refreshers reload, in seconds.
     ///
-    /// This is a *safety net*, not the primary propagation mechanism. A
-    /// reconciler that knows a tenant changed should say so — through
-    /// [`TenantRuntimeRegistry::apply_one`](crate::TenantRuntimeRegistry::apply_one)
-    /// or by triggering an immediate refresh — rather than waiting for the next
-    /// poll. The interval bounds how stale things can get if that notification
-    /// is missed.
-    ///
-    /// Thirty seconds trades a little staleness for a lot of quiet: shorter
-    /// intervals mostly produce no-op refreshes.
+    /// A *safety net*, not the primary propagation mechanism. A reconciler that
+    /// knows something changed should say so — through `apply_one` or by
+    /// triggering an immediate refresh — rather than waiting for the next poll.
+    /// The interval bounds how stale things can get if that notification is
+    /// lost.
     pub refresh_interval_seconds: u64,
 
     /// Whether a failed initial load should stop the process.
     ///
     /// `true` (the default) is right for most deployments: a process that
-    /// cannot load any bindings can serve no tenant, and failing at startup
+    /// cannot load its state can serve no tenant, and failing at startup
     /// surfaces the problem where a deployment pipeline will catch it.
     ///
-    /// Setting it to `false` lets the process start unprimed and return 503
-    /// until a refresh succeeds. Useful where the binding source may legitimately
-    /// come up after the runtime.
+    /// `false` lets the process start unprimed and return 503 until a refresh
+    /// succeeds. Useful where a source may legitimately come up after the
+    /// runtime.
     pub fail_fast_on_prime: bool,
 }
 
-impl Default for TenantRuntimeConfig {
+impl Default for RuntimeConfig {
     fn default() -> Self {
         Self {
             refresh_interval_seconds: 30,
@@ -38,13 +40,13 @@ impl Default for TenantRuntimeConfig {
     }
 }
 
-impl TenantRuntimeConfig {
+impl RuntimeConfig {
     /// Checks the configuration before anything is built.
     ///
     /// # Errors
     ///
     /// Returns a message if the refresh interval is zero, which would spin the
-    /// refresher in a tight loop against the binding source.
+    /// refreshers in a tight loop against their sources.
     pub fn validate(&self) -> Result<(), String> {
         if self.refresh_interval_seconds == 0 {
             return Err("tenant_runtime.refresh_interval_seconds must be greater than zero".to_owned());
@@ -60,9 +62,9 @@ mod tests {
 
     #[test]
     fn a_zero_refresh_interval_is_rejected() {
-        let config = TenantRuntimeConfig {
+        let config = RuntimeConfig {
             refresh_interval_seconds: 0,
-            ..TenantRuntimeConfig::default()
+            ..RuntimeConfig::default()
         };
 
         assert!(config.validate().is_err());
@@ -70,6 +72,6 @@ mod tests {
 
     #[test]
     fn the_default_fails_fast_on_a_bad_prime() {
-        assert!(TenantRuntimeConfig::default().fail_fast_on_prime);
+        assert!(RuntimeConfig::default().fail_fast_on_prime);
     }
 }

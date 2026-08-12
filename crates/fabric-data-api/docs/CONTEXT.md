@@ -9,12 +9,15 @@ in this crate's public contract.
 ## Public surface
 
 - `build_data_api(&DataApiConfig, ResourceCatalog, ResourcePermissions,
-  Arc<TenantRuntimeRegistry>, ConnectorRegistry, Arc<IdentityResolver>) -> Result<Router, String>`.
+  Arc<RuntimeResolver>, ConnectorRegistry, Arc<IdentityResolver>) -> Result<Router, String>`.
 - `data_routes(DataApiState) -> Router`.
 - `DataApiState { service, identity }`; `FromRef<DataApiState> for Arc<IdentityResolver>`
   is what makes the `TenantIdentity` extractor work.
 - `DataApiService` — `list`, `read`, `create`, `update`, `delete`, `catalog()`,
-  `config()`. Private `prepare()` walks the resolution chain.
+  `config()`. Holds an `Arc<RuntimeResolver>`, not registries.
+  Split by responsibility across `execution/`: `data_api_service` (the struct),
+  `prepare` (catalogue → authorization → DataSource → connector),
+  `prepared`, `read_operations`, `write_operations`, `row_mapping`.
 - `ResourceCatalog` — `resolve()`, `names()`, `len()`. Deserialises from a JSON
   object keyed by resource name.
 - `ResourceDefinition { data_source, collection, key_field ("id"),
@@ -28,8 +31,9 @@ in this crate's public contract.
 - `ListResponse::from_outcome(&QueryOutcome, limit, offset)`, `PagingInfo`,
   `RowResponse`, `WriteResponse::from_outcome()`.
 - `DataApiError` — `Identity`, `Resolve`, `UnknownResource`, `OperationNotAllowed`,
-  `Forbidden`, `BadRequest`, `NotFound`, `Connector`. `status()`, `code()`,
-  private `public_message()`.
+  **`ResourceIsReadOnly`**, `Forbidden`, `BadRequest`, `NotFound`, `Connector`.
+  Split across `errors/`: `data_api_error` (the enum), `status_mapping`
+  (`status()`, `code()`), `response` (`public_message()`, `IntoResponse`).
 
 ## Routes
 
@@ -49,7 +53,9 @@ Mounted at `/data` by the composition root. axum 0.8 path syntax (`{key}`, not `
 |---|---|---|
 | `RuntimeUnavailable` | 503 | "the platform is starting up; retry shortly" |
 | `UnknownTenant` | 403 | "this tenant has no resources here" (no tenant echoed) |
-| `UnknownDataSource` | 500 | "internal error" |
+| `UnboundDataSource` | 500 | "internal error" |
+| `MissingDataSource` | 500 | "internal error" (the id never leaks) |
+| `ResourceIsReadOnly` | 405 | "…is read-only" (no placement detail) |
 | `UnknownResource` / `NotFound` | 404 | as written |
 | `OperationNotAllowed` | 405 | as written |
 | `Forbidden` | 403 | as written |
@@ -68,17 +74,27 @@ Mounted at `/data` by the composition root. axum 0.8 path syntax (`{key}`, not `
 4. **Connector error text never reaches a caller.** `is_internal()` decides;
    there is a test asserting a table name does not leak.
 5. **No unfiltered delete exists.** The route requires a key.
-6. **`queryable_fields` is checked for filters and sorts, not only projections.**
-7. **No NDC / protocol / SQL types in this crate.**
-8. Resources default to read-only.
+6. **`queryable_fields` is checked for filters, sorts, projections, and write
+   payloads** — `models::field_reference::parse` and `execution::row_mapping::to_row`.
+7. **Writes check `ResolvedDataSource::is_writable()` before dispatch.**
+8. **No NDC / protocol / SQL types in this crate.**
+9. Resources default to read-only.
 
 ## Testing
 
-`tests/data_api.rs` drives the assembled router with a `RecordingConnector`
-that captures the `ExecutionTarget` and spec it receives. 23 tests covering:
-tenant routing per placement, the discriminator predicate, insert stamping,
-header rejection, fail-closed paths, paging probe rows, and live migration via
-`apply_one`.
+Integration tests are split by concern, over a shared `tests/support/` module
+holding a `RecordingConnector` that captures the `ExecutionTarget` and spec it
+receives:
+
+| File | Covers |
+|---|---|
+| `tenant_routing.rs` | tenant → DataSource routing, telemetry, no leakage |
+| `tenant_isolation.rs` | discriminator predicate, insert/update stamping |
+| `identity_boundary.rs` | header ban, missing/invalid/expired tokens |
+| `failure_modes.rs` | unknown tenant, unprimed, missing DataSource, scopes |
+| `data_source_capabilities.rs` | read-only placement |
+| `querying.rs` | paging probe row, clamping, projection, sorting |
+| `data_source_lifecycle.rs` | migration, rebinding, stale updates, removal |
 
 Integration tests are their own crate, so `clippy.toml`'s
 `allow-unwrap-in-tests` does not reach them — the allowances are declared at the

@@ -1,0 +1,126 @@
+# cargo-deny configuration for SaaS Fabric.
+#
+# Enforces docs/architecture/dependency-policy.md: every dependency in this
+# workspace must carry an approved OSS licence, verified per crate and per
+# version, with Apache-2.0 preferred. Run with `cargo deny check`.
+#
+# Install: cargo install cargo-deny --locked
+
+[graph]
+# Only ever resolve for the targets this workspace actually builds for.
+targets = []
+all-features = false
+no-default-features = false
+
+[output]
+feature-depth = 1
+
+# ---------------------------------------------------------------------------
+# Licences
+# ---------------------------------------------------------------------------
+#
+# Deliberately no wildcard fallback. Every licence a dependency carries must
+# be named explicitly below, or the build fails — including the "no licence
+# detected at all" case. That is the rule that caught hasura/ndc-spec (see
+# docs/architecture/dependency-policy.md and ADR 0001): an ecosystem being
+# open source does not mean every crate in it is.
+[licenses]
+version = 2
+confidence-threshold = 0.8
+
+# This list is the set of licences actually present in the resolved graph —
+# not a set of licences pre-approved in principle. A licence nobody uses is
+# not listed, so adding one is always a deliberate edit a reviewer sees, and
+# `license-not-encountered` stays quiet rather than becoming background noise
+# a reviewer learns to scroll past.
+allow = [
+    # Preferred: this project's own licence, grants an explicit patent
+    # licence, compatible with everything else on this list.
+    "Apache-2.0",
+    # Common permissive licences used throughout the Rust ecosystem.
+    "MIT",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    # ICU4X (icu_* crates, transitively pulled in via idna/url) ship under
+    # this licence as of the versions in Cargo.lock.
+    "Unicode-3.0",
+]
+
+# --- Exceptions -------------------------------------------------------------
+#
+# Deliberately empty. Every dependency in the resolved graph satisfies the
+# allow list above on its own.
+#
+# It was not always empty. `reqwest`'s `rustls-tls` feature pulls in
+# `webpki-roots`, which carries CDLA-Permissive-2.0 — a Linux Foundation data
+# licence that is permissive but is not OSI-approved, and therefore exactly
+# the kind of thing the licensing constraint says may not be introduced
+# without an explicit decision. Rather than write that exception, the
+# dependency was removed: the workspace now uses `rustls-tls-native-roots`,
+# and ADR 0005 records why that is also the better operational answer.
+#
+# Per docs/architecture/dependency-policy.md, an exception is the last resort,
+# not the first response to a red build. Prefer, in order: drop the
+# dependency, swap the feature, swap the crate — and only then pin an
+# exception to one crate and one version with the reasoning beside it.
+exceptions = []
+
+# cargo-deny's `[licenses]` schema (version 2) has no `deny` list: anything
+# not named in `allow` above is already rejected, including licences it
+# cannot classify at all (the unlicensed case). Named here for the record,
+# so a reviewer sees the intent rather than inferring it from an empty
+# allow-list slot — these are exactly the licences this policy exists to
+# keep out: strong copyleft with network or field-of-use effects that cannot
+# combine with an Apache-2.0 platform (every AGPL variant, SSPL-1.0), and
+# source-available-but-not-open-source licences (BUSL-1.1). None of them may
+# be added to `allow` without a new ADR — see
+# docs/architecture/dependency-policy.md.
+#
+# One name worth disambiguating before someone greps for it and panics:
+# `ryu` resolves as "Apache-2.0 OR BSL-1.0". BSL-1.0 is the **Boost** Software
+# Licence — an OSI-approved permissive licence — not the Business Source
+# Licence, which is BUSL-1.1. The disjunction means Apache-2.0 is taken
+# regardless, so it never reaches the allow list either way.
+
+# ---------------------------------------------------------------------------
+# Bans
+# ---------------------------------------------------------------------------
+[bans]
+multiple-versions = "warn"
+# NOT "deny": this workspace's own crates depend on each other via
+# `<crate>.workspace = true` path dependencies with no version requirement,
+# which cargo-deny's wildcard check cannot distinguish from a genuine
+# unpinned `"*"` dependency on a registry crate. Denying here would fail on
+# every internal crate reference. The real protection against unpinned
+# external dependencies is `[workspace.dependencies]` in the root
+# `Cargo.toml` (every third-party version is pinned once there) plus
+# `Cargo.lock` being committed.
+wildcards = "allow"
+deny = []
+skip = []
+skip-tree = []
+
+# ---------------------------------------------------------------------------
+# Security advisories (RustSec)
+# ---------------------------------------------------------------------------
+[advisories]
+# db-path left at cargo-deny's default ($CARGO_HOME/advisory-dbs), named
+# explicitly here only so CI knows exactly what to cache (see
+# .github/workflows/ci.yml).
+db-urls = ["https://github.com/rustsec/advisory-db"]
+yanked = "deny"
+ignore = []
+
+# ---------------------------------------------------------------------------
+# Sources
+# ---------------------------------------------------------------------------
+# Every dependency must come from crates.io. A git or path dependency to an
+# external repository is the same unpublishable, mutable-tag risk that ADR
+# 0001 rejected `ndc-models` over even before its licence was considered —
+# so it is closed off here rather than left to reviewer vigilance.
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

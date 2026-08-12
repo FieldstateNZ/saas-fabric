@@ -65,6 +65,21 @@ refresh_interval_seconds = 30
 # tenant should fail where the deployment pipeline will catch it.
 fail_fast_on_prime = true
 
+# How often the background loop retries a connector that failed to negotiate
+# at startup (§35). A separate knob from [tenant_runtime]'s refresh interval
+# above: that one bounds staleness for two local file reads, this one bounds
+# how quickly a remote connector process coming back gets noticed.
+connector_retry_interval_seconds = 30
+
+# The overall Data API request budget — the outermost of three timeout
+# scopes (§36). Must never be shorter than the longest `http_timeout_seconds`
+# among [[connectors]] below, or that connector's own timeout could never
+# fire before this one cuts the request off first. The other two scopes: the
+# HTTP call to a connector (each connector's own `http_timeout_seconds`,
+# below) and database execution inside the connector (that process's own
+# configuration, invisible to SaaS Fabric).
+request_timeout_seconds = 30
+
 [data_api]
 default_limit = 50
 # A hard ceiling on how much work one request can ask a shared database for.
@@ -80,7 +95,12 @@ administrator_role = "platform-admin"
 [[connectors]]
 id = "postgres-au-east"
 endpoint = "http://ndc-postgres.data.svc.cluster.local:8080"
-timeout_seconds = 10
+# Two clocks, both bounding this host's HTTP call to the connector and
+# nothing beyond it. The connector's own database timeout is its
+# configuration, and the overall Data API request budget is the host's —
+# see the timeout-ownership table in the fabric-connector-ndc docs.
+http_timeout_seconds = 10
+http_connect_timeout_seconds = 5
 
 # Request-level argument names for per-tenant connection routing (NDC 0.2.4).
 # These match ndc-postgres dynamic connections; nothing in the specification

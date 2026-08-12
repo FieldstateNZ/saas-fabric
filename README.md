@@ -200,3 +200,20 @@ The runtime plane and Data API are implemented and tested. Not yet built:
 
 Apache-2.0. Dependencies are held to OSI-approved licences, verified per crate
 and per version — see ADR 0001 for how that is done and why it matters.
+
+## CI
+
+Every push and pull request runs `cargo fmt --all --check`,
+`cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`,
+`cargo deny check`, and a file-size check
+([`.github/workflows/ci.yml`](.github/workflows/ci.yml)). The latter two are
+policy, not just tooling defaults:
+
+- [`deny.toml`](deny.toml) mechanically enforces
+  [`docs/architecture/dependency-policy.md`](docs/architecture/dependency-policy.md) —
+  approved licences only, no unlicensed crates, no unexpected registries or
+  git sources.
+- [`scripts/check_file_sizes.py`](scripts/check_file_sizes.py) enforces
+  [`docs/architecture/file-size-policy.md`](docs/architecture/file-size-policy.md) —
+  production `.rs` files over 150 lines fail the build unless the script's
+  exemption list documents why.

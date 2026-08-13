@@ -23,12 +23,22 @@
 //!   revision guard is evaluated against a snapshot that is stale by the
 //!   time the store happens, which makes it no guard at all.
 //!
-//! Both assertions are one-sided: they can only fail on an implementation
-//! that actually loses a write. Neither can fail through timing alone on a
-//! correct one, because both are statements about the *final* state, taken
-//! after every writer has been joined.
+//! Every assertion here has to be one-sided: it may only fail on an
+//! implementation that actually loses a write, never through timing on a
+//! correct one. That is easy to get wrong, and this file got it wrong once.
+//! An earlier version compared each writer's observation against a shared
+//! high-water mark, but `lookup` and `fetch_max` are not atomic together —
+//! writer A could read 133, writer B raise the mark to 138, and A's
+//! `fetch_max(133)` then return 138, failing an assertion that nothing had
+//! gone backwards when nothing had. It failed roughly one run in forty under
+//! CPU saturation and never on an idle machine, which is the worst way for a
+//! test to be wrong.
+//!
+//! The fix is to compare only observations a *single task* made, in order. A
+//! monotonic value read twice by one thread must not decrease, and that needs
+//! no coordination with anyone else — so the assertion is sound by
+//! construction rather than by argument.
 
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use crate::resource::registry::test_resource::{registry, resource, TestResource};
@@ -84,16 +94,9 @@ async fn insert_own_keys(registry: Arc<ResourceRegistry<TestResource>>, writer: 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn concurrent_full_syncs_never_walk_the_held_revision_backwards() {
     let registry = Arc::new(registry());
-    let high_water = Arc::new(AtomicU64::new(0));
 
     let writers: Vec<_> = (1..=WRITER_COUNT)
-        .map(|writer| {
-            tokio::spawn(publish_rising_revisions(
-                Arc::clone(&registry),
-                Arc::clone(&high_water),
-                writer,
-            ))
-        })
+        .map(|writer| tokio::spawn(publish_rising_revisions(Arc::clone(&registry), writer)))
         .collect();
 
     for writer in writers {
@@ -114,27 +117,28 @@ async fn concurrent_full_syncs_never_walk_the_held_revision_backwards() {
 /// One writer's share of the revision test.
 ///
 /// Each writer publishes a rising sequence of revisions and, after every
-/// publish, checks what the registry now holds against the highest revision
-/// *any* writer has observed. Seeing something lower means the held revision
-/// decreased between the two observations, which the guard is supposed to
-/// make impossible.
-async fn publish_rising_revisions(
-    registry: Arc<ResourceRegistry<TestResource>>,
-    high_water: Arc<AtomicU64>,
-    writer: u64,
-) {
+/// publish, compares what the registry holds against what *this same task*
+/// last saw. Revisions only move forward (§20), so one task's successive
+/// observations must never decrease — and because both readings are this
+/// task's own, no interleaving by another writer can make the comparison
+/// spuriously fail. A writer that evaluated the guard against a stale
+/// snapshot is what makes it decrease for real.
+async fn publish_rising_revisions(registry: Arc<ResourceRegistry<TestResource>>, writer: u64) {
+    let mut last_seen = 0;
+
     for pass in 0..PASSES {
         registry.apply_all(vec![resource(CONTENDED_KEY, pass * WRITER_COUNT + writer)]);
 
         let observed = registry.lookup(&CONTENDED_KEY.to_owned()).unwrap().revision.get();
-        let previous = high_water.fetch_max(observed, Ordering::SeqCst);
 
         assert!(
-            observed >= previous,
-            "the held revision went backwards, from {previous} to {observed} — \
+            observed >= last_seen,
+            "the held revision went backwards, from {last_seen} to {observed} — \
              a writer evaluated the revision guard against a snapshot that was \
              already stale by the time it stored its own"
         );
+
+        last_seen = observed;
 
         if pass % 8 == 0 {
             tokio::task::yield_now().await;

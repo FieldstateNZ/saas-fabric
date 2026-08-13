@@ -13,8 +13,11 @@ mod deletion_tests;
 #[cfg(test)]
 mod duplicate_key_tests;
 #[cfg(test)]
+mod first_load_tests;
+#[cfg(test)]
 mod lookup_tests;
 mod merge;
+mod merged_snapshot;
 #[cfg(test)]
 mod stale_revision_tests;
 #[cfg(test)]

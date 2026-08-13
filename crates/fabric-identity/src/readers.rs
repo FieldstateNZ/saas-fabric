@@ -10,13 +10,19 @@
 //!
 //! The two must agree about *when* a token is valid even though they check it
 //! by different means, so the validity window lives in shared pieces —
-//! [`LeewaySeconds`], `expiry`, `not_before`, `rejection` — and
+//! [`LeewaySeconds`], `expiry`, `not_before`, `window`, `rejection` — and
 //! `posture_parity_tests` holds the pair against each other.
+//!
+//! Sharing is what makes the agreement structural. Both readers run `window`,
+//! so the defence-in-depth posture applies every check the canonical one does
+//! *plus* signature verification and `jsonwebtoken`'s own rules. It can be
+//! stricter; it cannot be laxer.
 
 pub(crate) mod expiry;
 pub(crate) mod jwt_payload;
 pub(crate) mod not_before;
 pub(crate) mod rejection;
+pub(crate) mod window;
 
 mod jwks;
 mod leeway;
@@ -25,6 +31,7 @@ mod unsigned_token;
 mod validating;
 mod validation_rules;
 mod verification_keys;
+mod verified_claims;
 
 #[cfg(test)]
 mod posture_parity_tests;

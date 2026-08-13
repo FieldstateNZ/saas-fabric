@@ -21,13 +21,45 @@ const PERMITTED_ALGORITHMS: [Algorithm; 3] = [Algorithm::RS256, Algorithm::RS384
 /// while the canonical trusted-ingress posture rejected it, which is the wrong
 /// way round for a mode whose entire purpose is to check *more*.
 ///
+/// Switching `validate_nbf` on is necessary but was never sufficient: this
+/// library ignores a `NumericDate` it cannot read, and `nbf` is not one of the
+/// claims it requires, so an `nbf` outside `u64` used to constrain nothing here
+/// while the canonical posture refused the token. The rule above is upheld by
+/// `window`, which both readers run, not by these rules alone.
+///
 /// The leeway comes from [`LeewaySeconds`] rather than a local constant, so the
 /// two postures cannot start out with different windows before a deployment has
 /// configured anything.
+///
+/// # Why `exp` is required here and not in the canonical posture
+///
+/// `Validation::new` seeds `required_spec_claims` with `exp`. That is restated
+/// below rather than inherited, because it is a policy decision and it had gone
+/// unwritten: `expiry` accepts a token with no `exp`, on the grounds that which
+/// claims a token must carry is the identity platform's business and not the
+/// runtime's, and the two statements sat in the codebase contradicting each
+/// other with nothing marking which was intended.
+///
+/// Requiring it is intended, and it is kept. A bearer token with no `exp` never
+/// expires, and this is the posture a deployment opts into precisely to have
+/// more refused than the architecture strictly requires. Refusing one is the
+/// stricter direction, which the rule above permits; it is the *laxer*
+/// direction that is forbidden.
+///
+/// It is also why an `exp` this library cannot read reaches the caller as
+/// [`IdentityError::UnverifiedToken`](crate::IdentityError::UnverifiedToken)
+/// rather than as an expiry failure. Both `{"exp": -1}` and `{"exp": 1e30}`
+/// fail its `NumericDate` parse, and a claim it failed to parse is
+/// indistinguishable from one that was never sent, so it reports the required
+/// claim missing and `rejection::classify` collapses that into the opaque
+/// rejection. The token is refused either way; only the canonical posture,
+/// which clamps such values instead of discarding them, can say which end of
+/// the window was at fault.
 pub(crate) fn baseline() -> Validation {
     let mut validation = Validation::new(Algorithm::RS256);
 
     validation.algorithms = PERMITTED_ALGORITHMS.to_vec();
+    validation.set_required_spec_claims(&["exp"]);
     validation.validate_exp = true;
     validation.validate_nbf = true;
     validation.leeway = LeewaySeconds::DEFAULT.seconds();
@@ -50,6 +82,23 @@ mod tests {
     #[test]
     fn expiry_is_validated_by_default() {
         assert!(baseline().validate_exp);
+    }
+
+    #[test]
+    fn an_expiry_claim_is_required_in_this_posture() {
+        // Pinned because it is a deliberate divergence from the canonical
+        // posture, which accepts a token with no `exp`. Inherited from
+        // `Validation::new` and undocumented until now, so an accident and an
+        // intention looked identical here.
+        assert!(baseline().required_spec_claims.contains("exp"));
+    }
+
+    #[test]
+    fn no_other_claim_is_required_by_default() {
+        // `iss` and `aud` become required only when a deployment configures
+        // them, and `nbf` never does — requiring it would reject the ordinary
+        // token that simply does not carry one.
+        assert_eq!(baseline().required_spec_claims.len(), 1);
     }
 
     #[test]

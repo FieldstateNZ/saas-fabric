@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use fabric_core::SystemClock;
-use fabric_identity::{TokenReader, TrustedIngressReader, ValidatingReader, VerificationKeys};
+use fabric_identity::{LeewaySeconds, TokenReader, TrustedIngressReader, ValidatingReader, VerificationKeys};
 
 use crate::config::TokenConfig;
 
@@ -17,13 +17,15 @@ use crate::config::TokenConfig;
 ///
 /// Returns a message if a JWKS document cannot be read or parsed. Only the
 /// defence-in-depth mode can fail: the canonical posture needs no key material.
-pub(super) fn build(config: &TokenConfig) -> Result<Arc<dyn TokenReader>, String> {
+pub(super) fn build(config: &TokenConfig, leeway: LeewaySeconds) -> Result<Arc<dyn TokenReader>, String> {
     match config {
         // The canonical posture (§8, §9): the edge authenticated the caller and
         // the runtime consumes the identity it established. `build_identity`
         // records it at info — a correctly configured deployment is not a
         // problem to warn about on every start. See ADR 0002.
-        TokenConfig::TrustedIngress => Ok(Arc::new(TrustedIngressReader::new(SystemClock::shared()))),
+        TokenConfig::TrustedIngress => Ok(Arc::new(
+            TrustedIngressReader::new(SystemClock::shared()).with_leeway(leeway),
+        )),
 
         TokenConfig::Validating {
             jwks_path,
@@ -33,7 +35,8 @@ pub(super) fn build(config: &TokenConfig) -> Result<Arc<dyn TokenReader>, String
             let document = std::fs::read_to_string(jwks_path)
                 .map_err(|error| format!("could not read JWKS from {}: {error}", jwks_path.display()))?;
 
-            let mut reader = ValidatingReader::new(VerificationKeys::from_jwks_json(&document)?);
+            let mut reader =
+                ValidatingReader::new(VerificationKeys::from_jwks_json(&document)?).with_leeway(leeway);
 
             if !issuers.is_empty() {
                 reader = reader.with_issuers(issuers);

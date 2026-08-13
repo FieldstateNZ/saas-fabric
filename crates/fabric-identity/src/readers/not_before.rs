@@ -16,14 +16,22 @@ use crate::{IdentityError, TokenClaims};
 /// perfectly ordinary thing for an identity provider to issue, and without this
 /// check the runtime would honour it immediately.
 ///
-/// The defence-in-depth [`ValidatingReader`](crate::ValidatingReader) does not
-/// call this; it gets the same check from `jsonwebtoken`, which needs
-/// `validate_nbf` switched on explicitly because it defaults to off. Both
-/// postures therefore reject the same tokens with the same
-/// [`IdentityError::TokenNotYetValid`], for every `nbf` that library can read —
-/// `posture_parity_tests` pins that, because the claim was false once already.
-/// A fractional `nbf` was enforced there and silently ignored here, which is
-/// the wrong way round for the posture that has nothing standing behind it.
+/// The defence-in-depth [`ValidatingReader`](crate::ValidatingReader) calls
+/// this too, by way of `window`. It *also* gets an `nbf` check from
+/// `jsonwebtoken` — which needs `validate_nbf` switched on explicitly, because
+/// it defaults to off — but that check alone was never enough. An `nbf` outside
+/// `u64`, such as `1e30`, is unreadable to that library, and `nbf` is not one
+/// of the claims it requires, so an `nbf` it could not read constrained nothing
+/// there while this function refused the token. The wording that used to stand
+/// here, "for every `nbf` that library can read", was true and entirely
+/// untested, which is exactly how it survived being a hedge over a real hole.
+///
+/// Both postures now run this function, so they reject the same tokens with the
+/// same [`IdentityError::TokenNotYetValid`] for every `nbf` a token can carry.
+/// `posture_parity_tests` pins that at the boundaries, because the claim it
+/// replaces was false once already: a fractional `nbf` was enforced in the
+/// defence-in-depth posture and silently ignored in this one, which is the
+/// wrong way round for the posture that has nothing standing behind it.
 ///
 /// # Skew
 ///

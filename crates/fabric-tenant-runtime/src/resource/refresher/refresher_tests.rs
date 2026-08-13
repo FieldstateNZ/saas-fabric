@@ -84,6 +84,53 @@ async fn a_partly_invalid_first_load_still_serves_what_is_usable() {
 }
 
 #[tokio::test]
+async fn a_first_load_repeating_a_key_serves_the_entry_that_is_usable() {
+    // The shape `JsonFileSource` makes reachable — a JSON array with no
+    // duplicate-key check — and the one the prime guard and the merge used to
+    // answer differently. The guard saw a usable set and waved it through; the
+    // merge dropped the first entry as invalid and the second as a duplicate of
+    // it. `prime` returned `Ok`, so `fail_fast_on_prime: true` never fired, and
+    // the process came up primed over zero tenants.
+    let registry = TenantRegistry::new();
+    let source = InMemorySource::new(vec![
+        unusable_binding("acme", 1),
+        tenant_binding("acme", 2, "shared-01"),
+    ]);
+
+    let count = ResourceRefresher::prime(&registry, &source).await.unwrap();
+
+    assert_eq!(
+        count, 1,
+        "a valid entry for acme was published, so one must be installed"
+    );
+    assert!(registry.is_primed());
+    assert_eq!(
+        registry.lookup(&tenant("acme")).unwrap().revision,
+        BindingRevision::new(2)
+    );
+}
+
+#[tokio::test]
+async fn a_refresh_installs_a_new_tenant_whose_first_entry_is_unusable() {
+    // The same root cause on the refresh path, where it is less severe only
+    // because the registry is already serving: `acme` has no held copy, so
+    // nothing was retained for it and the usable entry was refused as a
+    // duplicate. The tenant simply never appeared.
+    let registry = TenantRegistry::new();
+    let source = InMemorySource::new(vec![tenant_binding("incumbent", 1, "shared-01")]);
+    ResourceRefresher::prime(&registry, &source).await.unwrap();
+
+    registry.apply_all(vec![
+        tenant_binding("incumbent", 1, "shared-01"),
+        unusable_binding("acme", 1),
+        tenant_binding("acme", 2, "shared-01"),
+    ]);
+
+    assert!(registry.lookup(&tenant("acme")).is_ok());
+    assert!(registry.lookup(&tenant("incumbent")).is_ok());
+}
+
+#[tokio::test]
 async fn a_genuinely_empty_source_primes_successfully() {
     // A deployment that has not onboarded a tenant yet must still start.
     // Installing nothing is only a failure when the source actually published

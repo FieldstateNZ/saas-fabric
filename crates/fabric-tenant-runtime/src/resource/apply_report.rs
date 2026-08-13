@@ -41,13 +41,20 @@
 /// array straight into a `Vec<T>`, so a reconciler that emits one key twice
 /// produces two entries for one resource.
 ///
-/// The first entry decides the key; every later one is refused and counted in
+/// The first entry that can be *compared against the outgoing snapshot*
+/// decides the key; every later one is refused and counted in
 /// [`Self::duplicate_rejected`]. That follows the same reasoning as
 /// [`Self::divergent_payload`] — silently picking a winner is guessing at what
 /// a broken reconciler meant — with one addition: the winner is chosen by
 /// *position* rather than by revision, because the revision is exactly the
 /// field a duplicated key calls into question. Taking the highest revision
 /// would be interpreting data the source has already got wrong.
+///
+/// Note "can be compared", not "first". An entry that fails validation is
+/// refused before any comparison happens, so it does not consume the key and
+/// a later valid entry for it is still installed. Reading that rule as plain
+/// "first" is what once made `[invalid a@1, valid a@2]` install nothing at
+/// all — see `MergedSnapshot::accept`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ApplyReport {
     /// Resources the registry had not seen before.
@@ -105,10 +112,27 @@ impl ApplyReport {
     /// [`Self::duplicate_rejected`] deliberately do not: in each case nothing
     /// in the registry moved on account of the refusal, whatever was held is
     /// retained, and every occurrence already gets its own log line at the
-    /// point it happens — so none is ever silently folded into a bucket here.
+    /// point it happens. They are *also* carried on the aggregate line itself,
+    /// on both branches, so a debug-level "no changes" is never the only thing
+    /// said about a refresh that refused something.
+    ///
+    /// Every field is bound below rather than matched with `..`, so a bucket
+    /// added later cannot default into "not movement" without someone saying
+    /// so — the compiler asks the question at the one place able to answer it.
     #[must_use]
     pub const fn is_noop(&self) -> bool {
-        self.added == 0 && self.updated == 0 && self.removed == 0
+        let Self {
+            added,
+            updated,
+            removed,
+            unchanged: _,
+            stale_ignored: _,
+            invalid_rejected: _,
+            divergent_payload: _,
+            duplicate_rejected: _,
+        } = *self;
+
+        added == 0 && updated == 0 && removed == 0
     }
 }
 

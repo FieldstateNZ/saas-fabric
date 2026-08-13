@@ -1,6 +1,5 @@
 //! Keeping a registry current, in the background.
 
-mod prime_guard;
 mod refresh_handle;
 #[cfg(test)]
 mod refresher_tests;
@@ -10,7 +9,6 @@ use std::time::Duration;
 
 use tokio::sync::Notify;
 
-use crate::resource::refresher::prime_guard::first_rejection_if_nothing_is_usable;
 use crate::resource::{RegistryResource, ResourceRegistry, ResourceSource};
 use crate::{logging, RuntimeConfig, SourceError};
 
@@ -36,10 +34,11 @@ pub struct ResourceRefresher;
 impl ResourceRefresher {
     /// Loads once, so the registry can serve.
     ///
-    /// A first load that would install *nothing* is refused, and the registry
-    /// is left unprimed rather than primed and empty — see
-    /// `first_rejection_if_nothing_is_usable` for why that is a load failure
-    /// and why a partial rejection is not.
+    /// Goes through `ResourceRegistry::apply_first_load` rather than
+    /// `apply_all`: a first load that would install *nothing* is refused, and
+    /// the registry is left unprimed rather than primed and empty. The merge
+    /// itself makes that call, from the same verdicts it uses to decide what to
+    /// install — nothing here predicts the outcome ahead of it.
     ///
     /// # Errors
     ///
@@ -51,19 +50,18 @@ impl ResourceRefresher {
         source: &dyn ResourceSource<T>,
     ) -> Result<usize, SourceError> {
         let resources = source.load().await?;
+        let published = resources.len();
 
-        if let Some(reason) = first_rejection_if_nothing_is_usable(&resources) {
-            return Err(SourceError::NothingUsable {
+        registry
+            .apply_first_load(resources)
+            .map_err(|reason| SourceError::NothingUsable {
                 origin: source.describe(),
-                count: resources.len(),
+                count: published,
                 reason,
-            });
-        }
-
-        registry.apply_all(resources);
+            })?;
 
         // Deliberately what the registry now holds, not what the source
-        // returned. `apply_all` drops resources that fail validation, and a
+        // returned. The merge drops resources that fail validation, and a
         // prime that reports a hundred tenants when three were rejected hides
         // the one number an operator needs.
         let count = registry.len();

@@ -97,6 +97,21 @@ impl VerificationKeys {
 pub(crate) mod tests {
     use super::*;
 
+    /// Test-only constructors. Deliberately not on the public surface: a shared
+    /// secret is an HMAC key, and this crate verifies with public keys only.
+    impl VerificationKeys {
+        /// Wraps a symmetric secret as the sole key.
+        ///
+        /// Used by `posture_parity_tests`, whose fixtures are HS256 because the
+        /// signature is not what those tests are about.
+        pub(crate) fn from_shared_secret(secret: &[u8]) -> Self {
+            Self {
+                by_key_id: HashMap::new(),
+                sole_key: Some(DecodingKey::from_secret(secret)),
+            }
+        }
+    }
+
     /// A real 2048-bit modulus, so `from_rsa_components` accepts it. Nothing
     /// signs with it.
     pub(crate) const MODULUS: &str = "sXchDaQebHnPiGvyDOAT4saGEUetSyo9MKLOoWFsueri23bOdgWp4Dy1Wl\

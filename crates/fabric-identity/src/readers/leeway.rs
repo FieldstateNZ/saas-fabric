@@ -29,7 +29,35 @@
 /// two orders of magnitude of headroom. A deployment that believes it needs more
 /// has a broken clock to repair, and widening the window further would hide that
 /// symptom rather than fix its cause.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+///
+/// # Reading one from configuration
+///
+/// Deserialising goes through [`Self::try_new`] via `#[serde(try_from)]`, so a
+/// configuration file cannot produce an unchecked value the constructor would
+/// have refused. Combined with [`Default`] that makes it a one-line field:
+///
+/// ```
+/// use fabric_identity::LeewaySeconds;
+///
+/// #[derive(serde::Deserialize)]
+/// struct Example {
+///     #[serde(default)]
+///     leeway_seconds: LeewaySeconds,
+/// }
+///
+/// let configured: Example = serde_json::from_str(r#"{"leeway_seconds":120}"#)?;
+/// assert_eq!(configured.leeway_seconds.seconds(), 120);
+///
+/// // Omitted entirely, the default applies.
+/// let defaulted: Example = serde_json::from_str("{}")?;
+/// assert_eq!(defaulted.leeway_seconds, LeewaySeconds::DEFAULT);
+///
+/// // Out of range fails at parse time, not at first request.
+/// assert!(serde_json::from_str::<Example>(r#"{"leeway_seconds":86400}"#).is_err());
+/// # Ok::<(), serde_json::Error>(())
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Deserialize)]
+#[serde(try_from = "u64")]
 pub struct LeewaySeconds(u64);
 
 impl LeewaySeconds {
@@ -67,6 +95,16 @@ impl LeewaySeconds {
 impl Default for LeewaySeconds {
     fn default() -> Self {
         Self::DEFAULT
+    }
+}
+
+impl TryFrom<u64> for LeewaySeconds {
+    type Error = String;
+
+    /// The single checked entry point, so `serde` and hand-written callers
+    /// cannot disagree about what is in range.
+    fn try_from(seconds: u64) -> Result<Self, Self::Error> {
+        Self::try_new(seconds)
     }
 }
 
@@ -113,5 +151,29 @@ mod tests {
         let message = LeewaySeconds::try_new(u64::MAX).unwrap_err();
 
         assert!(message.contains("3600"), "unhelpful message: {message}");
+    }
+
+    #[test]
+    fn deserialises_an_in_range_allowance_from_configuration() {
+        let leeway: LeewaySeconds = serde_json::from_str("120").unwrap();
+
+        assert_eq!(leeway.seconds(), 120);
+    }
+
+    #[test]
+    fn an_out_of_range_allowance_fails_to_deserialise_rather_than_being_clamped() {
+        // The point of `try_from`: config that would neutralise the validity
+        // window stops the process at startup instead of taking effect.
+        let error = serde_json::from_str::<LeewaySeconds>("86400").unwrap_err();
+
+        assert!(error.to_string().contains("3600"), "unhelpful message: {error}");
+    }
+
+    #[test]
+    fn a_negative_allowance_cannot_even_be_spelled_in_configuration() {
+        // The inner type is unsigned, so this fails in `serde` before the
+        // range check is reached. Recorded because a negative leeway narrows
+        // the window it exists to widen.
+        assert!(serde_json::from_str::<LeewaySeconds>("-1").is_err());
     }
 }

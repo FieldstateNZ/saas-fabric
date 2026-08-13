@@ -4,10 +4,8 @@ use std::sync::Arc;
 
 use fabric_core::Clock;
 
-use crate::readers::expiry::ensure_not_expired;
 use crate::readers::jwt_payload::decode_payload;
-use crate::readers::not_before::ensure_already_valid;
-use crate::readers::LeewaySeconds;
+use crate::readers::{window, LeewaySeconds};
 use crate::{IdentityError, TokenClaims, TokenReader};
 
 /// Reads the claims of a bearer token the platform edge has already validated.
@@ -94,8 +92,9 @@ impl TokenReader for TrustedIngressReader {
     fn read(&self, token: &str) -> Result<TokenClaims, IdentityError> {
         let claims = decode_payload(token)?;
 
-        ensure_not_expired(&claims, self.clock.as_ref(), self.leeway)?;
-        ensure_already_valid(&claims, self.clock.as_ref(), self.leeway)?;
+        // The same function the defence-in-depth posture runs, which is what
+        // stops the two drifting apart on the window (see `window`).
+        window::ensure_current(&claims, self.clock.as_ref(), self.leeway)?;
 
         Ok(claims)
     }

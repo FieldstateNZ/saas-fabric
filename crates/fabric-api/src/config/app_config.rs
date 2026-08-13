@@ -9,7 +9,7 @@ use std::path::PathBuf;
 
 use fabric_connector_ndc::NdcConnectorConfig;
 use fabric_data_api::{DataApiConfig, ResourcePermissions};
-use fabric_identity::IdentityConfig;
+use fabric_identity::{IdentityConfig, LeewaySeconds};
 use fabric_tenant_runtime::RuntimeConfig;
 
 use crate::config::TokenConfig;
@@ -31,6 +31,15 @@ pub struct AppConfig {
 
     /// Which token reader to use — the deployment's security posture.
     pub token: TokenConfig,
+
+    /// How much clock skew to tolerate on `exp` and `nbf`.
+    ///
+    /// Sits beside [`Self::token`] rather than inside it, for two reasons.
+    /// `TokenConfig::TrustedIngress` is a unit variant and cannot carry a
+    /// field at all; and more importantly, a per-posture setting would let a
+    /// deployment configure two different windows, when the whole point of
+    /// the type is that both postures agree about which tokens are current.
+    pub leeway: LeewaySeconds,
 
     /// How the runtime registries stay current.
     pub tenant_runtime: RuntimeConfig,
@@ -117,6 +126,7 @@ impl Default for AppConfig {
             data_api: DataApiConfig::default(),
             permissions: ResourcePermissions::default(),
             connectors: Vec::new(),
+            leeway: LeewaySeconds::default(),
             connector_retry_interval_seconds: 30,
             // 3x the connector default of 10s: enough headroom that raising a
             // connector's own timeout a little never silently breaks this

@@ -13,11 +13,16 @@ use crate::{IdentityError, TokenClaims};
 /// one integer comparison — there is no posture in which accepting one is
 /// right.
 ///
-/// A token with no `exp` is accepted. The specification does not require one,
-/// and which tokens are acceptable is the identity platform's policy to set,
-/// not the runtime's. A token that *has* one is a different matter: every
-/// number a claim can hold yields a second (see
+/// A token with no `exp` is accepted **by this function**. The specification
+/// does not require one, and which tokens are acceptable is the identity
+/// platform's policy to set, not the runtime's. A token that *has* one is a
+/// different matter: every number a claim can hold yields a second (see
 /// [`TokenClaims::unix_seconds`]), so a present `exp` always constrains.
+///
+/// The defence-in-depth posture goes further and requires `exp`, so a token
+/// without one is refused there and accepted here. That is deliberate, and
+/// `validation_rules::baseline` records why — a posture chosen to be stricter
+/// may reject more, so long as it never accepts more.
 ///
 /// # Errors
 ///

@@ -97,6 +97,56 @@ async fn a_first_load_that_installs_nothing_refuses_to_start() {
 }
 
 #[tokio::test]
+async fn a_repeated_tenant_key_does_not_start_a_replica_over_zero_tenants() {
+    // End to end, the shape that reopened the hole: the source publishes an
+    // unusable entry for `acme` followed by a usable one. `build_runtime`
+    // returned `Ok` with a primed, empty tenant registry — /ready 200, every
+    // request 403 or 500, and `fail_fast_on_prime: true` with nothing to fire
+    // on because the load never reported a failure.
+    let data_sources = Arc::new(InMemorySource::new(vec![data_source("shared-01", 1)]));
+    let tenants = Arc::new(InMemorySource::new(vec![
+        unusable_binding("acme"),
+        tenant_binding("acme", 2, "shared-01"),
+    ]));
+
+    let (resolver, handles) = build_runtime(&RuntimeConfig::default(), tenants, data_sources)
+        .await
+        .unwrap();
+
+    assert!(resolver.is_primed());
+    assert!(
+        resolver
+            .resolve_data_source(&TenantId::try_new("acme").unwrap(), &crate::testing::primary())
+            .is_ok(),
+        "a usable binding for acme was published, so the replica must be able to serve it"
+    );
+
+    handles.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn without_fail_fast_a_repeated_key_still_never_starts_primed_and_empty() {
+    // `fail_fast_on_prime: false` is allowed to start anyway; it is not allowed
+    // to start *primed and empty*. Unprimed answers 503 and keeps the replica
+    // out of the load balancer.
+    let config = RuntimeConfig {
+        fail_fast_on_prime: false,
+        ..RuntimeConfig::default()
+    };
+    let data_sources = Arc::new(InMemorySource::new(vec![data_source("shared-01", 1)]));
+    let tenants = Arc::new(InMemorySource::new(vec![
+        unusable_binding("orphan"),
+        unusable_binding("stray"),
+    ]));
+
+    let (resolver, handles) = build_runtime(&config, tenants, data_sources).await.unwrap();
+
+    assert!(!resolver.is_primed());
+
+    handles.shutdown().await.unwrap();
+}
+
+#[tokio::test]
 async fn an_incoherent_pool_no_longer_takes_the_whole_replica_down() {
     // The other half of the reviewer's scenario. `max_connections: 0` used to
     // keep the DataSource out of the registry; with the prime guard in place

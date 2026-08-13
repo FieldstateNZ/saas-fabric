@@ -14,16 +14,24 @@
 //! # What is compared, and what is not
 //!
 //! The axis under test is how each posture interprets a `NumericDate` and turns
-//! it into a verdict. The defence-in-depth side is therefore driven through the
-//! real [`validation_rules::baseline`] rules and the real
-//! [`rejection::classify`] mapping — the two pieces of `ValidatingReader` that
-//! decide *this* question — with only signature verification switched off.
+//! it into a verdict. Both sides are driven through the real readers, so
+//! nothing about the rules, the error mapping, the shared window check, or the
+//! order they run in is restated here — a parity test that restated any of them
+//! would keep passing while the real ones drifted, which is the failure this
+//! file exists to prevent. An earlier version of this file did compose those
+//! pieces by hand, and the composition it chose was not the one production ran.
 //!
-//! Signature verification is a separate axis with its own tests, and reaching
-//! it here would mean committing an RSA private key to sign fixtures with. A
-//! parity test that restated either the rules or the error mapping would be
-//! worthless, since it would keep passing while the real ones drifted; sharing
-//! them is the point.
+//! The single deviation is that the defence-in-depth reader has signature
+//! verification switched off, because signing fixtures would mean committing an
+//! RSA private key. Signature verification is a separate axis with its own
+//! tests.
+//!
+//! That switch is broader than its name: `jsonwebtoken` gates the algorithm
+//! allowlist and the key-family check on the same `validate_signature` flag
+//! (`decoding.rs`), so disabling it also disables the RS-only pin. That is why
+//! an HS256 fixture is readable by rules that permit only the RSA family, and
+//! it is worth knowing before reading a passing test as evidence that the pin
+//! works — it is not.
 //!
 //! # Why the clock is real
 //!
@@ -35,11 +43,14 @@
 use std::sync::Arc;
 
 use fabric_core::{Clock, SystemClock};
-use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header};
+use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
 use serde_json::{json, Value};
 
-use crate::readers::{rejection, validation_rules, LeewaySeconds, TrustedIngressReader};
+use crate::readers::{validating, validation_rules, LeewaySeconds, TrustedIngressReader};
 use crate::{IdentityError, TokenReader};
+
+/// The secret both the fixture signer and the reader are given.
+const FIXTURE_SECRET: &[u8] = b"parity-fixture";
 
 /// A second comfortably inside both postures' notion of the present.
 fn now() -> u64 {
@@ -80,7 +91,7 @@ fn token(claims: &Value) -> String {
     encode(
         &Header::new(Algorithm::HS256),
         claims,
-        &EncodingKey::from_secret(b"parity-fixture"),
+        &EncodingKey::from_secret(FIXTURE_SECRET),
     )
     .unwrap()
 }
@@ -92,17 +103,11 @@ fn trusted_ingress_verdict(token: &str, at: u64) -> Result<(), IdentityError> {
         .map(|_| ())
 }
 
-/// The defence-in-depth verdict, through the production rules and mapping.
-fn validating_verdict(token: &str) -> Result<(), IdentityError> {
-    let mut rules = validation_rules::baseline();
-
-    // The one deviation from production, and the reason is above: this test is
-    // about `NumericDate`s, not signatures.
-    rules.insecure_disable_signature_validation();
-
-    decode::<Value>(token, &DecodingKey::from_secret(b"parity-fixture"), &rules)
+/// The defence-in-depth verdict, through the production reader.
+fn validating_verdict(token: &str, at: u64) -> Result<(), IdentityError> {
+    validating::tests::insecure_reader(FIXTURE_SECRET, Arc::new(FrozenClock(at)))
+        .read(token)
         .map(|_| ())
-        .map_err(|error| rejection::classify(&error))
 }
 
 /// Asserts that both postures reach `expected` on the same token.
@@ -116,7 +121,7 @@ fn assert_both_postures(claims: &Value, expected: &Result<(), IdentityError>) {
     let token = token(claims);
 
     let canonical = trusted_ingress_verdict(&token, at);
-    let defence_in_depth = validating_verdict(&token);
+    let defence_in_depth = validating_verdict(&token, at);
 
     assert_eq!(
         canonical, defence_in_depth,
@@ -124,6 +129,43 @@ fn assert_both_postures(claims: &Value, expected: &Result<(), IdentityError>) {
          defence-in-depth said {defence_in_depth:?}"
     );
     assert_eq!(&canonical, expected, "both postures were wrong about {claims}");
+}
+
+/// Asserts a divergence that is deliberate, documented, and in the safe
+/// direction.
+///
+/// The rule the postures live under is one-directional: the defence-in-depth
+/// one may refuse what the canonical one accepts, never the reverse. The rows
+/// asserted through here are that permitted direction, so they are pinned
+/// rather than closed — a change to either side has to come to this file and
+/// say which row moved and why.
+///
+/// The final assertion is the rule itself, and is what keeps this helper from
+/// being a way to bless a divergence in the dangerous direction.
+#[track_caller]
+fn assert_defence_in_depth_is_stricter(
+    claims: &Value,
+    canonical_expected: &Result<(), IdentityError>,
+    defence_expected: &Result<(), IdentityError>,
+) {
+    let at = now();
+    let token = token(claims);
+
+    let canonical = trusted_ingress_verdict(&token, at);
+    let defence_in_depth = validating_verdict(&token, at);
+
+    assert_eq!(
+        &canonical, canonical_expected,
+        "trusted-ingress moved on {claims}"
+    );
+    assert_eq!(
+        &defence_in_depth, defence_expected,
+        "defence-in-depth moved on {claims}"
+    );
+    assert!(
+        defence_in_depth.is_err(),
+        "{claims} is recorded as a stricter-direction divergence, but defence-in-depth accepted it"
+    );
 }
 
 #[test]
@@ -192,6 +234,91 @@ fn the_rounding_boundary_falls_on_the_same_second_in_both_postures() {
     assert_both_postures(
         &json!({ "tenant_id": "acme", "nbf": as_float(boundary) - 0.4, "exp": now() + 20_000 }),
         &Ok(()),
+    );
+}
+
+#[test]
+fn a_not_before_beyond_the_readable_range_is_refused_by_both_postures() {
+    // The row the adversarial review found, and the dangerous direction: this
+    // is unreadable to `jsonwebtoken`, `nbf` is not a claim it requires, and an
+    // unreadable claim it does not require constrained nothing — so the posture
+    // that exists to check *more* honoured a token the canonical one refused.
+    assert_both_postures(
+        &json!({ "tenant_id": "acme", "nbf": 1e30, "exp": now() + 20_000 }),
+        &Err(IdentityError::TokenNotYetValid),
+    );
+}
+
+#[test]
+fn a_not_before_at_exactly_two_to_the_sixty_fourth_is_refused_by_both_postures() {
+    // The exact edge of the library's readable range: its check is
+    // `value < u64::MAX as f64`, and `u64::MAX as f64` is 2^64, so this is the
+    // first value it rejects and therefore stops constraining.
+    assert_both_postures(
+        &json!({ "tenant_id": "acme", "nbf": 18_446_744_073_709_551_616.0_f64, "exp": now() + 20_000 }),
+        &Err(IdentityError::TokenNotYetValid),
+    );
+}
+
+#[test]
+fn the_largest_whole_second_not_before_is_refused_by_both_postures() {
+    // One below the previous case and on the integer path, where the library
+    // reads the value fine. Included so the two sides of that boundary are both
+    // pinned rather than only the failing one.
+    assert_both_postures(
+        &json!({ "tenant_id": "acme", "nbf": u64::MAX, "exp": now() + 20_000 }),
+        &Err(IdentityError::TokenNotYetValid),
+    );
+}
+
+#[test]
+fn a_not_before_before_the_epoch_has_already_arrived_in_both_postures() {
+    // The guard against over-correcting. This is also unreadable to the
+    // library, but it means "valid since 1969" and must stay accepted; a fix
+    // that refused every unreadable `nbf` would pass the tests above and break
+    // this one.
+    assert_both_postures(
+        &json!({ "tenant_id": "acme", "nbf": -1, "exp": now() + 20_000 }),
+        &Ok(()),
+    );
+}
+
+#[test]
+fn a_token_with_no_expiry_is_accepted_canonically_and_refused_in_depth() {
+    // A pre-existing, deliberate divergence: `baseline` requires `exp` and the
+    // canonical posture does not. `validation_rules` records the reasoning. A
+    // bearer token with no `exp` never expires, and the stricter posture is the
+    // one a deployment opts into to have such a token refused.
+    assert_defence_in_depth_is_stricter(
+        &json!({ "tenant_id": "acme" }),
+        &Ok(()),
+        &Err(IdentityError::UnverifiedToken),
+    );
+}
+
+#[test]
+fn an_expiry_beyond_the_readable_range_is_refused_only_in_depth() {
+    // Same mechanism as the missing claim: the library cannot parse this, and
+    // a claim it failed to parse is indistinguishable from one never sent, so
+    // its required-claim check fires. The canonical posture clamps to the end
+    // of representable time instead, which has not passed.
+    assert_defence_in_depth_is_stricter(
+        &json!({ "tenant_id": "acme", "exp": 1e30 }),
+        &Ok(()),
+        &Err(IdentityError::UnverifiedToken),
+    );
+}
+
+#[test]
+fn an_expiry_before_the_epoch_is_refused_by_both_postures_for_different_stated_reasons() {
+    // Both refuse it, so the rule holds; only the reported error differs. The
+    // canonical posture clamps to zero and can say "expired", while the library
+    // discarded the value and can only say the required claim was missing,
+    // which `classify` collapses into the opaque rejection.
+    assert_defence_in_depth_is_stricter(
+        &json!({ "tenant_id": "acme", "exp": -1 }),
+        &Err(IdentityError::ExpiredToken),
+        &Err(IdentityError::UnverifiedToken),
     );
 }
 

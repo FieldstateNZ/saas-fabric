@@ -1,10 +1,9 @@
 //! Replacing a registry's contents with an authoritative set.
 
-use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use crate::logging;
-use crate::resource::registry::merge::{collect_removals, merge};
+use crate::resource::registry::merged_snapshot::MergedSnapshot;
 use crate::resource::snapshot::ResourceSnapshot;
 use crate::resource::{ApplyReport, RegistryResource, ResourceRegistry};
 
@@ -26,42 +25,24 @@ impl<T: RegistryResource> ResourceRegistry<T> {
     /// resources. That is the price of supporting deprovisioning at all, and it
     /// is why a load failure must never be turned into an empty set.
     ///
-    /// # Validation
-    ///
     /// Each incoming resource is checked by [`RegistryResource::validate`]
-    /// before it may enter the snapshot. One that fails is dropped, and the
-    /// previously-held copy — if there is one — is left in place. See that
-    /// method for why a bad resource is skipped rather than failing the whole
-    /// apply, and why the held copy is retained rather than removed.
+    /// before it may enter the snapshot; one that fails is dropped and the
+    /// previously-held copy, if any, is left in place. A copy arriving at
+    /// *exactly* the revision already held is never applied even when its
+    /// payload differs — see [`ApplyReport::divergent_payload`]. A key
+    /// appearing twice in one set is decided by its first comparable entry and
+    /// the rest are refused — see
+    /// `MergedSnapshot::accept` for
+    /// the ordering between those two rules and why it matters.
     ///
-    /// # Same revision, different payload
+    /// # This installs unconditionally
     ///
-    /// An incoming copy at *exactly* the revision already held is never
-    /// applied, even if its payload differs from what is held — see
-    /// [`ApplyReport::divergent_payload`] for the full reasoning (item 50).
-    /// The short version: the revision is the authority on whether a
-    /// resource changed, so trusting a payload that disagrees with it would
-    /// make the revision guard meaningless. The mismatch is counted and
-    /// logged instead of being silently folded into "unchanged".
-    ///
-    /// # One key, twice in the same incoming set
-    ///
-    /// Each incoming entry is judged against the snapshot being *replaced*. So
-    /// a key may be decided only once per call: two entries for one key would
-    /// both compare against that same outgoing snapshot while only one of them
-    /// could win the map, and the loser's event would then describe a snapshot
-    /// that never existed. A subscriber acting on it (§19 — drop the state
-    /// attached to the old revision, re-read the resource) would look up a
-    /// revision the registry does not hold.
-    ///
-    /// So the first entry for a key decides it, and every later one is refused
-    /// before it can be compared at all, counted in
-    /// [`ApplyReport::duplicate_rejected`], and logged at error level. See that
-    /// field for why refusing beats picking a winner.
-    ///
-    /// That is what upholds the invariant this whole method is built around:
-    /// **every published event describes a transition into the snapshot that
-    /// was actually installed.**
+    /// Applying primes the registry as a side effect, and nothing can un-prime
+    /// it. On a registry that has never loaded, use
+    /// `apply_first_load` instead: it runs the identical merge and
+    /// installs the result only if there is something to serve. Calling this
+    /// method for a first load can leave a registry primed and empty, which
+    /// answers `/ready` with 200 while failing every request.
     ///
     /// # Concurrency
     ///
@@ -73,41 +54,58 @@ impl<T: RegistryResource> ResourceRegistry<T> {
         let _write = self.writes.acquire();
 
         let guard = self.snapshot.load();
-        let current = guard.as_ref();
+        let merged = MergedSnapshot::merge(guard.as_deref(), incoming);
 
-        let mut report = ApplyReport::default();
-        let mut next: HashMap<T::Key, Arc<T>> = HashMap::with_capacity(incoming.len());
-        let mut events = Vec::new();
+        self.install(merged)
+    }
 
-        // Tracked separately from `next` rather than inferred from it: a
-        // rejected resource with nothing held leaves no trace in `next`, so
-        // `next` cannot answer "was this key already decided?".
-        let mut decided: HashSet<T::Key> = HashSet::with_capacity(incoming.len());
+    /// Applies the **first** set a registry ever sees, refusing to install one
+    /// that would leave nothing to serve.
+    ///
+    /// The merge is the same one [`Self::apply_all`] runs — the same code
+    /// decides what to install and whether installing it is safe, which is the
+    /// invariant [`MergedSnapshot`] exists to hold. All this adds is *when* the
+    /// swap happens: after the verdicts are in, not before.
+    ///
+    /// An empty publication still primes. A deployment with no tenants
+    /// onboarded yet must be able to start, and installing nothing is only a
+    /// failure when something was offered to install. A partial rejection also
+    /// primes, for the reason set out on [`MergedSnapshot::refusal`].
+    ///
+    /// # Errors
+    ///
+    /// The first rejection, named, when the set published resources and none of
+    /// them survived. The registry is left untouched — and so, on a fresh
+    /// registry, unprimed — rather than reporting ready over an empty snapshot.
+    pub(crate) fn apply_first_load(&self, incoming: Vec<T>) -> Result<ApplyReport, String> {
+        let _write = self.writes.acquire();
 
-        for resource in incoming {
-            if !decided.insert(resource.key().clone()) {
-                report.duplicate_rejected += 1;
-                logging::duplicate_key_rejected::<T>(resource.key(), resource.revision());
-                continue;
-            }
+        let published = incoming.len();
+        let guard = self.snapshot.load();
+        let mut merged = MergedSnapshot::merge(guard.as_deref(), incoming);
 
-            let held = current.and_then(|snapshot| snapshot.get(resource.key()));
-
-            merge(resource, held, &mut next, &mut report, &mut events);
+        if let Some(reason) = merged.refusal(published) {
+            return Err(reason);
         }
 
-        if let Some(snapshot) = current {
-            collect_removals(snapshot, &next, &mut report, &mut events);
-        }
+        Ok(self.install(merged))
+    }
 
-        let size = next.len();
-        self.snapshot.store(Some(Arc::new(ResourceSnapshot::new(next))));
+    /// Swaps in a merged snapshot and announces what changed.
+    ///
+    /// The write lock is the caller's to hold: both callers acquire it before
+    /// the merge, so the snapshot a merge was judged against is still the one
+    /// being replaced here.
+    fn install(&self, merged: MergedSnapshot<T>) -> ApplyReport {
+        let size = merged.next.len();
+        self.snapshot
+            .store(Some(Arc::new(ResourceSnapshot::new(merged.next))));
 
         // Published only after the swap, so a subscriber that reacts by looking
         // the resource up sees the new state rather than the old.
-        self.publish(events);
-        logging::snapshot_applied::<T>(size, &report);
+        self.publish(merged.events);
+        logging::snapshot_applied::<T>(size, &merged.report);
 
-        report
+        merged.report
     }
 }

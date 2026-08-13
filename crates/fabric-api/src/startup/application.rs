@@ -51,7 +51,10 @@ pub struct Application {
 /// other connector can. See the `connectors` submodule for the policy.
 pub async fn build(config: &AppConfig) -> Result<Application, String> {
     // 1. Identity. First, because it decides what the process will believe.
-    let identity = build_identity(config.identity.clone(), token_reader::build(&config.token)?)?;
+    let identity = build_identity(
+        config.identity.clone(),
+        token_reader::build(&config.token, config.leeway)?,
+    )?;
 
     // 2. Runtime state. Two independently reconciled resources, read from files
     //    a controller writes. Never queries Git or Kubernetes (§6).

@@ -111,6 +111,69 @@ fn two_entries_for_one_key_never_publish_contradictory_transitions() {
 }
 
 #[test]
+fn an_invalid_first_entry_does_not_consume_its_key() {
+    // The regression that reopened the hole the prime guard closed. The
+    // duplicate check used to run before validation, so the invalid entry
+    // claimed the key on its way to being dropped and the entry that could
+    // actually be served was refused as a duplicate of it. Nothing installed,
+    // and on a first load that primed the registry empty.
+    let registry = registry();
+
+    let report = registry.apply_all(vec![invalid_resource("a", 1), resource("a", 2)]);
+
+    assert_eq!(report.invalid_rejected, 1);
+    assert_eq!(
+        report.duplicate_rejected, 0,
+        "an entry that was never compared decided nothing"
+    );
+    assert_eq!(report.added, 1);
+    assert_eq!(registry.len(), 1);
+    assert_eq!(
+        registry.lookup(&"a".to_owned()).unwrap().revision,
+        BindingRevision::new(2)
+    );
+}
+
+#[test]
+fn a_new_key_whose_first_entry_is_invalid_still_appears_on_a_refresh() {
+    // The same root cause on the refresh path. `newbie` has no held copy to
+    // fall back on, so the invalid entry left nothing behind and the valid one
+    // was refused — a genuinely new resource never appeared despite the source
+    // publishing a usable copy of it.
+    let registry = registry();
+    registry.apply_all(vec![resource("incumbent", 1)]);
+
+    registry.apply_all(vec![
+        resource("incumbent", 1),
+        invalid_resource("newbie", 1),
+        resource("newbie", 2),
+    ]);
+
+    assert_eq!(
+        registry.lookup(&"newbie".to_owned()).unwrap().revision,
+        BindingRevision::new(2)
+    );
+    assert!(registry.lookup(&"incumbent".to_owned()).is_ok());
+}
+
+#[test]
+fn an_invalid_duplicate_cannot_undo_the_entry_that_won_the_key() {
+    // The other direction, and the reason validity-before-duplication is not
+    // simply "check validity first and forget the rest": once an entry has been
+    // compared and won the key, a later invalid entry for it must not put the
+    // held copy back over the top of the winner.
+    let registry = registry();
+    registry.apply_all(vec![resource("a", 1)]);
+
+    registry.apply_all(vec![resource("a", 5), invalid_resource("a", 6)]);
+
+    assert_eq!(
+        registry.lookup(&"a".to_owned()).unwrap().revision,
+        BindingRevision::new(5)
+    );
+}
+
+#[test]
 fn the_invariant_holds_for_every_shape_a_repeated_key_can_take() {
     // The invariant is a property of `apply_all`, not a fact about two
     // reported inputs, so it is checked against every combination a second
@@ -123,6 +186,13 @@ fn the_invariant_holds_for_every_shape_a_repeated_key_can_take() {
         vec![resource("a", 3), resource("a", 5)],
         vec![resource("a", 5), invalid_resource("a", 6)],
         vec![invalid_resource("a", 5), resource("a", 6)],
+        vec![
+            invalid_resource("a", 5),
+            invalid_resource("a", 6),
+            resource("a", 7),
+        ],
+        vec![invalid_resource("a", 5), resource("a", 6), resource("a", 7)],
+        vec![invalid_resource("b", 1), resource("b", 2)],
         vec![resource("a", 4), resource_with_payload("a", 4, "divergent")],
         vec![resource("a", 5), resource("a", 5)],
         vec![resource("a", 5), resource("a", 6), resource("b", 1)],

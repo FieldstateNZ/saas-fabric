@@ -8,6 +8,14 @@
 
 listen = "0.0.0.0:8080"
 
+# Clock skew tolerated on a token's `exp` and `nbf`, in seconds. One value for
+# both postures on purpose: a per-posture setting would let a deployment
+# configure two different windows, and the two are supposed to agree about
+# which tokens are current. Capped at an hour — NTP-scale skew is tens of
+# seconds, so that is ample headroom while still too small to neutralise the
+# expiry check.
+leeway = 60
+
 # Files that reconciliation writes and the runtime reads. None is queried during
 # request handling — see specification §6.
 #

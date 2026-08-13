@@ -3,7 +3,7 @@
 use fabric_core::{event_id, EventType};
 
 use crate::resource::{ApplyReport, RegistryResource};
-use crate::DOMAIN_ID;
+use crate::{UnusableFirstLoad, DOMAIN_ID};
 
 /// A new snapshot was installed.
 ///
@@ -25,8 +25,14 @@ pub(crate) fn snapshot_applied<T: RegistryResource>(count: usize, report: &Apply
         invalid_rejected,
         divergent_payload,
         duplicate_rejected,
-        // Left off deliberately: it is `count` minus the movement buckets, and
-        // the steady state is "everything unchanged", so it carries no signal.
+        // Left off deliberately: the steady state is "everything unchanged", so
+        // it would be on every line and say nothing.
+        //
+        // Not because it is derivable. `count` is the size of the snapshot just
+        // installed, which also holds every entry retained behind a stale
+        // revision, a divergent payload, or a validation failure — so
+        // `count` minus the movement buckets is not `unchanged`. A single
+        // ignored stale revision already makes those two differ.
         unchanged: _,
     } = *report;
 
@@ -70,6 +76,24 @@ pub(crate) fn primed<T: RegistryResource>(source: &str, count: usize) {
         source,
         count,
         "registry primed"
+    );
+}
+
+/// A registry that has never loaded refused a set it could not serve.
+///
+/// Error, and deliberately explicit that the registry is *still unprimed* — the
+/// opposite of [`refresh_failed`], where a previous snapshot is still serving.
+/// Here there is nothing serving, `/ready` answers 503, and no amount of waiting
+/// fixes it until the source publishes something usable.
+pub(crate) fn first_load_refused<T: RegistryResource>(source: &str, refused: &UnusableFirstLoad) {
+    tracing::error!(
+        event = "runtime.first_load_refused",
+        event_id = event_id(DOMAIN_ID, EventType::Error, 4),
+        resource_kind = T::KIND,
+        source,
+        published = refused.published,
+        reason = refused.reason,
+        "refused a first load with nothing to serve; still unprimed, so /ready stays 503"
     );
 }
 

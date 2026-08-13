@@ -54,8 +54,11 @@ physical/provider concerns.
   resource type cannot opt out silently). The `PartialEq` bound exists so the
   apply path can detect a same-revision payload mismatch (item 50); both
   concrete types already derived it.
-- `ResourceRegistry<T>` — `lookup()`, `apply_all()`, `apply_one()`,
-  `invalidate()`, `subscribe()`, `is_primed()`, `len()`.
+- `ResourceRegistry<T>` — `lookup()`, `apply_all() -> Result<ApplyReport,
+  UnusableFirstLoad>`, `apply_one()`, `invalidate()`, `subscribe()`,
+  `is_primed()`, `len()`. `apply_all` is the **only** full-sync entry point: it
+  decides for itself whether it is a first load, so no caller can install an
+  empty snapshot over a registry that has never loaded.
 - Aliases: `TenantRegistry`, `DataSourceRegistry`, `TenantChange`, `DataSourceChange`.
 - `LookupError::{Unavailable, NotFound}` — mapped to `ResolveError` by the resolver.
 - `ApplyReport { added, updated, removed, stale_ignored, unchanged,
@@ -87,8 +90,12 @@ physical/provider concerns.
   MissingDataSource{logical, data_source}}`.
 - `SourceError::{Unreadable{origin, cause}, Malformed{origin, detail},
   NothingUsable{origin, count, reason}}` — field is `origin`, **not** `source`
-  (thiserror reserves it). `NothingUsable` is produced only by `prime`, never by
-  a refresh.
+  (thiserror reserves it). `NothingUsable` is `prime`'s wrapping of
+  `UnusableFirstLoad`; it names a source, which the registry cannot.
+- `UnusableFirstLoad{published, reason}` — returned by `apply_all` when the
+  registry has never loaded and nothing in a non-empty publication survived.
+  Only reachable while unprimed: once a snapshot exists, a rejected resource
+  falls back to the copy held.
 - `ConfigurationError::{TenantHasNoDataBindings, InvalidResource}`.
 
 ## Module layout
@@ -97,9 +104,10 @@ physical/provider concerns.
 resource/          generic lifecycle
   resource_kind.rs registry.rs (+ apply_all, apply_one, tests)
   snapshot.rs change.rs apply_report.rs lookup_error.rs
-  source.rs refresher.rs (+ refresh_handle, prime_guard) sources/{in_memory,json_file}
+  source.rs refresher.rs (+ refresh_handle) sources/{in_memory,json_file}
   registry/{apply,change,lookup,stale_revision,deletion,concurrency}_tests.rs
-  registry/{validation,duplicate_key,writer_concurrency}_tests.rs
+  registry/{validation,duplicate_key,first_load,writer_concurrency}_tests.rs
+  registry/merged_snapshot.rs (holds the merge verdicts + the refusal rule)
   registry/{merge,write_lock}.rs registry/test_resource.rs
 tenant/            tenant_runtime_binding, tenant_data_binding,
                    configuration_binding, storage_binding
@@ -118,11 +126,15 @@ config.rs errors/ logging.rs testing.rs
    Never convert a read error into `Ok(vec![])`. Always logged at error level —
    never silent. On a *first* load this extends to validation: a non-empty
    source whose every entry is rejected has produced nothing to install, so
-   `prime` refuses it (`SourceError::NothingUsable`) *before* applying, leaving
-   the registry unprimed. Primed-and-empty would answer `/ready` 200 and then
-   500 every request. A *partial* rejection is not a failure — there is
-   something to serve, and failing would take healthy tenants down over one
-   operator's typo.
+   `apply_all` refuses it (`UnusableFirstLoad`) *before* swapping, leaving the
+   registry unprimed. Primed-and-empty would answer `/ready` 200 and then fail
+   every request. A *partial* rejection is not a failure — there is something to
+   serve, and failing would take healthy tenants down over one operator's typo.
+
+   **The registry enforces this, not its callers.** It held as a call-site rule
+   twice and drifted both times; most recently the background refresh loop went
+   on installing the refused payload one interval after startup. Do not
+   reintroduce a second full-sync entry point that skips the check.
 3. **Revisions only move forward — within one apply as well as across applies.**
    Never apply an older revision. Never apply a *matching* revision whose
    payload disagrees with what is held either (item 50) — count it in

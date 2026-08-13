@@ -120,11 +120,13 @@ async fn a_refresh_installs_a_new_tenant_whose_first_entry_is_unusable() {
     let source = InMemorySource::new(vec![tenant_binding("incumbent", 1, "shared-01")]);
     ResourceRefresher::prime(&registry, &source).await.unwrap();
 
-    registry.apply_all(vec![
-        tenant_binding("incumbent", 1, "shared-01"),
-        unusable_binding("acme", 1),
-        tenant_binding("acme", 2, "shared-01"),
-    ]);
+    registry
+        .apply_all(vec![
+            tenant_binding("incumbent", 1, "shared-01"),
+            unusable_binding("acme", 1),
+            tenant_binding("acme", 2, "shared-01"),
+        ])
+        .unwrap();
 
     assert!(registry.lookup(&tenant("acme")).is_ok());
     assert!(registry.lookup(&tenant("incumbent")).is_ok());

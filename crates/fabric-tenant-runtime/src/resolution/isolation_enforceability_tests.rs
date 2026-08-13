@@ -67,17 +67,19 @@ fn resolve(
     isolation: IsolationModel,
 ) -> Result<crate::ResolvedDataSource, ResolveError> {
     let tenants = Arc::new(TenantRegistry::new());
-    tenants.apply_all(vec![TenantRuntimeBinding::new(
-        tenant("acme"),
-        BindingRevision::new(7),
-    )
-    .with_data(
-        primary(),
-        TenantDataBinding::new(data_source_id("pg-01"), isolation),
-    )]);
+    tenants
+        .apply_all(vec![TenantRuntimeBinding::new(
+            tenant("acme"),
+            BindingRevision::new(7),
+        )
+        .with_data(
+            primary(),
+            TenantDataBinding::new(data_source_id("pg-01"), isolation),
+        )])
+        .unwrap();
 
     let sources = Arc::new(DataSourceRegistry::new());
-    sources.apply_all(vec![data_source("pg-01", placement)]);
+    sources.apply_all(vec![data_source("pg-01", placement)]).unwrap();
 
     RuntimeResolver::new(tenants, sources).resolve_data_source(&tenant("acme"), &primary())
 }
@@ -175,20 +177,24 @@ fn the_check_refuses_rather_than_choosing_a_different_data_source() {
     // veto, never choose. With a perfectly good dedicated DataSource also
     // registered, the answer is still an error and not that other DataSource.
     let tenants = Arc::new(TenantRegistry::new());
-    tenants.apply_all(vec![TenantRuntimeBinding::new(
-        tenant("acme"),
-        BindingRevision::new(7),
-    )
-    .with_data(
-        primary(),
-        TenantDataBinding::new(data_source_id("pg-01"), IsolationModel::Database),
-    )]);
+    tenants
+        .apply_all(vec![TenantRuntimeBinding::new(
+            tenant("acme"),
+            BindingRevision::new(7),
+        )
+        .with_data(
+            primary(),
+            TenantDataBinding::new(data_source_id("pg-01"), IsolationModel::Database),
+        )])
+        .unwrap();
 
     let sources = Arc::new(DataSourceRegistry::new());
-    sources.apply_all(vec![
-        data_source("pg-01", PlacementClass::Shared),
-        data_source("pg-02", PlacementClass::Dedicated),
-    ]);
+    sources
+        .apply_all(vec![
+            data_source("pg-01", PlacementClass::Shared),
+            data_source("pg-02", PlacementClass::Dedicated),
+        ])
+        .unwrap();
 
     let error = RuntimeResolver::new(tenants, sources)
         .resolve_data_source(&tenant("acme"), &primary())

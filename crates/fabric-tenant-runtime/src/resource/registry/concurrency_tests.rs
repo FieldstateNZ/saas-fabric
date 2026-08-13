@@ -62,9 +62,9 @@ fn generation_b(revision: u64) -> Vec<crate::resource::registry::test_resource::
 async fn run_writer(registry: Arc<ResourceRegistry<crate::resource::registry::test_resource::TestResource>>) {
     for pass in 1..=PASSES {
         if pass % 2 == 1 {
-            registry.apply_all(generation_a(pass));
+            registry.apply_all(generation_a(pass)).unwrap();
         } else {
-            registry.apply_all(generation_b(pass));
+            registry.apply_all(generation_b(pass)).unwrap();
         }
 
         if pass % 20 == 0 {

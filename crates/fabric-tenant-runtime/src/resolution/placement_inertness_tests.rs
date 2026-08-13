@@ -57,7 +57,9 @@ fn placed(
 
 fn resolver(data_sources: Vec<DataSource>, bound_to: &str) -> RuntimeResolver {
     let tenants = Arc::new(TenantRegistry::new());
-    tenants.apply_all(vec![tenant_binding("acme", 7, bound_to)]);
+    tenants
+        .apply_all(vec![tenant_binding("acme", 7, bound_to)])
+        .unwrap();
 
     registry(tenants, data_sources)
 }
@@ -70,27 +72,29 @@ fn resolver(data_sources: Vec<DataSource>, bound_to: &str) -> RuntimeResolver {
 /// what these tests assert depends on which model it is.
 fn resolver_on_shared(data_sources: Vec<DataSource>, bound_to: &str) -> RuntimeResolver {
     let tenants = Arc::new(TenantRegistry::new());
-    tenants.apply_all(vec![TenantRuntimeBinding::new(
-        tenant("acme"),
-        BindingRevision::new(7),
-    )
-    .with_data(
-        primary(),
-        TenantDataBinding::new(
-            data_source_id(bound_to),
-            IsolationModel::Discriminator {
-                column: FieldName::try_new("tenant_key").unwrap(),
-                value: "tenant-482".to_owned(),
-            },
-        ),
-    )]);
+    tenants
+        .apply_all(vec![TenantRuntimeBinding::new(
+            tenant("acme"),
+            BindingRevision::new(7),
+        )
+        .with_data(
+            primary(),
+            TenantDataBinding::new(
+                data_source_id(bound_to),
+                IsolationModel::Discriminator {
+                    column: FieldName::try_new("tenant_key").unwrap(),
+                    value: "tenant-482".to_owned(),
+                },
+            ),
+        )])
+        .unwrap();
 
     registry(tenants, data_sources)
 }
 
 fn registry(tenants: Arc<TenantRegistry>, data_sources: Vec<DataSource>) -> RuntimeResolver {
     let registry = Arc::new(DataSourceRegistry::new());
-    registry.apply_all(data_sources);
+    registry.apply_all(data_sources).unwrap();
 
     RuntimeResolver::new(tenants, registry)
 }

@@ -31,6 +31,22 @@ const PERMITTED_ALGORITHMS: [Algorithm; 3] = [Algorithm::RS256, Algorithm::RS384
 /// two postures cannot start out with different windows before a deployment has
 /// configured anything.
 ///
+/// # Why `validate_aud` is switched off here
+///
+/// It reads backwards for a hardening posture, and is not. This library
+/// defaults it *on*, and its `aud` arm turns "claim present, no allowlist
+/// configured" into a rejection. `audiences` is optional in `fabric-api`'s
+/// `TokenConfig`, so a deployment that enabled this mode without listing any
+/// refused essentially every real OIDC access token — those carry an `aud` —
+/// opaquely, with nothing in the rejection to say why.
+///
+/// An allowlist nobody configured most plausibly means "do not check this
+/// claim", not "reject anything that has one". Ignoring `aud` until it is
+/// configured also keeps this posture level with the canonical one, which never
+/// looks at `aud` at all, rather than making it laxer — the direction that is
+/// forbidden. `allowlists::require_audiences` switches the check back on the
+/// moment a deployment does configure audiences.
+///
 /// # Why `exp` is required here and not in the canonical posture
 ///
 /// `Validation::new` seeds `required_spec_claims` with `exp`. That is restated
@@ -62,6 +78,7 @@ pub(crate) fn baseline() -> Validation {
     validation.set_required_spec_claims(&["exp"]);
     validation.validate_exp = true;
     validation.validate_nbf = true;
+    validation.validate_aud = false;
     validation.leeway = LeewaySeconds::DEFAULT.seconds();
 
     validation
@@ -95,10 +112,22 @@ mod tests {
 
     #[test]
     fn no_other_claim_is_required_by_default() {
-        // `iss` and `aud` become required only when a deployment configures
-        // them, and `nbf` never does — requiring it would reject the ordinary
-        // token that simply does not carry one.
+        // `iss` and `aud` become required only when a deployment configures an
+        // allowlist. `allowlists` is what makes that true, and pins it; this
+        // file asserted it for a while before anything did it, so a configured
+        // allowlist was bypassable by omitting the claim. `nbf` never becomes
+        // required — that would reject the ordinary token carrying none.
         assert_eq!(baseline().required_spec_claims.len(), 1);
+    }
+
+    #[test]
+    fn the_audience_claim_is_not_checked_until_a_deployment_lists_audiences() {
+        // The library defaults this on, and with no allowlist configured its
+        // `aud` arm rejects every token that merely *carries* one — which is
+        // most real access tokens. Guarded here because it is the second rule
+        // in this function that differs from `Validation::new`.
+        assert!(!baseline().validate_aud);
+        assert!(Validation::new(Algorithm::RS256).validate_aud);
     }
 
     #[test]

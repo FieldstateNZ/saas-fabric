@@ -7,9 +7,11 @@ use crate::resource::registry::test_resource::{registry, resource, resource_with
 #[test]
 fn a_full_sync_removes_resources_absent_from_the_incoming_set() {
     let registry = registry();
-    registry.apply_all(vec![resource("a", 1), resource("b", 1)]);
+    registry
+        .apply_all(vec![resource("a", 1), resource("b", 1)])
+        .unwrap();
 
-    let report = registry.apply_all(vec![resource("a", 1)]);
+    let report = registry.apply_all(vec![resource("a", 1)]).unwrap();
 
     assert_eq!(report.removed, 1);
     assert!(registry.lookup(&"b".to_owned()).is_err());
@@ -19,9 +21,9 @@ fn an_older_revision_is_ignored_rather_than_resurrecting_retired_state() {
     // A stale read must not point a tenant back at a database a migration has
     // already drained.
     let registry = registry();
-    registry.apply_all(vec![resource("a", 10)]);
+    registry.apply_all(vec![resource("a", 10)]).unwrap();
 
-    let report = registry.apply_all(vec![resource("a", 3)]);
+    let report = registry.apply_all(vec![resource("a", 3)]).unwrap();
 
     assert_eq!(report.stale_ignored, 1);
     assert_eq!(
@@ -33,9 +35,9 @@ fn an_older_revision_is_ignored_rather_than_resurrecting_retired_state() {
 fn an_identical_revision_is_reported_as_unchanged() {
     // Item 50, the quiet case: same revision, same payload.
     let registry = registry();
-    registry.apply_all(vec![resource("a", 5)]);
+    registry.apply_all(vec![resource("a", 5)]).unwrap();
 
-    let report = registry.apply_all(vec![resource("a", 5)]);
+    let report = registry.apply_all(vec![resource("a", 5)]).unwrap();
 
     assert_eq!(report.unchanged, 1);
     assert_eq!(report.divergent_payload, 0);
@@ -47,9 +49,13 @@ fn a_same_revision_divergent_payload_is_counted_and_the_held_payload_is_kept() {
     // that changed content but forgot to bump the revision must not vanish
     // without trace — it is counted here, and warn-logged in `apply_all`.
     let registry = registry();
-    registry.apply_all(vec![resource_with_payload("a", 5, "original")]);
+    registry
+        .apply_all(vec![resource_with_payload("a", 5, "original")])
+        .unwrap();
 
-    let report = registry.apply_all(vec![resource_with_payload("a", 5, "changed")]);
+    let report = registry
+        .apply_all(vec![resource_with_payload("a", 5, "changed")])
+        .unwrap();
 
     assert_eq!(report.divergent_payload, 1);
     assert_eq!(report.unchanged, 0);
@@ -58,7 +64,9 @@ fn a_same_revision_divergent_payload_is_counted_and_the_held_payload_is_kept() {
 #[test]
 fn applying_one_resource_leaves_the_others_alone() {
     let registry = registry();
-    registry.apply_all(vec![resource("a", 1), resource("b", 1)]);
+    registry
+        .apply_all(vec![resource("a", 1), resource("b", 1)])
+        .unwrap();
 
     assert!(registry.apply_one(resource("a", 2)));
 
@@ -74,7 +82,7 @@ fn applying_one_resource_leaves_the_others_alone() {
 #[test]
 fn applying_one_resource_at_the_same_revision_is_refused() {
     let registry = registry();
-    registry.apply_all(vec![resource("a", 4)]);
+    registry.apply_all(vec![resource("a", 4)]).unwrap();
 
     assert!(!registry.apply_one(resource("a", 4)));
 }
@@ -84,7 +92,9 @@ fn applying_one_resource_with_a_divergent_payload_at_the_same_revision_is_refuse
     // refuses the update even though the payload disagrees, and the held
     // payload is left exactly as it was.
     let registry = registry();
-    registry.apply_all(vec![resource_with_payload("a", 4, "original")]);
+    registry
+        .apply_all(vec![resource_with_payload("a", 4, "original")])
+        .unwrap();
 
     assert!(!registry.apply_one(resource_with_payload("a", 4, "changed")));
     assert_eq!(registry.lookup(&"a".to_owned()).unwrap().payload, "original");
@@ -92,7 +102,7 @@ fn applying_one_resource_with_a_divergent_payload_at_the_same_revision_is_refuse
 #[test]
 fn invalidating_a_resource_makes_it_fail_closed() {
     let registry = registry();
-    registry.apply_all(vec![resource("a", 1)]);
+    registry.apply_all(vec![resource("a", 1)]).unwrap();
 
     assert!(registry.invalidate(&"a".to_owned()));
     assert!(registry.lookup(&"a".to_owned()).is_err());
@@ -102,7 +112,7 @@ fn invalidating_a_resource_makes_it_fail_closed() {
 #[test]
 fn invalidating_an_absent_resource_reports_that_nothing_happened() {
     let registry = registry();
-    registry.apply_all(vec![]);
+    registry.apply_all(vec![]).unwrap();
 
     assert!(!registry.invalidate(&"a".to_owned()));
 }

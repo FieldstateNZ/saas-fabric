@@ -64,10 +64,16 @@ pub fn row(id: i64, name: &str) -> Row {
 /// Builds a resolver over the given state, both registries primed.
 pub fn resolver(bindings: Vec<TenantRuntimeBinding>, sources: Vec<DataSource>) -> Arc<RuntimeResolver> {
     let tenant_registry = Arc::new(TenantRegistry::new());
-    tenant_registry.apply_all(bindings);
+    assert!(
+        tenant_registry.apply_all(bindings).is_ok(),
+        "the fixture must install; a first load this test cannot use is a broken fixture"
+    );
 
     let source_registry = Arc::new(DataSourceRegistry::new());
-    source_registry.apply_all(sources);
+    assert!(
+        source_registry.apply_all(sources).is_ok(),
+        "the fixture must install; a first load this test cannot use is a broken fixture"
+    );
 
     Arc::new(RuntimeResolver::new(tenant_registry, source_registry))
 }

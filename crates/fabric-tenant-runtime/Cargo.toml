@@ -19,7 +19,10 @@ tokio = { workspace = true, features = ["fs", "sync", "time", "rt"] }
 tracing.workspace = true
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+# `test-util` supplies tokio's paused clock. The refresh loop's guarantees are
+# timing-dependent, and a test that waits on a real interval only makes the loop
+# *likely* to have run — a slow machine would let a broken build pass.
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util"] }
 
 [lints]
 workspace = true

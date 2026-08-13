@@ -70,16 +70,38 @@ whose defining property is supposed to be that it does not care.
 | | `TrustedIngressReader` (default) | `ValidatingReader` (opt-in) |
 |---|---|---|
 | Parses claims | yes | yes |
-| Checks `exp` | yes | yes |
+| Checks `exp` | yes | yes, and **requires** it |
+| Checks `nbf` | yes | yes |
 | Verifies signature | no | yes |
-| Checks `iss` / `aud` | no | when configured |
+| Checks `iss` / `aud` | no | only when configured — and then the claim is mandatory |
 | Issuer discovery | never | never |
 | JWKS fetching | never | never — snapshot loaded at startup |
 | Realm knowledge | never | never |
 
-Expiry is checked in both. Replaying a captured expired token is cheap and
-refusing it costs one integer comparison, so there is no posture in which
-accepting one is right.
+Expiry and not-before are checked in both. Replaying a captured expired token
+is cheap and refusing it costs one integer comparison, so there is no posture
+in which accepting one is right; the same holds for honouring a token minted
+for later use. Both postures run the same check, so the defence-in-depth mode
+cannot end up laxer than the canonical one no matter what the underlying
+library can or cannot parse.
+
+The two do differ on a *missing* `exp`. The canonical posture accepts a token
+without one — the edge already decided that token was good, and this reader's
+job is to consume that decision, not to re-legislate the token's shape. The
+defence-in-depth posture requires it, because a bearer token that never
+expires is precisely the thing a deployment opts into that mode to refuse.
+Rejecting more is the permitted direction between these two; accepting more is
+not.
+
+`iss` and `aud` were the reverse of that, and it took an adversarial review to
+notice. Configuring an allowlist used to set the *comparison* without making
+the claim required, so any token that simply omitted `iss` sailed past an
+issuer allowlist — a security control that silently did nothing. Configuring
+one now makes the claim mandatory. Leaving it unconfigured means the claim is
+not examined at all, which is what an operator who did not set it expects; the
+previous behaviour rejected every token that merely *carried* an `aud`, which
+made the mode unusable against a real identity provider for reasons nothing
+explained.
 
 Neither reader fetches anything. Even in defence-in-depth mode, keys arrive as a
 `VerificationKeys` snapshot built outside the request path, and rotation means

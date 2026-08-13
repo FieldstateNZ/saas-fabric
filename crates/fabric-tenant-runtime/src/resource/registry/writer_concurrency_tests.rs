@@ -61,7 +61,7 @@ const CONTENDED_KEY: &str = "contended";
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn concurrent_writers_never_lose_each_others_resources() {
     let registry = Arc::new(registry());
-    registry.apply_all(vec![]);
+    registry.apply_all(vec![]).unwrap();
 
     let writers: Vec<_> = (0..WRITER_COUNT)
         .map(|writer| tokio::spawn(insert_own_keys(Arc::clone(&registry), writer)))
@@ -127,7 +127,9 @@ async fn publish_rising_revisions(registry: Arc<ResourceRegistry<TestResource>>,
     let mut last_seen = 0;
 
     for pass in 0..PASSES {
-        registry.apply_all(vec![resource(CONTENDED_KEY, pass * WRITER_COUNT + writer)]);
+        registry
+            .apply_all(vec![resource(CONTENDED_KEY, pass * WRITER_COUNT + writer)])
+            .unwrap();
 
         let observed = registry.lookup(&CONTENDED_KEY.to_owned()).unwrap().revision.get();
 

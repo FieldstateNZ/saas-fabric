@@ -13,10 +13,10 @@ fn resolver(
     data_sources: Vec<crate::DataSource>,
 ) -> RuntimeResolver {
     let tenant_registry = Arc::new(TenantRegistry::new());
-    tenant_registry.apply_all(tenants);
+    tenant_registry.apply_all(tenants).unwrap();
 
     let data_source_registry = Arc::new(DataSourceRegistry::new());
-    data_source_registry.apply_all(data_sources);
+    data_source_registry.apply_all(data_sources).unwrap();
 
     RuntimeResolver::new(tenant_registry, data_source_registry)
 }
@@ -78,10 +78,14 @@ fn a_data_source_change_is_visible_without_touching_any_tenant_binding() {
     // The independence that makes DataSources worth having: correcting a
     // connection is one edit, and bumps one revision.
     let tenant_registry = Arc::new(TenantRegistry::new());
-    tenant_registry.apply_all(vec![tenant_binding("acme", 1, "shared-01")]);
+    tenant_registry
+        .apply_all(vec![tenant_binding("acme", 1, "shared-01")])
+        .unwrap();
 
     let source_registry = Arc::new(DataSourceRegistry::new());
-    source_registry.apply_all(vec![data_source("shared-01", 1)]);
+    source_registry
+        .apply_all(vec![data_source("shared-01", 1)])
+        .unwrap();
 
     let resolver = RuntimeResolver::new(Arc::clone(&tenant_registry), Arc::clone(&source_registry));
 
@@ -160,10 +164,14 @@ fn a_data_source_removed_after_a_successful_resolve_fails_closed_rather_than_fal
     // still fail closed — never silently pick up a different DataSource for
     // a binding that has not itself changed.
     let tenant_registry = Arc::new(TenantRegistry::new());
-    tenant_registry.apply_all(vec![tenant_binding("acme", 1, "shared-01")]);
+    tenant_registry
+        .apply_all(vec![tenant_binding("acme", 1, "shared-01")])
+        .unwrap();
 
     let source_registry = Arc::new(DataSourceRegistry::new());
-    source_registry.apply_all(vec![data_source("shared-01", 1)]);
+    source_registry
+        .apply_all(vec![data_source("shared-01", 1)])
+        .unwrap();
 
     let resolver = RuntimeResolver::new(Arc::clone(&tenant_registry), Arc::clone(&source_registry));
 
@@ -171,7 +179,7 @@ fn a_data_source_removed_after_a_successful_resolve_fails_closed_rather_than_fal
 
     // The DataSource disappears from a subsequent full sync — deprovisioned,
     // never touching the tenant binding.
-    source_registry.apply_all(vec![]);
+    source_registry.apply_all(vec![]).unwrap();
 
     let error = resolver
         .resolve_data_source(&tenant("acme"), &primary())
@@ -195,7 +203,7 @@ fn a_read_only_data_source_is_reported_as_not_writable() {
 #[test]
 fn readiness_requires_both_registries() {
     let tenant_registry = Arc::new(TenantRegistry::new());
-    tenant_registry.apply_all(vec![]);
+    tenant_registry.apply_all(vec![]).unwrap();
 
     let resolver = RuntimeResolver::new(tenant_registry, Arc::new(DataSourceRegistry::new()));
 
@@ -219,10 +227,14 @@ fn a_resolved_target_carries_both_revisions() {
 #[test]
 fn a_data_source_revision_bump_does_not_move_the_tenant_revision() {
     let tenant_registry = Arc::new(TenantRegistry::new());
-    tenant_registry.apply_all(vec![tenant_binding("acme", 3, "shared-01")]);
+    tenant_registry
+        .apply_all(vec![tenant_binding("acme", 3, "shared-01")])
+        .unwrap();
 
     let source_registry = Arc::new(DataSourceRegistry::new());
-    source_registry.apply_all(vec![data_source("shared-01", 1)]);
+    source_registry
+        .apply_all(vec![data_source("shared-01", 1)])
+        .unwrap();
 
     let resolver = RuntimeResolver::new(Arc::clone(&tenant_registry), Arc::clone(&source_registry));
 
@@ -239,10 +251,14 @@ fn a_data_source_revision_bump_does_not_move_the_tenant_revision() {
 #[test]
 fn rebinding_a_tenant_moves_the_tenant_revision_and_the_data_source_id() {
     let tenant_registry = Arc::new(TenantRegistry::new());
-    tenant_registry.apply_all(vec![tenant_binding("acme", 3, "shared-01")]);
+    tenant_registry
+        .apply_all(vec![tenant_binding("acme", 3, "shared-01")])
+        .unwrap();
 
     let source_registry = Arc::new(DataSourceRegistry::new());
-    source_registry.apply_all(vec![data_source("shared-01", 1), data_source("shared-02", 6)]);
+    source_registry
+        .apply_all(vec![data_source("shared-01", 1), data_source("shared-02", 6)])
+        .unwrap();
 
     let resolver = RuntimeResolver::new(Arc::clone(&tenant_registry), Arc::clone(&source_registry));
 

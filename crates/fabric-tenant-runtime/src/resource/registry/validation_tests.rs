@@ -21,9 +21,13 @@ use crate::{DataSourceRegistry, PoolSettings, TenantRegistry, TenantRuntimeBindi
 
 #[test]
 fn an_invalid_resource_never_enters_the_snapshot() {
+    // Primed first, so the subject is validation alone. On a registry that has
+    // never loaded, a set of nothing but rejections is refused outright rather
+    // than installed — a separate rule, pinned in `first_load_tests`.
     let registry = registry();
+    registry.apply_all(vec![]).unwrap();
 
-    let report = registry.apply_all(vec![invalid_resource("a", 1)]);
+    let report = registry.apply_all(vec![invalid_resource("a", 1)]).unwrap();
 
     assert_eq!(report.invalid_rejected, 1);
     assert_eq!(report.added, 0);
@@ -36,11 +40,13 @@ fn one_invalid_resource_does_not_stop_its_valid_neighbours_loading() {
     // operator's typo must not freeze every other resource's updates.
     let registry = registry();
 
-    let report = registry.apply_all(vec![
-        resource("good", 1),
-        invalid_resource("bad", 1),
-        resource("also-good", 1),
-    ]);
+    let report = registry
+        .apply_all(vec![
+            resource("good", 1),
+            invalid_resource("bad", 1),
+            resource("also-good", 1),
+        ])
+        .unwrap();
 
     assert_eq!(report.added, 2);
     assert_eq!(report.invalid_rejected, 1);
@@ -55,9 +61,9 @@ fn a_resource_that_turns_invalid_keeps_serving_the_copy_already_held() {
     // unusable payload is a reconciler bug. Treating the bug as a removal
     // would take a live tenant offline over a typo.
     let registry = registry();
-    registry.apply_all(vec![resource("a", 1)]);
+    registry.apply_all(vec![resource("a", 1)]).unwrap();
 
-    let report = registry.apply_all(vec![invalid_resource("a", 2)]);
+    let report = registry.apply_all(vec![invalid_resource("a", 2)]).unwrap();
 
     assert_eq!(report.invalid_rejected, 1);
     assert_eq!(report.removed, 0);
@@ -73,9 +79,13 @@ fn a_rejection_does_not_blank_the_registry() {
     // "A load failure must never become an empty set" has to hold for a set
     // that is entirely invalid, too.
     let registry = registry();
-    registry.apply_all(vec![resource("a", 1), resource("b", 1)]);
+    registry
+        .apply_all(vec![resource("a", 1), resource("b", 1)])
+        .unwrap();
 
-    registry.apply_all(vec![invalid_resource("a", 2), invalid_resource("b", 2)]);
+    registry
+        .apply_all(vec![invalid_resource("a", 2), invalid_resource("b", 2)])
+        .unwrap();
 
     assert!(registry.is_primed());
     assert_eq!(registry.len(), 2);
@@ -86,8 +96,9 @@ fn a_rejection_is_not_movement_so_the_aggregate_log_stays_quiet() {
     // Nothing in the registry moved, and each rejection already gets its own
     // error-level log, so it must not also inflate the snapshot-applied line.
     let registry = registry();
+    registry.apply_all(vec![]).unwrap();
 
-    let report = registry.apply_all(vec![invalid_resource("a", 1)]);
+    let report = registry.apply_all(vec![invalid_resource("a", 1)]).unwrap();
 
     assert!(report.is_noop());
     assert_eq!(report.invalid_rejected, 1);
@@ -96,7 +107,7 @@ fn a_rejection_is_not_movement_so_the_aggregate_log_stays_quiet() {
 #[test]
 fn applying_one_invalid_resource_is_refused() {
     let registry = registry();
-    registry.apply_all(vec![resource("a", 1)]);
+    registry.apply_all(vec![resource("a", 1)]).unwrap();
 
     assert!(!registry.apply_one(invalid_resource("a", 2)));
     assert_eq!(
@@ -122,7 +133,7 @@ fn an_incoherent_pool_does_not_take_a_data_source_out_of_the_registry() {
         ..data_source("sql-au-east-03", 1)
     };
 
-    let report = registry.apply_all(vec![odd_pool]);
+    let report = registry.apply_all(vec![odd_pool]).unwrap();
 
     assert_eq!(report.invalid_rejected, 0);
     assert_eq!(report.added, 1);
@@ -143,13 +154,15 @@ fn the_pool_rule_itself_still_exists_for_whoever_applies_it() {
 
 #[test]
 fn a_tenant_with_no_data_bindings_is_rejected_at_load() {
+    // Primed first, for the reason in `an_invalid_resource_never_enters_the_snapshot`.
     let registry = TenantRegistry::new();
+    registry.apply_all(vec![]).unwrap();
     let unbound = TenantRuntimeBinding {
         data: BTreeMap::new(),
         ..tenant_binding("acme", 1, "sql-au-east-03")
     };
 
-    let report = registry.apply_all(vec![unbound]);
+    let report = registry.apply_all(vec![unbound]).unwrap();
 
     assert_eq!(report.invalid_rejected, 1);
     assert!(registry.lookup(&tenant("acme")).is_err());
@@ -160,7 +173,9 @@ fn a_coherent_tenant_alongside_an_unbound_one_still_loads() {
     let registry = TenantRegistry::new();
     let unbound = TenantRuntimeBinding::new(TenantId::try_new("orphan").unwrap(), BindingRevision::new(1));
 
-    let report = registry.apply_all(vec![tenant_binding("acme", 1, "sql-au-east-03"), unbound]);
+    let report = registry
+        .apply_all(vec![tenant_binding("acme", 1, "sql-au-east-03"), unbound])
+        .unwrap();
 
     assert_eq!(report.added, 1);
     assert_eq!(report.invalid_rejected, 1);

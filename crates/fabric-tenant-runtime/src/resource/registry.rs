@@ -41,8 +41,7 @@ use write_lock::WriteLock;
 /// starts losing the oldest.
 ///
 /// A lagging subscriber is told it lagged and can re-read current state, so
-/// losing events is recoverable. Blocking the registry on a slow subscriber
-/// would not be.
+/// losing events is recoverable. Blocking the registry on one would not be.
 const CHANGE_CHANNEL_CAPACITY: usize = 256;
 
 /// Holds the current set of one kind of reconciled resource.
@@ -54,14 +53,16 @@ const CHANGE_CHANNEL_CAPACITY: usize = 256;
 /// [`LookupError::Unavailable`] rather than [`LookupError::NotFound`] — see
 /// [`LookupError`] for why that distinction is load-bearing.
 ///
+/// Priming is irreversible, so no mutator here can install an *empty* snapshot
+/// over a registry that has never loaded — [`Self::apply_all`] refuses such a
+/// set rather than trusting callers to route around it.
+///
 /// # Writers
 ///
 /// [`Self::apply_all`], [`Self::apply_one`] and [`Self::invalidate`] are each a
 /// read-modify-write, so they are serialised against one another by an internal
-/// write lock. Calling them concurrently is therefore safe — without that,
-/// two writers would read the same starting snapshot and the second store would
-/// discard the first, which also defeats the revision guard by letting a lower
-/// revision land after a higher one.
+/// write lock and calling them concurrently is safe. `WriteLock` sets out what
+/// goes wrong without it.
 ///
 /// Readers are unaffected and take no lock: [`Self::lookup`] remains an atomic
 /// pointer load and a hash lookup no matter how many writers are active.
@@ -140,7 +141,7 @@ impl<T: RegistryResource> ResourceRegistry<T> {
     fn publish(&self, events: Vec<ResourceChange<T::Key>>) {
         for event in events {
             // `send` fails only when nobody is listening, which is normal at
-            // startup and in tests. There is nothing to recover from.
+            // startup and in tests — nothing to recover from.
             drop(self.changes.send(event));
         }
     }

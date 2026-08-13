@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use crate::resource::snapshot::ResourceSnapshot;
 use crate::resource::{ApplyReport, RegistryResource, ResourceChange};
+use crate::UnusableFirstLoad;
 
 /// The snapshot an incoming set *would* install, plus the per-key verdicts that
 /// built it.
@@ -55,6 +56,14 @@ pub(super) struct MergedSnapshot<T: RegistryResource> {
     /// The first validation failure, named, so a refusal can say what to go and
     /// fix rather than only that something is wrong.
     pub(super) first_rejection: Option<String>,
+
+    /// How many resources the incoming set offered. Recorded by [`Self::merge`]
+    /// from the very input it judged, so [`Self::refusal`] needs no arguments.
+    published: usize,
+
+    /// Whether this merge is against *no* snapshot at all — the registry's first
+    /// load, and the only case where installing can be refused.
+    first_load: bool,
 }
 
 impl<T: RegistryResource> MergedSnapshot<T> {
@@ -69,6 +78,8 @@ impl<T: RegistryResource> MergedSnapshot<T> {
             report: ApplyReport::default(),
             decided: HashSet::with_capacity(incoming.len()),
             first_rejection: None,
+            published: incoming.len(),
+            first_load: current.is_none(),
         };
 
         for resource in incoming {
@@ -83,25 +94,39 @@ impl<T: RegistryResource> MergedSnapshot<T> {
         merged
     }
 
-    /// Why this merge must not be installed as a **first** load, or `None` when
-    /// there is something to serve.
+    /// Why this merge must not be installed, or `None` when there is something
+    /// to serve.
     ///
-    /// `published` is how many resources the source offered. Zero is
-    /// legitimate: a deployment that has not onboarded a tenant yet must still
-    /// start, and installing nothing is only a failure when something was
-    /// offered to install.
+    /// # Why this takes no arguments
     ///
-    /// Above zero, an empty `next` means the source published state and none of
-    /// it can be served. That is indistinguishable from a source that failed to
-    /// load, so it gets the same treatment — the caller leaves the registry
-    /// unprimed rather than primed and empty.
+    /// Both facts it needs — how many resources the source offered, and whether
+    /// there was a snapshot to replace — are recorded by [`Self::merge`] from
+    /// the very inputs it judged. No caller supplies them, so no caller can
+    /// supply a different answer than the merge used, and there is no call site
+    /// left that could decide to skip the question.
     ///
-    /// One-of-fifty is deliberately *not* the same as fifty-of-fifty: with
-    /// something left in `next`, `is_primed` is honest, the healthy tenants are
-    /// served, and only the rejected ones fail closed. Refusing to start there
-    /// would take forty-nine tenants down over the fiftieth's typo.
-    pub(super) fn refusal(&mut self, published: usize) -> Option<String> {
-        if published == 0 || !self.next.is_empty() {
+    /// # The three conditions
+    ///
+    /// **A snapshot already exists.** Nothing is refused. A full sync is allowed
+    /// to empty a registry — that is how deprovisioning works — and a rejected
+    /// resource falls back to the copy held, so something keeps serving either
+    /// way. Priming is the irreversible step and it has already happened.
+    ///
+    /// **Nothing was published.** Zero is legitimate: a deployment that has not
+    /// onboarded a tenant yet must still start, and installing nothing is only a
+    /// failure when something was offered to install.
+    ///
+    /// **Something was published and none of it survived.** Indistinguishable
+    /// from a source that failed to load, so it gets the same treatment: the
+    /// registry is left untouched, which on a first load means unprimed rather
+    /// than primed and empty.
+    ///
+    /// One-of-fifty is deliberately *not* fifty-of-fifty: with something left in
+    /// `next`, `is_primed` is honest, the healthy tenants are served, and only
+    /// the rejected ones fail closed. Refusing to start there would take
+    /// forty-nine tenants down over the fiftieth's typo.
+    pub(super) fn refusal(&mut self) -> Option<UnusableFirstLoad> {
+        if !self.first_load || self.published == 0 || !self.next.is_empty() {
             return None;
         }
 
@@ -111,10 +136,12 @@ impl<T: RegistryResource> MergedSnapshot<T> {
         // is denied and because a future rule that drops an entry some other
         // way should still refuse the load, with a message that is merely vague
         // instead of one that is wrong.
-        Some(
-            self.first_rejection
+        Some(UnusableFirstLoad {
+            published: self.published,
+            reason: self
+                .first_rejection
                 .take()
                 .unwrap_or_else(|| format!("no {} survived the merge", T::KIND)),
-        )
+        })
     }
 }

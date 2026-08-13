@@ -6,6 +6,7 @@ use crate::logging;
 use crate::resource::registry::merged_snapshot::MergedSnapshot;
 use crate::resource::snapshot::ResourceSnapshot;
 use crate::resource::{ApplyReport, RegistryResource, ResourceRegistry};
+use crate::UnusableFirstLoad;
 
 impl<T: RegistryResource> ResourceRegistry<T> {
     /// Replaces the registry contents with an authoritative set.
@@ -35,57 +36,58 @@ impl<T: RegistryResource> ResourceRegistry<T> {
     /// `MergedSnapshot::accept` for
     /// the ordering between those two rules and why it matters.
     ///
-    /// # This installs unconditionally
+    /// # A first load is not a special call
     ///
     /// Applying primes the registry as a side effect, and nothing can un-prime
-    /// it. On a registry that has never loaded, use
-    /// `apply_first_load` instead: it runs the identical merge and
-    /// installs the result only if there is something to serve. Calling this
-    /// method for a first load can leave a registry primed and empty, which
-    /// answers `/ready` with 200 while failing every request.
+    /// it — so installing a set that leaves *nothing* to serve, on a registry
+    /// that has never loaded, answers `/ready` with 200 over an empty snapshot
+    /// while every request fails. That case is refused here, by this method, on
+    /// every call.
+    ///
+    /// There used to be a second method for it, and a rule that callers must
+    /// pick the right one. Two call sites had to agree about one fact and they
+    /// drifted: the background refresh loop kept calling this method, so a prime
+    /// that had been correctly refused was undone one refresh interval later —
+    /// the same unusable payload installed as an empty snapshot, `/ready`
+    /// flipping 503 → 200, and every request turning from a retryable
+    /// `RuntimeUnavailable` into a terminal `UnknownTenant`.
+    ///
+    /// A call-site rule was never the right shape for it. "Has this registry
+    /// ever loaded?" is a fact the registry knows about itself — the same fact
+    /// [`Self::is_primed`] reports — so nothing is gained by asking a caller to
+    /// remember it, and a caller that forgets cannot be caught by the compiler.
+    /// The check now reads that fact off `guard`, the snapshot this merge is
+    /// judged against, so the question and the merge cannot come apart.
+    ///
+    /// On a registry that already holds a snapshot this can never fail: a
+    /// rejected resource falls back to the copy held, so there is always
+    /// something left to serve.
+    ///
+    /// # Errors
+    ///
+    /// [`UnusableFirstLoad`] when the registry has never loaded, the set
+    /// published resources, and none of them survived the merge. The registry is
+    /// left untouched — and so, unprimed — rather than reporting ready over an
+    /// empty snapshot.
     ///
     /// # Concurrency
     ///
     /// This is a read-modify-write, so it is serialised against the other
     /// mutators by the registry's write lock. Lookups are not affected.
-    pub fn apply_all(&self, incoming: Vec<T>) -> ApplyReport {
+    pub fn apply_all(&self, incoming: Vec<T>) -> Result<ApplyReport, UnusableFirstLoad> {
         // Held across the swap *and* the publish below: see `WriteLock` for
         // why both, rather than only the swap.
         let _write = self.writes.acquire();
 
         let guard = self.snapshot.load();
-        let merged = MergedSnapshot::merge(guard.as_deref(), incoming);
-
-        self.install(merged)
-    }
-
-    /// Applies the **first** set a registry ever sees, refusing to install one
-    /// that would leave nothing to serve.
-    ///
-    /// The merge is the same one [`Self::apply_all`] runs — the same code
-    /// decides what to install and whether installing it is safe, which is the
-    /// invariant [`MergedSnapshot`] exists to hold. All this adds is *when* the
-    /// swap happens: after the verdicts are in, not before.
-    ///
-    /// An empty publication still primes. A deployment with no tenants
-    /// onboarded yet must be able to start, and installing nothing is only a
-    /// failure when something was offered to install. A partial rejection also
-    /// primes, for the reason set out on [`MergedSnapshot::refusal`].
-    ///
-    /// # Errors
-    ///
-    /// The first rejection, named, when the set published resources and none of
-    /// them survived. The registry is left untouched — and so, on a fresh
-    /// registry, unprimed — rather than reporting ready over an empty snapshot.
-    pub(crate) fn apply_first_load(&self, incoming: Vec<T>) -> Result<ApplyReport, String> {
-        let _write = self.writes.acquire();
-
-        let published = incoming.len();
-        let guard = self.snapshot.load();
         let mut merged = MergedSnapshot::merge(guard.as_deref(), incoming);
 
-        if let Some(reason) = merged.refusal(published) {
-            return Err(reason);
+        // Asked unconditionally. `refusal` takes no arguments precisely so that
+        // this line cannot be made to ask a different question than the merge
+        // answered, and so that there is nowhere left to put a branch that
+        // skips it.
+        if let Some(refusal) = merged.refusal() {
+            return Err(refusal);
         }
 
         Ok(self.install(merged))
@@ -93,9 +95,9 @@ impl<T: RegistryResource> ResourceRegistry<T> {
 
     /// Swaps in a merged snapshot and announces what changed.
     ///
-    /// The write lock is the caller's to hold: both callers acquire it before
-    /// the merge, so the snapshot a merge was judged against is still the one
-    /// being replaced here.
+    /// The write lock is the caller's to hold: it is acquired before the merge,
+    /// so the snapshot a merge was judged against — including whether there was
+    /// one at all — is still the one being replaced here.
     fn install(&self, merged: MergedSnapshot<T>) -> ApplyReport {
         let size = merged.next.len();
         self.snapshot

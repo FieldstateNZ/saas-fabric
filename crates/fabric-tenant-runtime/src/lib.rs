@@ -64,7 +64,7 @@ mod testing;
 
 pub use config::RuntimeConfig;
 pub use data_source::{DataResidency, DataSource, DataSourceCapabilities, PlacementClass, PoolSettings};
-pub use errors::{ConfigurationError, ResolveError, SourceError};
+pub use errors::{ConfigurationError, ResolveError, SourceError, UnusableFirstLoad};
 pub use registration::{build_runtime, RuntimeHandles};
 pub use resolution::{ResolvedDataSource, RuntimeResolver};
 pub use resource::sources::{InMemorySource, JsonFileSource};

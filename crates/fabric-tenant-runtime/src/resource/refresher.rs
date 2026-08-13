@@ -34,11 +34,12 @@ pub struct ResourceRefresher;
 impl ResourceRefresher {
     /// Loads once, so the registry can serve.
     ///
-    /// Goes through `ResourceRegistry::apply_first_load` rather than
-    /// `apply_all`: a first load that would install *nothing* is refused, and
-    /// the registry is left unprimed rather than primed and empty. The merge
-    /// itself makes that call, from the same verdicts it uses to decide what to
-    /// install — nothing here predicts the outcome ahead of it.
+    /// There is nothing special about this call. [`ResourceRegistry::apply_all`]
+    /// refuses a first load that would install nothing, whoever makes it, so
+    /// this path gets that protection by using the same method the refresh loop
+    /// does rather than by remembering to pick a different one. All this adds is
+    /// turning the refusal into a [`SourceError`] so `fail_fast_on_prime` has
+    /// something to fire on.
     ///
     /// # Errors
     ///
@@ -50,14 +51,13 @@ impl ResourceRefresher {
         source: &dyn ResourceSource<T>,
     ) -> Result<usize, SourceError> {
         let resources = source.load().await?;
-        let published = resources.len();
 
         registry
-            .apply_first_load(resources)
-            .map_err(|reason| SourceError::NothingUsable {
+            .apply_all(resources)
+            .map_err(|refused| SourceError::NothingUsable {
                 origin: source.describe(),
-                count: published,
-                reason,
+                count: refused.published,
+                reason: refused.reason,
             })?;
 
         // Deliberately what the registry now holds, not what the source
@@ -97,7 +97,14 @@ impl ResourceRefresher {
 
                 match source.load().await {
                     Ok(resources) => {
-                        registry.apply_all(resources);
+                        if let Err(refused) = registry.apply_all(resources) {
+                            // Only reachable while the registry has never
+                            // loaded — a prime that was refused, and a source
+                            // still publishing the payload that got it refused.
+                            // The registry stayed unprimed, which is the whole
+                            // point; this says so out loud.
+                            logging::first_load_refused::<T>(&source.describe(), &refused);
+                        }
                     }
                     Err(error) => {
                         // Deliberately does not touch the registry. The last

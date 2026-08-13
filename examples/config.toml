@@ -81,6 +81,11 @@ mode = "trusted_ingress"
 #   issuers = ["https://id.example.com/realms/platform"]
 #   audiences = ["saas-fabric"]
 #
+# Setting either allowlist makes that claim mandatory: a token omitting `iss`
+# is refused rather than skipping the issuer check. Leaving one out means the
+# claim is not examined at all. An empty list is neither — it matches nothing,
+# so it refuses every token; say nothing rather than saying `[]`.
+#
 # Even then the runtime performs no issuer discovery and no JWKS fetching: the
 # document is read once at startup, so identity-provider lifecycle stays with
 # the identity provider (§24).

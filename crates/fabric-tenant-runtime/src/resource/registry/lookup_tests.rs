@@ -20,7 +20,7 @@ fn an_unprimed_registry_reports_unavailable_not_not_found() {
 #[test]
 fn a_primed_registry_reports_an_absent_key_as_not_found() {
     let registry = registry();
-    registry.apply_all(vec![resource("a", 1)]);
+    registry.apply_all(vec![resource("a", 1)]).unwrap();
 
     assert_eq!(
         registry.lookup(&"b".to_owned()).unwrap_err(),
@@ -30,7 +30,7 @@ fn a_primed_registry_reports_an_absent_key_as_not_found() {
 #[test]
 fn priming_with_an_empty_set_still_counts_as_primed() {
     let registry = registry();
-    registry.apply_all(vec![]);
+    registry.apply_all(vec![]).unwrap();
 
     assert!(registry.is_primed());
     assert_eq!(
@@ -41,7 +41,7 @@ fn priming_with_an_empty_set_still_counts_as_primed() {
 #[test]
 fn resolves_a_held_resource() {
     let registry = registry();
-    registry.apply_all(vec![resource("a", 7)]);
+    registry.apply_all(vec![resource("a", 7)]).unwrap();
 
     assert_eq!(
         registry.lookup(&"a".to_owned()).unwrap().revision,

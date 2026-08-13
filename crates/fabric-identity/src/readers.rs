@@ -24,6 +24,7 @@ pub(crate) mod not_before;
 pub(crate) mod rejection;
 pub(crate) mod window;
 
+mod allowlists;
 mod jwks;
 mod leeway;
 mod trusted_ingress;
@@ -33,6 +34,8 @@ mod validation_rules;
 mod verification_keys;
 mod verified_claims;
 
+#[cfg(test)]
+mod allowlist_tests;
 #[cfg(test)]
 mod posture_parity_tests;
 

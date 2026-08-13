@@ -56,7 +56,10 @@ async fn an_unprimed_runtime_returns_service_unavailable_not_forbidden() {
 async fn an_unprimed_data_source_registry_alone_is_enough_to_be_unavailable() {
     // Tenants loaded, DataSources not: the chain cannot complete.
     let tenant_registry = Arc::new(TenantRegistry::new());
-    tenant_registry.apply_all(tenants());
+    assert!(
+        tenant_registry.apply_all(tenants()).is_ok(),
+        "the fixture must install; a first load this test cannot use is a broken fixture"
+    );
 
     let runtime = Arc::new(RuntimeResolver::new(
         tenant_registry,

@@ -42,7 +42,7 @@ fn assert_events_describe_the_installed_snapshot(
         .collect();
 
     let mut changes = registry.subscribe();
-    registry.apply_all(incoming);
+    registry.apply_all(incoming).unwrap();
 
     let mut events: Vec<ResourceChange<String>> = Vec::new();
     while let Ok(event) = changes.try_recv() {
@@ -86,7 +86,7 @@ fn a_duplicate_never_publishes_an_event_for_a_snapshot_that_never_existed() {
     // held copy over the top of it — while the first entry's event stays
     // queued and is published anyway.
     let registry = registry();
-    registry.apply_all(vec![resource("a", 1)]);
+    registry.apply_all(vec![resource("a", 1)]).unwrap();
 
     assert_events_describe_the_installed_snapshot(
         &registry,
@@ -101,7 +101,7 @@ fn two_entries_for_one_key_never_publish_contradictory_transitions() {
     // announced as updates — 1→9 and 1→3 — and the later one wins the map.
     // "Revisions only move forward" (§20) has to hold *within* one apply too.
     let registry = registry();
-    registry.apply_all(vec![resource("a", 1)]);
+    registry.apply_all(vec![resource("a", 1)]).unwrap();
 
     assert_events_describe_the_installed_snapshot(
         &registry,
@@ -119,7 +119,9 @@ fn an_invalid_first_entry_does_not_consume_its_key() {
     // and on a first load that primed the registry empty.
     let registry = registry();
 
-    let report = registry.apply_all(vec![invalid_resource("a", 1), resource("a", 2)]);
+    let report = registry
+        .apply_all(vec![invalid_resource("a", 1), resource("a", 2)])
+        .unwrap();
 
     assert_eq!(report.invalid_rejected, 1);
     assert_eq!(
@@ -141,13 +143,15 @@ fn a_new_key_whose_first_entry_is_invalid_still_appears_on_a_refresh() {
     // was refused — a genuinely new resource never appeared despite the source
     // publishing a usable copy of it.
     let registry = registry();
-    registry.apply_all(vec![resource("incumbent", 1)]);
+    registry.apply_all(vec![resource("incumbent", 1)]).unwrap();
 
-    registry.apply_all(vec![
-        resource("incumbent", 1),
-        invalid_resource("newbie", 1),
-        resource("newbie", 2),
-    ]);
+    registry
+        .apply_all(vec![
+            resource("incumbent", 1),
+            invalid_resource("newbie", 1),
+            resource("newbie", 2),
+        ])
+        .unwrap();
 
     assert_eq!(
         registry.lookup(&"newbie".to_owned()).unwrap().revision,
@@ -163,9 +167,11 @@ fn an_invalid_duplicate_cannot_undo_the_entry_that_won_the_key() {
     // compared and won the key, a later invalid entry for it must not put the
     // held copy back over the top of the winner.
     let registry = registry();
-    registry.apply_all(vec![resource("a", 1)]);
+    registry.apply_all(vec![resource("a", 1)]).unwrap();
 
-    registry.apply_all(vec![resource("a", 5), invalid_resource("a", 6)]);
+    registry
+        .apply_all(vec![resource("a", 5), invalid_resource("a", 6)])
+        .unwrap();
 
     assert_eq!(
         registry.lookup(&"a".to_owned()).unwrap().revision,
@@ -201,7 +207,7 @@ fn the_invariant_holds_for_every_shape_a_repeated_key_can_take() {
 
     for incoming in cases {
         let registry = registry();
-        registry.apply_all(vec![resource("a", 4)]);
+        registry.apply_all(vec![resource("a", 4)]).unwrap();
 
         assert_events_describe_the_installed_snapshot(&registry, &["a", "b"], incoming);
     }
@@ -213,9 +219,11 @@ fn a_refused_duplicate_is_counted_rather_than_folded_into_another_bucket() {
     // must not hide inside `unchanged`, `stale_ignored`, or `invalid_rejected`,
     // all of which describe the source disagreeing with what is *held*.
     let registry = registry();
-    registry.apply_all(vec![resource("a", 1)]);
+    registry.apply_all(vec![resource("a", 1)]).unwrap();
 
-    let report = registry.apply_all(vec![resource("a", 2), resource("a", 3), resource("b", 1)]);
+    let report = registry
+        .apply_all(vec![resource("a", 2), resource("a", 3), resource("b", 1)])
+        .unwrap();
 
     assert_eq!(report.duplicate_rejected, 1);
     assert_eq!(report.updated, 1);
@@ -232,7 +240,9 @@ fn a_repeated_key_does_not_stop_its_neighbours_loading() {
     // every other resource's updates.
     let registry = registry();
 
-    registry.apply_all(vec![resource("a", 1), resource("a", 2), resource("b", 7)]);
+    registry
+        .apply_all(vec![resource("a", 1), resource("a", 2), resource("b", 7)])
+        .unwrap();
 
     assert_eq!(registry.len(), 2);
     assert_eq!(
@@ -247,9 +257,11 @@ fn the_first_entry_for_a_key_decides_its_fate() {
     // mean interpreting data the source has already got wrong, and would make
     // the outcome depend on the very field the duplicate calls into question.
     let registry = registry();
-    registry.apply_all(vec![resource("a", 1)]);
+    registry.apply_all(vec![resource("a", 1)]).unwrap();
 
-    registry.apply_all(vec![resource("a", 9), resource("a", 3)]);
+    registry
+        .apply_all(vec![resource("a", 9), resource("a", 3)])
+        .unwrap();
 
     assert_eq!(
         registry.lookup(&"a".to_owned()).unwrap().revision,

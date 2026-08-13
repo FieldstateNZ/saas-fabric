@@ -266,6 +266,13 @@ tasks.
   `Err` for a missing file precisely for this, and there is a test pinning it.
 - **`apply_all` is a full sync.** Absent resources are removed — that is what
   makes deprovisioning work, and it is why the point above matters so much.
+- **`apply_all` refuses a first load with nothing to serve.** It returns
+  `Result<ApplyReport, UnusableFirstLoad>`, and on a registry that has never
+  loaded it will not install a set that published resources of which none
+  survived — that would report `/ready` 200 over an empty snapshot while every
+  request failed, irreversibly. On an already-primed registry it cannot fail, so
+  the `Err` arm is only live at startup. There is deliberately no second entry
+  point that skips the check: that arrangement existed twice and drifted twice.
 - **DataSources are primed before tenants.** A binding referencing a DataSource
   the registry has not loaded resolves to `MissingDataSource`, so this order
   avoids a window of spurious 500s at startup. See "Startup consistency

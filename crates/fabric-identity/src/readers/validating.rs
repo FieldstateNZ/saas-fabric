@@ -5,7 +5,7 @@ use std::sync::Arc;
 use fabric_core::{Clock, SystemClock};
 use jsonwebtoken::Validation;
 
-use crate::readers::{validation_rules, verified_claims, LeewaySeconds};
+use crate::readers::{allowlists, validation_rules, verified_claims, LeewaySeconds};
 use crate::{IdentityError, TokenClaims, TokenReader, VerificationKeys};
 
 /// Verifies a token's signature and registered claims before returning them.
@@ -66,16 +66,25 @@ impl ValidatingReader {
     }
 
     /// Requires tokens to carry one of these issuers.
+    ///
+    /// "Requires" is literal: a token omitting `iss` is refused, not waved
+    /// through. Worth saying, because `jsonwebtoken` does not do that on its
+    /// own — `allowlists` records what it does instead. An empty slice
+    /// configures an allowlist nothing matches, so refuses every token.
     #[must_use]
     pub fn with_issuers(mut self, issuers: &[String]) -> Self {
-        self.validation.set_issuer(issuers);
+        allowlists::require_issuers(&mut self.validation, issuers);
         self
     }
 
     /// Requires tokens to carry one of these audiences.
+    ///
+    /// Literal in the same sense as [`Self::with_issuers`], with the same empty-slice
+    /// caveat. Leaving this uncalled means `aud` goes unchecked rather than that every
+    /// token carrying one is refused; `validation_rules` records why.
     #[must_use]
     pub fn with_audiences(mut self, audiences: &[String]) -> Self {
-        self.validation.set_audience(audiences);
+        allowlists::require_audiences(&mut self.validation, audiences);
         self
     }
 

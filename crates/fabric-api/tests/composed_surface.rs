@@ -43,10 +43,16 @@ fn router() -> Router {
     let config = config();
 
     let tenant_registry = Arc::new(TenantRegistry::new());
-    tenant_registry.apply_all(tenants());
+    assert!(
+        tenant_registry.apply_all(tenants()).is_ok(),
+        "the fixture must install; a first load this test cannot use is a broken fixture"
+    );
 
     let data_source_registry = Arc::new(DataSourceRegistry::new());
-    data_source_registry.apply_all(data_sources());
+    assert!(
+        data_source_registry.apply_all(data_sources()).is_ok(),
+        "the fixture must install; a first load this test cannot use is a broken fixture"
+    );
 
     let identity = build_identity(
         config.identity.clone(),

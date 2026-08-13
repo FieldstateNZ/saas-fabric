@@ -49,9 +49,23 @@ impl RuntimeHandles {
 ///
 /// "An initial load fails" includes a source that read perfectly well but
 /// published nothing that survived validation
-/// ([`SourceError::NothingUsable`](crate::SourceError)). Either way the
-/// registry is left unprimed, so the `false` branch above starts a process that
-/// answers 503 — never one that reports ready over an empty set.
+/// ([`SourceError::NothingUsable`](crate::SourceError)). Either way the registry
+/// is left unprimed, and the `false` branch above starts a process that answers
+/// 503.
+///
+/// It also *stays* answering 503. The guarantee is not a property of this
+/// function — it is enforced by
+/// [`ResourceRegistry::apply_all`](crate::ResourceRegistry::apply_all), which
+/// refuses to install an empty snapshot over a registry that has never loaded no
+/// matter who calls it. That distinction is load-bearing: when the rule lived at
+/// the call sites instead, the background refresh loop went on installing the
+/// same unusable payload one interval later, and the replica reported ready over
+/// zero tenants.
+///
+/// The one way a process reports ready over an empty set is a source that
+/// genuinely publishes an empty set — a deployment with no tenants onboarded
+/// yet, which must be able to start. That is honest, and distinct from a source
+/// that published state none of which could be served.
 pub async fn build_runtime(
     config: &RuntimeConfig,
     tenant_source: Arc<dyn ResourceSource<TenantRuntimeBinding>>,

@@ -20,11 +20,13 @@ use crate::{DataSourceRegistry, TenantRegistry};
 #[tokio::test]
 async fn a_data_source_removed_from_a_full_sync_fails_closed_and_emits_removed() {
     let registry = DataSourceRegistry::new();
-    registry.apply_all(vec![data_source("sql-au-east-03", 1)]);
+    registry
+        .apply_all(vec![data_source("sql-au-east-03", 1)])
+        .unwrap();
     assert!(registry.lookup(&data_source_id("sql-au-east-03")).is_ok());
 
     let mut changes = registry.subscribe();
-    let report = registry.apply_all(vec![]);
+    let report = registry.apply_all(vec![]).unwrap();
 
     assert_eq!(report.removed, 1);
     assert!(registry.lookup(&data_source_id("sql-au-east-03")).is_err());
@@ -36,11 +38,13 @@ async fn a_data_source_removed_from_a_full_sync_fails_closed_and_emits_removed()
 #[tokio::test]
 async fn a_tenant_removed_from_a_full_sync_fails_closed_and_emits_removed() {
     let registry = TenantRegistry::new();
-    registry.apply_all(vec![tenant_binding("acme", 1, "sql-au-east-03")]);
+    registry
+        .apply_all(vec![tenant_binding("acme", 1, "sql-au-east-03")])
+        .unwrap();
     assert!(registry.lookup(&tenant("acme")).is_ok());
 
     let mut changes = registry.subscribe();
-    let report = registry.apply_all(vec![]);
+    let report = registry.apply_all(vec![]).unwrap();
 
     assert_eq!(report.removed, 1);
     assert!(registry.lookup(&tenant("acme")).is_err());
@@ -52,10 +56,12 @@ async fn a_tenant_removed_from_a_full_sync_fails_closed_and_emits_removed() {
 #[test]
 fn invalidating_a_data_source_fails_closed_with_no_restart() {
     let registry = DataSourceRegistry::new();
-    registry.apply_all(vec![
-        data_source("sql-au-east-03", 1),
-        data_source("sql-au-east-04", 1),
-    ]);
+    registry
+        .apply_all(vec![
+            data_source("sql-au-east-03", 1),
+            data_source("sql-au-east-04", 1),
+        ])
+        .unwrap();
 
     assert!(registry.invalidate(&data_source_id("sql-au-east-03")));
 
@@ -69,10 +75,12 @@ fn invalidating_a_data_source_fails_closed_with_no_restart() {
 #[test]
 fn invalidating_a_tenant_fails_closed_with_no_restart() {
     let registry = TenantRegistry::new();
-    registry.apply_all(vec![
-        tenant_binding("acme", 1, "sql-au-east-03"),
-        tenant_binding("globex", 1, "sql-au-east-03"),
-    ]);
+    registry
+        .apply_all(vec![
+            tenant_binding("acme", 1, "sql-au-east-03"),
+            tenant_binding("globex", 1, "sql-au-east-03"),
+        ])
+        .unwrap();
 
     assert!(registry.invalidate(&tenant("acme")));
 

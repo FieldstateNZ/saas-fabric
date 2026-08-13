@@ -14,7 +14,7 @@ produced ADR 0006.
 | --- | --- | --- |
 | Formatting | `cargo fmt --all --check` | clean |
 | Lints | `cargo clippy --workspace --all-targets -- -D warnings` | 0 findings |
-| Tests | `cargo test --workspace` | 527 passing, 0 failing |
+| Tests | `cargo test --workspace` | 595 passing, 0 failing |
 | Docs | `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps` | 0 warnings |
 | Dependencies | `cargo deny check` | advisories, bans, licences, sources — all ok |
 | File sizes | `python3 scripts/check_file_sizes.py` | 0 over the 150-line limit |

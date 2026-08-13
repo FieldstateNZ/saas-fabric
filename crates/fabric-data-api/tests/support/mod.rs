@@ -82,6 +82,11 @@ pub fn app_with_config(
     permissions: ResourcePermissions,
     config: &DataApiConfig,
 ) -> Router {
+    // Before any event this crate emits can fire, so no callsite is ever
+    // registered against an absent subscriber — see `tracing_capture`'s module
+    // docs for the cross-test race this closes.
+    tracing_capture::install();
+
     let identity = build_identity(
         IdentityConfig::default(),
         Arc::new(TrustedIngressReader::new(Arc::new(FixedClock))),

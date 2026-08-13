@@ -23,6 +23,19 @@ pub struct IdentityConfig {
     /// which tenant is selected.
     pub roles_claim: String,
 
+    /// The claim carrying granted scopes. Defaults to `scope`.
+    ///
+    /// Configurable for the same reason the others are: `scope` is the OAuth 2
+    /// name, but providers in the wild emit `scp` (Entra ID) or `permissions`
+    /// (Auth0). Getting this wrong fails *open-ended* rather than loudly — an
+    /// unmatched claim yields an empty scope list, so every scope check simply
+    /// returns false and the deployment sees blanket 403s with no indication
+    /// that the claim name is the cause.
+    ///
+    /// Like roles, scopes are read for authorization only and can never affect
+    /// tenant selection (§23).
+    pub scope_claim: String,
+
     /// Whether to reject a request that carries a tenant-selection header.
     ///
     /// Defaults to `true`. The tenant is never read from a header either way —
@@ -42,6 +55,7 @@ impl Default for IdentityConfig {
             tenant_claim: "tenant_id".to_owned(),
             subject_claim: "sub".to_owned(),
             roles_claim: "roles".to_owned(),
+            scope_claim: "scope".to_owned(),
             reject_tenant_header: true,
         }
     }
@@ -63,6 +77,7 @@ impl IdentityConfig {
             ("tenant_claim", &self.tenant_claim),
             ("subject_claim", &self.subject_claim),
             ("roles_claim", &self.roles_claim),
+            ("scope_claim", &self.scope_claim),
         ] {
             if value.trim().is_empty() {
                 return Err(format!("identity.{field} must not be empty"));
@@ -94,5 +109,40 @@ mod tests {
             ..IdentityConfig::default()
         };
         assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn the_scope_claim_defaults_to_the_oauth_name() {
+        assert_eq!(IdentityConfig::default().scope_claim, "scope");
+    }
+
+    #[test]
+    fn an_empty_scope_claim_name_is_rejected_at_startup() {
+        // Without this, an empty name would match nothing, every scope check
+        // would return false, and the deployment would see blanket 403s.
+        let config = IdentityConfig {
+            scope_claim: String::new(),
+            ..IdentityConfig::default()
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn an_omitted_scope_claim_still_deserialises_alongside_deny_unknown_fields() {
+        // `deny_unknown_fields` and container-level `default` have to keep
+        // coexisting: existing config files name no scope_claim at all, and an
+        // unknown key must still be an error rather than a silent typo.
+        let config: IdentityConfig = serde_json::from_str(r#"{"tenant_claim":"tenant_id"}"#).unwrap();
+        assert_eq!(config.scope_claim, "scope");
+
+        assert!(serde_json::from_str::<IdentityConfig>(r#"{"scope_clam":"scp"}"#).is_err());
+    }
+
+    #[test]
+    fn a_provider_specific_scope_claim_is_accepted() {
+        let config: IdentityConfig = serde_json::from_str(r#"{"scope_claim":"scp"}"#).unwrap();
+
+        assert_eq!(config.scope_claim, "scp");
+        assert!(config.validate().is_ok());
     }
 }

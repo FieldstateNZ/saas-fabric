@@ -25,7 +25,22 @@ impl<T: RegistryResource> ResourceRegistry<T> {
     /// intentional for tests and incremental-only deployments, but a production
     /// start should `apply_all` first so that lookups do not report everything
     /// else as missing.
+    ///
+    /// Also returns `false` if the resource fails
+    /// [`RegistryResource::validate`], leaving whatever is held untouched — the
+    /// same rule `apply_all` applies, for the same reasons.
+    ///
+    /// # Concurrency
+    ///
+    /// A read-modify-write, so it is serialised against the other mutators by
+    /// the registry's write lock. Lookups are not affected.
     pub fn apply_one(&self, resource: T) -> bool {
+        if let Err(error) = resource.validate() {
+            logging::invalid_resource_rejected::<T>(resource.key(), &error);
+            return false;
+        }
+
+        let _write = self.writes.acquire();
         let guard = self.snapshot.load();
 
         let mut next = guard
@@ -63,7 +78,13 @@ impl<T: RegistryResource> ResourceRegistry<T> {
     /// closed until the next refresh restores it — the intended behaviour for
     /// something deprovisioned, and an acceptable momentary outage for
     /// something invalidated by mistake.
+    ///
+    /// # Concurrency
+    ///
+    /// A read-modify-write, so it is serialised against the other mutators by
+    /// the registry's write lock. Lookups are not affected.
     pub fn invalidate(&self, key: &T::Key) -> bool {
+        let _write = self.writes.acquire();
         let guard = self.snapshot.load();
 
         let Some(snapshot) = guard.as_ref() else {

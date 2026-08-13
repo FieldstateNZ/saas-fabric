@@ -21,7 +21,11 @@ fn index() -> SchemaIndex {
                 "tenant_key": {"type": {"type": "named", "name": "text"}}
             }}},
             "collections": [{"name": "customers", "type": "customers"}],
-            "procedures": [{"name": "insert_customers"}, {"name": "delete_customers"}]
+            "procedures": [
+                {"name": "insert_customers"},
+                {"name": "update_customers"},
+                {"name": "delete_customers"}
+            ]
         }"#,
     )
     .unwrap();
@@ -42,6 +46,14 @@ fn insert_binding() -> ProcedureBinding {
         procedure: "insert_customers".to_owned(),
         payload_argument: Some("objects".to_owned()),
         filter_argument: None,
+    }
+}
+
+fn update_binding() -> ProcedureBinding {
+    ProcedureBinding {
+        procedure: "update_customers".to_owned(),
+        payload_argument: Some("update_columns".to_owned()),
+        filter_argument: Some("filter".to_owned()),
     }
 }
 
@@ -91,6 +103,104 @@ fn a_collection_with_no_mapping_cannot_be_written_to() {
     assert!(matches!(
         to_mutation_request(&spec, None, &config, &index()).unwrap_err(),
         ConnectorError::Unsupported { .. }
+    ));
+}
+
+/// An update as `for_target` leaves it under discriminator isolation: the
+/// caller's change, the stamped tenant key, and a tenant-scoped predicate.
+fn update_spec() -> MutationSpec {
+    MutationSpec::Update {
+        collection: collection(),
+        filter: Some(tenant_predicate()),
+        changes: Row::new()
+            .with(FieldName::try_new("name").unwrap(), Value::String("Alice".into()))
+            .with(
+                FieldName::try_new("tenant_key").unwrap(),
+                Value::String("tenant-482".into()),
+            ),
+    }
+}
+
+fn update_config(binding: ProcedureBinding) -> NdcConnectorConfig {
+    config_with(CollectionProcedures {
+        update: Some(binding),
+        ..CollectionProcedures::default()
+    })
+}
+
+#[test]
+fn an_update_sends_its_payload_and_its_predicate_under_separate_arguments() {
+    // The regression this pins: payload and predicate are written into one
+    // argument map, so a mapping naming the same argument twice used to drop
+    // the payload entirely and translate without complaint.
+    let config = update_config(update_binding());
+
+    let request = to_mutation_request(&update_spec(), None, &config, &index()).unwrap();
+    let NdcMutationOperation::Procedure { name, arguments, .. } = request.operations.first().unwrap();
+
+    assert_eq!(name, "update_customers");
+    assert_eq!(arguments.len(), 2, "payload and predicate must both survive");
+    assert_eq!(arguments["update_columns"]["name"], "Alice");
+    assert_eq!(arguments["filter"]["type"], "binary_comparison_operator");
+}
+
+#[test]
+fn an_update_carries_the_tenant_predicate_through_translation() {
+    let config = update_config(update_binding());
+
+    let request = to_mutation_request(&update_spec(), None, &config, &index()).unwrap();
+    let NdcMutationOperation::Procedure { arguments, .. } = request.operations.first().unwrap();
+
+    assert_eq!(arguments["filter"]["column"]["name"], "tenant_key");
+    assert_eq!(arguments["filter"]["value"]["value"], "tenant-482");
+    // The stamped discriminator has to reach the payload too, or an update
+    // could move a row out of its tenant.
+    assert_eq!(arguments["update_columns"]["tenant_key"], "tenant-482");
+}
+
+#[test]
+fn an_update_mapping_without_a_filter_argument_is_refused() {
+    // Startup validation rejects this as well. Both checks are deliberate:
+    // translating it anyway would send an unscoped update.
+    let config = update_config(ProcedureBinding {
+        filter_argument: None,
+        ..update_binding()
+    });
+
+    assert!(matches!(
+        to_mutation_request(&update_spec(), None, &config, &index()).unwrap_err(),
+        ConnectorError::InvalidOperation(_)
+    ));
+}
+
+#[test]
+fn an_update_mapping_without_a_payload_argument_is_refused() {
+    let config = update_config(ProcedureBinding {
+        payload_argument: None,
+        ..update_binding()
+    });
+
+    assert!(matches!(
+        to_mutation_request(&update_spec(), None, &config, &index()).unwrap_err(),
+        ConnectorError::InvalidOperation(_)
+    ));
+}
+
+#[test]
+fn an_update_that_arrives_without_a_predicate_is_refused() {
+    // As for a delete: reaching translation with no predicate means something
+    // bypassed `for_target`, and a table-wide update would follow.
+    let config = update_config(update_binding());
+
+    let spec = MutationSpec::Update {
+        collection: collection(),
+        filter: None,
+        changes: Row::new().with(FieldName::try_new("name").unwrap(), Value::String("Alice".into())),
+    };
+
+    assert!(matches!(
+        to_mutation_request(&spec, None, &config, &index()).unwrap_err(),
+        ConnectorError::InvalidOperation(_)
     ));
 }
 

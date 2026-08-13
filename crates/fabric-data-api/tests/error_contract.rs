@@ -85,6 +85,44 @@ async fn an_inbound_request_id_is_echoed_back_unchanged() {
 }
 
 #[tokio::test]
+async fn an_oversized_inbound_request_id_is_replaced_rather_than_echoed_or_trimmed() {
+    // The id is reflected onto the header, into the error body, and into log
+    // fields, so an unbounded one is a caller-controlled amplifier on all
+    // three. A refused id is replaced outright: truncating would hand back
+    // something that looks like the caller's id but no longer matches it.
+    let (app, _) = app();
+
+    let serde_json::Value::Object(claims) = json!({"tenant_id": "acme"}) else {
+        unreachable!("claims are always an object")
+    };
+    let oversized = "a".repeat(1024 * 1024);
+
+    let request = Request::builder()
+        .method("GET")
+        .uri(format!("{API_PREFIX}/customers"))
+        .header(
+            "authorization",
+            format!("Bearer {}", encode_unsigned_token(&claims)),
+        )
+        .header("x-request-id", &oversized)
+        .body(Body::empty())
+        .unwrap();
+
+    let response = app.oneshot(request).await.unwrap();
+    let echoed = response
+        .headers()
+        .get("x-request-id")
+        .expect("a request id header")
+        .to_str()
+        .unwrap()
+        .to_owned();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(uuid::Uuid::parse_str(&echoed).is_ok(), "a fresh id, not a trim");
+    assert!(!oversized.starts_with(&echoed));
+}
+
+#[tokio::test]
 async fn every_response_carries_a_request_id_header_even_on_success() {
     let (app, _) = app();
 

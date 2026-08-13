@@ -97,7 +97,13 @@ impl TenantRuntimeBinding {
         self.features.get(name).copied().unwrap_or(false)
     }
 
-    /// Checks the binding is internally coherent.
+    /// Checks the binding is internally coherent, at load rather than at first
+    /// request.
+    ///
+    /// The registry calls this through
+    /// [`RegistryResource::validate`](crate::RegistryResource) on every apply.
+    /// It stays an inherent method as well so a caller holding a bare binding
+    /// can check one without importing the lifecycle trait.
     ///
     /// # Errors
     ///

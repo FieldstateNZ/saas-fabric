@@ -151,7 +151,15 @@ pub fn tenant_on_replica() -> TenantRuntimeBinding {
     )
 }
 
-/// The catalogue: one writable resource, one read-only.
+/// The catalogue: one writable resource, one read-only, one with a field
+/// allowlist.
+///
+/// `restrictedCustomers` is the only entry with a non-empty
+/// `queryable_fields`, and it exists for one purpose: without it, every field
+/// name is permitted, so no test could tell "the resource exposes this field"
+/// apart from "the resource exposes everything". It is what makes the
+/// authorization-ordering suite able to ask whether an unauthorised caller can
+/// distinguish a real field from an invented one.
 pub fn catalog() -> ResourceCatalog {
     serde_json::from_str(
         r#"{
@@ -163,6 +171,12 @@ pub fn catalog() -> ResourceCatalog {
             "readOnlyReport": {
                 "data_source": "primary",
                 "collection": "customers"
+            },
+            "restrictedCustomers": {
+                "data_source": "primary",
+                "collection": "customers",
+                "operations": ["read", "list", "create", "update", "delete"],
+                "queryable_fields": ["id", "name"]
             }
         }"#,
     )

@@ -7,6 +7,7 @@
 use fabric_core::BindingRevision;
 
 use crate::resource::{RegistryResource, ResourceRegistry};
+use crate::ConfigurationError;
 
 /// The smallest thing a registry can hold.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -17,6 +18,11 @@ pub(super) struct TestResource {
     /// resources that share both but differ in payload — the shape item
     /// 50's divergent-payload guard exists to catch.
     pub(super) payload: &'static str,
+    /// Whether [`RegistryResource::validate`] accepts this resource. A plain
+    /// switch rather than a real rule, so the load-path validation tests
+    /// exercise the *lifecycle's* handling of a rejection without inheriting
+    /// a domain type's own notion of what makes it invalid.
+    pub(super) valid: bool,
 }
 
 impl RegistryResource for TestResource {
@@ -30,6 +36,17 @@ impl RegistryResource for TestResource {
 
     fn revision(&self) -> BindingRevision {
         self.revision
+    }
+
+    fn validate(&self) -> Result<(), ConfigurationError> {
+        if self.valid {
+            return Ok(());
+        }
+
+        Err(ConfigurationError::InvalidResource(format!(
+            "test resource {} is deliberately invalid",
+            self.key
+        )))
     }
 }
 
@@ -45,6 +62,15 @@ pub(super) fn resource_with_payload(key: &str, revision: u64, payload: &'static 
         key: key.to_owned(),
         revision: BindingRevision::new(revision),
         payload,
+        valid: true,
+    }
+}
+
+/// A resource that fails validation, for exercising the load-path check.
+pub(super) fn invalid_resource(key: &str, revision: u64) -> TestResource {
+    TestResource {
+        valid: false,
+        ..resource(key, revision)
     }
 }
 

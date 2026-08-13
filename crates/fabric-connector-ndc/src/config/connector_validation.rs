@@ -1,6 +1,6 @@
 //! Checks a connector configuration before anything is built.
 
-use crate::config::NdcConnectorConfig;
+use crate::config::{NdcConnectorConfig, ProcedureBinding};
 
 impl NdcConnectorConfig {
     /// Checks the configuration is usable and safe.
@@ -10,7 +10,8 @@ impl NdcConnectorConfig {
     /// Returns a message naming the offending setting.
     pub fn validate(&self) -> Result<(), String> {
         self.validate_transport()?;
-        self.validate_predicate_arguments()
+        self.validate_predicate_arguments()?;
+        self.validate_distinct_arguments()
     }
 
     /// Rejects a connector that could never be reached, or whose two HTTP
@@ -71,6 +72,43 @@ impl NdcConnectorConfig {
                     return Err(format!(
                         "connector {}: {collection}.{operation} needs a filter_argument, otherwise the \
                          tenant predicate would be dropped and the write would reach every tenant's rows",
+                        self.id
+                    ));
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Requires a mapping's payload and predicate to land in *different*
+    /// arguments.
+    ///
+    /// One `BTreeMap` carries a procedure's arguments and an update fills it
+    /// twice — payload first, predicate second. Name both the same and the
+    /// second write wins: the caller's field values are gone, and the write
+    /// reports success having changed nothing. Refused at startup rather than
+    /// defended against during translation, because no execution of such a
+    /// mapping could mean anything, whichever verb it is attached to.
+    ///
+    /// The connection-routing names are deliberately *not* compared against
+    /// these. Routing travels in the request's top-level `request_arguments`, a
+    /// different map altogether, so a procedure argument sharing a name with
+    /// one cannot displace it — and refusing that pairing would reject a
+    /// configuration that works.
+    fn validate_distinct_arguments(&self) -> Result<(), String> {
+        for (collection, procedures) in &self.procedures {
+            for (operation, binding) in procedures.all() {
+                // Only a mapping declaring both names can collide.
+                let Some((payload, filter)) = binding.and_then(ProcedureBinding::argument_names) else {
+                    continue;
+                };
+
+                if payload == filter {
+                    return Err(format!(
+                        "connector {}: {collection}.{operation} names {payload} as both its \
+                         payload_argument and its filter_argument, so the predicate would overwrite \
+                         the payload and the write would silently change nothing",
                         self.id
                     ));
                 }

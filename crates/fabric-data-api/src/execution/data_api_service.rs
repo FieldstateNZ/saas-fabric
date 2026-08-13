@@ -52,14 +52,16 @@ impl DataApiService {
         }
     }
 
-    /// The catalogue, for handlers that need a resource definition before
-    /// dispatching.
-    #[must_use]
-    pub const fn catalog(&self) -> &ResourceCatalog {
-        &self.catalog
-    }
-
     /// The configured limits.
+    ///
+    /// Note what is deliberately *not* offered alongside it: a way to reach the
+    /// catalogue. A `ResourceDefinition` is what field-name validation needs,
+    /// and handing one to a handler is what once let request-shape validation
+    /// run ahead of authorization. The only `ResourceDefinition` in this crate
+    /// now comes out of `prepare`, which authorises first — so the ordering is
+    /// a property of what is reachable, not of what each handler remembers to
+    /// do. These limits are safe to hand out for the opposite reason: they are
+    /// deployment-wide constants that say nothing about any resource.
     #[must_use]
     pub const fn config(&self) -> &DataApiConfig {
         &self.config

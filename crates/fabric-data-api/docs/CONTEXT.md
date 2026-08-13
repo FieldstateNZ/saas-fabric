@@ -17,11 +17,15 @@ in this crate's public contract.
   the host and this crate's own tests share one literal.
 - `DataApiState { service, identity }`; `FromRef<DataApiState> for Arc<IdentityResolver>`
   is what makes the `TenantIdentity` extractor work.
-- `DataApiService` — `list`, `read`, `create`, `update`, `delete`, `catalog()`,
-  `config()`. Holds an `Arc<RuntimeResolver>`, not registries.
+- `DataApiService` — `list`, `read`, `create`, `update`, `delete`, `config()`.
+  Holds an `Arc<RuntimeResolver>`, not registries.
   Split by responsibility across `execution/`: `data_api_service` (the struct),
   `prepare` (catalogue → authorization → DataSource → connector),
   `prepared`, `read_operations`, `write_operations`, `row_mapping`.
+  `list` takes the **raw query string**, not a parsed `ListQuery`, and there is
+  deliberately **no `catalog()` accessor**: both exist so that nothing outside
+  `prepare` can obtain a `ResourceDefinition`, and therefore nothing can
+  validate a field name before authorization has run. See "Hard invariants" 13.
 - `ResourceCatalog` — `resolve()`, `names()`, `len()`. Deserialises from a JSON
   object keyed by resource name.
 - `ResourceDefinition { data_source, collection, key_field ("id"),
@@ -34,9 +38,12 @@ in this crate's public contract.
   max_sort_fields (5), max_select_fields (50), max_filter_depth (4),
   max_request_body_bytes (1 MiB), max_mutation_batch_size (500) }`,
   `effective_limit()`, `validate()`. See docs/README.md's "Request limits".
-- `ListQuery::parse(raw, &ResourceDefinition)`, `to_filter()`. Complexity
-  bounds are checked separately, in `limits::enforce_query`, called from
-  `DataApiService::list` — not inside `parse` itself.
+- `ListQuery::parse(raw, &ResourceDefinition)`, `to_filter()`. Called from
+  `DataApiService::list` **after** `prepare` has authorised, never from the
+  handler — it validates field names, so calling it earlier turns 400-vs-403
+  into a field-name oracle. Complexity bounds are checked separately, in
+  `limits::enforce_query`, immediately after the parse — not inside `parse`
+  itself.
 - `ListResponse::from_outcome(&QueryOutcome, limit, offset)`, `PagingInfo`,
   `RowResponse`, `WriteResponse::from_outcome()`.
 - `DataApiError` — `Identity`, `Resolve`, `UnknownResource`, `OperationNotAllowed`,
@@ -60,12 +67,21 @@ Not re-exported from `lib.rs`, but load-bearing enough to know about:
   becomes a `DataApiError::BadRequest` (this crate's error shape) rather than
   axum's own bare `413`.
 - `request_id` — a `tokio::task_local!`-scoped correlation id. `middleware`
-  is applied once, in `data_routes`, and reads an inbound `X-Request-Id` or
-  generates one; `current()` reads it back from anywhere in the call stack
-  (used by `errors::response` when building a failure body/log). Task-local
-  rather than a parameter, deliberately — see the module's own rustdoc for
-  why threading it through `list`/`read`/`create`/`update`/`delete`/`prepare`/
-  `execute_query`/`execute_mutation` was rejected.
+  is applied once, in `data_routes`; `current()` reads it back from anywhere in
+  the call stack (used by `errors::response` when building a failure
+  body/log). Task-local rather than a parameter, deliberately — see the
+  module's own rustdoc for why threading it through
+  `list`/`read`/`create`/`update`/`delete`/`prepare`/`execute_query`/
+  `execute_mutation` was rejected.
+  - `request_id::correlation_id` — which id a request gets. An inbound
+    `X-Request-Id` is adopted only if it is 1..=128 characters of
+    `[A-Za-z0-9-_.:+/=]`; anything else (too long, whitespace, control
+    characters) is **replaced with a fresh UUID, never truncated**, because a
+    trimmed id would look like the caller's own but no longer match it, and two
+    ids sharing a prefix would collapse onto one. The value is reflected onto
+    the response header, into the error body, and into log fields, so it is
+    bounded before any of that. `header_value()` is infallible, which is what
+    lets `middleware` set the header unconditionally.
 
 ## Routes
 
@@ -125,6 +141,14 @@ unconditional, not just on 5xx (see docs/README.md's "Correlation ids").
 12. **No handler, service method, or connector call is `tokio::spawn`ed onto a
     detached task.** A dropped request must cancel its in-flight connector
     call (item 37) — spawning would defeat that silently.
+13. **Authorization is decided before any check that could describe the
+    resource.** `queryable_fields` validation — `field_reference::parse` and
+    `row_mapping::to_row` — takes `prepared.resource`, so it cannot run before
+    `prepare` has authorised. A 400 ahead of the 403 answers "is this a real
+    field?" for a caller who was going to be refused. Checks that describe only
+    a deployment-wide rule may run earlier, and two do: the request body size
+    cap (enforced while the body is read) and the syntactic resource-name parse
+    in the handlers. Pinned by `tests/authorization_ordering.rs`.
 
 ## Testing
 
@@ -146,7 +170,20 @@ adding `tracing-subscriber` as a test dependency:
 | `request_limits.rs` | every `DataApiConfig` bound, at the limit and one over |
 | `cancellation.rs` | a dropped request cancels the in-flight connector call |
 | `schema_exposure.rs` | no physical collection/connector/DataSource name in any body |
-| `error_contract.rs` | request id correlation, unknown-tenant anti-enumeration |
+| `error_contract.rs` | request id correlation, inbound-id bound, unknown-tenant anti-enumeration |
+| `authorization_ordering.rs` | a refused caller gets one identical answer whatever the request shape |
+
+`tests/support/fixtures.rs`'s catalogue carries `restrictedCustomers`, the only
+entry with a non-empty `queryable_fields`. Without it every field name is
+permitted, so no test could distinguish "this resource exposes this field" from
+"this resource exposes everything" — which is what `authorization_ordering.rs`
+needs to ask.
+
+`tracing_capture` installs its subscriber **globally, once**, and switches a
+thread-local sink per `capture()` call. A thread-scoped subscriber loses a race
+roughly one run in twenty-five: `tracing` caches a callsite's `Interest` from
+the first firing thread's dispatcher, so a non-capturing test running in
+parallel could permanently disable an event for a capturing one.
 
 Every `app*` builder in `tests/support/mod.rs` funnels through
 `app_with_config`, which takes a `&DataApiConfig` — reach for it directly

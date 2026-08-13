@@ -42,6 +42,12 @@ tenant_claim = "tenant_id"
 subject_claim = "sub"
 roles_claim = "roles"
 
+# The claim carrying granted scopes. `scope` is the OAuth 2 name; Entra ID
+# emits `scp` and Auth0 emits `permissions`. Getting this wrong yields an empty
+# scope list, which surfaces as blanket 403s rather than as an error — which is
+# why it is configurable alongside the other three rather than assumed.
+scope_claim = "scope"
+
 # Reject requests carrying X-Tenant-Id rather than ignoring them (§11). The
 # header is never read as a tenant source either way; this decides whether an
 # attempt to use one is a 400 or is silent.

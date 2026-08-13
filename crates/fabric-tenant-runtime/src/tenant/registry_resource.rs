@@ -3,7 +3,7 @@
 use fabric_core::{BindingRevision, TenantId};
 
 use crate::resource::RegistryResource;
-use crate::TenantRuntimeBinding;
+use crate::{ConfigurationError, TenantRuntimeBinding};
 
 /// Registry integration for [`TenantRuntimeBinding`].
 ///
@@ -26,5 +26,13 @@ impl RegistryResource for TenantRuntimeBinding {
 
     fn revision(&self) -> BindingRevision {
         self.revision
+    }
+
+    /// Delegates to the inherent [`TenantRuntimeBinding::validate`], which is
+    /// where the rules themselves live. Spelled as a path call rather than
+    /// `self.validate()` so it is obvious to a reader that this is delegation
+    /// and not recursion.
+    fn validate(&self) -> Result<(), ConfigurationError> {
+        TenantRuntimeBinding::validate(self)
     }
 }

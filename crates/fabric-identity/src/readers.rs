@@ -10,6 +10,7 @@
 
 pub(crate) mod expiry;
 pub(crate) mod jwt_payload;
+pub(crate) mod not_before;
 
 mod jwks;
 mod trusted_ingress;

@@ -33,7 +33,8 @@ use crate::{IdentityError, TokenClaims, TokenReader, VerificationKeys};
 ///
 /// # What it checks
 ///
-/// Signature, `exp`, and — when configured — `iss` and `aud`.
+/// Signature, the full validity window (`exp` and `nbf`), and — when
+/// configured — `iss` and `aud`.
 pub struct ValidatingReader {
     keys: VerificationKeys,
     validation: Validation,
@@ -91,6 +92,11 @@ impl TokenReader for ValidatingReader {
 
             match error.kind() {
                 jsonwebtoken::errors::ErrorKind::ExpiredSignature => IdentityError::ExpiredToken,
+                // `ImmatureSignature` is this library's name for a token whose
+                // `nbf` has not arrived. Mapped so both postures report a
+                // premature token identically; the two differ in how they
+                // check, and must not differ in what the caller is told.
+                jsonwebtoken::errors::ErrorKind::ImmatureSignature => IdentityError::TokenNotYetValid,
                 _ => IdentityError::UnverifiedToken,
             }
         })?;

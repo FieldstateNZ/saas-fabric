@@ -71,7 +71,13 @@ pub use errors::DataApiError;
 // catalogue or connector registry first. A caller who could reach the
 // service or assemble the state directly could skip all of that.
 pub(crate) use execution::DataApiService;
-pub use models::{ListQuery, ListResponse, PagingInfo, RowResponse, WriteResponse};
+// `ListQuery` is not `pub`. It is a *parsed* query, and parsing is now
+// something only the authorised path may do -- see the ordering rationale on
+// `execution::prepare`. Nothing outside this crate referenced it, and leaving
+// it exported would leave a second door into the same parse that the
+// authorisation fix just closed.
+pub(crate) use models::ListQuery;
+pub use models::{ListResponse, PagingInfo, RowResponse, WriteResponse};
 pub use registration::build_data_api;
 // `API_PREFIX` stays public: the host needs it to reason about where this
 // router mounts, and a test asserts on it. `data_routes` does not, for the

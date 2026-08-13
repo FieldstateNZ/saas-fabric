@@ -3,7 +3,7 @@
 use fabric_core::{BindingRevision, DataSourceId};
 
 use crate::resource::RegistryResource;
-use crate::DataSource;
+use crate::{ConfigurationError, DataSource};
 
 /// Registry integration for [`DataSource`].
 ///
@@ -26,5 +26,13 @@ impl RegistryResource for DataSource {
 
     fn revision(&self) -> BindingRevision {
         self.revision
+    }
+
+    /// Delegates to the inherent [`DataSource::validate`], which is where the
+    /// rules themselves live. Spelled as a path call rather than
+    /// `self.validate()` so it is obvious to a reader that this is delegation
+    /// and not recursion.
+    fn validate(&self) -> Result<(), ConfigurationError> {
+        DataSource::validate(self)
     }
 }

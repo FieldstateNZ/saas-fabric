@@ -12,10 +12,16 @@ mod concurrency_tests;
 mod deletion_tests;
 #[cfg(test)]
 mod lookup_tests;
+mod merge;
 #[cfg(test)]
 mod stale_revision_tests;
 #[cfg(test)]
 mod test_resource;
+#[cfg(test)]
+mod validation_tests;
+mod write_lock;
+#[cfg(test)]
+mod writer_concurrency_tests;
 
 use std::sync::Arc;
 
@@ -24,6 +30,7 @@ use tokio::sync::broadcast;
 
 use crate::resource::snapshot::ResourceSnapshot;
 use crate::resource::{LookupError, RegistryResource, ResourceChange};
+use write_lock::WriteLock;
 
 /// How many change notifications are buffered for a slow subscriber before it
 /// starts losing the oldest.
@@ -41,9 +48,22 @@ const CHANGE_CHANNEL_CAPACITY: usize = 256;
 /// holding an empty one. Until the first successful load every lookup returns
 /// [`LookupError::Unavailable`] rather than [`LookupError::NotFound`] — see
 /// [`LookupError`] for why that distinction is load-bearing.
+///
+/// # Writers
+///
+/// [`Self::apply_all`], [`Self::apply_one`] and [`Self::invalidate`] are each a
+/// read-modify-write, so they are serialised against one another by an internal
+/// write lock. Calling them concurrently is therefore safe — without that,
+/// two writers would read the same starting snapshot and the second store would
+/// discard the first, which also defeats the revision guard by letting a lower
+/// revision land after a higher one.
+///
+/// Readers are unaffected and take no lock: [`Self::lookup`] remains an atomic
+/// pointer load and a hash lookup no matter how many writers are active.
 pub struct ResourceRegistry<T: RegistryResource> {
     snapshot: ArcSwapOption<ResourceSnapshot<T>>,
     changes: broadcast::Sender<ResourceChange<T::Key>>,
+    writes: WriteLock,
 }
 
 impl<T: RegistryResource> Default for ResourceRegistry<T> {
@@ -61,6 +81,7 @@ impl<T: RegistryResource> ResourceRegistry<T> {
         Self {
             snapshot: ArcSwapOption::empty(),
             changes,
+            writes: WriteLock::default(),
         }
     }
 

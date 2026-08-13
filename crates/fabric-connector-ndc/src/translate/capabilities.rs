@@ -27,6 +27,12 @@ pub(crate) fn to_capabilities(
         filtering: true,
         ordering: true,
         paging: true,
+        // Unconditional, unlike everything negotiated below it. `is_null` is
+        // a core NDC unary operator rather than a declared capability --
+        // `NdcCapabilitiesResponse` has no key for it, and `to_expression`
+        // emits it without consulting the schema -- so every conforming
+        // connector can express a null test.
+        null_checks: true,
         mutations: config.has_writes(),
         transactional_mutations: capabilities.supports_transactional_mutations(),
         // The Data API does not issue aggregate queries, so even where the

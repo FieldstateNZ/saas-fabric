@@ -1,4 +1,8 @@
 //! The predicate tree itself.
+//!
+//! The questions asked *of* a tree — which fields it names, which capabilities
+//! a backend needs to run it — live in
+//! [`filter_introspection`](super::filter_introspection).
 
 use serde_json::Value;
 
@@ -81,59 +85,6 @@ impl Filter {
             (left, right) => Self::And {
                 clauses: vec![left, right],
             },
-        }
-    }
-
-    /// Every field this predicate mentions.
-    ///
-    /// Used to check a filter against the connector's schema before executing:
-    /// a filter naming a field that does not exist should be a clean rejection,
-    /// not a backend error with an unpredictable message.
-    #[must_use]
-    pub fn referenced_fields(&self) -> Vec<&FieldName> {
-        let mut fields = Vec::new();
-        self.collect_fields(&mut fields);
-        fields
-    }
-
-    /// Walks the tree accumulating field references.
-    fn collect_fields<'a>(&'a self, into: &mut Vec<&'a FieldName>) {
-        match self {
-            Self::And { clauses } | Self::Or { clauses } => {
-                for clause in clauses {
-                    clause.collect_fields(into);
-                }
-            }
-            Self::Not { clause } => clause.collect_fields(into),
-            Self::Compare { field, .. } | Self::IsNull { field } | Self::In { field, .. } => {
-                into.push(field);
-            }
-        }
-    }
-
-    /// Every distinct operator this predicate uses.
-    ///
-    /// Checked against connector capabilities before execution.
-    #[must_use]
-    pub fn referenced_operators(&self) -> Vec<ComparisonOperator> {
-        let mut operators = Vec::new();
-        self.collect_operators(&mut operators);
-        operators.sort_unstable();
-        operators.dedup();
-        operators
-    }
-
-    /// Walks the tree accumulating operators.
-    fn collect_operators(&self, into: &mut Vec<ComparisonOperator>) {
-        match self {
-            Self::And { clauses } | Self::Or { clauses } => {
-                for clause in clauses {
-                    clause.collect_operators(into);
-                }
-            }
-            Self::Not { clause } => clause.collect_operators(into),
-            Self::Compare { operator, .. } => into.push(*operator),
-            Self::IsNull { .. } | Self::In { .. } => {}
         }
     }
 }

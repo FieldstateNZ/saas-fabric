@@ -13,22 +13,34 @@ use crate::{
 impl DataApiService {
     /// Lists records.
     ///
+    /// # Why this takes the raw query string
+    ///
+    /// Parsing a list query checks every field name against the resource's
+    /// `queryable_fields`, so a parse is a statement about the resource. Doing
+    /// it before [`Self::prepare`] would let a caller with no scopes tell a
+    /// real field from an invented one by watching 400 against 403 — which is
+    /// exactly the ordering `prepare`'s own rustdoc forbids. The handler
+    /// therefore hands the string over untouched and the parse happens here,
+    /// after authorization has already decided the answer.
+    ///
     /// # Errors
     ///
-    /// Any [`DataApiError`], including [`DataApiError::BadRequest`] if `query`
-    /// exceeds a configured complexity bound (§28).
+    /// Any [`DataApiError`], including [`DataApiError::BadRequest`] for a field
+    /// the resource does not expose or a query that exceeds a configured
+    /// complexity bound (§28).
     pub async fn list(
         &self,
         identity: &TenantIdentity,
         resource_name: &LogicalResourceName,
-        query: &ListQuery,
+        raw_query: &str,
     ) -> Result<ListResponse, DataApiError> {
         let prepared = self.prepare(identity, resource_name, OperationKind::List)?;
 
-        // Complexity, not authorization: checked once the caller is known to
-        // be allowed here at all, and before anything is asked of a
-        // connector.
-        limits::enforce_query(query, &self.config)?;
+        // Shape, then complexity. Neither is authorization, so both wait until
+        // the caller is known to be allowed here at all — and both finish
+        // before anything is asked of a connector.
+        let query = ListQuery::parse(raw_query, prepared.resource)?;
+        limits::enforce_query(&query, &self.config)?;
 
         let limit = self.config.effective_limit(query.limit);
         let offset = query.offset.unwrap_or(0);

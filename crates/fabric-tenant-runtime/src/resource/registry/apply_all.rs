@@ -4,8 +4,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::logging;
+use crate::resource::registry::merge::{collect_removals, merge};
 use crate::resource::snapshot::ResourceSnapshot;
-use crate::resource::{ApplyReport, RegistryResource, ResourceChange, ResourceRegistry};
+use crate::resource::{ApplyReport, RegistryResource, ResourceRegistry};
 
 impl<T: RegistryResource> ResourceRegistry<T> {
     /// Replaces the registry contents with an authoritative set.
@@ -25,6 +26,14 @@ impl<T: RegistryResource> ResourceRegistry<T> {
     /// resources. That is the price of supporting deprovisioning at all, and it
     /// is why a load failure must never be turned into an empty set.
     ///
+    /// # Validation
+    ///
+    /// Each incoming resource is checked by [`RegistryResource::validate`]
+    /// before it may enter the snapshot. One that fails is dropped, and the
+    /// previously-held copy — if there is one — is left in place. See that
+    /// method for why a bad resource is skipped rather than failing the whole
+    /// apply, and why the held copy is retained rather than removed.
+    ///
     /// # Same revision, different payload
     ///
     /// An incoming copy at *exactly* the revision already held is never
@@ -34,7 +43,16 @@ impl<T: RegistryResource> ResourceRegistry<T> {
     /// resource changed, so trusting a payload that disagrees with it would
     /// make the revision guard meaningless. The mismatch is counted and
     /// logged instead of being silently folded into "unchanged".
+    ///
+    /// # Concurrency
+    ///
+    /// This is a read-modify-write, so it is serialised against the other
+    /// mutators by the registry's write lock. Lookups are not affected.
     pub fn apply_all(&self, incoming: Vec<T>) -> ApplyReport {
+        // Held across the swap *and* the publish below: see `WriteLock` for
+        // why both, rather than only the swap.
+        let _write = self.writes.acquire();
+
         let guard = self.snapshot.load();
         let current = guard.as_ref();
 
@@ -61,65 +79,5 @@ impl<T: RegistryResource> ResourceRegistry<T> {
         logging::snapshot_applied::<T>(size, &report);
 
         report
-    }
-}
-
-/// Decides what happens to one incoming resource.
-fn merge<T: RegistryResource>(
-    incoming: T,
-    held: Option<&Arc<T>>,
-    next: &mut HashMap<T::Key, Arc<T>>,
-    report: &mut ApplyReport,
-    events: &mut Vec<ResourceChange<T::Key>>,
-) {
-    match held {
-        None => {
-            report.added += 1;
-            events.push(ResourceChange::added(incoming.key().clone(), incoming.revision()));
-            next.insert(incoming.key().clone(), Arc::new(incoming));
-        }
-        Some(held) if incoming.revision() > held.revision() => {
-            report.updated += 1;
-            events.push(ResourceChange::updated(
-                incoming.key().clone(),
-                held.revision(),
-                incoming.revision(),
-            ));
-            next.insert(incoming.key().clone(), Arc::new(incoming));
-        }
-        Some(held) if incoming.revision() < held.revision() => {
-            report.stale_ignored += 1;
-            logging::stale_resource_ignored::<T>(incoming.key(), incoming.revision(), held.revision());
-            next.insert(incoming.key().clone(), Arc::clone(held));
-        }
-        // Same revision, same payload: the ordinary no-op.
-        Some(held) if incoming == **held => {
-            report.unchanged += 1;
-            next.insert(incoming.key().clone(), Arc::clone(held));
-        }
-        // Same revision, different payload: item 50. Never applied — the
-        // revision is the authority — but counted and logged so a
-        // reconciler bug (a real change that forgot to bump the revision)
-        // cannot vanish without a trace.
-        Some(held) => {
-            report.divergent_payload += 1;
-            logging::divergent_payload_at_same_revision::<T>(incoming.key(), incoming.revision());
-            next.insert(incoming.key().clone(), Arc::clone(held));
-        }
-    }
-}
-
-/// Records everything the incoming set dropped.
-fn collect_removals<T: RegistryResource>(
-    current: &ResourceSnapshot<T>,
-    next: &HashMap<T::Key, Arc<T>>,
-    report: &mut ApplyReport,
-    events: &mut Vec<ResourceChange<T::Key>>,
-) {
-    for (key, held) in current.entries() {
-        if !next.contains_key(key) {
-            report.removed += 1;
-            events.push(ResourceChange::removed(key.clone(), held.revision()));
-        }
     }
 }

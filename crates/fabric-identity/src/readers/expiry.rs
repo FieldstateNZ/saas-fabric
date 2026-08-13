@@ -1,4 +1,5 @@
-//! The one claim check that applies regardless of token-reading posture.
+//! The closing end of the token's validity window. See `not_before` for the
+//! opening end, which mirrors the skew convention applied here.
 
 use fabric_core::Clock;
 

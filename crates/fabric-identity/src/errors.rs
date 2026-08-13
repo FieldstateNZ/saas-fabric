@@ -37,6 +37,15 @@ pub enum IdentityError {
     #[error("bearer token has expired")]
     ExpiredToken,
 
+    /// The token's `nbf` (not-before) is still in the future.
+    ///
+    /// Distinct from [`Self::ExpiredToken`] so that operators can tell the two
+    /// ends of the validity window apart in logs — a burst of these usually
+    /// means a clock has drifted, not that anybody is attacking. The caller is
+    /// told no more than "not yet valid" either way.
+    #[error("bearer token is not yet valid")]
+    TokenNotYetValid,
+
     /// The token carried no tenant claim under the configured name.
     ///
     /// Specification §28: missing tenant claim, request rejected.

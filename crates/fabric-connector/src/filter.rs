@@ -9,6 +9,9 @@ mod comparison_operator;
 mod filter_expression;
 #[cfg(test)]
 mod filter_expression_tests;
+mod filter_introspection;
+#[cfg(test)]
+mod filter_introspection_tests;
 
 pub use comparison_operator::ComparisonOperator;
 pub use filter_expression::Filter;

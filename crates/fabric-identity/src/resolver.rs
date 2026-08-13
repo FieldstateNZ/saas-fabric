@@ -68,7 +68,7 @@ impl IdentityResolver {
             .unwrap_or_default()
             .to_owned();
         let roles = claims.string_list(&self.config.roles_claim);
-        let scopes = claims.string_list("scope");
+        let scopes = claims.string_list(&self.config.scope_claim);
 
         Ok(TenantIdentity::new(tenant, subject, roles, scopes))
     }

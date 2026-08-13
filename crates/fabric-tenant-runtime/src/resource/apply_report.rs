@@ -52,6 +52,15 @@ pub struct ApplyReport {
     /// revision, same payload.
     pub unchanged: usize,
 
+    /// Resources that failed [`RegistryResource::validate`](crate::RegistryResource::validate)
+    /// and were therefore never installed.
+    ///
+    /// Counted separately from every other bucket because it is the only one
+    /// that indicates the *source* published something unusable, rather than
+    /// something merely old or unchanged. A non-zero value here on a steady
+    /// system means a reconciler needs fixing.
+    pub invalid_rejected: usize,
+
     /// Resources at the **same** revision as what is held, but with a
     /// **different** payload. Never applied — see the type-level docs above
     /// for why rejecting is the correct side to fail on. Kept separate from
@@ -68,10 +77,11 @@ impl ApplyReport {
     /// logging every one at info would bury the ones that matter.
     ///
     /// Only `added`, `updated`, and `removed` count as movement.
-    /// [`Self::divergent_payload`] deliberately does not: nothing in the
-    /// registry moved, the old payload is retained, and every occurrence
-    /// already gets its own warn-level log at the point it happens — so it
-    /// is never silently folded into either bucket here.
+    /// [`Self::divergent_payload`] and [`Self::invalid_rejected`] deliberately
+    /// do not: in both cases nothing in the registry moved, whatever was held
+    /// is retained, and every occurrence already gets its own log line at the
+    /// point it happens — so neither is ever silently folded into a bucket
+    /// here.
     #[must_use]
     pub const fn is_noop(&self) -> bool {
         self.added == 0 && self.updated == 0 && self.removed == 0

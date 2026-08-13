@@ -28,14 +28,24 @@ The neutral data-execution boundary. Depends on `fabric-core`, `async-trait`,
 - `QueryOutcome{rows, total_count}`, `MutationOutcome{affected_rows, returned_rows}`.
 - `Filter` — `And{clauses}` | `Or{clauses}` | `Not{clause}` | `Compare{field, operator, value}`
   | `IsNull{field}` | `In{field, values}`. `and()` (flattens), `referenced_fields()`,
-  `referenced_operators()`.
+  `referenced_operators()`, `requires_null_check()`.
+  `referenced_operators()` reports what the backend must be able to express, not a
+  literal census of `Compare` nodes: `In` reports `Equal` (membership is a
+  disjunction of equalities), `IsNull` reports nothing and is covered by
+  `requires_null_check()`. A variant that reports neither is silently exempt from
+  the capability gate — that was a real defect.
 - `ComparisonOperator` — Equal, NotEqual, LessThan, LessThanOrEqual, GreaterThan,
   GreaterThanOrEqual, Contains (substring, not SQL LIKE).
 - Inline tests live in sibling `*_tests.rs` modules with a shared `testing.rs`
   fixture, so the type files stay small.
 - `ConnectorCapabilities` — `filtering`, `ordering`, `paging`, `mutations`,
-  `transactional_mutations`, `total_count`, `comparisons: BTreeSet<_>`.
-  `baseline()`, `ensure_supports_query()`, `ensure_supports_mutation()`.
+  `transactional_mutations`, `total_count`, `null_checks`, `comparisons: BTreeSet<_>`.
+  `baseline()`, `ensure_supports_query()`, `ensure_supports_mutation()` (the last
+  two in `capabilities/support_check.rs`, sharing one private
+  `ensure_supports_filter` so read and write checks cannot drift).
+  `null_checks` is its own flag, not a `ComparisonOperator`: a null test is unary,
+  and under three-valued logic `x = NULL` is unknown for every row, so equality
+  support proves nothing about it. Not `serde`-derived — no config file sets it.
 - `ConnectorSchema` / `CollectionSchema` — `ensure_fields()`, `collection()`,
   `has_field()`. No type modelling, field sets only.
 - `Row` — `BTreeMap<FieldName, Value>` newtype. Deterministic ordering.

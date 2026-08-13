@@ -251,16 +251,65 @@ apart from an ordinary, honest "no such tenant" answer.
 
 ### Correlation ids
 
-Every response — success or failure — carries an `X-Request-Id` header. If
-the caller sent one, it is echoed back unchanged, so a gateway's or a
-caller's own tracing shares one id with this crate's logs; otherwise a fresh
-id is generated. The same id appears in three places for a failure: the
+Every response — success or failure — carries an `X-Request-Id` header. If the
+caller sent a usable one, it is echoed back unchanged, so a gateway's or a
+caller's own tracing shares one id with this crate's logs; otherwise a fresh id
+is generated. The same id appears in three places for a failure: the
 response body (`error.request_id`), the response header, and the `tracing`
 event that recorded whatever detail the response withheld
 (`data_api.request_failed` for a masked 5xx, `data_api.unknown_tenant_probed`
 for a probed tenant). Quoting the id from a client error report is enough to
 find the matching internal log line — nothing else about the failure needs
 to be guessed or reproduced.
+
+**"Usable" is a narrow definition, and deliberately so.** An inbound
+`X-Request-Id` is adopted only when it is between 1 and 128 characters drawn
+from `A-Z a-z 0-9 - _ . : + / =`. That covers every id format anyone actually
+sends — a UUID is 36 characters, a W3C `traceparent` 55, an X-Ray trace id 35 —
+and refuses the rest, including whitespace, control characters, and anything
+longer. The value is reflected onto the response header, into the error body,
+and into the fields of every log event about the request, so an unbounded one
+is a caller-controlled multiplier on this service's log volume and response
+size.
+
+A refused id is **replaced with a fresh one, not truncated**. Truncating would
+hand back something that looks like the caller's id but is not: the id they
+quote to an operator would no longer be the id in the log, and two callers
+whose ids share a long prefix would silently collapse onto one value, merging
+two requests' traces. A generated id is honestly different, and the caller can
+see that it is, because it comes back on the response header. Propagation is a
+convenience; a correct id is not.
+
+## Authorization comes before request shape
+
+A caller who is going to be refused gets the *same* refusal whatever they put
+in the request. That matters because some validation describes the resource
+rather than the request: `queryable_fields` checking answers "is `salary` a
+real field here?", and a 400 saying so ahead of the 403 lets a caller with no
+scopes enumerate a resource's field allowlist one guess at a time.
+
+So every check that could describe the resource takes the `ResourceDefinition`
+that `prepare` returns, and `prepare` authorises first. It is structural, not a
+convention to remember: `DataApiService` exposes no way to reach the catalogue,
+so a handler has no `ResourceDefinition` to validate against. That is why
+`DataApiService::list` takes the raw query string and parses it itself, rather
+than accepting a `ListQuery` the handler already built.
+
+Two checks deliberately still run first, because neither says anything about
+any resource — both describe a fixed, deployment-wide rule:
+
+- the request body size cap, which has to run while the body is being read;
+- the syntactic resource-name parse in each handler.
+
+The complexity limits (`max_filters` and friends) would also be safe to check
+early for the same reason — every bound is a deployment-wide constant. They run
+after authorization anyway, because they operate on the parsed query and that
+parse had to move behind it. Keeping the two together costs nothing and leaves
+one rule to remember instead of two.
+
+`tests/authorization_ordering.rs` pins all of this by asserting that a valid
+field, a hidden field, and an invented field produce byte-identical responses
+for an unauthorised caller.
 
 ## Read-only DataSources
 
@@ -310,6 +359,12 @@ write should not assume the write did not happen.
 - **`queryable_fields` covers filters, not just projections.** Filtering is an
   information channel: narrow a filter until rows disappear and you have read a
   hidden value.
+- **Never validate a field name before `prepare` has authorised.** The 400 it
+  produces would tell a caller who is about to be refused which fields exist.
+  See "Authorization comes before request shape".
+- **An unusable inbound `X-Request-Id` is replaced, not repaired.** Over 128
+  characters, or carrying anything outside `[A-Za-z0-9-_.:+/=]`, and the
+  caller gets a fresh id back instead.
 - **Resources are read-only by default.** A catalogue entry must deliberately
   list `create`/`update`/`delete`.
 - **Paging asks the connector for `limit + 1` rows.** The probe row makes

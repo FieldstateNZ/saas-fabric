@@ -43,9 +43,13 @@ impl ResourceRefresher {
         source: &dyn ResourceSource<T>,
     ) -> Result<usize, SourceError> {
         let resources = source.load().await?;
-        let count = resources.len();
-
         registry.apply_all(resources);
+
+        // Deliberately what the registry now holds, not what the source
+        // returned. `apply_all` drops resources that fail validation, and a
+        // prime that reports a hundred tenants when three were rejected hides
+        // the one number an operator needs.
+        let count = registry.len();
         logging::primed::<T>(&source.describe(), count);
 
         Ok(count)

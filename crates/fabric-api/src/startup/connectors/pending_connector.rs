@@ -76,6 +76,7 @@ impl PendingConnector {
                 filtering: false,
                 ordering: false,
                 paging: false,
+                null_checks: false,
                 mutations: false,
                 transactional_mutations: false,
                 total_count: false,

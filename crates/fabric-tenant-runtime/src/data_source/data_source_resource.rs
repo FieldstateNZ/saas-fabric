@@ -6,6 +6,7 @@ use fabric_connector::{ConnectionSelector, ConnectorId};
 use fabric_core::{BindingRevision, DataSourceId};
 
 use crate::data_source::{DataResidency, DataSourceCapabilities, PlacementClass, PoolSettings};
+use crate::ConfigurationError;
 
 /// A configured physical data destination, reusable across tenants.
 ///
@@ -76,13 +77,20 @@ fn default_connection() -> ConnectionSelector {
 impl DataSource {
     /// Checks the DataSource is usable, at load rather than at first request.
     ///
+    /// The registry calls this through
+    /// [`RegistryResource::validate`](crate::RegistryResource) on every apply,
+    /// which is what makes "at load" true rather than aspirational. It stays
+    /// an inherent method as well so a caller holding a bare `DataSource` —
+    /// the example-state tests, chiefly — can check one without importing the
+    /// lifecycle trait.
+    ///
     /// # Errors
     ///
-    /// Returns a message naming the offending setting.
-    pub fn validate(&self) -> Result<(), String> {
+    /// [`ConfigurationError::InvalidResource`] naming the offending setting.
+    pub fn validate(&self) -> Result<(), ConfigurationError> {
         self.pool
             .validate()
-            .map_err(|error| format!("data source {}: {error}", self.id))
+            .map_err(|error| ConfigurationError::InvalidResource(format!("data source {}: {error}", self.id)))
     }
 
     /// A short, non-sensitive description for telemetry (§29).

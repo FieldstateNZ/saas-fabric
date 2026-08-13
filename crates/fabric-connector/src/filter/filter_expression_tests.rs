@@ -1,4 +1,4 @@
-//! Combining, flattening, and walking the predicate tree.
+//! Combining and flattening the predicate tree.
 
 use serde_json::Value;
 
@@ -33,32 +33,4 @@ fn combining_flattens_rather_than_nesting() {
         panic!("expected a conjunction");
     };
     assert_eq!(clauses.len(), 3);
-}
-
-#[test]
-fn collects_fields_from_nested_clauses() {
-    let filter = Filter::Not {
-        clause: Box::new(Filter::Or {
-            clauses: vec![
-                compare("a", ComparisonOperator::Equal),
-                Filter::IsNull { field: field("b") },
-            ],
-        }),
-    };
-
-    let fields: Vec<&str> = filter.referenced_fields().iter().map(|f| f.as_str()).collect();
-
-    assert_eq!(fields, ["a", "b"]);
-}
-
-#[test]
-fn collects_distinct_operators() {
-    let filter = compare("a", ComparisonOperator::Contains)
-        .and(compare("b", ComparisonOperator::Contains))
-        .and(compare("c", ComparisonOperator::GreaterThan));
-
-    assert_eq!(
-        filter.referenced_operators(),
-        [ComparisonOperator::GreaterThan, ComparisonOperator::Contains]
-    );
 }

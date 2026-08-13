@@ -2,7 +2,9 @@
 
 use std::collections::BTreeSet;
 
-use crate::{ComparisonOperator, ConnectorError, MutationSpec, QuerySpec};
+use crate::ComparisonOperator;
+
+mod support_check;
 
 /// The features a connector declares support for.
 ///
@@ -21,6 +23,9 @@ use crate::{ComparisonOperator, ConnectorError, MutationSpec, QuerySpec};
 ///
 /// So the platform refuses instead. §28 requires failing closed, and an
 /// unsupported operation is a case where the safe answer cannot be computed.
+///
+/// The gate itself is [`ensure_supports_query`](Self::ensure_supports_query)
+/// and [`ensure_supports_mutation`](Self::ensure_supports_mutation).
 // A flag per capability is the honest representation here: these are
 // independent yes/no facts a backend declares, not a state machine that could
 // be an enum. Grouping them into sub-structs to satisfy the lint would add
@@ -40,6 +45,15 @@ pub struct ConnectorCapabilities {
     pub transactional_mutations: bool,
     /// Whether the backend can report a total row count ignoring paging.
     pub total_count: bool,
+    /// Whether the backend can test a field for null
+    /// ([`Filter::IsNull`](crate::Filter::IsNull)).
+    ///
+    /// A flag of its own rather than an entry in [`comparisons`](Self::comparisons)
+    /// because a null test is unary — there is no literal to compare against —
+    /// and no comparison stands in for it. Under three-valued logic `x = NULL`
+    /// is unknown for every row, so a backend declaring equality has said
+    /// nothing about whether it can find nulls.
+    pub null_checks: bool,
     /// The comparison operators the backend can express.
     pub comparisons: BTreeSet<ComparisonOperator>,
 }
@@ -47,6 +61,9 @@ pub struct ConnectorCapabilities {
 impl ConnectorCapabilities {
     /// The minimum a connector must support to be useful: reads with
     /// predicates, ordering, paging, and equality.
+    ///
+    /// Every capability beyond that minimum starts `false`. A backend gets a
+    /// feature by declaring it, never by a default nobody revisited.
     #[must_use]
     pub fn baseline() -> Self {
         Self {
@@ -56,80 +73,10 @@ impl ConnectorCapabilities {
             mutations: false,
             transactional_mutations: false,
             total_count: false,
+            null_checks: false,
             comparisons: [ComparisonOperator::Equal, ComparisonOperator::NotEqual]
                 .into_iter()
                 .collect(),
         }
-    }
-
-    /// Checks a query against these capabilities before it is executed.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ConnectorError::Unsupported`] naming the first feature the
-    /// backend lacks.
-    pub fn ensure_supports_query(&self, spec: &QuerySpec) -> Result<(), ConnectorError> {
-        if let Some(filter) = &spec.filter {
-            if !self.filtering {
-                return Err(unsupported("filtering"));
-            }
-
-            for operator in filter.referenced_operators() {
-                if !self.comparisons.contains(&operator) {
-                    return Err(unsupported(&format!("the {} comparison", operator.as_str())));
-                }
-            }
-        }
-
-        if !spec.sort.is_empty() && !self.ordering {
-            return Err(unsupported("ordering"));
-        }
-
-        if (spec.limit.is_some() || spec.offset.is_some()) && !self.paging {
-            return Err(unsupported("paging"));
-        }
-
-        Ok(())
-    }
-
-    /// Checks a mutation against these capabilities before it is executed.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ConnectorError::Unsupported`] if the backend does not accept
-    /// writes, or cannot express a predicate the mutation depends on.
-    pub fn ensure_supports_mutation(&self, spec: &MutationSpec) -> Result<(), ConnectorError> {
-        if !self.mutations {
-            return Err(unsupported("mutations"));
-        }
-
-        let filter = match spec {
-            MutationSpec::Insert { .. } => None,
-            MutationSpec::Update { filter, .. } | MutationSpec::Delete { filter, .. } => filter.as_ref(),
-        };
-
-        // A predicate on a write is load-bearing in a way a read's is not: it is
-        // what stops the write reaching another tenant's rows. If the backend
-        // cannot express it, executing anyway would be destructive.
-        if let Some(filter) = filter {
-            if !self.filtering {
-                return Err(unsupported("filtering on mutations"));
-            }
-
-            for operator in filter.referenced_operators() {
-                if !self.comparisons.contains(&operator) {
-                    return Err(unsupported(&format!("the {} comparison", operator.as_str())));
-                }
-            }
-        }
-
-        Ok(())
-    }
-}
-
-/// Builds the standard unsupported-feature error.
-fn unsupported(feature: &str) -> ConnectorError {
-    ConnectorError::Unsupported {
-        feature: feature.to_owned(),
     }
 }

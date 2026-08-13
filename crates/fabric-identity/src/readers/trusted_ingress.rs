@@ -6,6 +6,7 @@ use fabric_core::Clock;
 
 use crate::readers::expiry::ensure_not_expired;
 use crate::readers::jwt_payload::decode_payload;
+use crate::readers::not_before::ensure_already_valid;
 use crate::{IdentityError, TokenClaims, TokenReader};
 
 /// Reads the claims of a bearer token the platform edge has already validated.
@@ -46,18 +47,24 @@ use crate::{IdentityError, TokenClaims, TokenReader};
 ///
 /// # What is still checked
 ///
-/// Expiry. Replaying a captured expired token is cheap and refusing it costs
-/// one comparison.
+/// The token's validity window, at both ends: `exp` and `nbf`. Replaying a
+/// captured expired token is cheap, and presenting one minted for later use is
+/// cheaper still; refusing either costs one comparison.
+///
+/// This is the posture where those checks are load-bearing. Because this reader
+/// decodes the payload itself rather than handing it to a JWT library, no
+/// component upstream of it enforces the window — if this reader skips a check,
+/// nothing else performs it.
 pub struct TrustedIngressReader {
     clock: Arc<dyn Clock>,
     leeway_seconds: i64,
 }
 
 impl TrustedIngressReader {
-    /// The default clock-skew allowance applied to `exp`.
+    /// The default clock-skew allowance applied to `exp` and `nbf`.
     const DEFAULT_LEEWAY_SECONDS: i64 = 60;
 
-    /// Builds the reader with the default expiry leeway.
+    /// Builds the reader with the default validity-window leeway.
     #[must_use]
     pub fn new(clock: Arc<dyn Clock>) -> Self {
         Self {
@@ -66,7 +73,12 @@ impl TrustedIngressReader {
         }
     }
 
-    /// Overrides the clock-skew allowance applied to `exp`.
+    /// Overrides the clock-skew allowance, in seconds.
+    ///
+    /// One value widens both ends of the validity window, matching how
+    /// `jsonwebtoken` treats leeway in the defence-in-depth posture. A skewed
+    /// clock is skewed in one direction only, but which direction is not known
+    /// in advance, so the allowance covers both.
     #[must_use]
     pub const fn with_leeway_seconds(mut self, leeway_seconds: i64) -> Self {
         self.leeway_seconds = leeway_seconds;
@@ -79,6 +91,7 @@ impl TokenReader for TrustedIngressReader {
         let claims = decode_payload(token)?;
 
         ensure_not_expired(&claims, self.clock.as_ref(), self.leeway_seconds)?;
+        ensure_already_valid(&claims, self.clock.as_ref(), self.leeway_seconds)?;
 
         Ok(claims)
     }
@@ -130,6 +143,25 @@ mod tests {
             reader_at(5_000).read(&expired).unwrap_err(),
             IdentityError::ExpiredToken
         );
+    }
+
+    #[test]
+    fn rejects_a_token_minted_for_later_use() {
+        // The canonical posture parses claims itself, so nothing upstream
+        // enforces `nbf` on its behalf.
+        let premature = token(r#"{"tenant_id":"acme","nbf":5000}"#);
+
+        assert_eq!(
+            reader_at(1_000).read(&premature).unwrap_err(),
+            IdentityError::TokenNotYetValid
+        );
+    }
+
+    #[test]
+    fn accepts_a_token_whose_not_before_has_already_passed() {
+        let mature = token(r#"{"tenant_id":"acme","nbf":1000,"exp":9000}"#);
+
+        assert!(reader_at(5_000).read(&mature).is_ok());
     }
 
     #[test]

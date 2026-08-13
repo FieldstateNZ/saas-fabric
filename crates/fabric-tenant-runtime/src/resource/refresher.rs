@@ -1,5 +1,6 @@
 //! Keeping a registry current, in the background.
 
+mod prime_guard;
 mod refresh_handle;
 #[cfg(test)]
 mod refresher_tests;
@@ -9,6 +10,7 @@ use std::time::Duration;
 
 use tokio::sync::Notify;
 
+use crate::resource::refresher::prime_guard::first_rejection_if_nothing_is_usable;
 use crate::resource::{RegistryResource, ResourceRegistry, ResourceSource};
 use crate::{logging, RuntimeConfig, SourceError};
 
@@ -34,15 +36,30 @@ pub struct ResourceRefresher;
 impl ResourceRefresher {
     /// Loads once, so the registry can serve.
     ///
+    /// A first load that would install *nothing* is refused, and the registry
+    /// is left unprimed rather than primed and empty — see
+    /// `first_rejection_if_nothing_is_usable` for why that is a load failure
+    /// and why a partial rejection is not.
+    ///
     /// # Errors
     ///
-    /// [`SourceError`] if the source could not be read. The caller decides
-    /// whether that is fatal — see [`RuntimeConfig::fail_fast_on_prime`].
+    /// [`SourceError`] if the source could not be read, or if it read cleanly
+    /// but published nothing usable. The caller decides whether that is fatal —
+    /// see [`RuntimeConfig::fail_fast_on_prime`].
     pub async fn prime<T: RegistryResource>(
         registry: &ResourceRegistry<T>,
         source: &dyn ResourceSource<T>,
     ) -> Result<usize, SourceError> {
         let resources = source.load().await?;
+
+        if let Some(reason) = first_rejection_if_nothing_is_usable(&resources) {
+            return Err(SourceError::NothingUsable {
+                origin: source.describe(),
+                count: resources.len(),
+                reason,
+            });
+        }
+
         registry.apply_all(resources);
 
         // Deliberately what the registry now holds, not what the source

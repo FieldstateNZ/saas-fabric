@@ -7,6 +7,7 @@ use fabric_core::Clock;
 use crate::readers::expiry::ensure_not_expired;
 use crate::readers::jwt_payload::decode_payload;
 use crate::readers::not_before::ensure_already_valid;
+use crate::readers::LeewaySeconds;
 use crate::{IdentityError, TokenClaims, TokenReader};
 
 /// Reads the claims of a bearer token the platform edge has already validated.
@@ -57,31 +58,34 @@ use crate::{IdentityError, TokenClaims, TokenReader};
 /// nothing else performs it.
 pub struct TrustedIngressReader {
     clock: Arc<dyn Clock>,
-    leeway_seconds: i64,
+    leeway: LeewaySeconds,
 }
 
 impl TrustedIngressReader {
-    /// The default clock-skew allowance applied to `exp` and `nbf`.
-    const DEFAULT_LEEWAY_SECONDS: i64 = 60;
-
     /// Builds the reader with the default validity-window leeway.
     #[must_use]
     pub fn new(clock: Arc<dyn Clock>) -> Self {
         Self {
             clock,
-            leeway_seconds: Self::DEFAULT_LEEWAY_SECONDS,
+            leeway: LeewaySeconds::DEFAULT,
         }
     }
 
-    /// Overrides the clock-skew allowance, in seconds.
+    /// Overrides the clock-skew allowance.
     ///
     /// One value widens both ends of the validity window, matching how
     /// `jsonwebtoken` treats leeway in the defence-in-depth posture. A skewed
     /// clock is skewed in one direction only, but which direction is not known
     /// in advance, so the allowance covers both.
+    ///
+    /// The argument is a checked [`LeewaySeconds`] rather than an integer.
+    /// This method used to take a bare `i64` and store whatever it was handed,
+    /// so a negative value narrowed the window it was supposed to widen and
+    /// `i64::MAX` switched off both ends of it — in the one posture where
+    /// nothing else performs the check.
     #[must_use]
-    pub const fn with_leeway_seconds(mut self, leeway_seconds: i64) -> Self {
-        self.leeway_seconds = leeway_seconds;
+    pub const fn with_leeway(mut self, leeway: LeewaySeconds) -> Self {
+        self.leeway = leeway;
         self
     }
 }
@@ -90,8 +94,8 @@ impl TokenReader for TrustedIngressReader {
     fn read(&self, token: &str) -> Result<TokenClaims, IdentityError> {
         let claims = decode_payload(token)?;
 
-        ensure_not_expired(&claims, self.clock.as_ref(), self.leeway_seconds)?;
-        ensure_already_valid(&claims, self.clock.as_ref(), self.leeway_seconds)?;
+        ensure_not_expired(&claims, self.clock.as_ref(), self.leeway)?;
+        ensure_already_valid(&claims, self.clock.as_ref(), self.leeway)?;
 
         Ok(claims)
     }
@@ -162,6 +166,45 @@ mod tests {
         let mature = token(r#"{"tenant_id":"acme","nbf":1000,"exp":9000}"#);
 
         assert!(reader_at(5_000).read(&mature).is_ok());
+    }
+
+    #[test]
+    fn rejects_a_token_minted_for_later_use_with_a_fractional_not_before() {
+        // Exactly the token the adversarial review presented: spec-legal under
+        // RFC 7519 §2, and accepted 4000 seconds before it became valid.
+        let premature = token(r#"{"tenant_id":"acme","nbf":5000.0}"#);
+
+        assert_eq!(
+            reader_at(1_000).read(&premature).unwrap_err(),
+            IdentityError::TokenNotYetValid
+        );
+    }
+
+    #[test]
+    fn rejects_an_expired_token_with_a_fractional_expiry() {
+        // The other half of the same hole: the check nothing upstream repeats.
+        let expired = token(r#"{"tenant_id":"acme","exp":1000.0}"#);
+
+        assert_eq!(
+            reader_at(5_000).read(&expired).unwrap_err(),
+            IdentityError::ExpiredToken
+        );
+    }
+
+    #[test]
+    fn a_widened_window_still_cannot_be_widened_past_the_ceiling() {
+        // The allowance is checked at construction, so there is no value a
+        // deployment can supply that switches the window off.
+        let reader = reader_at(5_000).with_leeway(LeewaySeconds::try_new(3_600).unwrap());
+
+        assert!(reader.read(&token(r#"{"tenant_id":"acme","exp":2000}"#)).is_ok());
+        assert_eq!(
+            reader
+                .read(&token(r#"{"tenant_id":"acme","exp":1000}"#))
+                .unwrap_err(),
+            IdentityError::ExpiredToken
+        );
+        assert!(LeewaySeconds::try_new(u64::MAX).is_err());
     }
 
     #[test]

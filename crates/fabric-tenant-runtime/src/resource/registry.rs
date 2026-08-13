@@ -11,6 +11,8 @@ mod concurrency_tests;
 #[cfg(test)]
 mod deletion_tests;
 #[cfg(test)]
+mod duplicate_key_tests;
+#[cfg(test)]
 mod lookup_tests;
 mod merge;
 #[cfg(test)]

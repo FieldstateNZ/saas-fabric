@@ -30,6 +30,13 @@ async fn priming_makes_the_registry_servable() {
     assert!(registry.lookup(&tenant("acme")).is_ok());
 }
 
+/// A binding with no data bindings at all — the rule
+/// [`TenantRuntimeBinding::validate`] enforces. Every data request for it
+/// would fail, so it can never be served.
+fn unusable_binding(name: &str, revision: u64) -> TenantRuntimeBinding {
+    TenantRuntimeBinding::new(tenant(name), BindingRevision::new(revision))
+}
+
 #[tokio::test]
 async fn priming_from_a_failing_source_leaves_the_registry_unprimed() {
     let registry = TenantRegistry::new();
@@ -38,6 +45,54 @@ async fn priming_from_a_failing_source_leaves_the_registry_unprimed() {
 
     assert!(ResourceRefresher::prime(&registry, &source).await.is_err());
     assert!(!registry.is_primed());
+}
+
+#[tokio::test]
+async fn a_first_load_that_can_install_nothing_is_a_load_failure() {
+    // The source read cleanly, so no `SourceError` fires — but every entry
+    // fails validation and there is no previously-held copy to fall back on,
+    // so the snapshot installed is empty. A registry in that state reports
+    // primed, answers /ready with 200, and returns `MissingDataSource` — a
+    // 500 — for every request that touches it.
+    let registry = TenantRegistry::new();
+    let source = InMemorySource::new(vec![unusable_binding("acme", 1)]);
+
+    assert!(ResourceRefresher::prime(&registry, &source).await.is_err());
+    assert!(
+        !registry.is_primed(),
+        "a refused prime must leave the registry unprimed, or /ready still answers 200"
+    );
+}
+
+#[tokio::test]
+async fn a_partly_invalid_first_load_still_serves_what_is_usable() {
+    // One rejected out of two is not the same as two out of two. There is
+    // something to serve, so `is_primed` is honest — and refusing to start
+    // here would take every healthy tenant offline over one operator's typo,
+    // which is the failure the drop-with-a-log rule exists to prevent.
+    let registry = TenantRegistry::new();
+    let source = InMemorySource::new(vec![
+        unusable_binding("orphan", 1),
+        tenant_binding("acme", 1, "shared-01"),
+    ]);
+
+    let count = ResourceRefresher::prime(&registry, &source).await.unwrap();
+
+    assert_eq!(count, 1);
+    assert!(registry.is_primed());
+    assert!(registry.lookup(&tenant("acme")).is_ok());
+}
+
+#[tokio::test]
+async fn a_genuinely_empty_source_primes_successfully() {
+    // A deployment that has not onboarded a tenant yet must still start.
+    // Installing nothing is only a failure when the source actually published
+    // something to install.
+    let registry = TenantRegistry::new();
+    let source: InMemorySource<TenantRuntimeBinding> = InMemorySource::empty();
+
+    assert_eq!(ResourceRefresher::prime(&registry, &source).await.unwrap(), 0);
+    assert!(registry.is_primed());
 }
 
 #[tokio::test]

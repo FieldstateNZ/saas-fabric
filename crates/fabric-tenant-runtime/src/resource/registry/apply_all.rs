@@ -1,6 +1,6 @@
 //! Replacing a registry's contents with an authoritative set.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use crate::logging;
@@ -44,6 +44,25 @@ impl<T: RegistryResource> ResourceRegistry<T> {
     /// make the revision guard meaningless. The mismatch is counted and
     /// logged instead of being silently folded into "unchanged".
     ///
+    /// # One key, twice in the same incoming set
+    ///
+    /// Each incoming entry is judged against the snapshot being *replaced*. So
+    /// a key may be decided only once per call: two entries for one key would
+    /// both compare against that same outgoing snapshot while only one of them
+    /// could win the map, and the loser's event would then describe a snapshot
+    /// that never existed. A subscriber acting on it (§19 — drop the state
+    /// attached to the old revision, re-read the resource) would look up a
+    /// revision the registry does not hold.
+    ///
+    /// So the first entry for a key decides it, and every later one is refused
+    /// before it can be compared at all, counted in
+    /// [`ApplyReport::duplicate_rejected`], and logged at error level. See that
+    /// field for why refusing beats picking a winner.
+    ///
+    /// That is what upholds the invariant this whole method is built around:
+    /// **every published event describes a transition into the snapshot that
+    /// was actually installed.**
+    ///
     /// # Concurrency
     ///
     /// This is a read-modify-write, so it is serialised against the other
@@ -60,7 +79,18 @@ impl<T: RegistryResource> ResourceRegistry<T> {
         let mut next: HashMap<T::Key, Arc<T>> = HashMap::with_capacity(incoming.len());
         let mut events = Vec::new();
 
+        // Tracked separately from `next` rather than inferred from it: a
+        // rejected resource with nothing held leaves no trace in `next`, so
+        // `next` cannot answer "was this key already decided?".
+        let mut decided: HashSet<T::Key> = HashSet::with_capacity(incoming.len());
+
         for resource in incoming {
+            if !decided.insert(resource.key().clone()) {
+                report.duplicate_rejected += 1;
+                logging::duplicate_key_rejected::<T>(resource.key(), resource.revision());
+                continue;
+            }
+
             let held = current.and_then(|snapshot| snapshot.get(resource.key()));
 
             merge(resource, held, &mut next, &mut report, &mut events);

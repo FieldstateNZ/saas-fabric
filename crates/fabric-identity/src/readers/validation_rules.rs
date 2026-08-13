@@ -2,11 +2,10 @@
 
 use jsonwebtoken::{Algorithm, Validation};
 
+use crate::readers::LeewaySeconds;
+
 /// The RSA family this client accepts.
 const PERMITTED_ALGORITHMS: [Algorithm; 3] = [Algorithm::RS256, Algorithm::RS384, Algorithm::RS512];
-
-/// Default clock-skew allowance, in seconds.
-pub(crate) const DEFAULT_LEEWAY_SECONDS: u64 = 60;
 
 /// Builds the baseline validation rules.
 ///
@@ -21,13 +20,17 @@ pub(crate) const DEFAULT_LEEWAY_SECONDS: u64 = 60;
 /// default would leave this posture accepting a token minted for later use
 /// while the canonical trusted-ingress posture rejected it, which is the wrong
 /// way round for a mode whose entire purpose is to check *more*.
+///
+/// The leeway comes from [`LeewaySeconds`] rather than a local constant, so the
+/// two postures cannot start out with different windows before a deployment has
+/// configured anything.
 pub(crate) fn baseline() -> Validation {
     let mut validation = Validation::new(Algorithm::RS256);
 
     validation.algorithms = PERMITTED_ALGORITHMS.to_vec();
     validation.validate_exp = true;
     validation.validate_nbf = true;
-    validation.leeway = DEFAULT_LEEWAY_SECONDS;
+    validation.leeway = LeewaySeconds::DEFAULT.seconds();
 
     validation
 }

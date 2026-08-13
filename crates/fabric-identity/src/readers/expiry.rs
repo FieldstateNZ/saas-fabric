@@ -3,6 +3,7 @@
 
 use fabric_core::Clock;
 
+use crate::readers::LeewaySeconds;
 use crate::{IdentityError, TokenClaims};
 
 /// Rejects a token whose `exp` has passed, allowing for clock skew.
@@ -14,24 +15,28 @@ use crate::{IdentityError, TokenClaims};
 ///
 /// A token with no `exp` is accepted. The specification does not require one,
 /// and which tokens are acceptable is the identity platform's policy to set,
-/// not the runtime's.
+/// not the runtime's. A token that *has* one is a different matter: every
+/// number a claim can hold yields a second (see
+/// [`TokenClaims::unix_seconds`]), so a present `exp` always constrains.
 ///
 /// # Errors
 ///
 /// [`IdentityError::ExpiredToken`] if `exp` is further in the past than
-/// `leeway_seconds` allows.
+/// `leeway` allows.
 pub(crate) fn ensure_not_expired(
     claims: &TokenClaims,
     clock: &dyn Clock,
-    leeway_seconds: i64,
+    leeway: LeewaySeconds,
 ) -> Result<(), IdentityError> {
     let Some(expiry) = claims.unix_seconds("exp") else {
         return Ok(());
     };
 
-    let now = i64::try_from(clock.now_unix_seconds()).unwrap_or(i64::MAX);
-
-    if now.saturating_sub(leeway_seconds) > expiry {
+    // Unsigned throughout, matching both the clock and `jsonwebtoken`'s own
+    // comparison, so there is no conversion to get wrong. `saturating_sub`
+    // covers a clock reading earlier than the allowance itself, which yields
+    // zero — no token is expired before the epoch.
+    if clock.now_unix_seconds().saturating_sub(leeway.seconds()) > expiry {
         return Err(IdentityError::ExpiredToken);
     }
 
@@ -62,26 +67,93 @@ mod tests {
         TokenClaims::new(serde_json::from_str(json).unwrap())
     }
 
+    fn leeway(seconds: u64) -> LeewaySeconds {
+        LeewaySeconds::try_new(seconds).unwrap()
+    }
+
     #[test]
     fn accepts_a_token_that_has_not_expired() {
-        assert!(ensure_not_expired(&claims(r#"{"exp":5000}"#), &FrozenClock(1_000), 60).is_ok());
+        assert!(ensure_not_expired(&claims(r#"{"exp":5000}"#), &FrozenClock(1_000), leeway(60)).is_ok());
     }
 
     #[test]
     fn rejects_a_token_that_has_expired() {
         assert_eq!(
-            ensure_not_expired(&claims(r#"{"exp":1000}"#), &FrozenClock(5_000), 60).unwrap_err(),
+            ensure_not_expired(&claims(r#"{"exp":1000}"#), &FrozenClock(5_000), leeway(60)).unwrap_err(),
             IdentityError::ExpiredToken
         );
     }
 
     #[test]
     fn accepts_a_token_that_expired_within_the_leeway_window() {
-        assert!(ensure_not_expired(&claims(r#"{"exp":1000}"#), &FrozenClock(1_030), 60).is_ok());
+        assert!(ensure_not_expired(&claims(r#"{"exp":1000}"#), &FrozenClock(1_030), leeway(60)).is_ok());
     }
 
     #[test]
     fn accepts_a_token_with_no_expiry_claim() {
-        assert!(ensure_not_expired(&claims("{}"), &FrozenClock(5_000), 60).is_ok());
+        assert!(ensure_not_expired(&claims("{}"), &FrozenClock(5_000), leeway(60)).is_ok());
+    }
+
+    #[test]
+    fn rejects_a_token_whose_fractional_expiry_has_passed() {
+        // The reviewer's case. `exp` is spec-legal as a float, and reading it
+        // as absent used to accept a token that expired 4000 seconds earlier.
+        assert_eq!(
+            ensure_not_expired(&claims(r#"{"exp":1000.0}"#), &FrozenClock(5_000), leeway(60)).unwrap_err(),
+            IdentityError::ExpiredToken
+        );
+    }
+
+    #[test]
+    fn accepts_a_token_whose_fractional_expiry_is_still_ahead() {
+        assert!(ensure_not_expired(&claims(r#"{"exp":5000.5}"#), &FrozenClock(1_000), leeway(60)).is_ok());
+    }
+
+    #[test]
+    fn accepts_a_token_exactly_at_the_edge_of_the_leeway_window() {
+        // now - leeway == exp. The comparison is strict, so this is the last
+        // accepted second rather than the first rejected one.
+        assert!(ensure_not_expired(&claims(r#"{"exp":1000}"#), &FrozenClock(1_060), leeway(60)).is_ok());
+    }
+
+    #[test]
+    fn rejects_a_token_one_second_beyond_the_leeway_window() {
+        assert_eq!(
+            ensure_not_expired(&claims(r#"{"exp":1000}"#), &FrozenClock(1_061), leeway(60)).unwrap_err(),
+            IdentityError::ExpiredToken
+        );
+    }
+
+    #[test]
+    fn rounding_decides_the_boundary_second() {
+        // 1060.5 rounds to 1061, one second inside the window; 1060.4 rounds
+        // to 1060, the last second outside it.
+        assert!(ensure_not_expired(&claims(r#"{"exp":1060.5}"#), &FrozenClock(1_121), leeway(60)).is_ok());
+        assert_eq!(
+            ensure_not_expired(&claims(r#"{"exp":1060.4}"#), &FrozenClock(1_121), leeway(60)).unwrap_err(),
+            IdentityError::ExpiredToken
+        );
+    }
+
+    #[test]
+    fn an_expiry_before_the_epoch_is_expired_rather_than_ignored() {
+        // Clamped to zero, which is the honest reading: an instant in 1969 has
+        // long passed. Treating it as absent would have been a free pass.
+        assert_eq!(
+            ensure_not_expired(&claims(r#"{"exp":-1}"#), &FrozenClock(5_000), leeway(60)).unwrap_err(),
+            IdentityError::ExpiredToken
+        );
+    }
+
+    #[test]
+    fn an_expiry_beyond_representable_time_has_not_passed() {
+        assert!(ensure_not_expired(&claims(r#"{"exp":1e30}"#), &FrozenClock(5_000), leeway(60)).is_ok());
+    }
+
+    #[test]
+    fn a_clock_earlier_than_the_allowance_itself_does_not_wrap() {
+        // `saturating_sub` floors at zero. Without it this would underflow, and
+        // a wrapped `now` would make every token look expired.
+        assert!(ensure_not_expired(&claims(r#"{"exp":0}"#), &FrozenClock(1), leeway(60)).is_ok());
     }
 }

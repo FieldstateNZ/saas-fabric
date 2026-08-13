@@ -84,13 +84,35 @@ impl DataSource {
     /// the example-state tests, chiefly — can check one without importing the
     /// lifecycle trait.
     ///
+    /// # Nothing on a DataSource alone can make it unresolvable
+    ///
+    /// The bar this applies is deliberately narrow: **refuse a DataSource only
+    /// when this process cannot turn it into an
+    /// [`ExecutionTarget`](fabric_connector::ExecutionTarget).** Nothing here
+    /// currently clears that bar, and saying so in one line is what the
+    /// [`RegistryResource::validate`](crate::RegistryResource) contract asks a
+    /// type with nothing to check to do.
+    ///
+    /// Field by field: `id`, `revision`, `connector` and `connection` are
+    /// newtypes that were checked when they were parsed; `capabilities`
+    /// defaults closed and is total either way; `residency` and `labels` are
+    /// carried and reported, never branched on. `placement` *is* read on the
+    /// request path, but only against a tenant's isolation model — a question
+    /// about a pair, answered at resolution by
+    /// [`ResolveError::IsolationNotEnforceable`](crate::ResolveError), which no
+    /// check on a lone DataSource could ask.
+    ///
+    /// `pool` is the one field that used to be checked here, and no longer is:
+    /// [`PoolSettings::validate`] carries the argument for why refusing a whole
+    /// DataSource over a number this process never reads did more damage than
+    /// the fault it guarded against.
+    ///
     /// # Errors
     ///
-    /// [`ConfigurationError::InvalidResource`] naming the offending setting.
+    /// [`ConfigurationError::InvalidResource`] naming the offending setting,
+    /// once there is a setting that genuinely qualifies.
     pub fn validate(&self) -> Result<(), ConfigurationError> {
-        self.pool
-            .validate()
-            .map_err(|error| ConfigurationError::InvalidResource(format!("data source {}: {error}", self.id)))
+        Ok(())
     }
 
     /// A short, non-sensitive description for telemetry (§29).

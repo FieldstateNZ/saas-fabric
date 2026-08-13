@@ -27,15 +27,19 @@ missing network boundary.
 - `TokenReader` — `read()`, `describe()`. **Synchronous by design**: no I/O on
   the request path.
 - `TrustedIngressReader::new(Arc<dyn Clock>)` — canonical. Parses claims,
-  enforces `exp` with leeway. `describe()` is `"trusted-ingress"` — neutral, not
-  a warning.
+  enforces `exp` **and** `nbf` with leeway. `.with_leeway(LeewaySeconds)`.
+  `describe()` is `"trusted-ingress"` — neutral, not a warning.
 - `ValidatingReader::new(VerificationKeys)` — defence in depth. RS256/384/512,
   algorithms pinned (no `alg: none` downgrade). `.with_issuers()`,
-  `.with_audiences()`, `.with_leeway_seconds()`.
+  `.with_audiences()`, `.with_leeway(LeewaySeconds)`.
+- `LeewaySeconds` — checked clock-skew allowance shared by both readers.
+  `try_new(u64) -> Result<Self, String>`, `DEFAULT` (60s), `MAX_SECONDS`
+  (3600), `seconds()`. Both readers take this rather than a raw integer, so a
+  value cannot narrow the window or grow large enough to neutralise it.
 - `VerificationKeys::from_jwks_json()` / `from_rsa_pem()`. A **snapshot** — no
   fetching, no discovery.
 - `TokenClaims` — `string()`, `string_list()` (array or space-delimited),
-  `unix_seconds()`, `raw()`.
+  `unix_seconds() -> Option<u64>`, `raw()`.
 - `encode_unsigned_token(&Map<String, Value>)` — test helper, exported because
   the Data API integration tests need it.
 - `build_identity(config, reader) -> Result<Arc<IdentityResolver>, String>`.
@@ -46,14 +50,20 @@ missing network boundary.
 readers.rs
   jwt_payload.rs      decode_payload   — segment split + base64 + JSON object
   expiry.rs           ensure_not_expired — applies in both postures
+  not_before.rs       ensure_already_valid — the mirror of expiry
+  leeway.rs           LeewaySeconds — the checked skew allowance both share
+  rejection.rs        classify() — jsonwebtoken error → IdentityError
   unsigned_token.rs   encode_unsigned_token
   trusted_ingress.rs  the canonical reader
   validating.rs       the defence-in-depth reader
   validation_rules.rs baseline jsonwebtoken Validation (pinned algorithms)
   jwks.rs             JWKS document → RSA keys
   verification_keys.rs key selection by kid
+  posture_parity_tests.rs  holds the two postures against each other
+claims.rs
+  numeric_date.rs     to_numeric_date — JSON number → second, saturating
 bearer.rs             Authorization header → token
-claims.rs  identity.rs  resolver.rs  extractor.rs  config.rs  errors.rs
+identity.rs  resolver.rs  extractor.rs  config.rs  errors.rs
 logging.rs  registration.rs  token_reader.rs
 ```
 
@@ -70,3 +80,13 @@ logging.rs  registration.rs  token_reader.rs
 6. **Never log the rejected tenant value.** Log the claim name and the reason.
 7. **Do not warn on correctly-configured trusted ingress.** It is the intended
    architecture, not a degraded mode.
+8. **The two postures must agree on the validity window.** They check it by
+   different means — this crate for trusted ingress, `jsonwebtoken` for defence
+   in depth — so any change to how a `NumericDate` is read, rounded, or compared
+   has to keep `posture_parity_tests` green. A fractional `exp`/`nbf` once made
+   them disagree silently, and only the canonical posture was wrong.
+9. **A present validity claim always constrains.** `unix_seconds()` yields a
+   second for *every* JSON number, clamping ones outside `u64` rather than
+   returning `None`. `None` means absent or non-numeric, and only that — the
+   original bug was a spec-legal value reading as "no claim" and switching off
+   its own check.

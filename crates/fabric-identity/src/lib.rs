@@ -67,7 +67,9 @@ pub use claims::TokenClaims;
 pub use config::IdentityConfig;
 pub use errors::IdentityError;
 pub use identity::TenantIdentity;
-pub use readers::{encode_unsigned_token, TrustedIngressReader, ValidatingReader, VerificationKeys};
+pub use readers::{
+    encode_unsigned_token, LeewaySeconds, TrustedIngressReader, ValidatingReader, VerificationKeys,
+};
 pub use registration::build_identity;
 pub use resolver::IdentityResolver;
 pub use token_reader::TokenReader;

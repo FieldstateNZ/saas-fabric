@@ -49,6 +49,27 @@ pub(crate) fn divergent_payload_at_same_revision<T: RegistryResource>(
     );
 }
 
+/// A key appeared more than once in one incoming set, and the later entry was
+/// refused.
+///
+/// Error rather than warning, for the same reason as
+/// [`invalid_resource_rejected`]: a source publishing two entries for one key
+/// is a reconciler bug that will not correct itself on the next poll, and until
+/// somebody fixes it one of the two payloads is being discarded on every single
+/// apply. The revision logged is the *refused* entry's, so the line says which
+/// of the two lost.
+pub(crate) fn duplicate_key_rejected<T: RegistryResource>(key: &T::Key, revision: BindingRevision) {
+    tracing::error!(
+        event = "runtime.duplicate_key_rejected",
+        event_id = event_id(DOMAIN_ID, EventType::Error, 3),
+        resource_kind = T::KIND,
+        resource_key = %key,
+        refused_revision = revision.get(),
+        "refused a repeated entry for a key an earlier entry in the same incoming set had \
+         already decided; the earlier entry stands"
+    );
+}
+
 /// A resource failed validation and was never installed.
 ///
 /// Error rather than warning, unlike the two above. A stale revision or a

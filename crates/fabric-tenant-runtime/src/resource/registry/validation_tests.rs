@@ -106,9 +106,15 @@ fn applying_one_invalid_resource_is_refused() {
 }
 
 #[test]
-fn a_data_source_whose_pool_can_never_hand_out_a_connection_is_rejected_at_load() {
+fn an_incoherent_pool_does_not_take_a_data_source_out_of_the_registry() {
+    // Deliberately inverted. Refusing a DataSource over `max_connections: 0`
+    // resolved every tenant on it to `MissingDataSource` — a 500 — for a field
+    // this process never reads and nothing in the workspace consumes. See
+    // `DataSource::validate` for the full argument; the short version is that
+    // the enforcement did more damage than the fault, and reconciliation is
+    // what applies these numbers and so what should refuse them.
     let registry = DataSourceRegistry::new();
-    let broken = crate::DataSource {
+    let odd_pool = crate::DataSource {
         pool: PoolSettings {
             max_connections: 0,
             ..PoolSettings::default()
@@ -116,10 +122,23 @@ fn a_data_source_whose_pool_can_never_hand_out_a_connection_is_rejected_at_load(
         ..data_source("sql-au-east-03", 1)
     };
 
-    let report = registry.apply_all(vec![broken]);
+    let report = registry.apply_all(vec![odd_pool]);
 
-    assert_eq!(report.invalid_rejected, 1);
-    assert!(registry.lookup(&data_source_id("sql-au-east-03")).is_err());
+    assert_eq!(report.invalid_rejected, 0);
+    assert_eq!(report.added, 1);
+    assert!(registry.lookup(&data_source_id("sql-au-east-03")).is_ok());
+}
+
+#[test]
+fn the_pool_rule_itself_still_exists_for_whoever_applies_it() {
+    // Demoting it from the load path must not delete it: reconciliation needs
+    // the same check before it publishes a DataSource at all.
+    assert!(PoolSettings {
+        max_connections: 0,
+        ..PoolSettings::default()
+    }
+    .validate()
+    .is_err());
 }
 
 #[test]

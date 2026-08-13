@@ -23,6 +23,21 @@ fn the_example_data_sources_parse_and_validate() {
 
     for source in &sources {
         source.validate().unwrap_or_else(|error| panic!("{error}"));
+
+        // `DataSource::validate` is deliberately empty — see its rustdoc for
+        // why nothing on a DataSource alone can stop this process resolving
+        // one. Left in place so the examples still fail the build the day it
+        // grows a real check, but on its own it now asserts nothing, so the
+        // pool rule is checked directly.
+        //
+        // Nothing in the runtime plane calls `PoolSettings::validate`:
+        // reconciliation owns applying these numbers, so reconciliation owns
+        // refusing them. That makes this the only place the shipped examples
+        // are held to the rule at all.
+        source
+            .pool
+            .validate()
+            .unwrap_or_else(|error| panic!("{}: {error}", source.id));
     }
 }
 

@@ -44,6 +44,44 @@ impl Default for PoolSettings {
 impl PoolSettings {
     /// Checks the settings are usable.
     ///
+    /// # Whose check this is
+    ///
+    /// **Reconciliation's, not the runtime's.** [`DataSource::validate`](crate::DataSource::validate) used
+    /// to call this on every apply, so `max_connections: 0` kept a DataSource
+    /// out of the registry entirely. That was disproportionate in the strict
+    /// sense — the enforcement did far more damage than the fault it guarded
+    /// against:
+    ///
+    /// - The runtime never reads these numbers. Execution is delegated to
+    ///   connector processes (ADR 0001), so the pool lives in the connector,
+    ///   and the type-level docs above say as much: the runtime reports these
+    ///   values and does not interpret them. At the time of writing nothing in
+    ///   the workspace consumes `max_connections` or `acquire_timeout_seconds`
+    ///   at all — the only reference to a `DataSource`'s `pool` was this
+    ///   method.
+    /// - A refused DataSource is *absent*, so every tenant bound to it resolved
+    ///   to [`ResolveError::MissingDataSource`](crate::ResolveError) — a 500,
+    ///   and a misleading one, because the DataSource plainly does exist. A
+    ///   resource that would have served every request correctly was withdrawn
+    ///   over a field no request touches.
+    /// - Rejecting did not even move the failure earlier, which is the usual
+    ///   argument for validating at load. These numbers are applied by
+    ///   reconciliation, so reconciliation is where they can be refused
+    ///   *before* they become runtime state. Refusing them here converted a
+    ///   future connector-sizing problem into a present-tense outage for
+    ///   tenants who had nothing to do with the mistake.
+    ///
+    /// Dropping it also restores consistency with the rest of the crate, whose
+    /// standing rule for a source that publishes something odd — see
+    /// [`ApplyReport::divergent_payload`](crate::ApplyReport) — is to keep
+    /// serving what works and say so loudly, not to withdraw it.
+    ///
+    /// The rule itself is kept and still tested, because it is a real rule; it
+    /// simply belongs to whoever applies these numbers. One consequence worth
+    /// naming rather than leaving implicit: nothing in *this* workspace calls
+    /// this method any more, so until reconciliation does, an incoherent pool
+    /// travels silently.
+    ///
     /// # Errors
     ///
     /// Returns a message if the pool could never hand out a connection.

@@ -20,5 +20,6 @@ pub(crate) use lifecycle_events::{
     primed, refresh_failed, refresher_started, refresher_stopped, snapshot_applied,
 };
 pub(crate) use resource_events::{
-    divergent_payload_at_same_revision, invalid_resource_rejected, stale_resource_ignored,
+    divergent_payload_at_same_revision, duplicate_key_rejected, invalid_resource_rejected,
+    stale_resource_ignored,
 };

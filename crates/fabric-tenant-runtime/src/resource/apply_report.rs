@@ -33,6 +33,21 @@
 /// truth for "did this resource change" everywhere else in this crate, and
 /// leaves a trail: a distinct counter here, and a warn-level log naming the
 /// resource kind, key, and revision at the point of application.
+///
+/// # One key, twice in the same incoming set
+///
+/// A source is meant to publish a *set*, and nothing in the pipeline makes
+/// that true: [`JsonFileSource`](crate::JsonFileSource) deserialises a JSON
+/// array straight into a `Vec<T>`, so a reconciler that emits one key twice
+/// produces two entries for one resource.
+///
+/// The first entry decides the key; every later one is refused and counted in
+/// [`Self::duplicate_rejected`]. That follows the same reasoning as
+/// [`Self::divergent_payload`] — silently picking a winner is guessing at what
+/// a broken reconciler meant — with one addition: the winner is chosen by
+/// *position* rather than by revision, because the revision is exactly the
+/// field a duplicated key calls into question. Taking the highest revision
+/// would be interpreting data the source has already got wrong.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ApplyReport {
     /// Resources the registry had not seen before.
@@ -67,6 +82,15 @@ pub struct ApplyReport {
     /// [`Self::unchanged`] so this case can never hide inside a "nothing
     /// happened" count.
     pub divergent_payload: usize,
+
+    /// Resources refused because an **earlier entry in the same incoming set**
+    /// had already decided their key.
+    ///
+    /// Distinct from every other bucket: the others describe a disagreement
+    /// between the source and what is held, while this one describes the
+    /// source disagreeing with *itself* inside a single publication. See the
+    /// type-level docs for why the first entry wins and the rest are refused.
+    pub duplicate_rejected: usize,
 }
 
 impl ApplyReport {
@@ -77,11 +101,11 @@ impl ApplyReport {
     /// logging every one at info would bury the ones that matter.
     ///
     /// Only `added`, `updated`, and `removed` count as movement.
-    /// [`Self::divergent_payload`] and [`Self::invalid_rejected`] deliberately
-    /// do not: in both cases nothing in the registry moved, whatever was held
-    /// is retained, and every occurrence already gets its own log line at the
-    /// point it happens — so neither is ever silently folded into a bucket
-    /// here.
+    /// [`Self::divergent_payload`], [`Self::invalid_rejected`] and
+    /// [`Self::duplicate_rejected`] deliberately do not: in each case nothing
+    /// in the registry moved on account of the refusal, whatever was held is
+    /// retained, and every occurrence already gets its own log line at the
+    /// point it happens — so none is ever silently folded into a bucket here.
     #[must_use]
     pub const fn is_noop(&self) -> bool {
         self.added == 0 && self.updated == 0 && self.removed == 0
@@ -110,6 +134,20 @@ mod tests {
             ..ApplyReport::default()
         }
         .is_noop());
+    }
+
+    #[test]
+    fn a_refused_duplicate_is_counted_separately_and_does_not_defeat_noop() {
+        // The first entry for the key may well have moved something, and that
+        // movement is already counted in its own bucket. The refusal itself
+        // moved nothing.
+        let report = ApplyReport {
+            duplicate_rejected: 1,
+            ..ApplyReport::default()
+        };
+
+        assert!(report.is_noop());
+        assert_eq!(report.duplicate_rejected, 1);
     }
 
     #[test]

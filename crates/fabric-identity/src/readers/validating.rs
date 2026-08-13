@@ -2,7 +2,7 @@
 
 use jsonwebtoken::{decode, decode_header, Validation};
 
-use crate::readers::validation_rules;
+use crate::readers::{rejection, validation_rules, LeewaySeconds};
 use crate::{IdentityError, TokenClaims, TokenReader, VerificationKeys};
 
 /// Verifies a token's signature and registered claims before returning them.
@@ -64,10 +64,15 @@ impl ValidatingReader {
         self
     }
 
-    /// Overrides the clock-skew allowance, in seconds.
+    /// Overrides the clock-skew allowance.
+    ///
+    /// Takes the same checked type as
+    /// [`TrustedIngressReader::with_leeway`](crate::TrustedIngressReader::with_leeway),
+    /// so a deployment cannot widen one posture's window further than the
+    /// other's, and cannot widen either far enough to neutralise it.
     #[must_use]
-    pub const fn with_leeway_seconds(mut self, leeway_seconds: u64) -> Self {
-        self.validation.leeway = leeway_seconds;
+    pub const fn with_leeway(mut self, leeway: LeewaySeconds) -> Self {
+        self.validation.leeway = leeway.seconds();
         self
     }
 }
@@ -90,15 +95,7 @@ impl TokenReader for ValidatingReader {
                 "bearer token failed verification"
             );
 
-            match error.kind() {
-                jsonwebtoken::errors::ErrorKind::ExpiredSignature => IdentityError::ExpiredToken,
-                // `ImmatureSignature` is this library's name for a token whose
-                // `nbf` has not arrived. Mapped so both postures report a
-                // premature token identically; the two differ in how they
-                // check, and must not differ in what the caller is told.
-                jsonwebtoken::errors::ErrorKind::ImmatureSignature => IdentityError::TokenNotYetValid,
-                _ => IdentityError::UnverifiedToken,
-            }
+            rejection::classify(&error)
         })?;
 
         match decoded.claims {

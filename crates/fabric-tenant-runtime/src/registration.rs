@@ -46,6 +46,12 @@ impl RuntimeHandles {
 ///   [`RuntimeConfig::fail_fast_on_prime`] is set. Otherwise a failed prime is
 ///   logged and the process starts unprimed, returning 503 until a refresh
 ///   succeeds.
+///
+/// "An initial load fails" includes a source that read perfectly well but
+/// published nothing that survived validation
+/// ([`SourceError::NothingUsable`](crate::SourceError)). Either way the
+/// registry is left unprimed, so the `false` branch above starts a process that
+/// answers 503 — never one that reports ready over an empty set.
 pub async fn build_runtime(
     config: &RuntimeConfig,
     tenant_source: Arc<dyn ResourceSource<TenantRuntimeBinding>>,

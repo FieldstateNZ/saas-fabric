@@ -85,7 +85,7 @@
     },
     "capabilities": {
       "writable": true,
-      "accepts_new_tenants": true
+      "accepts_new_tenants": false
     }
   }
 ]

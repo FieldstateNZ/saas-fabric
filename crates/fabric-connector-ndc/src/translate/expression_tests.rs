@@ -2,7 +2,7 @@
 
 use super::expression::*;
 use crate::wire::NdcSchemaResponse;
-use crate::wire::{NdcComparisonTarget, NdcComparisonValue, NdcExpression, NdcUnaryOperator};
+use crate::wire::{NdcComparisonTarget, NdcExpression, NdcUnaryOperator};
 use crate::SchemaIndex;
 use fabric_connector::{CollectionName, ComparisonOperator, ConnectorError, FieldName, Filter};
 use serde_json::Value;
@@ -28,10 +28,6 @@ fn full_index() -> SchemaIndex {
     index_from(
         r#"{"_eq": {"type": "equal"}, "_in": {"type": "in"}, "_ilike": {"type": "contains_insensitive"}}"#,
     )
-}
-
-fn equality_only_index() -> SchemaIndex {
-    index_from(r#"{"_eq": {"type": "equal"}}"#)
 }
 
 fn customers() -> CollectionName {
@@ -91,43 +87,6 @@ fn a_null_check_becomes_a_unary_comparison() {
             ..
         }
     ));
-}
-
-#[test]
-fn membership_uses_the_in_operator_when_the_connector_has_one() {
-    let filter = Filter::In {
-        field: field("status"),
-        values: vec![Value::String("a".into()), Value::String("b".into())],
-    };
-
-    let NdcExpression::BinaryComparisonOperator { operator, value, .. } =
-        to_expression(&customers(), &filter, &full_index()).unwrap()
-    else {
-        panic!("expected a binary comparison");
-    };
-    assert_eq!(operator, "_in");
-    assert_eq!(
-        value,
-        NdcComparisonValue::scalar(Value::Array(vec![
-            Value::String("a".into()),
-            Value::String("b".into())
-        ]))
-    );
-}
-
-#[test]
-fn membership_falls_back_to_a_disjunction_of_equalities() {
-    let filter = Filter::In {
-        field: field("status"),
-        values: vec![Value::String("a".into()), Value::String("b".into())],
-    };
-
-    let NdcExpression::Or { expressions } =
-        to_expression(&customers(), &filter, &equality_only_index()).unwrap()
-    else {
-        panic!("expected a disjunction");
-    };
-    assert_eq!(expressions.len(), 2);
 }
 
 #[test]

@@ -1,34 +1,9 @@
-//! What the Data API sends back.
+//! A page of records.
 
-use fabric_connector::{QueryOutcome, Row};
-use serde_json::{Map, Value};
+use fabric_connector::QueryOutcome;
 
-/// One record, as JSON.
-///
-/// A plain object rather than a typed struct: the Data API is generic over
-/// resources, and the shape of a row is the collection's business.
-#[derive(Debug, Clone, PartialEq, serde::Serialize)]
-#[serde(transparent)]
-pub struct RowResponse(Map<String, Value>);
-
-impl From<&Row> for RowResponse {
-    fn from(row: &Row) -> Self {
-        Self(
-            row.as_map()
-                .iter()
-                .map(|(field, value)| (field.to_string(), value.clone()))
-                .collect(),
-        )
-    }
-}
-
-impl RowResponse {
-    /// Borrows the underlying object.
-    #[must_use]
-    pub const fn as_map(&self) -> &Map<String, Value> {
-        &self.0
-    }
-}
+use crate::models::VisibleFields;
+use crate::RowResponse;
 
 /// Paging information for a list response.
 ///
@@ -67,15 +42,24 @@ impl ListResponse {
     /// `outcome` is expected to hold up to `limit + 1` rows: the query asks for
     /// one more than the caller wanted so that `has_more` is a fact rather than
     /// a guess. The extra row is removed here and never reaches the caller.
-    #[must_use]
-    pub fn from_outcome(outcome: &QueryOutcome, limit: u32, offset: u32) -> Self {
+    ///
+    /// `visible` is not optional and cannot be: every row goes through
+    /// [`RowResponse::project`], which needs it to know what this request may
+    /// disclose. See that method for why the projection lives in the
+    /// constructor rather than at each call site.
+    pub(crate) fn from_outcome(
+        outcome: &QueryOutcome,
+        visible: &VisibleFields<'_>,
+        limit: u32,
+        offset: u32,
+    ) -> Self {
         let has_more = outcome.rows.len() as u64 > u64::from(limit);
 
         let data = outcome
             .rows
             .iter()
             .take(limit as usize)
-            .map(RowResponse::from)
+            .map(|row| RowResponse::project(row, visible))
             .collect::<Vec<_>>();
 
         Self {
@@ -90,34 +74,30 @@ impl ListResponse {
     }
 }
 
-/// The result of a write.
-#[derive(Debug, Clone, PartialEq, serde::Serialize)]
-pub struct WriteResponse {
-    /// How many records the operation affected.
-    pub affected: u64,
-
-    /// Records the backend returned, if any — typically the written rows with
-    /// server-generated keys filled in.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub data: Vec<RowResponse>,
-}
-
-impl WriteResponse {
-    /// Builds a write response from a mutation outcome.
-    #[must_use]
-    pub fn from_outcome(outcome: &fabric_connector::MutationOutcome) -> Self {
-        Self {
-            affected: outcome.affected_rows,
-            data: outcome.returned_rows.iter().map(RowResponse::from).collect(),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use fabric_connector::FieldName;
+    use fabric_connector::{FieldName, IsolationModel, Row};
+    use serde_json::Value;
 
     use super::*;
+    use crate::ResourceDefinition;
+
+    fn open() -> ResourceDefinition {
+        serde_json::from_str(r#"{"data_source":"primary","collection":"customers"}"#).unwrap()
+    }
+
+    fn restricted() -> ResourceDefinition {
+        serde_json::from_str(
+            r#"{"data_source":"primary","collection":"customers","queryable_fields":["id","name"]}"#,
+        )
+        .unwrap()
+    }
+
+    /// A dedicated placement, so these tests exercise the catalogue rule alone.
+    /// The isolation rule has its own tests in `visible_fields`.
+    fn dedicated(resource: &ResourceDefinition) -> VisibleFields<'_> {
+        VisibleFields::new(resource, &IsolationModel::Database)
+    }
 
     fn row(id: i64) -> Row {
         Row::new().with(FieldName::try_new("id").unwrap(), Value::from(id))
@@ -126,9 +106,10 @@ mod tests {
     #[test]
     fn a_full_page_with_a_probe_row_reports_more_available() {
         // Three rows came back for a limit of two: the third is the probe.
+        let resource = open();
         let outcome = QueryOutcome::from_rows(vec![row(1), row(2), row(3)]);
 
-        let response = ListResponse::from_outcome(&outcome, 2, 0);
+        let response = ListResponse::from_outcome(&outcome, &dedicated(&resource), 2, 0);
 
         assert_eq!(response.data.len(), 2);
         assert!(response.paging.has_more);
@@ -137,9 +118,10 @@ mod tests {
 
     #[test]
     fn the_probe_row_never_reaches_the_caller() {
+        let resource = open();
         let outcome = QueryOutcome::from_rows(vec![row(1), row(2), row(3)]);
 
-        let response = ListResponse::from_outcome(&outcome, 2, 0);
+        let response = ListResponse::from_outcome(&outcome, &dedicated(&resource), 2, 0);
 
         let ids: Vec<&Value> = response
             .data
@@ -151,9 +133,10 @@ mod tests {
 
     #[test]
     fn a_short_page_reports_no_more_available() {
+        let resource = open();
         let outcome = QueryOutcome::from_rows(vec![row(1)]);
 
-        let response = ListResponse::from_outcome(&outcome, 10, 0);
+        let response = ListResponse::from_outcome(&outcome, &dedicated(&resource), 10, 0);
 
         assert!(!response.paging.has_more);
         assert_eq!(response.paging.returned, 1);
@@ -161,14 +144,20 @@ mod tests {
 
     #[test]
     fn an_exactly_full_page_with_no_probe_reports_no_more() {
+        let resource = open();
         let outcome = QueryOutcome::from_rows(vec![row(1), row(2)]);
 
-        assert!(!ListResponse::from_outcome(&outcome, 2, 0).paging.has_more);
+        let response = ListResponse::from_outcome(&outcome, &dedicated(&resource), 2, 0);
+
+        assert!(!response.paging.has_more);
     }
 
     #[test]
     fn an_empty_result_serialises_as_an_empty_array() {
-        let response = ListResponse::from_outcome(&QueryOutcome::default(), 10, 0);
+        let resource = open();
+        let outcome = QueryOutcome::default();
+
+        let response = ListResponse::from_outcome(&outcome, &dedicated(&resource), 10, 0);
 
         let json = serde_json::to_value(&response).unwrap();
         assert_eq!(json["data"], Value::Array(vec![]));
@@ -176,12 +165,16 @@ mod tests {
     }
 
     #[test]
-    fn a_write_response_omits_data_when_nothing_was_returned() {
-        let outcome = fabric_connector::MutationOutcome::affected(3);
+    fn every_row_on_the_page_is_projected_not_just_the_first() {
+        let resource = restricted();
+        let wide = |id: i64| row(id).with(FieldName::try_new("salary").unwrap(), Value::from(190_000));
+        let outcome = QueryOutcome::from_rows(vec![wide(1), wide(2)]);
 
-        let json = serde_json::to_value(WriteResponse::from_outcome(&outcome)).unwrap();
+        let response = ListResponse::from_outcome(&outcome, &dedicated(&resource), 10, 0);
 
-        assert_eq!(json["affected"], 3);
-        assert!(json.get("data").is_none());
+        assert!(response
+            .data
+            .iter()
+            .all(|row| !row.as_map().contains_key("salary")));
     }
 }

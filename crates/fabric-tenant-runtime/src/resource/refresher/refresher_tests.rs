@@ -169,16 +169,34 @@ async fn a_triggered_refresh_picks_up_a_new_revision() {
     handle.shutdown().await.unwrap();
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_failed_refresh_keeps_the_last_good_snapshot() {
     // The behaviour that matters most: an unreadable source must not empty the
     // registry and take every tenant down with it.
+    //
+    // # Why the shape of this test is load-bearing
+    //
+    // It used to trigger a refresh, then trigger a *second* one — and the
+    // second, successful load reinstalled everything the first was supposed to
+    // have preserved. With `apply_all(Vec::new())` injected into the failure
+    // arm of the refresh loop, the exact defect this test names, it passed.
+    // So did all 126 of its neighbours. The single most important refresher
+    // invariant had no regression coverage at all.
+    //
+    // Two things fix that. Nothing repairs the damage before the assertions
+    // run, and the source's load counter proves the failing refresh actually
+    // happened — otherwise "the registry still holds acme" is just the
+    // precondition restated, and passes whether or not the loop ever ran.
     let registry = Arc::new(TenantRegistry::new());
-    let source = Arc::new(InMemorySource::new(vec![tenant_binding("acme", 5, "shared-01")]));
+    let source = Arc::new(InMemorySource::new(vec![
+        tenant_binding("acme", 5, "shared-01"),
+        tenant_binding("globex", 2, "globex-01"),
+    ]));
 
     ResourceRefresher::prime(&registry, source.as_ref())
         .await
         .unwrap();
+    let loads_after_prime = source.loads();
 
     let handle = ResourceRefresher::spawn(
         Arc::clone(&registry),
@@ -189,27 +207,87 @@ async fn a_failed_refresh_keeps_the_last_good_snapshot() {
     source.fail_next();
     handle.refresh_now();
 
-    // Give the background task a turn, then a second refresh to prove the loop
-    // survived the failure.
-    tokio::task::yield_now().await;
-    handle.refresh_now();
+    // The clock is paused, so this yields to the refresh task and then jumps
+    // straight to this deadline — well short of the hour-long poll interval,
+    // which means exactly one load happens and it is the failing one.
     tokio::time::sleep(Duration::from_millis(50)).await;
 
-    assert!(registry.is_primed());
+    assert_eq!(
+        source.loads(),
+        loads_after_prime + 1,
+        "the refresh loop never re-read the source, so this test proves nothing"
+    );
+
+    assert!(
+        registry.is_primed(),
+        "a failed load must not un-prime the registry"
+    );
+    assert_eq!(
+        registry.len(),
+        2,
+        "a momentarily unreadable source must not deprovision anything"
+    );
     assert_eq!(
         registry.lookup(&tenant("acme")).unwrap().revision,
         BindingRevision::new(5)
+    );
+    assert_eq!(
+        registry.lookup(&tenant("globex")).unwrap().revision,
+        BindingRevision::new(2)
+    );
+
+    // Only now, after the invariant has been judged, prove the loop survived
+    // the failure — by observing something the previous snapshot did not have.
+    source.set(vec![tenant_binding("acme", 6, "shared-01")]);
+    handle.refresh_now();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    assert_eq!(
+        registry.lookup(&tenant("acme")).unwrap().revision,
+        BindingRevision::new(6),
+        "the loop must keep running after a failed load"
     );
 
     handle.shutdown().await.unwrap();
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn shutdown_stops_the_loop() {
+    // `is_ok()` on its own proved nothing about the name of this test. The
+    // task cannot panic over an empty in-memory source, so the result was
+    // `Ok` by construction — and the two ways the loop could fail to stop are
+    // worse than a failure: without the `break` arm, or without the notify,
+    // `self.task.await` never resolves and this hangs.
+    //
+    // So the loop is made to tick first, and what is asserted is that it stops
+    // ticking. That fails rather than hangs, and it fails for a detached task
+    // as well as a running one.
     let registry = Arc::new(TenantRegistry::new());
-    let source = Arc::new(InMemorySource::empty()) as Arc<dyn ResourceSource<TenantRuntimeBinding>>;
+    let source: Arc<InMemorySource<TenantRuntimeBinding>> = Arc::new(InMemorySource::empty());
+    let config = RuntimeConfig {
+        refresh_interval_seconds: 1,
+        fail_fast_on_prime: true,
+    };
 
-    let handle = ResourceRefresher::spawn(registry, source, &config());
+    let handle = ResourceRefresher::spawn(
+        registry,
+        Arc::clone(&source) as Arc<dyn ResourceSource<TenantRuntimeBinding>>,
+        &config,
+    );
+
+    tokio::time::sleep(Duration::from_secs(1) + Duration::from_millis(500)).await;
+    let loads_while_running = source.loads();
+    assert!(
+        loads_while_running > 0,
+        "precondition: the loop never polled, so stopping it proves nothing"
+    );
 
     assert!(handle.shutdown().await.is_ok());
+
+    tokio::time::sleep(Duration::from_secs(3) + Duration::from_millis(500)).await;
+    assert_eq!(
+        source.loads(),
+        loads_while_running,
+        "the loop kept polling after shutdown returned"
+    );
 }

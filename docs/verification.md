@@ -4,9 +4,11 @@ What was measured, what it showed, and where the numbers came from. Every
 command below is reproducible from the repository root; nothing here is
 asserted without one.
 
-Last run: 2026-08-13, against commit `HEAD` of
-`claude/tenant-runtime-data-api-5ea0ca`, after the adversarial review that
-produced ADR 0006.
+Last run: 2026-08-14, against commit `HEAD` of
+`claude/tenant-runtime-data-api-5ea0ca`, after five rounds of adversarial
+review — the last of which ran three independent lenses (cross-tenant leaks,
+concurrency and lifecycle, information disclosure) and found eight blocking
+defects, the most of any round.
 
 ## Gates
 
@@ -14,7 +16,7 @@ produced ADR 0006.
 | --- | --- | --- |
 | Formatting | `cargo fmt --all --check` | clean |
 | Lints | `cargo clippy --workspace --all-targets -- -D warnings` | 0 findings |
-| Tests | `cargo test --workspace` | 712 passing, 0 failing |
+| Tests | `cargo test --workspace` | 797 passing, 0 failing |
 | Docs | `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps` | 0 warnings |
 | Dependencies | `cargo deny check` | advisories, bans, licences, sources — all ok |
 | File sizes | `python3 scripts/check_file_sizes.py` | 0 over the 150-line limit |
@@ -159,10 +161,17 @@ Named here rather than left for a reader to discover.
 - **No load or concurrency testing beyond the registry.** The atomic-swap
   behaviour has a multi-threaded test; the HTTP surface under concurrent load
   does not.
-- **`IsolationModel::Schema` is safe but inert.** ADR 0006 closed the
-  configuration that made it dangerous; it did not make per-tenant schema
-  routing work. On a dedicated DataSource the variant behaves exactly like
-  `Database`, and the `schema` field is still read by nothing.
+- **`IsolationModel::Schema` is safe but inert.** ADRs 0006 and 0007 closed
+  the configurations that made it dangerous; neither made per-tenant schema
+  routing work. On a destination no other tenant reaches, the variant behaves
+  exactly like `Database`, and `schema()` still has no production caller. Its
+  rustdoc says so, rather than implying otherwise.
+
+- **Destination identity is configuration equality only.** ADR 0007's
+  co-tenancy rule treats two differently-named connections as two
+  destinations even when they reach one database, and two `SecretRef`s as
+  two even when they resolve to one credential. Closing that needs a
+  connector round trip on the request path, which §6 forbids.
 
 - **Pagination determinism is the caller's responsibility.** The Data API
   cannot verify that a caller's sort is unique for a given collection, so it

@@ -35,6 +35,13 @@ pub(crate) fn version_patch_mismatch(connector: &str, connector_version: &str, c
 }
 
 /// An operation was refused before it reached the connector.
+///
+/// `reason` must come from
+/// [`ConnectorError::operator_message`](fabric_connector::ConnectorError::operator_message),
+/// not from `Display`. A refusal's physical specifics — the collection, field,
+/// or procedure it was raised over — are deliberately kept out of the error's
+/// `Display` so nothing can forward them to an application, which means this
+/// log line is where they surface or nowhere.
 pub(crate) fn operation_refused(connector: &str, operation: &str, reason: &str) {
     tracing::warn!(
         event = "ndc.operation_refused",

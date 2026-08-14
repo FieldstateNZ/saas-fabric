@@ -257,8 +257,9 @@ caller's own tracing shares one id with this crate's logs; otherwise a fresh id
 is generated. The same id appears in three places for a failure: the
 response body (`error.request_id`), the response header, and the `tracing`
 event that recorded whatever detail the response withheld
-(`data_api.request_failed` for a masked 5xx, `data_api.unknown_tenant_probed`
-for a probed tenant). Quoting the id from a client error report is enough to
+(`data_api.request_failed` for a masked 5xx, `data_api.connector_refused` for a
+connector failure that answers 4xx, `data_api.unknown_tenant_probed` for a
+probed tenant). Quoting the id from a client error report is enough to
 find the matching internal log line — nothing else about the failure needs
 to be guessed or reproduced.
 
@@ -348,8 +349,11 @@ write should not assume the write did not happen.
 ## Gotchas
 
 - **Connector error text never reaches a caller.** It names physical tables,
-  schemas, and servers. It is logged with the request id and replaced with
-  `"internal error"`. There is a test pinning this.
+  schemas, and servers. It is logged with the request id and replaced. The one
+  arm that repeats anything — "this operation is not supported: ordering" —
+  repeats a `&'static str` from this crate's own allowlist, never the string the
+  connector supplied, and masks anything it does not recognise. There are tests
+  pinning both halves.
 - **A read of another tenant's key is 404, not 403.** 403 would confirm the key
   exists somewhere.
 - **A delete of another tenant's key reports 0 affected, not an error.** Same
@@ -359,6 +363,18 @@ write should not assume the write did not happen.
 - **`queryable_fields` covers filters, not just projections.** Filtering is an
   information channel: narrow a filter until rows disappear and you have read a
   hidden value.
+- **`queryable_fields` also covers what comes back.** It gated everything a
+  caller could *ask for* and nothing that was *returned*, so a request with no
+  `select` got the connector's default projection — every column, including the
+  tenant discriminator on a shared table. `RowResponse::project` is now the only
+  way to build a response row, so the rules are a required argument rather than
+  something a handler remembers.
+- **The tenant discriminator column is stripped whatever the catalogue says.**
+  A resource that enumerates no `queryable_fields` still never returns it, and
+  a resource that lists it explicitly still never returns it. §26 makes an
+  application's unawareness of its isolation model an invariant, and the column
+  name is knowable from the resolved binding on every request — so it is
+  enforced by the platform rather than left to each catalogue entry.
 - **Never validate a field name before `prepare` has authorised.** The 400 it
   produces would tell a caller who is about to be refused which fields exist.
   See "Authorization comes before request shape".

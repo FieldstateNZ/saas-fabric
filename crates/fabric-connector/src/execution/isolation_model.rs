@@ -32,7 +32,10 @@ pub enum IsolationModel {
 
     /// Tenants share a database; each has its own schema.
     ///
-    /// Isolation comes from qualifying collection references with the schema.
+    /// A **deferred capability** (ADR 0006). Isolation is intended to come from
+    /// qualifying collection references with the schema, and nothing does that
+    /// yet — see [`Self::schema`]. On the dedicated DataSource this variant is
+    /// restricted to, it behaves as [`Self::Database`] does.
     Schema {
         /// The tenant's schema.
         schema: SchemaName,
@@ -87,7 +90,27 @@ impl IsolationModel {
         }
     }
 
-    /// The schema to qualify collection references with, if any.
+    /// The tenant's schema, for the day [`Self::Schema`] is implemented.
+    ///
+    /// # This accessor has no production callers, and that is not an oversight
+    ///
+    /// Nothing in this workspace qualifies a collection reference with a
+    /// schema. `QuerySpec::for_target` deliberately does not rewrite collection
+    /// names, and the one connector implementation
+    /// (`fabric-connector-ndc`) never asks for this — it names collections
+    /// exactly as the connector's own schema document does.
+    ///
+    /// [`Self::Schema`] is a **deferred capability**: §18 requires the model
+    /// and ADR 0006 records the decision to keep the variant while it does
+    /// nothing, because deleting it would erase the reason
+    /// `fabric-tenant-runtime` refuses to place it on a shared DataSource. On a
+    /// dedicated DataSource it behaves exactly like [`Self::Database`] —
+    /// isolation comes from the connection, and this value is unused.
+    ///
+    /// So read this as the seam that capability will be consumed through, not
+    /// as something already load-bearing. Do not add a caller that assumes it
+    /// enforces anything; whatever eventually reads it will need the
+    /// interpolation-safety analysis that has not been done yet.
     #[must_use]
     pub const fn schema(&self) -> Option<&SchemaName> {
         match self {

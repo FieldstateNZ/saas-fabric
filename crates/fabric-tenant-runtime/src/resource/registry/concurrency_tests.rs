@@ -127,6 +127,15 @@ async fn concurrent_readers_never_observe_a_torn_snapshot() {
 
     let valid_sizes: HashSet<usize> = [0, SET_A_SIZE, SET_B_SIZE].into_iter().collect();
     let sizes = observed_sizes.lock().unwrap_or_else(PoisonError::into_inner);
+
+    // `{0}` is a subset of the valid set, so readers that only ever saw an
+    // unprimed registry would satisfy the check below having observed nothing
+    // at all. This says the race actually happened.
+    assert!(
+        sizes.contains(&SET_A_SIZE) || sizes.contains(&SET_B_SIZE),
+        "the readers never saw a primed registry, so a torn snapshot could not have been \
+         observed either: {sizes:?}"
+    );
     assert!(
         sizes.is_subset(&valid_sizes),
         "observed a registry size outside {{0, {SET_A_SIZE}, {SET_B_SIZE}}}: {sizes:?} — \

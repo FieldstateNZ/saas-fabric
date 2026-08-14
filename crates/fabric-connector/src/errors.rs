@@ -1,5 +1,13 @@
 //! Failures at the connector boundary.
 
+mod refusal_detail;
+mod unsupported_feature;
+#[cfg(test)]
+mod unsupported_feature_tests;
+
+pub use refusal_detail::RefusalDetail;
+pub use unsupported_feature::UnsupportedFeature;
+
 use crate::{CollectionName, ConnectorId};
 
 /// Everything that can go wrong executing an operation against a backend.
@@ -21,10 +29,20 @@ pub enum ConnectorError {
     /// The operation is refused rather than approximated. Silently dropping a
     /// predicate a backend cannot express would return rows the caller filtered
     /// out, which in a multi-tenant system is how data crosses a boundary.
+    ///
+    /// This is the one variant with two audiences: `feature` is the only
+    /// connector error text `fabric-data-api` forwards to an application, while
+    /// every sibling here is masked. [`UnsupportedFeature`] and
+    /// [`RefusalDetail`] are where that split is enforced and explained; build
+    /// a refusal through [`UnsupportedFeature::refused`] rather than by hand.
     #[error("connector does not support {feature}")]
     Unsupported {
-        /// The capability that was required but is not available.
-        feature: String,
+        /// The capability that was required but is not available. Published to
+        /// the caller, so it may name no physical resource.
+        feature: UnsupportedFeature,
+        /// Which collection, field, or procedure it was needed for. Internal
+        /// telemetry only.
+        detail: RefusalDetail,
     },
 
     /// The collection does not exist in the backend's schema.
@@ -94,5 +112,22 @@ impl ConnectorError {
                 | Self::MalformedResponse { .. }
                 | Self::Rejected { .. }
         )
+    }
+
+    /// This failure as an operator needs to read it, for a log line.
+    ///
+    /// `Display` is the *safe* rendering: no variant interpolates a
+    /// [`RefusalDetail`], so text built from it can go to a caller. This is the
+    /// unsafe one, and it exists so that the detail a refusal carries has
+    /// exactly one way out and that way is named for where it may go.
+    #[must_use]
+    pub fn operator_message(&self) -> String {
+        match self {
+            Self::Unsupported { detail, .. } => match detail.as_str() {
+                Some(detail) => format!("{self}: {detail}"),
+                None => self.to_string(),
+            },
+            _ => self.to_string(),
+        }
     }
 }

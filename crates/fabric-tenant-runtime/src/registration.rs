@@ -23,12 +23,27 @@ pub struct RuntimeHandles {
 impl RuntimeHandles {
     /// Stops both refreshers and waits for them.
     ///
+    /// # Both, then the error
+    ///
+    /// The two shutdowns are sequenced before either result is inspected, and
+    /// that ordering is the whole of this method. Written as `?` on the first
+    /// one, a panicked tenant refresher returned early and *dropped* the
+    /// DataSource handle — which orphans rather than stops it, because a
+    /// dropped [`JoinHandle`](tokio::task::JoinHandle) detaches its task. The
+    /// loop went on polling after `shutdown` returned, which is precisely the
+    /// state this type exists to prevent, and it happened only on the path
+    /// where something had already gone wrong.
+    ///
     /// # Errors
     ///
-    /// Returns the first join error if either background task panicked.
+    /// Returns the first join error if either background task panicked. The
+    /// tenant refresher's is reported in preference to the DataSource
+    /// refresher's; both tasks are stopped either way.
     pub async fn shutdown(self) -> Result<(), tokio::task::JoinError> {
-        self.tenants.shutdown().await?;
-        self.data_sources.shutdown().await
+        let tenants = self.tenants.shutdown().await;
+        let data_sources = self.data_sources.shutdown().await;
+
+        tenants.and(data_sources)
     }
 }
 

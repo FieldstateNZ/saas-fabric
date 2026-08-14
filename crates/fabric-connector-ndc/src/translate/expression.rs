@@ -4,6 +4,7 @@ use fabric_connector::{CollectionName, ComparisonOperator, ConnectorError, Field
 use serde_json::Value;
 
 use crate::schema_index::SemanticOperator;
+use crate::translate::membership::translate_membership;
 use crate::wire::{NdcComparisonTarget, NdcComparisonValue, NdcExpression, NdcUnaryOperator};
 use crate::SchemaIndex;
 
@@ -14,6 +15,8 @@ use crate::SchemaIndex;
 /// [`ConnectorError::Unsupported`] when the connector's schema declares no
 /// operator with the required meaning for the field's type. The operation is
 /// refused rather than approximated.
+///
+/// [`ConnectorError::InvalidOperation`] for a membership test with no values.
 pub(crate) fn to_expression(
     collection: &CollectionName,
     filter: &Filter,
@@ -81,55 +84,36 @@ fn translate_all(
 }
 
 /// Builds a binary comparison, resolving the connector's operator name.
-fn comparison(
+///
+/// The refusal names the *semantic* the caller needed, not the column it was
+/// needed for — and cannot name the column, because
+/// [`UnsupportedFeature`](fabric_connector::UnsupportedFeature) has nowhere to
+/// put one. That matters most here: by the time this runs the predicate may
+/// include the tenant discriminator `for_target` conjoined, so the column in
+/// hand can be the isolation column itself. It goes to the
+/// [`RefusalDetail`](fabric_connector::RefusalDetail) instead, which reaches an
+/// operator's log and nothing else.
+///
+/// An inequality arrives here as [`SemanticOperator::Equal`], because that is
+/// genuinely what is missing: it is negated afterwards, so a connector with no
+/// equality operator cannot serve either form.
+pub(super) fn comparison(
     collection: &CollectionName,
     field: &FieldName,
     semantic: SemanticOperator,
     value: Value,
     index: &SchemaIndex,
 ) -> Result<NdcExpression, ConnectorError> {
-    let operator =
-        index
-            .operator_name(collection, field, semantic)
-            .ok_or_else(|| ConnectorError::Unsupported {
-                feature: format!("comparing {collection}.{field} with a {semantic:?} operator"),
-            })?;
+    let operator = index.operator_name(collection, field, semantic).ok_or_else(|| {
+        semantic.refused_feature().refused_because(format!(
+            "{collection}.{field} has no {} operator in the connector schema",
+            semantic.as_str()
+        ))
+    })?;
 
     Ok(NdcExpression::BinaryComparisonOperator {
         column: NdcComparisonTarget::column(field.as_str()),
         operator: operator.to_owned(),
         value: NdcComparisonValue::scalar(value),
-    })
-}
-
-/// Translates set membership, falling back to a disjunction of equalities.
-///
-/// The fallback is not a degradation: `x IN (a, b)` and `x = a OR x = b` are the
-/// same predicate. It simply lets a connector that never declared an `in`
-/// operator still serve the query, which is worth doing because `in` is
-/// commonly omitted.
-fn translate_membership(
-    collection: &CollectionName,
-    field: &FieldName,
-    values: &[Value],
-    index: &SchemaIndex,
-) -> Result<NdcExpression, ConnectorError> {
-    if let Some(operator) = index.operator_name(collection, field, SemanticOperator::In) {
-        return Ok(NdcExpression::BinaryComparisonOperator {
-            column: NdcComparisonTarget::column(field.as_str()),
-            operator: operator.to_owned(),
-            value: NdcComparisonValue::scalar(Value::Array(values.to_vec())),
-        });
-    }
-
-    let alternatives = values
-        .iter()
-        .map(|value| comparison(collection, field, SemanticOperator::Equal, value.clone(), index))
-        .collect::<Result<Vec<_>, _>>()?;
-
-    // An empty `Or` matches nothing, which is exactly what membership of an
-    // empty set means.
-    Ok(NdcExpression::Or {
-        expressions: alternatives,
     })
 }

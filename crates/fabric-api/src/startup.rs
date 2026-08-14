@@ -11,11 +11,16 @@
 //! through six crates.
 
 mod application;
+mod background_tasks;
 mod catalog;
+mod compose;
 mod connectors;
+mod serving;
 mod shutdown;
 mod token_reader;
 
 pub use application::{build, Application};
+pub use background_tasks::BackgroundTasks;
+pub use compose::compose;
 pub use connectors::ConnectorRetryHandle;
 pub use shutdown::shutdown_signal;

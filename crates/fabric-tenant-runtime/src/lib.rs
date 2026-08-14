@@ -63,7 +63,9 @@ mod tenant;
 mod testing;
 
 pub use config::RuntimeConfig;
-pub use data_source::{DataResidency, DataSource, DataSourceCapabilities, PlacementClass, PoolSettings};
+pub use data_source::{
+    DataResidency, DataSource, DataSourceCapabilities, DestinationReuse, PlacementClass, PoolSettings,
+};
 pub use errors::{ConfigurationError, ResolveError, SourceError, UnusableFirstLoad};
 pub use registration::{build_runtime, RuntimeHandles};
 pub use resolution::{ResolvedDataSource, RuntimeResolver};
@@ -72,7 +74,7 @@ pub use resource::{
     ApplyReport, ChangeKind, LookupError, RefreshHandle, RegistryResource, ResourceChange, ResourceRefresher,
     ResourceRegistry, ResourceSource,
 };
-pub use tenant::{ConfigurationBinding, StorageBinding, TenantDataBinding, TenantRuntimeBinding};
+pub use tenant::{CoTenancy, ConfigurationBinding, StorageBinding, TenantDataBinding, TenantRuntimeBinding};
 
 /// The registry of tenant bindings.
 pub type TenantRegistry = ResourceRegistry<TenantRuntimeBinding>;

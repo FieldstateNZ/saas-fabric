@@ -90,8 +90,10 @@ nothing logged. §28 requires failing closed.
   Counting is expensive and connectors may decline.
 - `for_target` does *not* rewrite the collection name to add a schema.
   Per-tenant schemas are selected by the connection (a named connection per
-  schema, or `search_path` in a connection string). `IsolationModel::schema()`
-  is there for implementations that need it.
+  schema, or `search_path` in a connection string). `IsolationModel::Schema` is
+  a **deferred capability** (ADR 0006): `IsolationModel::schema()` has no
+  production caller, and is the seam that capability will eventually be consumed
+  through — not something already load-bearing.
 - The five name newtypes come from one macro in `ids/identifier_newtype.rs`.
   That is to stop five hand-written copies drifting apart — one of them quietly
   losing its serde validation is exactly the bug it prevents.

@@ -1,5 +1,8 @@
 //! Walking the chain from a tenant to something executable.
 
+mod destination_exclusivity;
+#[cfg(test)]
+mod destination_exclusivity_tests;
 mod isolation_enforceability;
 #[cfg(test)]
 mod isolation_enforceability_tests;

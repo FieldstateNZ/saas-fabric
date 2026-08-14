@@ -11,8 +11,21 @@ pub struct QuerySpec {
     /// The physical collection to read.
     pub collection: CollectionName,
 
-    /// Fields to return. Empty means "whatever the connector considers the
-    /// default projection" — usually all fields.
+    /// Fields to return.
+    ///
+    /// **Empty is not a default — it is the absence of a constraint.** It asks
+    /// the connector for no particular projection, and a backend answering an
+    /// unprojected read returns every column the collection has, including ones
+    /// the caller must never see: another resource's columns, and on a shared
+    /// table the tenant discriminator itself.
+    ///
+    /// A caller that must limit what comes back therefore has to populate this,
+    /// and must *also* filter the rows it gets: nothing here obliges a connector
+    /// to honour a projection, so an empty response-side check is a control that
+    /// only appears to work. `fabric-data-api` does both —
+    /// `ResourceDefinition::projection` fills this in from the resource's
+    /// `queryable_fields`, and `RowResponse::project` drops anything that comes
+    /// back regardless.
     pub fields: Vec<FieldName>,
 
     /// The predicate to apply, if any.
@@ -89,9 +102,12 @@ impl QuerySpec {
     /// add a schema. Connectors name their collections in their own schema
     /// document, and a per-tenant schema is normally selected by the connection
     /// itself — a named connection per schema, or a `search_path` in a
-    /// secret-derived connection string. The schema remains available on the
-    /// target via [`IsolationModel::schema`](crate::IsolationModel::schema) for
-    /// connector implementations that need it.
+    /// secret-derived connection string.
+    ///
+    /// That is the whole story today, not half of it:
+    /// [`IsolationModel::Schema`](crate::IsolationModel::Schema) is a deferred
+    /// capability (ADR 0006) and no connector in this workspace reads the schema
+    /// off a target. Nothing here is waiting for a connector to opt in.
     #[must_use]
     pub fn for_target(&self, target: &ExecutionTarget) -> Self {
         let Some(tenant_predicate) = target.isolation().tenant_predicate() else {

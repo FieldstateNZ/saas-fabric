@@ -12,8 +12,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use examples_support::{catalog, config, data_sources, raw, tenants};
 use fabric_connector::IsolationModel;
-use fabric_core::{DataSourceId, LogicalDataSourceName};
-use fabric_tenant_runtime::PlacementClass;
+use fabric_core::{DataSourceId, LogicalDataSourceName, TenantId};
+use fabric_tenant_runtime::DataSource;
 
 #[test]
 fn the_example_data_sources_parse_and_validate() {
@@ -178,23 +178,41 @@ fn every_catalogued_logical_data_source_is_bound_by_at_least_one_tenant() {
 
 #[test]
 fn no_example_binding_asks_for_isolation_its_data_source_cannot_provide() {
-    // The example shipped exactly this defect: `globex` on a `shared`
-    // DataSource under `schema` isolation, which contributes no predicate and
-    // shares one connection with every other tenant placed there. ADR 0006
-    // has the full account.
+    // The example shipped this defect twice, and the second time is the more
+    // instructive one. First: `globex` on a `shared` DataSource under `schema`
+    // isolation (ADR 0006). Then, after the guard keyed on `PlacementClass`,
+    // `initech-dedicated` sat at `regulated` with `accepts_new_tenants: true`
+    // — structurally identical, wearing a label the rule did not inspect.
     //
-    // `RuntimeResolver` refuses the combination at request time, so this test
-    // is not what makes the platform safe. It is what stops the *example* —
-    // the thing people copy — from teaching the mistake again, and it fails
-    // at build time rather than on someone's first request.
-    let placement: BTreeMap<DataSourceId, PlacementClass> = data_sources()
-        .iter()
-        .map(|source| (source.id.clone(), source.placement))
+    // So this mirrors what the resolver now enforces, which is a rule about an
+    // observed fact rather than a declared label: structural isolation needs a
+    // destination no other tenant reaches. `RuntimeResolver` refuses the
+    // combination at request time; this is what stops the *example* — the thing
+    // people copy — from teaching the mistake a third time, at build time
+    // rather than on someone's first request.
+    let sources: BTreeMap<DataSourceId, DataSource> = data_sources()
+        .into_iter()
+        .map(|source| (source.id.clone(), source))
         .collect();
+
+    // How many tenants reach each *destination*, not each DataSource id. Two
+    // ids naming one connector and one connection are one physical database,
+    // which is exactly the shape a label-based rule misses.
+    let mut occupants: BTreeMap<String, BTreeSet<TenantId>> = BTreeMap::new();
+    for binding in tenants() {
+        for data in binding.data.values() {
+            if let Some(source) = sources.get(&data.data_source) {
+                occupants
+                    .entry(destination_of(source))
+                    .or_default()
+                    .insert(binding.tenant.clone());
+            }
+        }
+    }
 
     for binding in tenants() {
         for (logical, data) in &binding.data {
-            let Some(class) = placement.get(&data.data_source) else {
+            let Some(source) = sources.get(&data.data_source) else {
                 continue; // covered by the dangling-reference test above
             };
 
@@ -202,15 +220,39 @@ fn no_example_binding_asks_for_isolation_its_data_source_cannot_provide() {
                 data.isolation,
                 IsolationModel::Database | IsolationModel::Schema { .. }
             );
+            if !structural {
+                continue;
+            }
+
+            let sharing = occupants.get(&destination_of(source)).map_or(1, BTreeSet::len);
 
             assert!(
-                !(structural && *class == PlacementClass::Shared),
-                "tenant {} binds {logical} to shared data source {}, which cannot enforce {} \
-                 isolation — a shared data source needs discriminator isolation (ADR 0006)",
+                sharing == 1,
+                "tenant {} binds {logical} to {}, whose destination {} tenants reach — \
+                 {} isolation contributes no predicate, so they would share everything (ADR 0006)",
                 binding.tenant,
                 data.data_source,
+                sharing,
                 data.isolation.telemetry_label(),
+            );
+
+            assert!(
+                !source.capabilities.accepts_new_tenants,
+                "tenant {} relies on {} for structural isolation, but that data source still \
+                 advertises accepts_new_tenants — placing a second tenant there is a refusal \
+                 for both of them",
+                binding.tenant, data.data_source,
             );
         }
     }
+}
+
+/// The physical destination a DataSource selects, as configuration describes it.
+///
+/// Configuration equality only, which is the same bar the runtime applies: two
+/// differently-named connections reaching one database still read as two
+/// destinations here. Closing that needs a connector round trip, which §6 keeps
+/// off the request path.
+fn destination_of(source: &DataSource) -> String {
+    format!("{}/{}", source.connector, source.connection.telemetry_label())
 }

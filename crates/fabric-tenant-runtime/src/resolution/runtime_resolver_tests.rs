@@ -4,7 +4,9 @@ use std::sync::Arc;
 
 use fabric_core::{BindingRevision, LogicalDataSourceName};
 
-use crate::testing::{data_source, primary, read_only_data_source, tenant, tenant_binding};
+use crate::testing::{
+    data_source, primary, read_only_data_source, shared_tenant_binding, tenant, tenant_binding,
+};
 use crate::{DataSourceRegistry, ResolveError, RuntimeResolver, TenantRegistry};
 
 /// Builds a resolver over the given state, both registries primed.
@@ -55,10 +57,16 @@ fn the_target_carries_the_tenant_binding_revision_not_the_data_source_revision()
 fn two_tenants_can_share_one_data_source() {
     // The reuse the model exists for: one DataSource, many tenants, one copy of
     // its physical configuration.
+    //
+    // Under discriminator isolation, because that is the only model many
+    // tenants may share a connection under. This fixture used the structural
+    // `tenant_binding` until the co-tenancy check noticed, and what it was
+    // demonstrating was two tenants issuing byte-identical unfiltered queries
+    // over one connection — the leak, asserted as a feature.
     let resolver = resolver(
         vec![
-            tenant_binding("acme", 1, "shared-01"),
-            tenant_binding("globex", 1, "shared-01"),
+            shared_tenant_binding("acme", 1, "shared-01"),
+            shared_tenant_binding("globex", 1, "shared-01"),
         ],
         vec![data_source("shared-01", 1)],
     );
@@ -190,14 +198,29 @@ fn a_data_source_removed_after_a_successful_resolve_fails_closed_rather_than_fal
 
 #[test]
 fn a_read_only_data_source_is_reported_as_not_writable() {
-    let resolver = resolver(
+    // Both directions, deliberately. `is_writable` gates every tenant write at
+    // `fabric-data-api`'s prepare step, and with only the negative asserted a
+    // body of `false` would pass the whole suite while turning every write in
+    // the platform into a 405.
+    let read_only = resolver(
         vec![tenant_binding("acme", 1, "replica-01")],
         vec![read_only_data_source("replica-01")],
+    )
+    .resolve_data_source(&tenant("acme"), &primary())
+    .unwrap();
+
+    let writable = resolver(
+        vec![tenant_binding("globex", 1, "pg-01")],
+        vec![data_source("pg-01", 1)],
+    )
+    .resolve_data_source(&tenant("globex"), &primary())
+    .unwrap();
+
+    assert!(!read_only.is_writable());
+    assert!(
+        writable.is_writable(),
+        "a writable DataSource must not be refused writes"
     );
-
-    let outcome = resolver.resolve_data_source(&tenant("acme"), &primary()).unwrap();
-
-    assert!(!outcome.is_writable());
 }
 
 #[test]

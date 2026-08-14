@@ -29,7 +29,11 @@ in this crate's public contract.
 - `ResourceCatalog` — `resolve()`, `names()`, `len()`. Deserialises from a JSON
   object keyed by resource name.
 - `ResourceDefinition { data_source, collection, key_field ("id"),
-  operations (["read","list"]), queryable_fields ([]) }`. `allows()`, `permits_field()`.
+  operations (["read","list"]), queryable_fields ([]) }`. `allows()`,
+  `permits_field()`, `projection(selected)`. `permits_field()` gates a field in
+  **both** directions — what a caller may name, and what a response may carry.
+  An empty `queryable_fields` still means "no restriction"; see the rustdoc on
+  `permits_field` for why "expose nothing" is not a usable default here.
 - `OperationKind { Read, List, Create, Update, Delete }` — `as_str()`,
   `is_write()`, `required_scope(resource)` → `data:{resource}:{read|write}`.
 - `ResourcePermissions { require_scopes (true), administrator_role ("platform-admin") }`,
@@ -44,8 +48,16 @@ in this crate's public contract.
   into a field-name oracle. Complexity bounds are checked separately, in
   `limits::enforce_query`, immediately after the parse — not inside `parse`
   itself.
-- `ListResponse::from_outcome(&QueryOutcome, limit, offset)`, `PagingInfo`,
-  `RowResponse`, `WriteResponse::from_outcome()`.
+- `VisibleFields::new(&ResourceDefinition, &IsolationModel)`, `permits(&FieldName)`
+  — the two rules a field must pass to appear in a response. Built only from
+  `Prepared::visible_fields()`, so obtaining one means the operation was
+  resolved and authorised.
+- `ListResponse::from_outcome(&QueryOutcome, &VisibleFields, limit, offset)`,
+  `PagingInfo`, `RowResponse::project(&Row, &VisibleFields)`,
+  `WriteResponse::from_outcome(&MutationOutcome, &VisibleFields)` — one type per
+  file under `models/`. `RowResponse` has **no** `From<&Row>`: the projecting
+  constructor is the only one, so no path can serialise a row without the rules
+  that apply to it. See invariant 6.
 - `DataApiError` — `Identity`, `Resolve`, `UnknownResource`, `OperationNotAllowed`,
   **`ResourceIsReadOnly`**, `Forbidden`, `BadRequest`, `NotFound`, `Connector`.
   Split across `errors/`: `data_api_error` (the enum), `status_mapping`
@@ -112,7 +124,7 @@ path syntax (`{key}`, not `:key`).
 | `Forbidden` | 403 | as written |
 | `BadRequest` | 400 | as written (includes every `limits`/`extraction` rejection) |
 | `Connector` (internal) | 500 | "internal error" |
-| `Connector::Unsupported` | 400 | names the feature only |
+| `Connector::Unsupported` | 400 | "this operation is not supported: {feature}" — `UnsupportedFeature`'s own `&'static str` |
 
 Every body is `{"error": {"code", "message", "request_id"}}` — `request_id` is
 unconditional, not just on 5xx (see docs/README.md's "Correlation ids").
@@ -125,11 +137,23 @@ unconditional, not just on 5xx (see docs/README.md's "Correlation ids").
 3. **Every read goes through `QuerySpec::for_target`; every write through
    `MutationSpec::for_target`.** That is what applies the tenant predicate and
    stamps the discriminator.
-4. **Connector error text never reaches a caller.** `is_internal()` decides;
-   there is a test asserting a table name does not leak.
+4. **Connector error text never reaches a caller.** `is_internal()` decides for
+   most arms. `Unsupported` is the one arm that repeats anything a connector
+   said, and what it repeats is a `&'static str` out of `UnsupportedFeature`'s
+   closed set — there are no connector-supplied bytes in that field to leak.
+   This crate used to hold an allowlist (`errors::neutral_feature`) because the
+   field was a `String`; the type carries the guarantee now and the allowlist
+   was deleted rather than left looking load-bearing. The refusal's
+   `RefusalDetail` is not readable from `public_message` even by mistake — it
+   has no `Display` — and is recorded by `logging::connector_refused` via
+   `ConnectorError::operator_message`.
 5. **No unfiltered delete exists.** The route requires a key.
-6. **`queryable_fields` is checked for filters, sorts, projections, and write
-   payloads** — `models::field_reference::parse` and `execution::row_mapping::to_row`.
+6. **`queryable_fields` gates both directions.** Inbound: filters, sorts,
+   projections, and write payloads — `models::field_reference::parse` and
+   `execution::row_mapping::to_row`. Outbound: every row a caller receives, via
+   `RowResponse::project`, on list, read-by-key, and a connector's
+   `returned_rows` alike. A control that refuses `?select=salary` and then
+   returns `salary` is not a control. Do not re-add a `From<&Row>`.
 7. **Writes check `ResolvedDataSource::is_writable()` before dispatch.**
 8. **No NDC / protocol / SQL types in this crate.**
 9. Resources default to read-only.
@@ -149,6 +173,13 @@ unconditional, not just on 5xx (see docs/README.md's "Correlation ids").
     a deployment-wide rule may run earlier, and two do: the request body size
     cap (enforced while the body is read) and the syntactic resource-name parse
     in the handlers. Pinned by `tests/authorization_ordering.rs`.
+14. **The tenant discriminator column never appears in a response.** Independent
+    of the catalogue and not overridable by it: `models::VisibleFields` drops it
+    using the column name from the resolved `IsolationModel`, because §26 makes
+    an application's unawareness of its isolation model an invariant rather than
+    an operator's choice. `queryable_fields` alone did not hold this — a
+    catalogue entry that enumerates nothing (the common case) returned the
+    column and the tenant's internal surrogate key on every shared placement.
 
 ## Testing
 
@@ -170,7 +201,8 @@ adding `tracing-subscriber` as a test dependency:
 | `request_limits.rs` | every `DataApiConfig` bound, at the limit and one over |
 | `cancellation.rs` | a dropped request cancels the in-flight connector call |
 | `schema_exposure.rs` | no physical collection/connector/DataSource name in any body |
-| `error_contract.rs` | request id correlation, inbound-id bound, unknown-tenant anti-enumeration |
+| `error_contract.rs` | request id correlation, inbound-id bound, unknown-tenant anti-enumeration, connector-text masking, refusal logging |
+| `field_exposure.rs` | `queryable_fields` and the discriminator gate every response body |
 | `authorization_ordering.rs` | a refused caller gets one identical answer whatever the request shape |
 
 `tests/support/fixtures.rs`'s catalogue carries `restrictedCustomers`, the only

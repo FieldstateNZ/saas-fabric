@@ -4,7 +4,14 @@ Date: 2026-08-13
 
 ## Status
 
-Accepted.
+Accepted, then **extended by ADR 0007**.
+
+The rule below is correct and still enforced, but it was only half a fix, and
+the half it left open was reachable in the shipped example. `PlacementClass`
+has six variants and this decision inspects one; four of the others make no
+claim about tenancy at all. Read ADR 0007 for the rule that actually closes
+it — and for why keying a safety property on an operator's label was the
+wrong shape of check to begin with.
 
 ## Context
 

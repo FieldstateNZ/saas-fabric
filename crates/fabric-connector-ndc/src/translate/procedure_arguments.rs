@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use fabric_connector::{ConnectorError, Filter, MutationSpec, Row};
+use fabric_connector::{ConnectorError, Filter, MutationSpec, Row, UnsupportedFeature};
 use serde_json::Value;
 
 use crate::config::ProcedureBinding;
@@ -11,6 +11,10 @@ use crate::SchemaIndex;
 
 /// Requires a procedure mapping for an operation.
 ///
+/// The two name-shaped parameters go to different audiences and the types say
+/// which is which: `feature` is what the caller is told and can hold nothing
+/// physical, while `operation` and `collection` only ever reach the log.
+///
 /// # Errors
 ///
 /// [`ConnectorError::Unsupported`] when the collection has no mapping for this
@@ -18,11 +22,12 @@ use crate::SchemaIndex;
 /// indefensible for a delete.
 pub(super) fn require<'a>(
     binding: Option<&'a ProcedureBinding>,
+    feature: UnsupportedFeature,
     operation: &str,
     collection: &str,
 ) -> Result<&'a ProcedureBinding, ConnectorError> {
-    binding.ok_or_else(|| ConnectorError::Unsupported {
-        feature: format!("{operation} on {collection}"),
+    binding.ok_or_else(|| {
+        feature.refused_because(format!("no {operation} procedure is mapped for {collection}"))
     })
 }
 

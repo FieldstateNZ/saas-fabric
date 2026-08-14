@@ -5,7 +5,7 @@
 //! A filter the read path refuses must never be one the write path executes,
 //! and two copies of the same list of checks is precisely how that drifts.
 
-use crate::{ConnectorCapabilities, ConnectorError, Filter, MutationSpec, QuerySpec};
+use crate::{ConnectorCapabilities, ConnectorError, Filter, MutationSpec, QuerySpec, UnsupportedFeature};
 
 impl ConnectorCapabilities {
     /// Checks a query against these capabilities before it is executed.
@@ -16,15 +16,15 @@ impl ConnectorCapabilities {
     /// backend lacks.
     pub fn ensure_supports_query(&self, spec: &QuerySpec) -> Result<(), ConnectorError> {
         if let Some(filter) = &spec.filter {
-            self.ensure_supports_filter(filter, "filtering")?;
+            self.ensure_supports_filter(filter, UnsupportedFeature::Filtering)?;
         }
 
         if !spec.sort.is_empty() && !self.ordering {
-            return Err(unsupported("ordering"));
+            return Err(UnsupportedFeature::Ordering.refused());
         }
 
         if (spec.limit.is_some() || spec.offset.is_some()) && !self.paging {
-            return Err(unsupported("paging"));
+            return Err(UnsupportedFeature::Paging.refused());
         }
 
         Ok(())
@@ -38,7 +38,7 @@ impl ConnectorCapabilities {
     /// writes, or cannot express a predicate the mutation depends on.
     pub fn ensure_supports_mutation(&self, spec: &MutationSpec) -> Result<(), ConnectorError> {
         if !self.mutations {
-            return Err(unsupported("mutations"));
+            return Err(UnsupportedFeature::Mutations.refused());
         }
 
         let filter = match spec {
@@ -50,7 +50,7 @@ impl ConnectorCapabilities {
         // what stops the write reaching another tenant's rows. If the backend
         // cannot express it, executing anyway would be destructive.
         if let Some(filter) = filter {
-            self.ensure_supports_filter(filter, "filtering on mutations")?;
+            self.ensure_supports_filter(filter, UnsupportedFeature::FilteringOnMutations)?;
         }
 
         Ok(())
@@ -61,14 +61,23 @@ impl ConnectorCapabilities {
     /// `filtering_feature` only names the caller in the error message; the
     /// checks themselves are identical for reads and writes, because a
     /// predicate the backend cannot express is unsafe either way.
-    fn ensure_supports_filter(&self, filter: &Filter, filtering_feature: &str) -> Result<(), ConnectorError> {
+    ///
+    /// Every refusal here is raised with
+    /// [`refused`](UnsupportedFeature::refused) and no detail: the gate decides
+    /// on a flag the connector declared, so there is no identifier to record
+    /// that the operation's own log span does not already carry.
+    fn ensure_supports_filter(
+        &self,
+        filter: &Filter,
+        filtering_feature: UnsupportedFeature,
+    ) -> Result<(), ConnectorError> {
         if !self.filtering {
-            return Err(unsupported(filtering_feature));
+            return Err(filtering_feature.refused());
         }
 
         for operator in filter.referenced_operators() {
             if !self.comparisons.contains(&operator) {
-                return Err(unsupported(&format!("the {} comparison", operator.as_str())));
+                return Err(UnsupportedFeature::Comparison(operator).refused());
             }
         }
 
@@ -76,16 +85,9 @@ impl ConnectorCapabilities {
         // it has no `ComparisonOperator` to look up. See
         // [`Filter::requires_null_check`].
         if filter.requires_null_check() && !self.null_checks {
-            return Err(unsupported("null comparison"));
+            return Err(UnsupportedFeature::NullComparison.refused());
         }
 
         Ok(())
-    }
-}
-
-/// Builds the standard unsupported-feature error.
-fn unsupported(feature: &str) -> ConnectorError {
-    ConnectorError::Unsupported {
-        feature: feature.to_owned(),
     }
 }

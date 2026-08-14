@@ -34,8 +34,9 @@ Wire types are hand-written in `src/wire/` from the published spec.
 - `wire/` — `query.rs`, `expression.rs`, `mutation.rs`, `response.rs`,
   `capabilities.rs`, `schema.rs`, `ndc_type.rs`. All `pub(crate)`. Field names
   mirror NDC exactly.
-- `translate/` — `query.rs`, `expression.rs`, `mutation.rs`,
-  `procedure_arguments.rs`, `response.rs`, `capabilities.rs`.
+- `translate/` — `query.rs`, `expression.rs`, `membership.rs`, `mutation.rs`,
+  `procedure_arguments.rs`, `response.rs`, `capabilities.rs`. Refusals are built
+  as `UnsupportedFeature::…refused_because(detail)` — see invariant 8.
 - `schema_index/` — `schema_index_type.rs`, `semantic_operator.rs`,
   `operator_index.rs`, `collection_index.rs`.
 - `config/` — `connector_config.rs`, `procedures.rs`.
@@ -79,6 +80,18 @@ Wire types are hand-written in `src/wire/` from the published spec.
    could accept them.
 7. Connector error text (`ConnectorError::Rejected.message`) is logged, never
    returned to an application.
+8. **`Unsupported.feature` is published text — and is now a closed type.**
+   `fabric-data-api` masks every other connector error but forwards this one's
+   capability name in a 400 body. It is a `fabric_connector::UnsupportedFeature`,
+   so it carries only fixed vocabulary ("the equal comparison", "writes to this
+   collection") and *cannot* name a collection, field, or procedure. The
+   predicate case is why: `to_expression` runs after `for_target` conjoins the
+   discriminator, so a refusal there is raised over the tenant isolation column.
+   Physical detail goes in the accompanying `RefusalDetail`, which has no
+   `Display` and surfaces only through `ConnectorError::operator_message` — read
+   by `logging::operation_refused` here and `data_api.connector_refused` above.
+   The old rule ("route every construction through one module") is gone with the
+   module: the type is the enforcement now.
 
 ## Notes
 

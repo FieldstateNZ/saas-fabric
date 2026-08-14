@@ -260,13 +260,88 @@ async fn without_fail_fast_an_unusable_first_load_stays_unprimed_across_refreshe
     );
 }
 
+/// A tenant source whose *second* load kills the refresh task.
+///
+/// Panicking is the point: it is the only way to give
+/// [`RuntimeHandles::shutdown`] a join error to trip over. It panics through
+/// `assert_eq!` rather than `panic!` because this crate denies `panic` outside
+/// `#[test]` bodies, and a fixture is not one.
+struct PanicOnRefreshSource {
+    loads: Mutex<usize>,
+}
+
+#[async_trait]
+impl ResourceSource<TenantRuntimeBinding> for PanicOnRefreshSource {
+    async fn load(&self) -> Result<Vec<TenantRuntimeBinding>, SourceError> {
+        let mut loads = self.loads.lock().unwrap_or_else(PoisonError::into_inner);
+        *loads += 1;
+
+        assert_eq!(*loads, 1, "deliberate panic: the refresh task must die here");
+
+        Ok(vec![tenant_binding("acme", 1, "shared-01")])
+    }
+
+    fn describe(&self) -> String {
+        "panic-on-refresh".to_owned()
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_panicking_refresher_does_not_leave_the_other_one_running() {
+    // The type's own doc says it "stops both refreshers and waits for them",
+    // and `?` on the first one meant it stopped one and *dropped* the other —
+    // which detaches the task rather than ending it. The DataSource source was
+    // observed going from one load to four across three intervals after
+    // `shutdown()` had already returned.
+    let config = RuntimeConfig {
+        fail_fast_on_prime: false,
+        refresh_interval_seconds: 1,
+    };
+    let data_sources = Arc::new(InMemorySource::new(vec![data_source("shared-01", 1)]));
+    let tenants = Arc::new(PanicOnRefreshSource { loads: Mutex::new(0) });
+
+    let (_resolver, handles) = build_runtime(
+        &config,
+        tenants,
+        Arc::clone(&data_sources) as Arc<dyn ResourceSource<DataSource>>,
+    )
+    .await
+    .unwrap();
+
+    // One interval: enough for the tenant refresher to reload and panic.
+    tokio::time::sleep(Duration::from_secs(1) + Duration::from_millis(500)).await;
+
+    assert!(
+        handles.shutdown().await.is_err(),
+        "precondition: the tenant refresher must have panicked, or this proves nothing"
+    );
+
+    let loads_at_shutdown = data_sources.loads();
+    tokio::time::sleep(Duration::from_secs(INTERVALS_TO_OUTLAST) + Duration::from_millis(500)).await;
+
+    assert_eq!(
+        data_sources.loads(),
+        loads_at_shutdown,
+        "the DataSource refresher kept polling after shutdown returned, so it was dropped \
+         rather than stopped"
+    );
+}
+
 #[tokio::test(start_paused = true)]
 async fn a_refused_prime_keeps_answering_retryably_rather_than_denying_the_tenant() {
     // What the flip actually did to callers, and the reason it is worse than it
     // sounds. `RuntimeUnavailable` is a 503: honest, retryable, and it keeps the
     // replica out of the load balancer. `UnknownTenant` is a 403 telling a
     // caller their tenant does not exist — terminal, and wrong.
-    let (resolver, _loads) = survive_the_refresh_loop(vec![unusable_binding("orphan")]).await;
+    let (resolver, loads) = survive_the_refresh_loop(vec![unusable_binding("orphan")]).await;
+
+    // Its two siblings assert this and it did not, which made it the one test
+    // of the three that a refresh loop failing to run would leave passing:
+    // `RuntimeUnavailable` is also what an untouched registry answers.
+    assert!(
+        loads > 1,
+        "the refresh loop never re-read the source ({loads} loads), so this test proves nothing"
+    );
 
     let error = resolver
         .resolve_data_source(&TenantId::try_new("orphan").unwrap(), &crate::testing::primary())

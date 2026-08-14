@@ -31,6 +31,7 @@
 
 mod capabilities;
 mod data_source_resource;
+mod destination_reuse;
 mod placement_class;
 mod pool_settings;
 mod registry_resource;
@@ -38,6 +39,7 @@ mod residency;
 
 pub use capabilities::DataSourceCapabilities;
 pub use data_source_resource::DataSource;
+pub use destination_reuse::DestinationReuse;
 pub use placement_class::PlacementClass;
 pub use pool_settings::PoolSettings;
 pub use residency::DataResidency;

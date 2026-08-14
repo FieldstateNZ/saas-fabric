@@ -45,8 +45,12 @@ impl DataApiService {
         let limit = self.config.effective_limit(query.limit);
         let offset = query.offset.unwrap_or(0);
 
+        // `projection` rather than `query.select` directly: an absent `select`
+        // used to leave the field list empty, which the connector contract
+        // reads as "give me everything". On a resource with an allowlist that
+        // asked the backend for the very columns the resource hides.
         let mut spec = QuerySpec::new(prepared.resource.collection.clone())
-            .with_fields(query.select.clone())
+            .with_fields(prepared.resource.projection(&query.select))
             .with_sort(query.sort.clone())
             // One row beyond the page, so `has_more` is a fact rather than a
             // guess. The extra row is trimmed before the response is built.
@@ -60,7 +64,12 @@ impl DataApiService {
             .execute_query(&prepared, &spec, resource_name, "list")
             .await?;
 
-        Ok(ListResponse::from_outcome(&outcome, limit, offset))
+        Ok(ListResponse::from_outcome(
+            &outcome,
+            &prepared.visible_fields(),
+            limit,
+            offset,
+        ))
     }
 
     /// Reads one record by key.
@@ -76,7 +85,11 @@ impl DataApiService {
     ) -> Result<RowResponse, DataApiError> {
         let prepared = self.prepare(identity, resource_name, OperationKind::Read)?;
 
+        // There is no `select` on this route, so the projection is entirely the
+        // resource's. It used to be absent altogether, which meant a read by
+        // key could not restrict its columns even in principle.
         let spec = QuerySpec::new(prepared.resource.collection.clone())
+            .with_fields(prepared.resource.projection(&[]))
             .with_filter(key_filter(prepared.resource, key))
             .with_paging(Some(1), None);
 
@@ -87,7 +100,7 @@ impl DataApiService {
         outcome
             .rows
             .first()
-            .map(RowResponse::from)
+            .map(|row| RowResponse::project(row, &prepared.visible_fields()))
             .ok_or(DataApiError::NotFound)
     }
 

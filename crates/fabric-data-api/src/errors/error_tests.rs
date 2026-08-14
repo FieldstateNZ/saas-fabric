@@ -1,6 +1,6 @@
 //! What each failure tells the caller — and what it must not.
 
-use fabric_connector::{ConnectorError, ConnectorId};
+use fabric_connector::{ComparisonOperator, ConnectorError, ConnectorId, UnsupportedFeature};
 use fabric_core::{DataSourceId, LogicalDataSourceName, TenantId};
 use fabric_identity::IdentityError;
 use fabric_tenant_runtime::ResolveError;
@@ -92,12 +92,23 @@ fn a_connector_rejection_never_reaches_the_caller_verbatim() {
 
 #[test]
 fn an_unsupported_operation_is_explained_because_it_names_no_infrastructure() {
-    let error = DataApiError::Connector(ConnectorError::Unsupported {
-        feature: "the contains comparison".to_owned(),
-    });
+    // The refusal carries physical detail alongside the capability name. The
+    // caller gets the name; the detail is unreachable from `public_message`,
+    // because `RefusalDetail` has no `Display` to reach it through.
+    let error = DataApiError::Connector(
+        UnsupportedFeature::Comparison(ComparisonOperator::Contains)
+            .refused_because("customer_records_v2.name has no contains operator"),
+    );
 
     assert_eq!(error.status(), StatusCode::BAD_REQUEST);
-    assert!(error.public_message().contains("contains"));
+
+    let message = error.public_message();
+
+    assert_eq!(
+        message,
+        "this operation is not supported: the contains comparison"
+    );
+    assert!(!message.contains("customer_records_v2"));
 }
 
 #[test]

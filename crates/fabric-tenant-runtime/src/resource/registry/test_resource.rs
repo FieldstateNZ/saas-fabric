@@ -4,6 +4,9 @@
 //! what is under test is the *lifecycle*, and using a real domain type would
 //! mix its own validation rules into every assertion.
 
+use std::collections::HashMap;
+use std::sync::Arc;
+
 use fabric_core::BindingRevision;
 
 use crate::resource::{RegistryResource, ResourceRegistry};
@@ -28,6 +31,11 @@ pub(super) struct TestResource {
 impl RegistryResource for TestResource {
     type Key = String;
 
+    /// Nothing about the *set* of test resources matters: what is under test
+    /// is the lifecycle, and a derived fact would only add a second thing for
+    /// the lifecycle tests to be wrong about.
+    type SetFacts = ();
+
     const KIND: &'static str = "test resource";
 
     fn key(&self) -> &Self::Key {
@@ -48,6 +56,8 @@ impl RegistryResource for TestResource {
             self.key
         )))
     }
+
+    fn derive_set_facts(_entries: &HashMap<String, Arc<Self>>) {}
 }
 
 /// A resource with the given key and revision, and a fixed default payload.

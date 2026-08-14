@@ -1,8 +1,12 @@
 //! How a tenant binding plugs into the generic registry.
 
+use std::collections::HashMap;
+use std::sync::Arc;
+
 use fabric_core::{BindingRevision, TenantId};
 
 use crate::resource::RegistryResource;
+use crate::tenant::CoTenancy;
 use crate::{ConfigurationError, TenantRuntimeBinding};
 
 /// Registry integration for [`TenantRuntimeBinding`].
@@ -17,6 +21,11 @@ use crate::{ConfigurationError, TenantRuntimeBinding};
 /// [ADR 0003](../../../../docs/decisions/0003-data-sources-are-first-class-resources.md).
 impl RegistryResource for TenantRuntimeBinding {
     type Key = TenantId;
+
+    /// Which DataSources more than one tenant is bound to — the fact that
+    /// decides whether structural isolation is real, and one the tenant
+    /// snapshot can answer without consulting the DataSource registry.
+    type SetFacts = CoTenancy;
 
     const KIND: &'static str = "tenant";
 
@@ -34,5 +43,9 @@ impl RegistryResource for TenantRuntimeBinding {
     /// and not recursion.
     fn validate(&self) -> Result<(), ConfigurationError> {
         TenantRuntimeBinding::validate(self)
+    }
+
+    fn derive_set_facts(entries: &HashMap<TenantId, Arc<Self>>) -> CoTenancy {
+        CoTenancy::derive(entries)
     }
 }

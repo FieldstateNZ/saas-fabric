@@ -16,12 +16,14 @@
 //! tenant using it. Duplicating them per tenant would mean a thousand copies to
 //! correct when an endpoint changes, and a thousand revisions bumped to do it.
 
+mod co_tenancy;
 mod configuration_binding;
 mod registry_resource;
 mod storage_binding;
 mod tenant_data_binding;
 mod tenant_runtime_binding;
 
+pub use co_tenancy::CoTenancy;
 pub use configuration_binding::ConfigurationBinding;
 pub use storage_binding::StorageBinding;
 pub use tenant_data_binding::TenantDataBinding;

@@ -14,7 +14,8 @@ use crate::SourceError;
 ///
 /// [`Self::fail_next`] exists so tests can exercise the path that matters most
 /// — that a load failure leaves the previous snapshot serving rather than
-/// clearing it.
+/// clearing it — and [`Self::loads`] so they can prove that path was actually
+/// taken rather than assuming it.
 pub struct InMemorySource<T> {
     state: Mutex<State<T>>,
 }
@@ -23,6 +24,7 @@ pub struct InMemorySource<T> {
 struct State<T> {
     resources: Vec<T>,
     fail_next: bool,
+    loads: usize,
 }
 
 impl<T> InMemorySource<T> {
@@ -33,6 +35,7 @@ impl<T> InMemorySource<T> {
             state: Mutex::new(State {
                 resources,
                 fail_next: false,
+                loads: 0,
             }),
         }
     }
@@ -62,6 +65,23 @@ impl<T> InMemorySource<T> {
         self.lock().fail_next = true;
     }
 
+    /// How many times [`ResourceSource::load`] has been called, successfully or
+    /// not.
+    ///
+    /// A test that asserts the registry is unchanged after a failed refresh is
+    /// asserting nothing unless the refresh actually happened — the registry
+    /// was unchanged before the test started too. This is what lets such a test
+    /// prove its own precondition instead of assuming a background task got a
+    /// turn.
+    ///
+    /// # Panics
+    ///
+    /// See [`Self::set`].
+    #[must_use]
+    pub fn loads(&self) -> usize {
+        self.lock().loads
+    }
+
     /// Takes the lock, recovering from poisoning.
     fn lock(&self) -> std::sync::MutexGuard<'_, State<T>> {
         self.state
@@ -74,6 +94,7 @@ impl<T> InMemorySource<T> {
 impl<T: RegistryResource> ResourceSource<T> for InMemorySource<T> {
     async fn load(&self) -> Result<Vec<T>, SourceError> {
         let mut state = self.lock();
+        state.loads += 1;
 
         if std::mem::take(&mut state.fail_next) {
             return Err(SourceError::Malformed {

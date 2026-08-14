@@ -20,12 +20,12 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use fabric_connector::{ConnectionName, ConnectionSelector, ConnectorId, FieldName, IsolationModel};
+use fabric_connector::{ConnectorId, FieldName, IsolationModel};
 use fabric_core::BindingRevision;
 
 use crate::data_source::{DataResidency, DataSourceCapabilities, PlacementClass, PoolSettings};
 use crate::tenant::TenantDataBinding;
-use crate::testing::{data_source, data_source_id, primary, tenant, tenant_binding};
+use crate::testing::{connection_for, data_source, data_source_id, primary, tenant, tenant_binding};
 use crate::{
     DataSource, DataSourceRegistry, ResolveError, RuntimeResolver, TenantRegistry, TenantRuntimeBinding,
 };
@@ -41,9 +41,11 @@ fn placed(
         id: data_source_id(id),
         revision: BindingRevision::new(1),
         connector: ConnectorId::try_new("postgres").unwrap(),
-        connection: ConnectionSelector::Named {
-            name: ConnectionName::try_new("primary-connection").unwrap(),
-        },
+        // Per id, not a constant: two of these tests register two DataSources,
+        // and a shared connection name would make them one physical database —
+        // which is a genuine reason to refuse structural isolation and has
+        // nothing to do with the placement inertness under test here.
+        connection: connection_for(id),
         placement,
         residency,
         pool: PoolSettings::default(),
@@ -261,14 +263,19 @@ fn the_execution_target_carries_no_placement_attribute() {
         "pg-02",
     );
 
+    // Over the target's own `Debug`, not over `physical_resource_identifier`.
+    // That formatter prints four named fields, none of which is placement, so
+    // searching it for "shared" could never have found anything — the test
+    // passed because of what the *formatter* omits rather than what the type
+    // does. Rendering the whole value fails the day `ExecutionTarget` grows a
+    // placement, residency, or capability field, which is the regression.
     let resolved = runtime.resolve_data_source(&tenant("acme"), &primary()).unwrap();
-    let identifier = resolved.target.physical_resource_identifier();
-    let lowered = identifier.to_lowercase();
+    let rendered = format!("{:?}", resolved.target).to_lowercase();
 
-    assert!(!lowered.contains("shared"), "{identifier}");
-    assert!(!lowered.contains("dedicated"), "{identifier}");
-    assert!(!lowered.contains("eu-west"), "{identifier}");
-    assert!(!lowered.contains("accepts"), "{identifier}");
+    assert!(!rendered.contains("shared"), "{rendered}");
+    assert!(!rendered.contains("dedicated"), "{rendered}");
+    assert!(!rendered.contains("eu-west"), "{rendered}");
+    assert!(!rendered.contains("accepts"), "{rendered}");
 }
 
 // -- The control-plane inputs are still readable ---------------------------

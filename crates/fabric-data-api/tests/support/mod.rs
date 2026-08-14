@@ -18,6 +18,7 @@ mod connector;
 mod delayed_connector;
 mod fixtures;
 mod requests;
+mod scripted_connector;
 mod tracing_capture;
 
 pub use connector::RecordingConnector;
@@ -28,6 +29,7 @@ pub use fixtures::{
     tenants,
 };
 pub use requests::{body_json, json_request, request};
+pub use scripted_connector::{wide_row, ScriptedConnector};
 pub use tracing_capture::{capture, field_value, CapturedEvent};
 
 use std::sync::Arc;

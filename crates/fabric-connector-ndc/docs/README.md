@@ -58,7 +58,40 @@ Two consequences worth knowing:
 
 `Filter::In` is the one place with a fallback: if the connector declares no `in`
 operator, it becomes a disjunction of equalities. That is not a degradation —
-`x IN (a,b)` and `x = a OR x = b` are the same predicate.
+`x IN (a,b)` and `x = a OR x = b` are the same predicate. Membership of the
+*empty* set is refused rather than translated: it is the only shape that would
+otherwise reach the wire without a single schema lookup, and nothing upstream
+builds one on purpose.
+
+## What a refusal is allowed to say
+
+When translation refuses, the caller is told the **capability** and never the
+identifier:
+
+```
+this operation is not supported: the equal comparison        ✅
+this operation is not supported: comparing t.tenant_key ...  ❌
+```
+
+The reason is narrow and specific. `fabric-data-api` masks every connector error
+except `Unsupported`, whose capability name it forwards into a 400 body. And
+`to_expression` runs *after* `MutationSpec::for_target` / `QuerySpec::for_target`
+have conjoined the tenant discriminator, so the predicate being refused may be
+one the caller never wrote, over the very column holding their tenant boundary
+up. Naming it would hand an application the shared table and its isolation key.
+
+**This is now enforced by the type, not by this paragraph.** The published half
+is a closed `fabric_connector::UnsupportedFeature` with nowhere to put a
+collection, field, or procedure, and its `as_str` returns `&'static str`, so a
+variant carrying runtime text could not be rendered at all. Getting it wrong is
+a compile error.
+
+The identifiers are still what an operator needs, so they ride alongside in a
+`RefusalDetail` — deliberately not `Display`, so it cannot be formatted into a
+message by accident. It reaches `ndc.operation_refused` (via
+`ConnectorError::operator_message`) and `data_api.connector_refused`, and no
+response body. Build refusals as
+`UnsupportedFeature::…refused_because(detail)`.
 
 ## Mutations are procedure calls
 

@@ -113,6 +113,6 @@ impl DataApiService {
 
         let outcome = prepared.connector.mutate(target, &scoped).await?;
 
-        Ok(WriteResponse::from_outcome(&outcome))
+        Ok(WriteResponse::from_outcome(&outcome, &prepared.visible_fields()))
     }
 }

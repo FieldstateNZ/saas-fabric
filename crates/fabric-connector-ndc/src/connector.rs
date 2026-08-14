@@ -70,14 +70,14 @@ impl DataConnector for NdcConnector {
         self.capabilities
             .ensure_supports_query(spec)
             .inspect_err(|error| {
-                logging::operation_refused(self.config.id.as_str(), "query", &error.to_string());
+                logging::operation_refused(self.config.id.as_str(), "query", &error.operator_message());
             })?;
 
         let arguments =
             routing::request_arguments(&self.config, target.connection(), self.secrets.as_ref()).await?;
 
         let request = to_query_request(spec, arguments, &self.schema).inspect_err(|error| {
-            logging::operation_refused(self.config.id.as_str(), "query", &error.to_string());
+            logging::operation_refused(self.config.id.as_str(), "query", &error.operator_message());
         })?;
 
         let response = self.client.post("/query", &request).await.inspect_err(|error| {
@@ -100,7 +100,7 @@ impl DataConnector for NdcConnector {
                 logging::operation_refused(
                     self.config.id.as_str(),
                     spec.operation_name(),
-                    &error.to_string(),
+                    &error.operator_message(),
                 );
             })?;
 
@@ -112,7 +112,7 @@ impl DataConnector for NdcConnector {
                 logging::operation_refused(
                     self.config.id.as_str(),
                     spec.operation_name(),
-                    &error.to_string(),
+                    &error.operator_message(),
                 );
             })?;
 

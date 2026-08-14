@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use fabric_connector::{ConnectorError, MutationSpec};
+use fabric_connector::{ConnectorError, MutationSpec, UnsupportedFeature};
 use serde_json::Value;
 
 use crate::config::ProcedureBinding;
@@ -32,27 +32,31 @@ pub(crate) fn to_mutation_request(
 ) -> Result<NdcMutationRequest, ConnectorError> {
     let collection = spec.collection();
 
-    let procedures =
-        config
-            .procedures
-            .get(collection.as_str())
-            .ok_or_else(|| ConnectorError::Unsupported {
-                feature: format!("writes to {collection} (no procedure mapping is configured)"),
-            })?;
+    // "writes to this collection" rather than its name: the caller knows which
+    // collection it asked about, and the physical one would end up in a
+    // response body. The type is what makes that a certainty rather than a
+    // habit — see `UnsupportedFeature`.
+    let procedures = config.procedures.get(collection.as_str()).ok_or_else(|| {
+        UnsupportedFeature::WritesToCollection
+            .refused_because(format!("no procedure mapping is configured for {collection}"))
+    })?;
+
+    let verb = spec.operation_name();
+    let feature = unmapped_verb_feature(spec);
 
     let (binding, procedure_arguments) = match spec {
         MutationSpec::Insert { rows, .. } => {
-            let binding = arguments::require(procedures.insert.as_ref(), "insert", collection.as_str())?;
+            let binding = arguments::require(procedures.insert.as_ref(), feature, verb, collection.as_str())?;
             (binding, arguments::for_insert(binding, rows)?)
         }
         MutationSpec::Update { filter, changes, .. } => {
-            let binding = arguments::require(procedures.update.as_ref(), "update", collection.as_str())?;
+            let binding = arguments::require(procedures.update.as_ref(), feature, verb, collection.as_str())?;
             let mut built = arguments::payload(binding, arguments::row_to_json(changes))?;
             arguments::add_predicate(&mut built, binding, filter.as_ref(), spec, index)?;
             (binding, built)
         }
         MutationSpec::Delete { filter, .. } => {
-            let binding = arguments::require(procedures.delete.as_ref(), "delete", collection.as_str())?;
+            let binding = arguments::require(procedures.delete.as_ref(), feature, verb, collection.as_str())?;
             let mut built = BTreeMap::new();
             arguments::add_predicate(&mut built, binding, filter.as_ref(), spec, index)?;
             (binding, built)
@@ -70,6 +74,19 @@ pub(crate) fn to_mutation_request(
         collection_relationships: BTreeMap::new(),
         request_arguments,
     })
+}
+
+/// What a caller is told when this verb has no procedure mapped.
+///
+/// Per verb rather than a blanket "writes", because the distinction is
+/// actionable: a resource may accept inserts and refuse deletes, and a caller
+/// told only "writes" cannot tell which of its requests to change.
+const fn unmapped_verb_feature(spec: &MutationSpec) -> UnsupportedFeature {
+    match spec {
+        MutationSpec::Insert { .. } => UnsupportedFeature::InsertsOnCollection,
+        MutationSpec::Update { .. } => UnsupportedFeature::UpdatesOnCollection,
+        MutationSpec::Delete { .. } => UnsupportedFeature::DeletesOnCollection,
+    }
 }
 
 /// Refuses a mapping that names a procedure the connector does not expose.

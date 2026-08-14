@@ -1,7 +1,11 @@
 //! How a DataSource plugs into the generic registry.
 
+use std::collections::HashMap;
+use std::sync::Arc;
+
 use fabric_core::{BindingRevision, DataSourceId};
 
+use crate::data_source::DestinationReuse;
 use crate::resource::RegistryResource;
 use crate::{ConfigurationError, DataSource};
 
@@ -17,6 +21,12 @@ use crate::{ConfigurationError, DataSource};
 /// side.
 impl RegistryResource for DataSource {
     type Key = DataSourceId;
+
+    /// Which DataSources share a physical destination with another — the half
+    /// of [`ConnectionSelector`](fabric_connector::ConnectionSelector)'s
+    /// "one connector, one database" precondition that configuration alone can
+    /// verify.
+    type SetFacts = DestinationReuse;
 
     const KIND: &'static str = "data source";
 
@@ -34,5 +44,9 @@ impl RegistryResource for DataSource {
     /// and not recursion.
     fn validate(&self) -> Result<(), ConfigurationError> {
         DataSource::validate(self)
+    }
+
+    fn derive_set_facts(entries: &HashMap<DataSourceId, Arc<Self>>) -> DestinationReuse {
+        DestinationReuse::derive(entries)
     }
 }

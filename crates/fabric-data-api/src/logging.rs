@@ -93,6 +93,29 @@ pub(crate) fn request_failed(code: &str, detail: &str, request_id: &str) {
     );
 }
 
+/// A connector refused an operation and the caller was told a 4xx.
+///
+/// Warn rather than error: the request is refused cleanly and nothing is
+/// broken in this process. Warn rather than debug because none of the reasons
+/// are the caller's fault — an unmapped collection, an operation the catalogue
+/// describes but the backend cannot express — so each is an operator's signal
+/// that a catalogue entry and a backend have drifted apart.
+///
+/// Its counterpart is [`request_failed`], which covers the 5xx half. Between
+/// them every connector failure is recorded exactly once, which matters
+/// because the caller receives a replaced message in both cases: `detail` is
+/// the only surviving copy of what the connector actually said.
+pub(crate) fn connector_refused(code: &str, detail: &str, request_id: &str) {
+    tracing::warn!(
+        event = "data_api.connector_refused",
+        event_id = event_id(DOMAIN_ID, EventType::Warning, 4),
+        code,
+        detail,
+        request_id,
+        "a connector refused the operation"
+    );
+}
+
 /// A request named a tenant this runtime does not know.
 ///
 /// Externally indistinguishable from a disabled or never-provisioned tenant —

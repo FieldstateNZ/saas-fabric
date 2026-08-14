@@ -5,6 +5,7 @@ use std::sync::Arc;
 use fabric_connector::ExecutionTarget;
 use fabric_core::{LogicalDataSourceName, TenantId};
 
+use crate::resolution::destination_exclusivity;
 use crate::resolution::isolation_enforceability::check_isolation_is_enforceable;
 use crate::resource::LookupError;
 use crate::{
@@ -92,7 +93,22 @@ impl RuntimeResolver {
         let data_binding = binding.data_binding(logical)?;
         let data_source = self.lookup_data_source(logical, &data_binding.data_source)?;
 
-        check_isolation_is_enforceable(&binding.tenant, &data_source, &data_binding.isolation)?;
+        // Both facts are read off snapshots that derived them when they
+        // installed, so this stays an atomic load and a map lookup — and it
+        // stays *current*, which a startup-only cross-scan would not.
+        let exclusivity = destination_exclusivity::observe(
+            &self.tenants,
+            &self.data_sources,
+            &binding.tenant,
+            &data_source.id,
+        );
+
+        check_isolation_is_enforceable(
+            &binding.tenant,
+            &data_source,
+            &data_binding.isolation,
+            exclusivity,
+        )?;
 
         // The target is assembled from both halves: the DataSource supplies the
         // connector and connection, the tenant binding supplies the isolation.

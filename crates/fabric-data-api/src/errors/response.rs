@@ -35,7 +35,19 @@ impl DataApiError {
 
             // The connector's own text can name tables, schemas and servers.
             Self::Connector(error) if error.is_internal() => "internal error".to_owned(),
-            Self::Connector(ConnectorError::Unsupported { feature }) => {
+
+            // The one arm that repeats anything a connector said — and what it
+            // repeats is a `&'static str` chosen from `UnsupportedFeature`'s
+            // closed set, so there are no connector-supplied bytes here to
+            // leak. This used to be an allowlist in this crate, because
+            // `feature` was a `String` and the producing side could not be
+            // trusted with it; the type carries that guarantee now, and the
+            // allowlist was deleted rather than left looking load-bearing.
+            //
+            // The refusal's `detail` — the collection, field, or procedure it
+            // was raised over — is not readable from here even by mistake:
+            // `RefusalDetail` has no `Display`. It is recorded below.
+            Self::Connector(ConnectorError::Unsupported { feature, .. }) => {
                 format!("this operation is not supported: {feature}")
             }
             Self::Connector(_) => "the request could not be executed".to_owned(),
@@ -63,6 +75,23 @@ impl IntoResponse for DataApiError {
             // place every masked internal detail is recorded.
             _ if status.is_server_error() => {
                 logging::request_failed(self.code(), &self.to_string(), &id);
+            }
+            // Connector failures that answer 4xx, which the arm above misses.
+            // Correct-for-disclosure and, until now, invisible: an
+            // `InvalidOperation` or `UnknownCollection` is a catalogue
+            // misconfiguration whose detail is replaced on the way out and was
+            // recorded nowhere, so the only trace of a mis-catalogued resource
+            // was the caller's 400.
+            //
+            // `operator_message`, not `to_string`: a refusal's physical
+            // specifics are held out of `Display` precisely so nothing can
+            // forward them by accident, which makes asking for them here the
+            // only way they are ever written down.
+            //
+            // Below the 5xx arm, so a connector error that is a 5xx keeps its
+            // existing event and is never recorded twice.
+            Self::Connector(error) => {
+                logging::connector_refused(self.code(), &error.operator_message(), &id);
             }
             _ => {}
         }

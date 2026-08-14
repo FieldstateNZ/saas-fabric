@@ -1,4 +1,9 @@
 //! Change notification, and its ordering guarantee.
+//!
+//! Every mutation below is asserted rather than discarded. `apply_one` and
+//! `invalidate` publish an event only on their `true` path, so a silently
+//! refused mutation leaves `changes.recv().await` waiting forever — these
+//! tests would hang rather than fail, which is the worse of the two.
 
 use fabric_core::BindingRevision;
 
@@ -11,7 +16,7 @@ async fn subscribers_are_told_when_a_resource_advances() {
     let mut changes = registry.subscribe();
 
     registry.apply_all(vec![resource("a", 1)]).unwrap();
-    registry.apply_one(resource("a", 2));
+    assert!(registry.apply_one(resource("a", 2)));
 
     let added = changes.recv().await.unwrap();
     assert_eq!(added.kind, ChangeKind::Added);
@@ -27,7 +32,7 @@ async fn subscribers_are_told_when_a_resource_is_removed() {
     registry.apply_all(vec![resource("a", 3)]).unwrap();
 
     let mut changes = registry.subscribe();
-    registry.invalidate(&"a".to_owned());
+    assert!(registry.invalidate(&"a".to_owned()));
 
     let removed = changes.recv().await.unwrap();
     assert_eq!(removed.kind, ChangeKind::Removed);
@@ -41,7 +46,7 @@ async fn a_change_is_published_only_after_the_new_state_is_visible() {
     registry.apply_all(vec![resource("a", 1)]).unwrap();
 
     let mut changes = registry.subscribe();
-    registry.apply_one(resource("a", 2));
+    assert!(registry.apply_one(resource("a", 2)));
 
     let change = changes.recv().await.unwrap();
     assert_eq!(change.current_revision, Some(BindingRevision::new(2)));

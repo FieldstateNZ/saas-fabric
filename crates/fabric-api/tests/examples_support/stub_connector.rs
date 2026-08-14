@@ -10,8 +10,8 @@
 
 use async_trait::async_trait;
 use fabric_connector::{
-    ConnectorCapabilities, ConnectorError, ConnectorId, ConnectorSchema, DataConnector, ExecutionTarget,
-    MutationOutcome, MutationSpec, QueryOutcome, QuerySpec,
+    CollectionName, ConnectorCapabilities, ConnectorError, ConnectorId, ConnectorSchema, DataConnector,
+    ExecutionTarget, MutationOutcome, MutationSpec, QueryOutcome, QuerySpec,
 };
 
 /// A connector that is registered but never usable.
@@ -33,10 +33,12 @@ impl StubConnector {
     }
 
     /// The error every operation returns.
-    fn refused() -> ConnectorError {
-        ConnectorError::Unsupported {
-            feature: "this stub executes nothing".to_owned(),
-        }
+    ///
+    /// The stub's schema is empty, so every collection really is unknown to
+    /// it — a truer answer than borrowing a capability name, and it leaves
+    /// `UnsupportedFeature` to mean what a real backend cannot do.
+    fn refused(collection: &CollectionName) -> ConnectorError {
+        ConnectorError::UnknownCollection(collection.clone())
     }
 }
 
@@ -54,15 +56,24 @@ impl DataConnector for StubConnector {
         &self.schema
     }
 
-    async fn query(&self, _: &ExecutionTarget, _: &QuerySpec) -> Result<QueryOutcome, ConnectorError> {
-        Err(Self::refused())
+    async fn query(&self, _: &ExecutionTarget, spec: &QuerySpec) -> Result<QueryOutcome, ConnectorError> {
+        Err(Self::refused(&spec.collection))
     }
 
-    async fn mutate(&self, _: &ExecutionTarget, _: &MutationSpec) -> Result<MutationOutcome, ConnectorError> {
-        Err(Self::refused())
+    async fn mutate(
+        &self,
+        _: &ExecutionTarget,
+        spec: &MutationSpec,
+    ) -> Result<MutationOutcome, ConnectorError> {
+        Err(Self::refused(spec.collection()))
     }
 
     async fn health(&self) -> Result<(), ConnectorError> {
-        Err(Self::refused())
+        // Not collection-shaped, and internal, so the readiness probe masks it
+        // — which is the behaviour the composed-surface test relies on.
+        Err(ConnectorError::Rejected {
+            connector: self.id.clone(),
+            message: "this stub executes nothing".to_owned(),
+        })
     }
 }

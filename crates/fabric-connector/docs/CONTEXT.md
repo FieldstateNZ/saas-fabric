@@ -19,10 +19,15 @@ The neutral data-execution boundary. Depends on `fabric-core`, `async-trait`,
   `fabric_tenant_runtime::RuntimeResolver` builds one.
 - `IsolationModel` — `Database` | `Schema{schema}` | `Discriminator{column, value}`.
   `tenant_predicate() -> Option<Filter>`, `schema()`, `telemetry_label()`.
+  `Schema` is deferred (ADR 0006) and `schema()` has zero production callers —
+  nothing qualifies a collection reference. Do not read it as working.
 - `ConnectionSelector` — `Default` | `Named{name}` | `Secret{reference}`.
   `telemetry_label()`, `needs_secret()`.
 - `QuerySpec` — `collection`, `fields`, `filter`, `sort`, `limit`, `offset`.
   Builders `with_fields/with_filter/with_sort/with_paging`. **`for_target()`**.
+  An empty `fields` is *no projection constraint*, not a default — a connector
+  may answer with every column, discriminator included. Callers that must limit
+  disclosure populate it **and** filter the response.
 - `MutationSpec` — `Insert{collection, rows}` | `Update{collection, filter, changes}` |
   `Delete{collection, filter}`. `collection()`, `operation_name()`, **`for_target()`**.
 - `QueryOutcome{rows, total_count}`, `MutationOutcome{affected_rows, returned_rows}`.
@@ -54,10 +59,17 @@ The neutral data-execution boundary. Depends on `fabric-core`, `async-trait`,
 - Names: `ConnectorId`, `CollectionName`, `FieldName`, `ConnectionName`,
   `SchemaName` — all from `identifier_newtype!`, all use
   `fabric_core::naming::parse_identifier`.
-- `ConnectorError` — `UnknownConnector`, `Unsupported{feature}`,
+- `ConnectorError` — `UnknownConnector`, `Unsupported{feature, detail}`,
   `UnknownCollection`, `SecretUnavailable{reference}`, `Unreachable{connector, source}`,
   `Rejected{connector, message}`, `MalformedResponse{connector, detail}`,
-  `InvalidOperation`. `is_internal()` drives 5xx-vs-4xx.
+  `InvalidOperation`. `is_internal()` drives 5xx-vs-4xx; `operator_message()` is
+  the log-only rendering that includes a refusal's `RefusalDetail`.
+- `UnsupportedFeature` — the closed vocabulary a refused caller may be told, and
+  the only thing `Unsupported.feature` can hold. `as_str() -> &'static str`, so
+  a variant carrying runtime text would not compile. Built into an error with
+  `.refused()` / `.refused_because(detail)`.
+- `RefusalDetail` — the operator's half of a refusal. No `Display`, on purpose:
+  it cannot be interpolated into a caller-facing message.
 
 ## Hard invariants — do not break
 
@@ -69,6 +81,10 @@ The neutral data-execution boundary. Depends on `fabric-core`, `async-trait`,
    discriminator value must not survive.
 4. **Capabilities refuse, never degrade.** An unsupported predicate is
    `Unsupported`, not a dropped clause.
+4a. **`Unsupported.feature` crosses to an application; nothing else here does.**
+   `fabric-data-api` masks every other variant. Keep `UnsupportedFeature` closed
+   and keep `as_str` returning `&'static str` — that return type is what makes a
+   leak a compile error. Physical identifiers go in `RefusalDetail`.
 5. **`ExecutionTarget` never holds a resolved credential** — only a selector.
 6. **`ResolvedSecret` must keep its redacting `Debug`.** Do not derive `Debug`.
 7. `ConnectorError::Rejected.message` is backend text — internal telemetry only,

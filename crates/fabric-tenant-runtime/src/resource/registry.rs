@@ -18,6 +18,7 @@ mod first_load_tests;
 mod lookup_tests;
 mod merge;
 mod merged_snapshot;
+mod set_facts;
 #[cfg(test)]
 mod stale_revision_tests;
 #[cfg(test)]

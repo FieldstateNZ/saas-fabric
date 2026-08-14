@@ -18,14 +18,12 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use fabric_connector::{
-    ConnectionName, ConnectionSelector, ConnectorId, FieldName, IsolationModel, SchemaName,
-};
+use fabric_connector::{ConnectorId, FieldName, IsolationModel, SchemaName};
 use fabric_core::BindingRevision;
 
 use crate::data_source::{DataResidency, DataSourceCapabilities, PlacementClass, PoolSettings};
 use crate::tenant::TenantDataBinding;
-use crate::testing::{data_source_id, primary, tenant};
+use crate::testing::{connection_for, data_source_id, primary, tenant};
 use crate::{
     DataSource, DataSourceRegistry, ResolveError, RuntimeResolver, TenantRegistry, TenantRuntimeBinding,
 };
@@ -35,9 +33,9 @@ fn data_source(id: &str, placement: PlacementClass) -> DataSource {
         id: data_source_id(id),
         revision: BindingRevision::new(1),
         connector: ConnectorId::try_new("postgres").unwrap(),
-        connection: ConnectionSelector::Named {
-            name: ConnectionName::try_new("shared-connection").unwrap(),
-        },
+        // Per id, so that a test registering two DataSources is testing the
+        // rule it names rather than the destination-reuse rule.
+        connection: connection_for(id),
         placement,
         residency: DataResidency::in_region("au-east"),
         pool: PoolSettings::default(),

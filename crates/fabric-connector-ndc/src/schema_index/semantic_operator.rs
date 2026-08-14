@@ -1,6 +1,6 @@
 //! The operator meanings the platform knows how to ask for.
 
-use fabric_connector::ComparisonOperator;
+use fabric_connector::{ComparisonOperator, UnsupportedFeature};
 
 use crate::wire::NdcComparisonOperatorDefinition;
 
@@ -29,6 +29,43 @@ pub enum SemanticOperator {
 }
 
 impl SemanticOperator {
+    /// The capability name a caller is told when this meaning is missing.
+    ///
+    /// The published half of a refusal, so it is drawn from `fabric-connector`'s
+    /// closed vocabulary rather than composed here — the type is what stops a
+    /// schema's own identifiers reaching an application.
+    #[must_use]
+    pub(crate) const fn refused_feature(self) -> UnsupportedFeature {
+        match self {
+            Self::Equal => UnsupportedFeature::Comparison(ComparisonOperator::Equal),
+            Self::In => UnsupportedFeature::Membership,
+            Self::LessThan => UnsupportedFeature::Comparison(ComparisonOperator::LessThan),
+            Self::LessThanOrEqual => UnsupportedFeature::Comparison(ComparisonOperator::LessThanOrEqual),
+            Self::GreaterThan => UnsupportedFeature::Comparison(ComparisonOperator::GreaterThan),
+            Self::GreaterThanOrEqual => {
+                UnsupportedFeature::Comparison(ComparisonOperator::GreaterThanOrEqual)
+            }
+            Self::Contains => UnsupportedFeature::Comparison(ComparisonOperator::Contains),
+        }
+    }
+
+    /// A stable name for telemetry and for the operator-only half of a refusal.
+    ///
+    /// Not what a caller is shown — that is [`Self::refused_feature`]. The
+    /// spellings match [`ComparisonOperator::as_str`] so the two read alike.
+    #[must_use]
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Equal => "equal",
+            Self::In => "in",
+            Self::LessThan => "less_than",
+            Self::LessThanOrEqual => "less_than_or_equal",
+            Self::GreaterThan => "greater_than",
+            Self::GreaterThanOrEqual => "greater_than_or_equal",
+            Self::Contains => "contains",
+        }
+    }
+
     /// The semantic a neutral operator needs from the connector.
     #[must_use]
     pub const fn for_neutral(operator: ComparisonOperator) -> Self {

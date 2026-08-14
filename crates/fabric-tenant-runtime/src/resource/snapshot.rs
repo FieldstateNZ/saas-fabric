@@ -25,12 +25,25 @@ use crate::resource::RegistryResource;
 #[derive(Debug)]
 pub(crate) struct ResourceSnapshot<T: RegistryResource> {
     entries: HashMap<T::Key, Arc<T>>,
+    facts: T::SetFacts,
 }
 
 impl<T: RegistryResource> ResourceSnapshot<T> {
-    /// Builds a snapshot.
-    pub(crate) const fn new(entries: HashMap<T::Key, Arc<T>>) -> Self {
-        Self { entries }
+    /// Builds a snapshot, deriving its whole-set facts from the same map.
+    ///
+    /// The derivation is here rather than at the three call sites so the two
+    /// cannot come apart: a snapshot's facts always describe the entries it
+    /// actually holds, whether it was built by a full sync, a single apply, or
+    /// an invalidation.
+    pub(crate) fn new(entries: HashMap<T::Key, Arc<T>>) -> Self {
+        let facts = T::derive_set_facts(&entries);
+
+        Self { entries, facts }
+    }
+
+    /// The whole-set facts derived when this snapshot was built.
+    pub(crate) const fn facts(&self) -> &T::SetFacts {
+        &self.facts
     }
 
     /// Looks up a resource.

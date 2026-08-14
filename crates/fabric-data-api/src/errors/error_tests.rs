@@ -102,6 +102,7 @@ fn a_connector_rejection_never_reaches_the_caller_verbatim() {
     // Connector text names physical tables and servers.
     let error = reading(ConnectorError::Rejected {
         connector: connector(),
+        status: 400,
         message: "relation \"acme_prod.customers\" does not exist on sql-au-east-03".to_owned(),
     });
 
@@ -338,6 +339,7 @@ fn a_malformed_response_to_a_write_does_not_tell_the_caller_it_failed() {
 fn a_connector_rejection_stays_a_500() {
     let error = reading(ConnectorError::Rejected {
         connector: connector(),
+        status: 400,
         message: "syntax error".to_owned(),
     });
 
@@ -345,18 +347,41 @@ fn a_connector_rejection_stays_a_500() {
 }
 
 #[test]
-fn a_rejected_write_does_not_claim_the_write_did_not_happen() {
-    // `Rejected` carries no status, so a 4xx refusal and a 5xx one are
-    // indistinguishable here — `effect()` answers `Unknown`, and the message
-    // has to say so rather than guess in the direction that loses data.
+fn a_write_the_backend_would_not_accept_is_reported_as_not_carried_out() {
+    // 400 means the connector declined the request itself, so the platform can
+    // say the one thing a caller holding a non-idempotent write most needs:
+    // nothing landed. Before the status was carried this was `Unknown` and the
+    // caller was sent to go and read their own data for no reason.
     let error = writing(ConnectorError::Rejected {
         connector: connector(),
+        status: 400,
         message: "relation \"acme_prod.customers\" does not exist".to_owned(),
     });
 
     let message = error.public_message();
 
+    assert!(message.contains("was not carried out"), "{message}");
+    assert!(!message.contains("read the current state"), "{message}");
+    assert!(!message.contains("acme_prod"), "{message}");
+}
+
+#[test]
+fn a_write_refused_mid_flight_still_does_not_claim_it_did_not_happen() {
+    // The other direction, and the one that keeps the first honest. A 409 is
+    // 4xx, but the specification's example for it is a foreign key constraint
+    // -- raised by the data source while writing -- and nothing makes a single
+    // procedure atomic. Claiming "not carried out" here would be the data-loss
+    // answer this whole classification exists to avoid.
+    let error = writing(ConnectorError::Rejected {
+        connector: connector(),
+        status: 409,
+        message: "duplicate key value violates constraint on acme_prod.customers".to_owned(),
+    });
+
+    let message = error.public_message();
+
     assert!(message.contains("read the current state"), "{message}");
+    assert!(!message.contains("was not carried out"), "{message}");
     assert!(!message.contains("acme_prod"), "{message}");
 }
 

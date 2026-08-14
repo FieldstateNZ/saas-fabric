@@ -24,7 +24,8 @@ use http::{Request, StatusCode};
 use serde_json::{json, Value};
 use support::{
     app_with_config, body_json, data_sources, json_request, malformed_response, open_permissions,
-    outcome_unknown, rejected, request, resolver, result_lost, tenants, unreachable, ScriptedConnector,
+    outcome_unknown, rejected, rejected_outright, request, resolver, result_lost, tenants, unreachable,
+    ScriptedConnector,
 };
 use tower::ServiceExt as _;
 
@@ -223,9 +224,10 @@ async fn a_malformed_response_to_a_write_does_not_claim_the_write_failed() {
 }
 
 #[tokio::test]
-async fn a_rejected_write_does_not_claim_it_did_not_happen() {
-    // `Rejected` carries no status, so a 4xx refusal and a 5xx one are
-    // indistinguishable here. `Unknown` is what is actually known.
+async fn a_write_refused_mid_flight_does_not_claim_it_did_not_happen() {
+    // A 409, whose specification example is a foreign key constraint the data
+    // source raises while writing. It is 4xx and it is still not conclusive:
+    // nothing makes a single opaque procedure atomic, so rows may be in.
     let answer = answer(rejected, write()).await;
 
     assert_eq!(answer.status, StatusCode::INTERNAL_SERVER_ERROR);
@@ -234,6 +236,23 @@ async fn a_rejected_write_does_not_claim_it_did_not_happen() {
         "{}",
         answer.message
     );
+}
+
+#[tokio::test]
+async fn a_write_the_backend_would_not_accept_is_reported_as_not_carried_out() {
+    // The other direction, end to end. A 400 means the connector declined the
+    // request rather than failing part-way through it, so the platform can tell
+    // the caller their records are untouched instead of sending them to look.
+    let answer = answer(rejected_outright, write()).await;
+
+    assert_eq!(answer.status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert!(
+        answer.message.contains("was not carried out"),
+        "{}",
+        answer.message
+    );
+    // Still masked: the connector's text names a schema and a column.
+    assert!(!answer.message.contains("acme_prod"), "{}", answer.message);
 }
 
 #[tokio::test]

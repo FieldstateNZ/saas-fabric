@@ -62,8 +62,13 @@ impl DataConnector for ScriptedConnector {
         if self.healthy {
             Ok(())
         } else {
+            // 503, as a connector failing its own health endpoint answers. The
+            // status carries no weight in a sweep -- nothing was executed, so
+            // there is no effect to classify -- but a fixture that invented a
+            // 400 here would read as a claim this code does not make.
             Err(ConnectorError::Rejected {
                 connector: self.id.clone(),
+                status: 503,
                 message: format!("{} is refusing", self.id),
             })
         }

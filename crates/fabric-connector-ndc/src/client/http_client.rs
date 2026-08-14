@@ -105,13 +105,16 @@ impl NdcHttpClient {
             .await
             .map_err(|error| transport_failure(&self.connector, error))?;
 
-        if response.status().is_success() {
+        let status = response.status();
+
+        if status.is_success() {
             return Ok(());
         }
 
         Err(ConnectorError::Rejected {
             connector: self.connector.clone(),
-            message: format!("health check returned {}", response.status()),
+            status: status.as_u16(),
+            message: format!("health check returned {status}"),
         })
     }
 

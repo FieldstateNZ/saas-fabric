@@ -37,6 +37,15 @@ pub(super) const WRITE_APPLIED: &str =
 /// A refusal the caller could act on, whose specifics are still not theirs.
 pub(super) const NOT_EXECUTED: &str = "the request could not be executed";
 
+/// A write the platform can prove never ran.
+///
+/// Deliberately promises nothing about a retry *succeeding* — a request the
+/// backend would not accept will be refused again — only that repeating it
+/// cannot double-apply anything, which is the question a caller holding a
+/// non-idempotent write is actually asking.
+pub(super) const WRITE_NOT_APPLIED: &str =
+    "this write was not carried out, so no records were changed; retrying cannot duplicate it";
+
 /// What a masked internal failure may still tell a caller about their write.
 ///
 /// A read gets the bare mask: it changed nothing, so there is nothing to be
@@ -57,12 +66,17 @@ pub(super) const fn internal(error: &ConnectorError, writing: bool) -> &'static 
             "the write was carried out, but the backend's answer could not be understood, so the result \
              is unavailable; do not retry"
         }
-        // A rejection carries no status, so a refusal raised before the write
-        // and one raised after it are indistinguishable from here.
+        // A refusal the platform cannot date: the backend either never answered
+        // or answered with a status that does not say when it stopped.
         OperationEffect::Unknown => {
             "the backend refused this write and the platform cannot tell whether it was applied first; \
              read the current state before retrying"
         }
-        OperationEffect::NotApplied => MASKED,
+        // Provably never ran: refused before the request was built, or refused
+        // by a backend that declined the request rather than failing part-way
+        // through it. `MASKED` would be a downgrade here — this is the one
+        // masked outcome where the caller learns something worth having, and it
+        // is true of every variant that reaches this arm.
+        OperationEffect::NotApplied => WRITE_NOT_APPLIED,
     }
 }

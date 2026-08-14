@@ -117,10 +117,15 @@ pub enum ConnectorError {
     /// Carries the backend's own message for the log. The Data API must not
     /// pass this to an application verbatim: it can name physical tables,
     /// servers, and schemas, which §2 and §29 keep internal.
-    #[error("connector {connector} rejected the operation: {message}")]
+    #[error("connector {connector} rejected the operation with {status}: {message}")]
     Rejected {
         /// Which connector rejected it.
         connector: ConnectorId,
+        /// The status the backend answered with, as a plain `u16` so this crate
+        /// names no transport type. [`rejection_effect`](crate::rejection_effect)
+        /// owns its reading, and argues why the number rather than the verdict
+        /// is what crosses this boundary.
+        status: u16,
         /// The backend's message. Internal telemetry only.
         message: String,
     },

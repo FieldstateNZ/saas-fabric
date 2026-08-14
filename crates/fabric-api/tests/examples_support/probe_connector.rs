@@ -85,8 +85,10 @@ impl DataConnector for ProbeConnector {
     async fn health(&self) -> Result<(), ConnectorError> {
         match &self.health {
             Health::Healthy => Ok(()),
+            // 503 is what a connector failing its own health endpoint answers.
             Health::Failing(message) => Err(ConnectorError::Rejected {
                 connector: self.id.clone(),
+                status: 503,
                 message: message.clone(),
             }),
             Health::Slow(delay) => {

@@ -64,12 +64,21 @@ pub(crate) fn operation_refused(connector: &str, operation: &str, reason: &str) 
 /// The connector's own message is logged here and **only** here — it can name
 /// physical tables and servers, so it never travels back to an application
 /// (§29).
-pub(crate) fn connector_rejected(connector: &str, operation: &str, message: &str) {
+///
+/// `status` is a separate field rather than left inside `message`, which only
+/// names it when the error body could not be parsed. It is the field an
+/// operator needs to tell a refused request from a constraint violation, and
+/// the same field
+/// [`rejection_effect`](fabric_connector::rejection_effect) reads to decide
+/// what the caller was told — so a disputed answer can be traced to the number
+/// that produced it.
+pub(crate) fn connector_rejected(connector: &str, operation: &str, status: u16, message: &str) {
     tracing::error!(
         event = "ndc.connector_rejected",
         event_id = event_id(DOMAIN_ID, EventType::Error, 1),
         connector,
         operation,
+        status,
         message,
         "connector rejected an operation"
     );

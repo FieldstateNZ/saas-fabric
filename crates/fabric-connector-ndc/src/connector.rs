@@ -81,8 +81,8 @@ impl DataConnector for NdcConnector {
         })?;
 
         let response = self.client.post("/query", &request).await.inspect_err(|error| {
-            if let ConnectorError::Rejected { message, .. } = error {
-                logging::connector_rejected(self.config.id.as_str(), "query", message);
+            if let ConnectorError::Rejected { status, message, .. } = error {
+                logging::connector_rejected(self.config.id.as_str(), "query", *status, message);
             }
         })?;
 
@@ -121,8 +121,13 @@ impl DataConnector for NdcConnector {
             .post("/mutation", &request)
             .await
             .inspect_err(|error| {
-                if let ConnectorError::Rejected { message, .. } = error {
-                    logging::connector_rejected(self.config.id.as_str(), spec.operation_name(), message);
+                if let ConnectorError::Rejected { status, message, .. } = error {
+                    logging::connector_rejected(
+                        self.config.id.as_str(),
+                        spec.operation_name(),
+                        *status,
+                        message,
+                    );
                 }
             })?;
 

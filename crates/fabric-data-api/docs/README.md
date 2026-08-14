@@ -363,6 +363,8 @@ Branch on `error.code`, never on the message:
 | `502` | `write_outcome_unknown` | **zero or one times** | read the current state, then decide |
 | `502` | `write_result_unavailable` | **exactly once** | do not retry; the affected count is gone |
 | `500` | `partial_write` | some of the batch | do not retry; see "Partial writes" |
+| `500` | `execution_failed` | **zero times** | the message says so; see "A backend that refused the write" |
+| `500` | `execution_failed` | **zero or one times** | the message says to reconcile; see below |
 
 The three 5xx rows are the three positions a transport failure can occupy on the
 wire, and they are distinguishable only because `fabric-connector` keeps them
@@ -374,6 +376,23 @@ mapping in `errors::connector_mapping` is what turns that into a status.
 A read never sees these distinctions. All three answer `503
 connector_unavailable`, because nothing was mutated in any of them and a retry
 is always safe.
+
+### A backend that refused the write
+
+The two `execution_failed` rows are the same status and the same code, and they
+are told apart by the message alone. That is deliberate: the distinction is not
+one a client can act on mechanically without an idempotency key it cannot yet
+supply, and inventing a second code would imply otherwise.
+
+Which one a caller gets is decided by the HTTP status the connector answered
+with, carried on `ConnectorError::Rejected` and read by
+`fabric_connector::rejection_effect`. **Only `400` and `422` mean the write
+provably did not happen** — NDC defines both as the connector declining the
+request itself. `403` and `409` are also 4xx and deliberately do *not* qualify:
+the specification's own examples for them are a check constraint and a foreign
+key constraint, which the data source raises part-way through a write, and
+nothing in NDC makes a single procedure atomic. A caller holding one of those
+must still reconcile.
 
 ### The honest caveat
 

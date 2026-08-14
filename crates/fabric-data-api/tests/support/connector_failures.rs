@@ -49,11 +49,25 @@ pub fn result_lost() -> ConnectorError {
     }
 }
 
-/// The backend refused the operation, carrying text that names a schema.
+/// The backend refused a write *while executing it*: a 409, whose specification
+/// example is the constraint violation this message describes. The write may
+/// already have applied, so this one must never be reported as not carried out.
 pub fn rejected() -> ConnectorError {
     ConnectorError::Rejected {
         connector: connector(),
+        status: 409,
         message: "duplicate key value violates constraint on acme_prod.customers".to_owned(),
+    }
+}
+
+/// The backend declined the request itself: a 400, which it could only answer
+/// by reading the request. Paired with [`rejected`] so a suite can drive both
+/// sides of the classification through the same surface.
+pub fn rejected_outright() -> ConnectorError {
+    ConnectorError::Rejected {
+        connector: connector(),
+        status: 400,
+        message: "unknown column \"salary\" on acme_prod.customers".to_owned(),
     }
 }
 

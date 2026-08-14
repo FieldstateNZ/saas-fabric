@@ -1,5 +1,6 @@
 //! What a failure says about whether the operation took effect.
 
+use crate::errors::rejection_effect;
 use crate::ConnectorError;
 
 /// What is known about whether a failed operation took effect on the backend.
@@ -54,11 +55,11 @@ impl ConnectorError {
     ///
     /// See [`OperationEffect`] for why the distinction is load-bearing.
     ///
-    /// `OutcomeUnknown` and `Rejected` reach the same answer from opposite
-    /// directions — one never heard back, the other heard a refusal it cannot
-    /// date. Merging them to satisfy the lint would delete the second
-    /// explanation, and that one is the surprising one.
-    #[allow(clippy::match_same_arms)]
+    /// Only `Rejected` needs to look at anything beyond its own variant: it is
+    /// the one failure the backend *answered*, so what it answered decides.
+    /// [`rejection_effect`](crate::rejection_effect) owns that reading, and it
+    /// is narrower than "a 4xx did not apply" — read it before assuming which
+    /// rejections are conclusive.
     #[must_use]
     pub const fn effect(&self) -> OperationEffect {
         match self {
@@ -89,11 +90,10 @@ impl ConnectorError {
             // downstream of a success status.
             Self::ResultLost { .. } | Self::MalformedResponse { .. } => OperationEffect::Applied,
 
-            // A 4xx rejection did not apply and a 5xx one may have, and the
-            // status is not carried here to tell them apart. `Unknown` is what
-            // is actually known; claiming `NotApplied` would be a guess in the
-            // direction that loses data.
-            Self::Rejected { .. } => OperationEffect::Unknown,
+            // The backend answered, so its answer is evidence — but only for
+            // the two statuses that mean it declined the request rather than
+            // failed part-way through executing it.
+            Self::Rejected { status, .. } => rejection_effect(*status),
         }
     }
 }

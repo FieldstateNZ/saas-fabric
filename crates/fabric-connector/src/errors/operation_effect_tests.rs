@@ -60,17 +60,31 @@ fn a_malformed_response_also_means_the_write_applied() {
     assert_eq!(error.effect(), OperationEffect::Applied);
 }
 
-#[test]
-fn a_rejection_claims_no_more_than_unknown() {
-    // A 4xx did not apply and a 5xx may have; the status is not carried here to
-    // tell them apart. Claiming `NotApplied` would be a guess in the direction
-    // that loses data.
-    let error = ConnectorError::Rejected {
+fn rejected(status: u16) -> ConnectorError {
+    ConnectorError::Rejected {
         connector: connector(),
+        status,
         message: "relation does not exist".to_owned(),
-    };
+    }
+}
 
-    assert_eq!(error.effect(), OperationEffect::Unknown);
+#[test]
+fn a_rejection_defers_to_the_status_the_backend_answered_with() {
+    // The variant no longer decides on its own. `rejection_status` owns which
+    // statuses are conclusive and argues the case; this only pins that `effect`
+    // asks it rather than answering from the variant alone.
+    assert_eq!(rejected(400).effect(), OperationEffect::NotApplied);
+    assert_eq!(rejected(500).effect(), OperationEffect::Unknown);
+}
+
+#[test]
+fn a_rejection_the_backend_raised_mid_write_still_claims_no_more_than_unknown() {
+    // 409 is 4xx and is *not* conclusive: the specification's own example for
+    // it is a foreign key constraint, which the data source raises while
+    // writing. The broad "4xx did not apply" rule would answer `NotApplied`
+    // here and tell a caller their records are absent when they may be present.
+    assert_eq!(rejected(409).effect(), OperationEffect::Unknown);
+    assert_eq!(rejected(403).effect(), OperationEffect::Unknown);
 }
 
 #[test]

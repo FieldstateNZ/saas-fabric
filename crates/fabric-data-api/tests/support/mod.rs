@@ -24,7 +24,9 @@ mod scripted_connector;
 mod tracing_capture;
 
 pub use connector::RecordingConnector;
-pub use connector_failures::{malformed_response, outcome_unknown, rejected, result_lost, unreachable};
+pub use connector_failures::{
+    malformed_response, outcome_unknown, rejected, rejected_outright, result_lost, unreachable,
+};
 pub use counting_connector::CountingConnector;
 pub use delayed_connector::DelayedConnector;
 pub use fixtures::{

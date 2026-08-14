@@ -71,7 +71,7 @@ The neutral data-execution boundary. Depends on `fabric-core`, `async-trait`,
 - `ConnectorError` — `UnknownConnector`, `Unsupported{feature, detail}`,
   `UnknownCollection`, `SecretUnavailable{reference}`, `Unreachable{connector, source}`,
   `OutcomeUnknown{connector, source}`, `ResultLost{connector, source}`,
-  `Rejected{connector, message}`, `MalformedResponse{connector, detail}`,
+  `Rejected{connector, status, message}`, `MalformedResponse{connector, detail}`,
   `InvalidOperation`. `is_internal()` drives 5xx-vs-4xx; `operator_message()` is
   the log-only rendering that includes a refusal's `RefusalDetail`.
 - **The three transport variants are not synonyms.** `Unreachable` is the narrow
@@ -82,9 +82,17 @@ The neutral data-execution boundary. Depends on `fabric-core`, `async-trait`,
 - `OperationEffect { NotApplied, Unknown, Applied }` + `ConnectorError::effect()`
   — the single question a non-idempotent write needs answered, stated per
   variant. Note `MalformedResponse` is `Applied` (only built after a 2xx) and
-  `Rejected` is `Unknown` (the status that would date it is not carried).
+  `Rejected` defers to `rejection_effect(status)`.
   **Map a status code from this, not from `is_internal()` alone**: only
   `NotApplied` may carry a retryable status on a write.
+- `rejection_effect(status: u16) -> OperationEffect` — what a backend's refusal
+  status claims. **Only `400` and `422` are `NotApplied`**; every other status,
+  `403` and `409` included, is `Unknown`. The rule is *not* "4xx did not apply":
+  NDC's own examples for 403 and 409 are constraint violations the data source
+  raises mid-write, and nothing in the specification makes a single procedure
+  atomic. The module's rustdoc carries the citations and the argument for
+  keeping a raw `u16` in a protocol-neutral crate; read it before widening the
+  match.
 - `UnsupportedFeature` — the closed vocabulary a refused caller may be told, and
   the only thing `Unsupported.feature` can hold. `as_str() -> &'static str`, so
   a variant carrying runtime text would not compile. Built into an error with

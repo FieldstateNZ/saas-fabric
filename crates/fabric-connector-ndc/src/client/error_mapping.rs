@@ -66,12 +66,19 @@ pub(super) fn result_lost(connector: &ConnectorId, error: reqwest::Error) -> Con
 /// §29 keep internal. The Data API is responsible for that last step, and
 /// [`ConnectorError::is_internal`] tells it which errors to replace with a
 /// generic message.
+///
+/// The status is carried out as a number rather than only formatted into the
+/// fallback message, because it is the only evidence the platform has about
+/// whether a refused write ran. Folding it into prose would leave
+/// [`ConnectorError::effect`] with a string it must not parse.
+/// [`rejection_effect`](fabric_connector::rejection_effect) reads it.
 pub(super) fn rejected(connector: &ConnectorId, status: reqwest::StatusCode, body: &[u8]) -> ConnectorError {
     let message = serde_json::from_slice::<NdcErrorResponse>(body)
         .map_or_else(|_| format!("connector returned {status}"), |error| error.message);
 
     ConnectorError::Rejected {
         connector: connector.clone(),
+        status: status.as_u16(),
         message,
     }
 }
@@ -86,6 +93,8 @@ pub(super) fn malformed(connector: &ConnectorId, detail: String) -> ConnectorErr
 
 #[cfg(test)]
 mod tests {
+    use fabric_connector::OperationEffect;
+
     use super::*;
 
     fn connector() -> ConnectorId {
@@ -134,6 +143,41 @@ mod tests {
         };
 
         assert!(message.contains("400"), "{message}");
+    }
+
+    #[test]
+    fn the_status_survives_a_body_that_supplied_its_own_message() {
+        // The path that used to lose it. When the body parses, the status never
+        // reaches the message string, so carrying it in the variant is the only
+        // way `effect()` can see it at all.
+        let ConnectorError::Rejected { status, message, .. } = rejected(
+            &connector(),
+            reqwest::StatusCode::BAD_REQUEST,
+            br#"{"message":"unknown column","details":{}}"#,
+        ) else {
+            panic!("expected a rejection");
+        };
+
+        assert_eq!(status, 400);
+        assert_eq!(message, "unknown column");
+    }
+
+    #[test]
+    fn a_refused_request_is_reported_as_certainly_not_applied() {
+        // End of the chain this change exists to complete: an NDC 400 becomes a
+        // `Rejected` whose `effect()` the Data API can act on.
+        let error = rejected(&connector(), reqwest::StatusCode::BAD_REQUEST, b"<html>");
+
+        assert_eq!(error.effect(), OperationEffect::NotApplied);
+    }
+
+    #[test]
+    fn a_conflict_is_not_reported_as_not_applied_despite_being_4xx() {
+        // 409's specification example is a foreign key constraint, raised while
+        // writing. Being 4xx does not make it conclusive.
+        let error = rejected(&connector(), reqwest::StatusCode::CONFLICT, b"<html>");
+
+        assert_eq!(error.effect(), OperationEffect::Unknown);
     }
 
     #[test]

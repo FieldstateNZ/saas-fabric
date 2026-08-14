@@ -73,6 +73,7 @@ impl DataConnector for StubConnector {
         // — which is the behaviour the composed-surface test relies on.
         Err(ConnectorError::Rejected {
             connector: self.id.clone(),
+            status: 503,
             message: "this stub executes nothing".to_owned(),
         })
     }

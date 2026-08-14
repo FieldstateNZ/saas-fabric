@@ -2,7 +2,7 @@
 
 use std::collections::BTreeSet;
 
-use crate::config::AppConfig;
+use crate::config::{administrator_role, AppConfig};
 
 impl AppConfig {
     /// Checks the settings no single domain can see.
@@ -18,6 +18,7 @@ impl AppConfig {
     pub fn validate(&self) -> Result<(), String> {
         self.validate_connectors()?;
         self.validate_state_paths()?;
+        administrator_role::validate(&self.permissions)?;
         self.validate_timeouts()
     }
 

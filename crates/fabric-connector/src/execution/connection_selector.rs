@@ -25,8 +25,29 @@ use crate::{ConnectionName, SecretRef};
 ///   be authenticated.
 /// - [`Self::Default`] uses the connector's single configured connection. Only
 ///   valid where one connector serves exactly one physical database.
+///
+/// # Unknown fields are rejected
+///
+/// `{"kind": "default", "name": "acme-prod"}` used to parse as [`Self::Default`]
+/// and drop `name` on the floor. Nothing downstream can recover the operator's
+/// intent from that — the document said "use the connection called
+/// `acme-prod`", and the value that reaches the connector says "use whatever
+/// single database this connector was configured with", which is a *different
+/// physical database* and exactly the mistake `fabric-tenant-runtime`'s
+/// `DestinationReuse` then has to catch after the fact.
+///
+/// A misspelled or misplaced field is a reconciliation fault, and the cheapest
+/// place to refuse it is the parse. §28 says fail closed; a silently ignored
+/// field is the opposite.
+///
+/// Note that `deny_unknown_fields` alone does not achieve this — serde applies
+/// it only to variants that have fields, so [`Self::Default`] would still have
+/// swallowed the surplus. Deserialisation therefore runs through a private
+/// mirror type; see `execution/tagged_documents.rs` for the gap and the shape
+/// that closes it.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(from = "super::tagged_documents::ConnectionSelectorDocument")]
 pub enum ConnectionSelector {
     /// Use the connector's single default connection.
     Default,
@@ -174,5 +195,60 @@ mod tests {
             reference: SecretRef::new("x")
         }
         .needs_secret());
+    }
+
+    #[test]
+    fn a_name_supplied_alongside_the_default_kind_is_rejected_not_dropped() {
+        // The operator meant `{"kind": "named", "name": "acme-prod"}`. This
+        // used to parse as `Default` — "the connector's one database" — which
+        // is a claim about infrastructure they never made.
+        let error = serde_json::from_str::<ConnectionSelector>(r#"{"kind": "default", "name": "acme-prod"}"#)
+            .unwrap_err();
+
+        assert!(error.to_string().contains("name"), "{error}");
+    }
+
+    #[test]
+    fn a_reference_supplied_alongside_a_named_connection_is_rejected() {
+        let error = serde_json::from_str::<ConnectionSelector>(
+            r#"{"kind": "named", "name": "acme-prod", "reference": "vault/prod/acme"}"#,
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("reference"), "{error}");
+    }
+
+    #[test]
+    fn the_documents_the_platform_actually_ships_still_parse() {
+        for document in [
+            r#"{"kind": "default"}"#,
+            r#"{"kind": "named", "name": "acme-prod"}"#,
+            r#"{"kind": "secret", "reference": "tenant/acme/data-primary"}"#,
+        ] {
+            assert!(
+                serde_json::from_str::<ConnectionSelector>(document).is_ok(),
+                "{document}"
+            );
+        }
+    }
+
+    #[test]
+    fn every_variant_survives_a_round_trip() {
+        // The deny would be a trap if this crate's own `Serialize` output no
+        // longer satisfied its `Deserialize`.
+        for selector in [
+            ConnectionSelector::Default,
+            ConnectionSelector::Named {
+                name: ConnectionName::try_new("acme-prod").unwrap(),
+            },
+            ConnectionSelector::Secret {
+                reference: SecretRef::new("tenant/acme/data-primary"),
+            },
+        ] {
+            let json = serde_json::to_string(&selector).unwrap();
+            let parsed: ConnectionSelector = serde_json::from_str(&json).unwrap();
+
+            assert_eq!(parsed, selector, "{json}");
+        }
     }
 }

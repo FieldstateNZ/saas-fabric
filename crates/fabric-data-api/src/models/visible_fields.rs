@@ -2,6 +2,7 @@
 
 use fabric_connector::{FieldName, IsolationModel};
 
+use crate::models::discriminator::discriminator_column;
 use crate::ResourceDefinition;
 
 /// The two rules that decide whether a field may appear in a response.
@@ -38,17 +39,18 @@ impl<'a> VisibleFields<'a> {
     pub(crate) const fn new(resource: &'a ResourceDefinition, isolation: &'a IsolationModel) -> Self {
         Self {
             resource,
-            // Matched rather than derived from `tenant_predicate()`: that
-            // returns a `Filter`, and digging a column back out of a predicate
-            // would break the moment the predicate's shape changed.
-            discriminator: match isolation {
-                IsolationModel::Discriminator { column, .. } => Some(column),
-                IsolationModel::Database | IsolationModel::Schema { .. } => None,
-            },
+            discriminator: discriminator_column(isolation),
         }
     }
 
     /// Whether a response may carry this field.
+    ///
+    /// Exact comparison, where the write-path mirror
+    /// ([`WritableFields`](super::WritableFields)) compares case-insensitively.
+    /// The asymmetry is intended and is about direction of travel: this side
+    /// filters names the *backend* produced against a projection built from
+    /// validated `FieldName`s, while the write side filters names a *caller*
+    /// chose. Only the caller is in a position to pick a casing on purpose.
     pub(crate) fn permits(&self, field: &FieldName) -> bool {
         self.discriminator != Some(field) && self.resource.permits_field(field)
     }

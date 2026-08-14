@@ -6,6 +6,7 @@ use fabric_connector::{ConnectorError, MutationSpec, UnsupportedFeature};
 use serde_json::Value;
 
 use crate::config::ProcedureBinding;
+use crate::schema_index::ArgumentKind;
 use crate::translate::procedure_arguments as arguments;
 use crate::wire::{NdcMutationOperation, NdcMutationRequest};
 use crate::{NdcConnectorConfig, SchemaIndex};
@@ -63,7 +64,7 @@ pub(crate) fn to_mutation_request(
         }
     };
 
-    ensure_procedure_exists(binding, config, index)?;
+    ensure_procedure_accepts(binding, config, index)?;
 
     Ok(NdcMutationRequest {
         operations: vec![NdcMutationOperation::Procedure {
@@ -89,21 +90,41 @@ const fn unmapped_verb_feature(spec: &MutationSpec) -> UnsupportedFeature {
     }
 }
 
-/// Refuses a mapping that names a procedure the connector does not expose.
+/// Refuses a mapping the connector's schema does not actually support.
 ///
 /// A typo, or configuration written against a different connector version.
 /// Catching it here turns an opaque backend error into a clear one.
-fn ensure_procedure_exists(
+///
+/// The predicate argument is re-checked as well as the procedure name, and the
+/// asymmetry is deliberate: `check_procedure_arguments` already refused this at
+/// startup, so reaching here means something built a connector without
+/// negotiating it. That is the case the check is for. A wrong payload argument
+/// yields a failed write; a wrong `filter_argument` yields a *successful* write
+/// against every tenant's rows, which is the one outcome worth paying for
+/// twice.
+fn ensure_procedure_accepts(
     binding: &ProcedureBinding,
     config: &NdcConnectorConfig,
     index: &SchemaIndex,
 ) -> Result<(), ConnectorError> {
-    if index.has_procedure(&binding.procedure) {
+    if !index.has_procedure(&binding.procedure) {
+        return Err(ConnectorError::InvalidOperation(format!(
+            "connector {} does not expose a procedure named {}",
+            config.id, binding.procedure
+        )));
+    }
+
+    let Some(filter) = binding.filter_argument.as_ref() else {
+        return Ok(());
+    };
+
+    if index.procedure_argument(&binding.procedure, filter) == Some(ArgumentKind::Predicate) {
         return Ok(());
     }
 
     Err(ConnectorError::InvalidOperation(format!(
-        "connector {} does not expose a procedure named {}",
+        "connector {}: procedure {} does not declare {filter} as a predicate argument, so the tenant \
+         predicate could not be sent where it would take effect",
         config.id, binding.procedure
     )))
 }

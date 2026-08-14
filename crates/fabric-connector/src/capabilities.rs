@@ -41,7 +41,34 @@ pub struct ConnectorCapabilities {
     pub paging: bool,
     /// Whether the backend accepts writes.
     pub mutations: bool,
-    /// Whether several mutations in one request are atomic.
+    /// Whether several mutations in **one request** are atomic *with respect to
+    /// each other*.
+    ///
+    /// # What this does not mean
+    ///
+    /// It does not mean an N-row insert is applied all-or-nothing, and reading
+    /// it that way is the mistake it invites. The flag is negotiated from NDC's
+    /// `mutation.transactional` capability, which in the specification (v0.2.13)
+    /// governs the *cardinality of the `operations` array*: without it a caller
+    /// must send exactly one operation; with it a caller may send several and
+    /// expect them to succeed or fail together. A capability whose entire effect
+    /// is "you may now put more than one element in this array" says nothing
+    /// about what happens inside one element.
+    ///
+    /// This platform puts every row of a batch into a single argument of a
+    /// single operation, and NDC argument values are opaque JSON — an argument
+    /// carrying one row and one carrying five hundred are indistinguishable to
+    /// the protocol. Atomicity of a batch is therefore the procedure's private
+    /// business, which no capability exposes.
+    ///
+    /// # Why it is declared but not consulted
+    ///
+    /// Nothing reads it, on purpose. It is negotiated because a future caller
+    /// that genuinely sends multiple operations would need it, and it is
+    /// documented here so that the next person to reach for it as a guard on
+    /// batch writes finds out why it cannot serve that role. The guard that
+    /// does exist is `fabric-data-api`'s `execution::write_integrity`, which
+    /// compares the reported affected-row count against the rows actually sent.
     pub transactional_mutations: bool,
     /// Whether the backend can report a total row count ignoring paging.
     pub total_count: bool,

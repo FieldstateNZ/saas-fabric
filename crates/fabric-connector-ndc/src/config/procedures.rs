@@ -45,13 +45,23 @@ impl CollectionProcedures {
         [("update", self.update.as_ref()), ("delete", self.delete.as_ref())]
     }
 
+    /// The mappings that must carry a payload, paired with their verb.
+    ///
+    /// Deletes are absent for the mirror-image reason inserts are absent from
+    /// [`Self::predicate_bearing`]: there is nothing to send.
+    pub(super) fn payload_bearing(&self) -> [(&'static str, Option<&ProcedureBinding>); 2] {
+        [("insert", self.insert.as_ref()), ("update", self.update.as_ref())]
+    }
+
     /// Every mapping this collection declares, paired with its verb.
     ///
     /// Deliberately wider than [`Self::predicate_bearing`], for checks that
     /// hold whatever the verb is. Naming one argument twice is incoherent on an
     /// insert as much as on an update, and a check scoped to the predicate-
-    /// bearing verbs would wave the insert through.
-    pub(super) fn all(&self) -> [(&'static str, Option<&ProcedureBinding>); 3] {
+    /// bearing verbs would wave the insert through. The startup check that
+    /// every configured argument is one the procedure declares wants the same
+    /// breadth, for the same reason.
+    pub(crate) fn all(&self) -> [(&'static str, Option<&ProcedureBinding>); 3] {
         [
             ("insert", self.insert.as_ref()),
             ("update", self.update.as_ref()),

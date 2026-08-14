@@ -3,8 +3,19 @@
 # Load with:  fabric-api examples/config.toml
 # Or:         FABRIC_CONFIG=examples/config.toml fabric-api
 #
-# Environment variables override the file, prefixed FABRIC_ with `__` for
-# nesting:  FABRIC_DATA_API__MAX_LIMIT=200
+# Environment variables override the file. Settings are namespaced
+# FABRIC_SETTING_, with `__` for nesting:
+#     FABRIC_SETTING_DATA_API__MAX_LIMIT=200
+#
+# That namespace is deliberately narrower than FABRIC_, which this process also
+# uses for things that are not settings: FABRIC_CONFIG above, the FABRIC_SECRET_*
+# variables the environment secret resolver reads, and the FABRIC_*_SERVICE_HOST /
+# FABRIC_*_PORT variables Kubernetes injects for every Service named fabric-*
+# while enableServiceLinks is at its default of true. All three used to be parsed
+# as settings and abort startup — the documented invocation on line 4 among them.
+#
+# An unrecognised FABRIC_SETTING_* variable is still a startup failure, so a
+# typo'd setting never silently does nothing.
 
 listen = "0.0.0.0:8080"
 
@@ -71,6 +82,12 @@ reject_tenant_header = true
 # cluster networking, service mesh policy, mTLS, or ingress-only exposure.
 mode = "trusted_ingress"
 
+# Switching posture means changing `mode` *and* supplying the settings below. A
+# [token] table naming mode = "trusted_ingress" while still carrying jwks_path,
+# issuers or audiences is rejected at startup rather than silently ignoring
+# them — which is what it used to do, on the one setting that decides the
+# security posture.
+
 # Optional defence in depth — a second layer over sound network policy, not a
 # replacement for it. Use where an environment genuinely expects verification at
 # more than one hop:
@@ -82,9 +99,14 @@ mode = "trusted_ingress"
 #   audiences = ["saas-fabric"]
 #
 # Setting either allowlist makes that claim mandatory: a token omitting `iss`
-# is refused rather than skipping the issuer check. Leaving one out means the
-# claim is not examined at all. An empty list is neither — it matches nothing,
-# so it refuses every token; say nothing rather than saying `[]`.
+# is refused rather than skipping the issuer check. Omitting the setting
+# entirely means the claim is not examined at all.
+#
+# There is no third state. `issuers = []` is a startup failure, not a way to
+# switch the check off, and a blank entry is refused with it — as an unrendered
+# template would be. An earlier version of this comment claimed an empty list
+# refused every token; it was true of the builder and false of the
+# configuration, which took the no-allowlist branch and accepted everything.
 #
 # Even then the runtime performs no issuer discovery and no JWKS fetching: the
 # document is read once at startup, so identity-provider lifecycle stays with
@@ -122,11 +144,20 @@ endpoint = "http://ndc-postgres.data.svc.cluster.local:8080"
 http_timeout_seconds = 10
 http_connect_timeout_seconds = 5
 
-# Request-level argument names for per-tenant connection routing (NDC 0.2.4).
-# These match ndc-postgres dynamic connections; nothing in the specification
-# fixes the names, so they are configurable.
+# The request-level argument this connector routes on (NDC 0.2.4). Naming one
+# is a statement that the connector declares it, and startup checks that
+# against the connector's own /schema — a name it does not declare is refused
+# there rather than being sent and silently ignored, which is what used to
+# happen and put every tenant on one database.
+#
+# So name only the one matching the deployment. `ndc-postgres` is configured
+# Named *or* Dynamic, never both: `connection_name_argument` for a Named
+# deployment, `connection_string_argument` for a Dynamic one. Setting both
+# requires the connector to declare both, which no real one does. Omit both
+# only where the connector serves exactly one database for every tenant.
+#
+# Nothing in the specification fixes the names; these match ndc-postgres.
 connection_name_argument = "connection_name"
-connection_string_argument = "connection_string"
 
 # Writes require an explicit procedure mapping. Core NDC 0.2 has no generic
 # insert/update/delete — the only mutation operation is invoking a procedure the

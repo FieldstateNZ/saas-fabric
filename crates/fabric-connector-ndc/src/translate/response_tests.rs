@@ -56,6 +56,23 @@ fn a_response_with_no_row_set_is_malformed() {
 }
 
 #[test]
+fn a_response_with_more_than_one_row_set_is_malformed_not_truncated() {
+    // Multiple row sets come back only for a query using variables, and this
+    // client never sends any. Taking the first would have dropped the rest
+    // with nothing in the outcome to say so -- a `200` that quietly answers a
+    // different question than the one asked.
+    let response = query_response(r#"[{"rows":[{"id":1}]},{"rows":[{"id":2}]}]"#);
+
+    let error = to_query_outcome(&connector(), &response).unwrap_err();
+
+    let ConnectorError::MalformedResponse { detail, .. } = &error else {
+        panic!("expected MalformedResponse, got {error:?}");
+    };
+    assert!(detail.contains('2'), "{detail}");
+    assert!(detail.contains("exactly one"), "{detail}");
+}
+
+#[test]
 fn reads_an_affected_row_count_and_returned_rows() {
     let response = mutation_response(
         r#"{"operation_results":[{"type":"procedure","result":{"affected_rows":2,"returning":[{"id":1},{"id":2}]}}]}"#,

@@ -9,6 +9,9 @@
 //!   Without one, the write path's projection could not be exercised at all.
 //! - an [`ConnectorError::Unsupported`] carrying the physical detail a
 //!   *translating* connector records, which is what must not reach a body.
+//! - an arbitrary [`ConnectorError`], so the transport variants — which differ
+//!   only in *where in the HTTP exchange* the call broke — can be driven
+//!   through the assembled router.
 
 use std::sync::Arc;
 
@@ -39,6 +42,7 @@ pub struct ScriptedConnector {
     schema: ConnectorSchema,
     rows: Vec<Row>,
     refusal: Option<(UnsupportedFeature, RefusalDetail)>,
+    failure: Option<fn() -> ConnectorError>,
 }
 
 impl ScriptedConnector {
@@ -68,6 +72,18 @@ impl ScriptedConnector {
         })
     }
 
+    /// Fails every operation with whatever `build` produces.
+    ///
+    /// A factory rather than a stored error because `ConnectorError` is not
+    /// `Clone`: its transport variants box an arbitrary source, and a test that
+    /// drives several requests needs a fresh one each time.
+    pub fn failing(build: fn() -> ConnectorError) -> Arc<Self> {
+        Arc::new(Self {
+            failure: Some(build),
+            ..Self::base()
+        })
+    }
+
     fn base() -> Self {
         Self {
             id: ConnectorId::try_new("postgres").unwrap(),
@@ -81,10 +97,15 @@ impl ScriptedConnector {
             )]),
             rows: Vec::new(),
             refusal: None,
+            failure: None,
         }
     }
 
     fn refusal<T>(&self) -> Option<Result<T, ConnectorError>> {
+        if let Some(build) = self.failure {
+            return Some(Err(build()));
+        }
+
         self.refusal.as_ref().map(|(feature, detail)| {
             Err(ConnectorError::Unsupported {
                 feature: *feature,

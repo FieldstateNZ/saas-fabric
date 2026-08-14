@@ -58,12 +58,21 @@ The immature part is contained and made loud:
 2. **A DataSource must declare `writable: true`.** Capabilities fail closed
    ([ADR 0003](0003-data-sources-are-first-class-resources.md)), so a read
    replica that nobody remembered to mark is refused, not written to.
-3. **An update or delete mapping without a `filter_argument` is rejected at
-   startup**, and again at translation time. Both checks exist deliberately: the
-   cost of this one failing open is other tenants' data.
+3. **Every mapped argument is checked against the connector's own schema at
+   startup.** An update or delete without a `filter_argument` is rejected;
+   an insert or update without a `payload_argument` is rejected; and any
+   argument the procedure does not declare — or that is declared with the
+   wrong kind, a `filter_argument` pointing at a non-predicate, a
+   `payload_argument` pointing at a predicate — is rejected. The predicate
+   half is re-checked at translation time. Both exist deliberately: the cost
+   of this one failing open is other tenants' data.
 4. **A mutation reaching the connector with no predicate is refused**, even
    though `for_target` should always have added one. That check is there for the
    case where something bypassed it.
+5. **A write may not report success unless the count agrees with what was
+   sent.** A response claiming fewer rows than were submitted is
+   `500 partial_write`, explicitly non-retryable, and says the platform cannot
+   determine which rows landed. One claiming more is a malformed response.
 
 ## The gap, stated plainly
 
@@ -72,18 +81,55 @@ The immature part is contained and made loud:
 
 Before any deployment enables writes against a real connector:
 
-- verify the procedure names and argument names against that connector's own
-  `GET /schema` output, not against documentation;
+- ~~verify the procedure names and argument names against that connector's own
+  `GET /schema` output~~ — now automatic; the connector refuses to build
+  otherwise. What remains manual is confirming the payload argument's expected
+  **value shape**, which the schema does not describe;
 - exercise an insert, an update and a delete end to end in a non-production
-  environment, and confirm the predicate actually scoped the write;
+  environment, and confirm the predicate actually scoped the write **and that
+  the affected-row count means rows, not statements**;
 - confirm with a second tenant on the same DataSource that the discriminator
   held.
 
-The startup check that a mapped procedure exists in the connector's schema
-catches a wrong *procedure* name. It does not catch a wrong *argument* name,
-because NDC procedure arguments are not introspectable in a way that lets us
-verify the semantics — which is exactly why this gap is written down rather than
-assumed away.
+### Two things this ADR originally said, both wrong
+
+The first draft claimed **"NDC procedure arguments are not introspectable in a
+way that lets us verify the semantics."** That was false when it was written.
+`schema_response.jsonschema` v0.2.13 requires `arguments: {name → ArgumentInfo}`
+on every `ProcedureInfo`, and a predicate argument is typed
+`{"type": "predicate", "object_type_name": …}`. Names are fully introspectable
+and the predicate type is checkable. This crate was discarding them at parse:
+`NdcNamed` had one field, so a schema declaring arguments round-tripped to
+`[{"name": "delete_customers"}]`.
+
+The consequence was not academic. A `filter_argument` naming an argument the
+procedure never declared passed configuration validation *and* translation, and
+the tenant predicate went out under a name nothing read — an unscoped delete
+against a connector that ignores unknown arguments. The one check that would
+have turned a documented data-loss gap into a startup failure was declined on a
+premise the code disproves.
+
+It also claimed **"the startup check that a mapped procedure exists in the
+connector's schema catches a wrong procedure name."** There was no startup
+check; `ensure_procedure_exists` ran at translation time only. There is one
+now.
+
+What is *genuinely* not introspectable is much narrower: the payload argument's
+expected **value shape** — whether `objects` wants an array of row objects or
+something else. That remains documentation-derived.
+
+### And a second gap, underneath the first
+
+`affected_rows` is not an NDC concept on `/mutation` at all.
+`MutationOperationResults` has one variant carrying one opaque `result` field:
+no per-row status, no error variant, no count. (`affected_rows` exists only in
+the experimental *relational* mutation API.) The word "atomic" does not appear
+in the specification source.
+
+So the count this platform returns is a heuristic read of a connector-private
+result shape — `null` reads as 0, an object without a count reads as 1. Decision
+item 5 above exists because of this: the platform cannot trust the number, so it
+refuses to report success when the number disagrees with what it sent.
 
 ## Consequences
 
@@ -95,9 +141,17 @@ assumed away.
 
 ### Bad, and accepted
 
-- A deployment that enables writes without running the checklist above can
-  configure a wrong argument name and lose the predicate. Mitigated by the
-  startup validation, the translation-time check, and this ADR — not eliminated.
+- ~~A deployment that enables writes without running the checklist can configure
+  a wrong argument name and lose the predicate.~~ No longer possible: it fails
+  at startup.
+- A hostile row now poisons its whole batch. The discriminator column is
+  refused case-insensitively before a `Row` is built, so a batch containing one
+  such row is a `400` and nothing dispatches — where previously the value was
+  silently overwritten and the batch succeeded. Refusing is the right side, but
+  it is a behaviour change worth stating.
+- The affected-row count is a heuristic, and a connector whose procedure returns
+  an unusual result shape will now surface as `partial_write` rather than a
+  quiet wrong number. Louder, and more likely to need an operator.
 - Mutations remain less exercised than reads until a real connector is wired up.
 
 ## Revisit when

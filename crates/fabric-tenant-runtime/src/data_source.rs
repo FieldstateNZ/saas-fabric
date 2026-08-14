@@ -31,6 +31,7 @@
 
 mod capabilities;
 mod data_source_resource;
+mod destination;
 mod destination_reuse;
 mod placement_class;
 mod pool_settings;

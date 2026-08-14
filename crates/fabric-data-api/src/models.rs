@@ -10,6 +10,7 @@
 //! is where the resource's field allowlist is applied on the way out, and that
 //! reasoning needs room to be read on its own.
 
+mod discriminator;
 mod field_reference;
 mod list_query;
 #[cfg(test)]
@@ -18,10 +19,12 @@ mod list_response;
 mod query_string;
 mod row_response;
 mod visible_fields;
+mod writable_fields;
 mod write_response;
 
 pub use list_query::ListQuery;
 pub use list_response::{ListResponse, PagingInfo};
 pub use row_response::RowResponse;
 pub(crate) use visible_fields::VisibleFields;
+pub(crate) use writable_fields::WritableFields;
 pub use write_response::WriteResponse;

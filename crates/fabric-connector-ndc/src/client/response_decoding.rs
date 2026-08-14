@@ -9,13 +9,28 @@
 use fabric_connector::{ConnectorError, ConnectorId};
 use serde::de::DeserializeOwned;
 
-use crate::client::error_mapping::{malformed, rejected, unreachable};
+use crate::client::error_mapping::{malformed, rejected, result_lost};
 
 /// Reads a response off the wire and decodes it.
 ///
+/// # A body that stops arriving is not a transport outage
+///
+/// By the time this runs the status line has already been read, and that is a
+/// fact worth more than any `reqwest::Error` discriminator. If it said `2xx`,
+/// the backend ran the operation and reported success; a body that then dies
+/// mid-stream has lost the *result*, not the effect. Reporting that as
+/// "unreachable" told a caller its write had not happened when the backend had
+/// already committed it — and, through a 503, invited a retry that would commit
+/// it again.
+///
+/// A non-success status takes the other path: the backend said it failed, and
+/// [`rejected`] with an empty body degrades to naming the status, which is
+/// exactly as much as is known once the body is gone.
+///
 /// # Errors
 ///
-/// [`ConnectorError::Unreachable`] if the body cannot be read, otherwise
+/// [`ConnectorError::ResultLost`] if a success body cannot be read,
+/// [`ConnectorError::Rejected`] if a failure body cannot be read, otherwise
 /// whatever [`decode_body`] decides.
 pub(crate) async fn decode<T: DeserializeOwned>(
     connector: &ConnectorId,
@@ -23,10 +38,11 @@ pub(crate) async fn decode<T: DeserializeOwned>(
 ) -> Result<T, ConnectorError> {
     let status = response.status();
 
-    let body = response
-        .bytes()
-        .await
-        .map_err(|error| unreachable(connector, error))?;
+    let body = match response.bytes().await {
+        Ok(body) => body,
+        Err(error) if status.is_success() => return Err(result_lost(connector, error)),
+        Err(_) => return Err(rejected(connector, status, &[])),
+    };
 
     decode_body(connector, status, &body)
 }

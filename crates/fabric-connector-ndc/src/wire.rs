@@ -73,12 +73,27 @@
 //!   ([`SchemaIndex`](crate::SchemaIndex)), never assumed from a type's name.
 //!   A scalar type this crate has never seen before is exactly as supported
 //!   as its declared operators say, and no more.
+//! - **Arrays.** An array is not a scalar type and does not borrow one's
+//!   operators. NDC filters arrays through a separate `array_comparison`
+//!   expression gated on `query.nested_fields.filter_by.nested_arrays`, which
+//!   this crate neither reads nor emits, so every comparison on an array
+//!   column is refused — see [`NdcType::named`](ndc_type::NdcType::named).
+//!   This is the never-widen rule in its sharpest form: on a document store,
+//!   equality against an array conventionally means *contains*.
+//! - **Request-level arguments.** The one NDC feature this crate depends on
+//!   rather than merely uses, because it is what carries a tenant's connection
+//!   routing. The connector's declaration of them is read at startup and
+//!   checked against the configuration, because the specification does not say
+//!   what a connector does with an argument it never declared — and the
+//!   connector we can read ignores it silently.
 
 mod capabilities;
 mod expression;
 mod mutation;
 mod ndc_type;
+mod procedure;
 mod query;
+mod request_arguments;
 mod response;
 mod schema;
 
@@ -88,8 +103,10 @@ pub(crate) use mutation::{
     NdcMutationOperation, NdcMutationRequest, NdcMutationResponse, NdcOperationResult,
 };
 pub(crate) use ndc_type::NdcType;
+pub(crate) use procedure::NdcProcedureInfo;
 pub(crate) use query::{
     NdcField, NdcOrderBy, NdcOrderByElement, NdcOrderByTarget, NdcOrderDirection, NdcQuery, NdcQueryRequest,
 };
+pub(crate) use request_arguments::NdcRequestLevelArguments;
 pub(crate) use response::{NdcErrorResponse, NdcQueryResponse};
-pub(crate) use schema::{NdcComparisonOperatorDefinition, NdcSchemaResponse};
+pub(crate) use schema::{NdcComparisonOperatorDefinition, NdcScalarType, NdcSchemaResponse};

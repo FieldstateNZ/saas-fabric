@@ -11,19 +11,23 @@ use crate::wire::{NdcMutationResponse, NdcOperationResult, NdcQueryResponse};
 ///
 /// # Errors
 ///
-/// [`ConnectorError::MalformedResponse`] if the connector returned no row set
-/// at all. We never send variables, so a conforming connector must return
-/// exactly one.
+/// [`ConnectorError::MalformedResponse`] unless the connector returned exactly
+/// one row set. This client never sends variables, and the specification's own
+/// schema says that means exactly one comes back — so *both* none and several
+/// are malformed. Several is the more dangerous of the two: taking the first
+/// would drop the rest with nothing in the outcome to say any were dropped.
 pub(crate) fn to_query_outcome(
     connector: &ConnectorId,
     response: &NdcQueryResponse,
 ) -> Result<QueryOutcome, ConnectorError> {
-    let row_set = response
-        .first()
-        .ok_or_else(|| ConnectorError::MalformedResponse {
-            connector: connector.clone(),
-            detail: "the query response contained no row sets".to_owned(),
-        })?;
+    let row_set = response.sole().ok_or_else(|| ConnectorError::MalformedResponse {
+        connector: connector.clone(),
+        detail: format!(
+            "the query response contained {} row sets; a request that sends no variables must \
+             produce exactly one",
+            response.count()
+        ),
+    })?;
 
     // An absent `rows` means the query asked for no fields, which is a
     // legitimate empty result rather than an error.

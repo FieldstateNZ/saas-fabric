@@ -59,13 +59,11 @@ mod row;
 mod schema;
 mod secret;
 #[cfg(test)]
-mod secret_tests;
-#[cfg(test)]
 mod testing;
 
 pub use capabilities::ConnectorCapabilities;
 pub use connector::DataConnector;
-pub use errors::{ConnectorError, RefusalDetail, UnsupportedFeature};
+pub use errors::{ConnectorError, OperationEffect, RefusalDetail, UnsupportedFeature};
 pub use execution::{ConnectionSelector, ExecutionTarget, IsolationModel};
 pub use filter::{ComparisonOperator, Filter};
 pub use ids::{CollectionName, ConnectionName, ConnectorId, FieldName, SchemaName};

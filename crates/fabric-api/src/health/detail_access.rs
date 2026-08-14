@@ -57,6 +57,11 @@ pub(super) fn may_see_detail(state: &HealthState, headers: &HeaderMap) -> bool {
         // An empty role name would otherwise match a token carrying an empty
         // role string. A deployment that configures no administrator has
         // authorised nobody, which is the fail-closed reading.
+        //
+        // Kept as defence in depth even though `config::administrator_role`
+        // now refuses a blank value at startup: `HealthState` is constructible
+        // without going through `AppConfig`, so this guard covers the paths
+        // that validation never sees.
         return false;
     }
 

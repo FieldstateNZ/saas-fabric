@@ -22,8 +22,21 @@ use crate::{ComparisonOperator, FieldName, Filter, SchemaName};
 /// [`Self::tenant_predicate`] exists so there is exactly one place that
 /// predicate is produced, and [`crate::QuerySpec::for_target`] applies it
 /// unconditionally so no caller can omit it.
+///
+/// # Unknown fields are rejected
+///
+/// `{"kind": "database", "column": "tenant_key", "value": "tenant-482"}` used
+/// to parse as [`Self::Database`], discarding the two fields that were the
+/// entire isolation mechanism: the operator believes they configured a
+/// discriminator, and what they got produces no predicate at all.
+///
+/// `deny_unknown_fields` alone does not close this — serde applies it only to
+/// variants that have fields, and [`Self::Database`] has none. Deserialisation
+/// runs through a private mirror type; `execution/tagged_documents.rs` carries
+/// the argument.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(from = "super::tagged_documents::IsolationModelDocument")]
 pub enum IsolationModel {
     /// The connection reaches only this tenant's database.
     ///
@@ -168,5 +181,69 @@ mod tests {
         assert_eq!(field.as_str(), "tenant_key");
         assert_eq!(operator, ComparisonOperator::Equal);
         assert_eq!(value, Value::String("tenant-482".to_owned()));
+    }
+
+    #[test]
+    fn a_discriminators_fields_under_a_database_kind_are_rejected_not_dropped() {
+        // The operator who thinks they configured discriminator isolation and
+        // did not. This used to parse as `Database` — no predicate, no error.
+        let error = serde_json::from_str::<IsolationModel>(
+            r#"{"kind": "database", "column": "tenant_key", "value": "tenant-482"}"#,
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("column"), "{error}");
+    }
+
+    #[test]
+    fn a_misspelled_field_on_a_discriminator_is_rejected() {
+        // `colum` rather than `column`. Without the deny, this was a missing
+        // *required* field and already failed — but the same typo on an
+        // optional-looking field would not have, and the rule should not
+        // depend on which field was fat-fingered.
+        let error = serde_json::from_str::<IsolationModel>(
+            r#"{"kind": "discriminator", "column": "tenant_key", "value": "t", "schema": "acme"}"#,
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("schema"), "{error}");
+    }
+
+    #[test]
+    fn the_documents_the_platform_actually_ships_still_parse() {
+        // The deny must reject only surplus, never anything legitimate.
+        for document in [
+            r#"{"kind": "database"}"#,
+            r#"{"kind": "schema", "schema": "acme"}"#,
+            r#"{"kind": "discriminator", "column": "tenant_key", "value": "tenant-482"}"#,
+        ] {
+            assert!(
+                serde_json::from_str::<IsolationModel>(document).is_ok(),
+                "{document}"
+            );
+        }
+    }
+
+    #[test]
+    fn every_variant_survives_a_round_trip() {
+        // `deny_unknown_fields` on an internally tagged enum is only safe if
+        // this crate's own output is still readable by it — a `Serialize` that
+        // emitted anything the `Deserialize` now rejects would make the type
+        // unable to read itself.
+        for model in [
+            IsolationModel::Database,
+            IsolationModel::Schema {
+                schema: SchemaName::try_new("acme").unwrap(),
+            },
+            IsolationModel::Discriminator {
+                column: FieldName::try_new("tenant_key").unwrap(),
+                value: "tenant-482".to_owned(),
+            },
+        ] {
+            let json = serde_json::to_string(&model).unwrap();
+            let parsed: IsolationModel = serde_json::from_str(&json).unwrap();
+
+            assert_eq!(parsed, model, "{json}");
+        }
     }
 }

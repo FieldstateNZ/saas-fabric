@@ -106,6 +106,17 @@ impl MutationSpec {
 /// Overwrites rather than fills a gap. A caller that supplied its own value for
 /// the discriminator column is either confused or hostile, and honouring it
 /// would let one tenant write into another's data.
+///
+/// # Why this is no longer the only guard
+///
+/// The overwrite keys on the column name matching *exactly*, so a case variant
+/// (`TENANT_KEY` against a configured `tenant_key`) used to travel to the
+/// connector beside the correct stamp rather than being replaced by it. Never
+/// exploitable — the variant is an extra key, so the right value is always
+/// present — but the reason it was harmless was a claim about *backend
+/// collation* that this crate cannot enforce. `fabric-data-api` now rejects a
+/// case-insensitive match before a row is built; this remains as defence in
+/// depth, and as the guard for any caller not taking that path.
 fn stamp(row: &Row, target: &ExecutionTarget) -> Row {
     match target.isolation() {
         crate::IsolationModel::Discriminator { column, value } => row

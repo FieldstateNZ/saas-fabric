@@ -1,6 +1,6 @@
 [package]
 name = "fabric-connector-ndc"
-description = "Speaks the Hasura NDC protocol (v0.2.13) as an internal connector boundary. Contains no Hasura code."
+description = "Speaks the Hasura NDC protocol (read from v0.2.13, requires v0.2.4+) as an internal connector boundary. Contains no Hasura code."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -18,7 +18,11 @@ thiserror.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+# `net` and `io-util` stand up the fake NDC connector in `client::fake_connector`,
+# which is a real socket rather than a mocked transport: the failures this crate
+# has to tell apart -- a refused connect, a request that went out and was never
+# answered, a body truncated after `200 OK` -- only differ at that level.
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt-multi-thread"] }
 
 [lints]
 workspace = true

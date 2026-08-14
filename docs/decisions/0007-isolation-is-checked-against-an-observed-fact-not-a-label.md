@@ -60,6 +60,16 @@ one connector serves exactly one physical database" — a precondition nothing
 checked, reachable by saying nothing at all. Omission is now a
 deserialisation error.
 
+Surplus fields are refused too, on both `ConnectionSelector` and
+`IsolationModel`. `{"kind": "default", "name": "acme-prod"}` used to parse as
+`Default` and discard the name; `{"kind": "database", "column": …, "value": …}`
+used to parse as `Database` and discard the discriminator an operator thought
+they had configured. Note that `#[serde(deny_unknown_fields)]` does not do
+this on its own: serde applies it only to variants that carry fields, and both
+offending variants are unit variants. Deserialisation therefore runs through
+mirror types whose corresponding variants are empty *struct* variants, which
+the attribute does reach.
+
 ## Consequences
 
 **The check needs no cross-registry knowledge when it is derived.** That was
@@ -81,9 +91,23 @@ destination fact names its peers rather than issuing a verdict, and
 occupancy is checked per peer.
 
 **It catches configuration equality only, and that limit is real.** Two
-differently-named connections reaching one database, or two `SecretRef`s
-resolving to one credential, still read as two destinations. Detecting that
-needs a connector round trip on the request path, which §6 forbids.
+differently-named connections reaching one database, or two `SecretRef`s a
+secret store *aliases* to one credential, still read as two destinations.
+Detecting that needs a connector round trip on the request path, which §6
+forbids.
+
+**One case that read like that limit was not, and has since been closed.**
+Two `SecretRef`s can also resolve to one credential because a *resolver's own
+mapping* flattens them — `EnvSecretResolver` sends every non-alphanumeric
+character to `_`, so `vault/prod/customer-db-01` and
+`vault/prod/customer_db_01` are one environment variable. That needs no round
+trip to see; it is a string comparison over the DataSource snapshot. The
+destination fact now keys secret-backed connections on
+`SecretRef::distinctness_key`, which discards exactly what a projection
+discards — case, and the identity of every non-alphanumeric character — and
+`SecretResolver` carries the matching obligation not to be coarser than that
+key. A resolver's own mapping is the runtime's fault to fix; a store's
+aliasing is not, and remains outside what any layer above the resolver sees.
 
 **Four existing test fixtures were wrong and now fail.** One —
 `two_tenants_can_share_one_data_source` — was asserting the leak as a

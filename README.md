@@ -66,7 +66,7 @@ Kubernetes, or opens a connection (§6).
 | [`fabric-identity`](crates/fabric-identity) | Bearer token → tenant identity context. Not authentication. |
 | [`fabric-tenant-runtime`](crates/fabric-tenant-runtime) | Tenant bindings and DataSources. Revisioned, lock-free, fail-closed. |
 | [`fabric-connector`](crates/fabric-connector) | The neutral execution boundary. No protocol or database types. |
-| [`fabric-connector-ndc`](crates/fabric-connector-ndc) | Speaks Hasura NDC v0.2.13. The only crate that knows NDC exists. |
+| [`fabric-connector-ndc`](crates/fabric-connector-ndc) | Speaks Hasura NDC — wire types read from v0.2.13, requires 0.2.4 or newer. The only crate that knows NDC exists. |
 | [`fabric-data-api`](crates/fabric-data-api) | The public HTTP surface. |
 | [`fabric-api`](crates/fabric-api) | The composition root. |
 

@@ -21,9 +21,11 @@
 //!
 //! The specification itself is published, and implementing a published protocol
 //! for interoperability is a different act from incorporating someone's
-//! implementation of it. So the subset we need is written here, from the
-//! specification, and pinned to `NDC_VERSION` (crate-private -- the
-//! version is this crate's business, not its callers').
+//! implementation of it. So the subset we need is written here, read from
+//! version 0.2.13 of the specification but requiring only
+//! `NDC_MINIMUM_VERSION` of a connector — the two are different numbers for
+//! a reason, and that constant explains it. Both are crate-private: the
+//! version is this crate's business, not its callers'.
 //!
 //! That subset is a **closed list, not a starting point** — see the `wire`
 //! module's docs (`src/wire.rs`) for the policy on what happens when NDC can
@@ -53,6 +55,14 @@
 //!
 //! Named routing is strongly preferred — it keeps the credential inside the
 //! connector's own configuration instead of putting it in a request body.
+//!
+//! Those argument names are configuration, not constants: the specification
+//! fixes neither, and both are optional. Naming one in
+//! [`NdcConnectorConfig`] is how an operator says this connector routes that
+//! way — and it is checked, because a connector is free to ignore a
+//! request-level argument it never declared, and the one implementation that
+//! can be read does exactly that. See `registration::routing_arguments` for
+//! what that costs when nobody checks: every tenant on one database, at `200`.
 //!
 //! # Operator portability
 //!
@@ -89,16 +99,34 @@ pub use registration::build_ndc_connector;
 // exists is a two-line change.
 pub(crate) use schema_index::SchemaIndex;
 
-/// The NDC specification version this client implements.
+/// The minimum NDC specification version this client requires.
 ///
-/// Sent on every request in the `X-Hasura-NDC-Version` header and checked
-/// against the connector's `/capabilities` response at startup. Pinned rather
-/// than floating: our wire types are hand-written, so a connector speaking a
-/// version we have not read is a mismatch we want to hear about at boot rather
-/// than discover through a malformed response under load.
-pub(crate) const NDC_VERSION: &str = "0.2.13";
+/// Sent on every request in the `X-Hasura-NDC-Version` header, and the floor
+/// checked against the connector's `/capabilities` response at startup. It is
+/// deliberately one value used for both: `versioning.md` defines compatibility
+/// as `^{requested-version}`, so the version advertised in the header *is* the
+/// contract, and advertising one number while accepting another is a promise
+/// this crate would not be keeping.
+///
+/// # Why 0.2.4 rather than the newest version read
+///
+/// The wire types here were hand-written against 0.2.13, but 0.2.4 is the
+/// version whose features this client actually depends on — it added
+/// request-level arguments, which carry every tenant's connection routing.
+/// Everything 0.2.5 through 0.2.13 added is relational-query and aggregate
+/// surface the Data API never asks for. `versioning.md` asks a client to send
+/// "the minimum non-breaking version of the specification that is supported by
+/// the client, so that the widest range of connectors can be used", and this is
+/// that value. It is also what lets a real connector through: `ndc-postgres`
+/// v3.1.0 pins `ndc-models` at v0.2.4 and reports `0.2.4`.
+///
+/// A connector below this floor, or on a different minor, is rejected at boot
+/// rather than discovered through wrong answers under load — see
+/// `registration::version` for the full reasoning, including why a matching
+/// minor was never sufficient on its own.
+pub(crate) const NDC_MINIMUM_VERSION: &str = "0.2.4";
 
-/// The header carrying [`NDC_VERSION`].
+/// The header carrying [`NDC_MINIMUM_VERSION`].
 pub(crate) const NDC_VERSION_HEADER: &str = "X-Hasura-NDC-Version";
 
 /// The event-ID domain number for this crate. See `fabric_core::event_id`.

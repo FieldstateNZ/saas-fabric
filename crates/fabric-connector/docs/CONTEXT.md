@@ -31,6 +31,11 @@ The neutral data-execution boundary. Depends on `fabric-core`, `async-trait`,
 - `MutationSpec` — `Insert{collection, rows}` | `Update{collection, filter, changes}` |
   `Delete{collection, filter}`. `collection()`, `operation_name()`, **`for_target()`**.
 - `QueryOutcome{rows, total_count}`, `MutationOutcome{affected_rows, returned_rows}`.
+  `affected_rows` is what the backend *said*, not a checked fact — an NDC
+  connector recovers it from a procedure result whose shape NDC does not
+  define. Consumers reconcile it against the operation they sent rather than
+  relaying it; `fabric-data-api::execution::write_integrity` is where that is
+  done and argued.
 - `Filter` — `And{clauses}` | `Or{clauses}` | `Not{clause}` | `Compare{field, operator, value}`
   | `IsNull{field}` | `In{field, values}`. `and()` (flattens), `referenced_fields()`,
   `referenced_operators()`, `requires_null_check()`.
@@ -45,6 +50,10 @@ The neutral data-execution boundary. Depends on `fabric-core`, `async-trait`,
   fixture, so the type files stay small.
 - `ConnectorCapabilities` — `filtering`, `ordering`, `paging`, `mutations`,
   `transactional_mutations`, `total_count`, `null_checks`, `comparisons: BTreeSet<_>`.
+  `transactional_mutations` is **declared but deliberately consulted by nothing**:
+  it maps to NDC's `mutation.transactional`, which gates how many *operations* a
+  request may carry, so it says nothing about whether an N-row insert inside one
+  operation is atomic. See its rustdoc before reaching for it as a batch guard.
   `baseline()`, `ensure_supports_query()`, `ensure_supports_mutation()` (the last
   two in `capabilities/support_check.rs`, sharing one private
   `ensure_supports_filter` so read and write checks cannot drift).
@@ -61,9 +70,21 @@ The neutral data-execution boundary. Depends on `fabric-core`, `async-trait`,
   `fabric_core::naming::parse_identifier`.
 - `ConnectorError` — `UnknownConnector`, `Unsupported{feature, detail}`,
   `UnknownCollection`, `SecretUnavailable{reference}`, `Unreachable{connector, source}`,
+  `OutcomeUnknown{connector, source}`, `ResultLost{connector, source}`,
   `Rejected{connector, message}`, `MalformedResponse{connector, detail}`,
   `InvalidOperation`. `is_internal()` drives 5xx-vs-4xx; `operator_message()` is
   the log-only rendering that includes a refusal's `RefusalDetail`.
+- **The three transport variants are not synonyms.** `Unreachable` is the narrow
+  one: the request provably never went out (refused connect, DNS failure, connect
+  timeout — `reqwest::Error::is_connect()`), so nothing happened. `OutcomeUnknown`
+  is a request that went out and was never conclusively answered. `ResultLost` is
+  a success status followed by a lost body, so the operation *did* take effect.
+- `OperationEffect { NotApplied, Unknown, Applied }` + `ConnectorError::effect()`
+  — the single question a non-idempotent write needs answered, stated per
+  variant. Note `MalformedResponse` is `Applied` (only built after a 2xx) and
+  `Rejected` is `Unknown` (the status that would date it is not carried).
+  **Map a status code from this, not from `is_internal()` alone**: only
+  `NotApplied` may carry a retryable status on a write.
 - `UnsupportedFeature` — the closed vocabulary a refused caller may be told, and
   the only thing `Unsupported.feature` can hold. `as_str() -> &'static str`, so
   a variant carrying runtime text would not compile. Built into an error with
@@ -96,6 +117,7 @@ The neutral data-execution boundary. Depends on `fabric-core`, `async-trait`,
   statically known (chosen by id at request time), and dispatch is free next to
   a network hop. This is *not* the executor-generic repository case — there is
   no cross-call transaction to compose at this level; transactionality is a
-  connector-declared capability.
+  connector-declared capability — and a narrow one, covering atomicity *across*
+  operations rather than within any single one.
 - `for_target` deliberately does not schema-qualify collection names. Schema
   isolation is enforced by the connection.

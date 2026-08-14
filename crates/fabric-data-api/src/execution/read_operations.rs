@@ -120,6 +120,10 @@ impl DataApiService {
         // isolation. Every read goes through it.
         let scoped = spec.for_target(target);
 
-        Ok(prepared.connector.query(target, &scoped).await?)
+        prepared
+            .connector
+            .query(target, &scoped)
+            .await
+            .map_err(|error| prepared.failed(error))
     }
 }

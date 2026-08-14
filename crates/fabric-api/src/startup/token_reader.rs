@@ -23,7 +23,7 @@ pub(super) fn build(config: &TokenConfig, leeway: LeewaySeconds) -> Result<Arc<d
         // the runtime consumes the identity it established. `build_identity`
         // records it at info — a correctly configured deployment is not a
         // problem to warn about on every start. See ADR 0002.
-        TokenConfig::TrustedIngress => Ok(Arc::new(
+        TokenConfig::TrustedIngress {} => Ok(Arc::new(
             TrustedIngressReader::new(SystemClock::shared()).with_leeway(leeway),
         )),
 
@@ -38,12 +38,19 @@ pub(super) fn build(config: &TokenConfig, leeway: LeewaySeconds) -> Result<Arc<d
             let mut reader =
                 ValidatingReader::new(VerificationKeys::from_jwks_json(&document)?).with_leeway(leeway);
 
-            if !issuers.is_empty() {
-                reader = reader.with_issuers(issuers);
+            // No emptiness test, deliberately. This used to read
+            // `if !issuers.is_empty()`, which made `issuers = []` take the *no
+            // allowlist* branch and accept every issuer — the opposite of what
+            // `fabric-identity`'s fail-closed builder does with an empty slice,
+            // and the opposite of what the configuration comment promised.
+            // `Allowlist` cannot be empty, so `Some` now means exactly "check
+            // this" and the branch that could fail open no longer exists.
+            if let Some(issuers) = issuers {
+                reader = reader.with_issuers(issuers.as_slice());
             }
 
-            if !audiences.is_empty() {
-                reader = reader.with_audiences(audiences);
+            if let Some(audiences) = audiences {
+                reader = reader.with_audiences(audiences.as_slice());
             }
 
             Ok(Arc::new(reader))

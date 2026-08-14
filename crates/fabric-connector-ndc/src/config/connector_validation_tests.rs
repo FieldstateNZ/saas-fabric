@@ -72,6 +72,67 @@ fn an_insert_mapping_needs_no_filter_argument() {
     assert!(config.has_writes());
 }
 
+// -- A verb that writes values must say where they go ------------------
+
+#[test]
+fn an_insert_mapping_without_a_payload_argument_is_rejected_at_startup() {
+    // Unlike a missing filter_argument this fails closed — every insert is
+    // refused at translation time. It is still rejected here, because "every
+    // write 400s in production" is a bad way to find out about a mapping that
+    // could never have worked.
+    let procedures = CollectionProcedures {
+        insert: Some(ProcedureBinding {
+            procedure: "insert_customers".to_owned(),
+            payload_argument: None,
+            filter_argument: None,
+        }),
+        ..CollectionProcedures::default()
+    };
+
+    let error = NdcConnectorConfig::for_test(mapping("customers", procedures))
+        .validate()
+        .unwrap_err();
+
+    assert!(error.contains("customers.insert"), "{error}");
+    assert!(error.contains("payload_argument"), "{error}");
+}
+
+#[test]
+fn an_update_mapping_without_a_payload_argument_is_rejected_too() {
+    let procedures = CollectionProcedures {
+        update: Some(ProcedureBinding {
+            procedure: "update_customers".to_owned(),
+            payload_argument: None,
+            filter_argument: Some("filter".to_owned()),
+        }),
+        ..CollectionProcedures::default()
+    };
+
+    let error = NdcConnectorConfig::for_test(mapping("customers", procedures))
+        .validate()
+        .unwrap_err();
+
+    assert!(error.contains("payload_argument"), "{error}");
+}
+
+#[test]
+fn a_delete_mapping_needs_no_payload_argument() {
+    // A delete carries no row values, so requiring one would reject a
+    // configuration that is complete.
+    let procedures = CollectionProcedures {
+        delete: Some(ProcedureBinding {
+            procedure: "delete_customers".to_owned(),
+            payload_argument: None,
+            filter_argument: Some("filter".to_owned()),
+        }),
+        ..CollectionProcedures::default()
+    };
+
+    assert!(NdcConnectorConfig::for_test(mapping("customers", procedures))
+        .validate()
+        .is_ok());
+}
+
 // -- Payload and predicate must not share an argument name -------------
 
 #[test]

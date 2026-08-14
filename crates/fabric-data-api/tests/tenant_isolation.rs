@@ -75,7 +75,7 @@ async fn a_created_record_is_stamped_with_the_tenant_discriminator() {
             "POST",
             "/customers",
             json!({"tenant_id": "globex"}),
-            &json!({"name": "Alice", "tenant_key": "tenant-999"}),
+            &json!({"name": "Alice"}),
         ))
         .await
         .unwrap();
@@ -86,7 +86,7 @@ async fn a_created_record_is_stamped_with_the_tenant_discriminator() {
         panic!("expected an insert");
     };
 
-    // The caller's hostile value is overwritten, not merged.
+    // The caller never names the column; the platform supplies it.
     assert_eq!(
         rows.first().unwrap().get(&field("tenant_key")),
         Some(&Value::String("tenant-482".to_owned()))
@@ -94,10 +94,11 @@ async fn a_created_record_is_stamped_with_the_tenant_discriminator() {
 }
 
 #[tokio::test]
-async fn a_batch_create_stamps_every_row_with_the_tenant_discriminator() {
-    // Item 21: the overwrite has to apply per row, not just to the first one
-    // — a caller batching hostile rows must not get even one of them through
-    // by hiding it behind a well-formed sibling.
+async fn a_created_record_naming_the_discriminator_is_refused_outright() {
+    // This used to be accepted and *overwritten* by `MutationSpec::for_target`,
+    // which was safe only while the row and the backend agreed on the column
+    // name byte for byte. The refusal is structural instead: the value never
+    // enters the row, so nothing downstream has to undo it.
     let (app, connector) = app();
 
     let response = app
@@ -105,10 +106,48 @@ async fn a_batch_create_stamps_every_row_with_the_tenant_discriminator() {
             "POST",
             "/customers",
             json!({"tenant_id": "globex"}),
-            &json!([
-                {"name": "Alice", "tenant_key": "tenant-999"},
-                {"name": "Bob", "tenant_key": "tenant-111"},
-            ]),
+            &json!({"name": "Alice", "tenant_key": "tenant-999"}),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    // Refused before dispatch, so nothing partial can have been written.
+    assert_eq!(connector.mutation_count(), 0);
+}
+
+#[tokio::test]
+async fn a_case_variant_of_the_discriminator_is_refused_on_create() {
+    // The asymmetry this closes: `permits_field` compared exactly, so
+    // `TENANT_KEY` travelled to the connector *beside* the correct
+    // `tenant_key` rather than being overwritten by it.
+    let (app, connector) = app();
+
+    let response = app
+        .oneshot(json_request(
+            "POST",
+            "/customers",
+            json!({"tenant_id": "globex"}),
+            &json!({"name": "Mallory", "TENANT_KEY": "tenant-999"}),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(connector.mutation_count(), 0);
+}
+
+#[tokio::test]
+async fn a_batch_create_stamps_every_row_with_the_tenant_discriminator() {
+    // Item 21: the stamp has to apply per row, not just to the first one.
+    let (app, connector) = app();
+
+    let response = app
+        .oneshot(json_request(
+            "POST",
+            "/customers",
+            json!({"tenant_id": "globex"}),
+            &json!([{"name": "Alice"}, {"name": "Bob"}]),
         ))
         .await
         .unwrap();
@@ -129,14 +168,59 @@ async fn a_batch_create_stamps_every_row_with_the_tenant_discriminator() {
 }
 
 #[tokio::test]
+async fn one_hostile_row_refuses_the_whole_batch() {
+    // A caller must not get a hostile row through by hiding it behind a
+    // well-formed sibling — and because the refusal happens before dispatch,
+    // the well-formed sibling is not written either. All or nothing is a
+    // promise the platform *can* keep here, unlike at the connector.
+    let (app, connector) = app();
+
+    let response = app
+        .oneshot(json_request(
+            "POST",
+            "/customers",
+            json!({"tenant_id": "globex"}),
+            &json!([
+                {"name": "Alice"},
+                {"name": "Bob", "TENANT_KEY": "tenant-111"},
+            ]),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(connector.mutation_count(), 0);
+}
+
+#[tokio::test]
 async fn an_update_cannot_move_a_record_to_another_tenant() {
+    let (app, connector) = app();
+
+    let response = app
+        .oneshot(json_request(
+            "PATCH",
+            "/customers/1",
+            json!({"tenant_id": "globex"}),
+            &json!({"tenant_key": "tenant-999"}),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(connector.mutation_count(), 0);
+}
+
+#[tokio::test]
+async fn an_ordinary_update_still_carries_the_tenant_stamp_and_predicate() {
+    // The refusal above must not have removed the stamp: a legitimate update
+    // still cannot move a row out of this tenant.
     let (app, connector) = app();
 
     app.oneshot(json_request(
         "PATCH",
         "/customers/1",
         json!({"tenant_id": "globex"}),
-        &json!({"tenant_key": "tenant-999"}),
+        &json!({"name": "Renamed"}),
     ))
     .await
     .unwrap();

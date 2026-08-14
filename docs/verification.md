@@ -5,10 +5,12 @@ command below is reproducible from the repository root; nothing here is
 asserted without one.
 
 Last run: 2026-08-14, against commit `HEAD` of
-`claude/tenant-runtime-data-api-5ea0ca`, after five rounds of adversarial
-review — the last of which ran three independent lenses (cross-tenant leaks,
-concurrency and lifecycle, information disclosure) and found eight blocking
-defects, the most of any round.
+`claude/tenant-runtime-data-api-5ea0ca`, after six rounds of adversarial
+review. The last two ran narrow independent lenses rather than one generalist
+pass, and between them found nineteen blocking defects — more than the four
+generalist rounds before them combined. Round six's lenses were NDC wire
+conformance (checked against the published specification for the first time),
+the write path end to end, and configuration and deployment.
 
 ## Gates
 
@@ -16,7 +18,7 @@ defects, the most of any round.
 | --- | --- | --- |
 | Formatting | `cargo fmt --all --check` | clean |
 | Lints | `cargo clippy --workspace --all-targets -- -D warnings` | 0 findings |
-| Tests | `cargo test --workspace` | 797 passing, 0 failing |
+| Tests | `cargo test --workspace` | 966 passing, 0 failing |
 | Docs | `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps` | 0 warnings |
 | Dependencies | `cargo deny check` | advisories, bans, licences, sources — all ok |
 | File sizes | `python3 scripts/check_file_sizes.py` | 0 over the 150-line limit |
@@ -155,9 +157,29 @@ Also checked structurally, because none of these can be caught by a test:
 Named here rather than left for a reader to discover.
 
 - **No connector integration test.** Nothing in this workspace has spoken to
-  a running NDC connector. The write path in particular is exercised entirely
-  against hand-written expectations of what `ndc-postgres` accepts —
-  ADR 0004 states this plainly and carries a pre-deployment checklist.
+  a running NDC connector, and round six showed what that costs. Two of its
+  findings were invisible to every unit test because our requests were
+  well-formed and our logic correct: a connector that declares no
+  request-level arguments silently ignores the per-tenant routing we send
+  (verified against `ndc-postgres` v3.1.0's source, where `Static => None`
+  and `acquire` returns one pool regardless), and `affected_rows` is not an
+  NDC concept on `/mutation` at all, so the count we report is a heuristic
+  read of a connector-private result shape. Both are now checked at startup
+  or refused, but neither was findable from inside this workspace.
+
+  ADR 0004 carries the remaining pre-deployment checklist. The item that
+  matters most: the payload argument's expected **value shape** is still
+  documentation-derived, because the NDC schema does not describe it.
+
+- **No exactly-once write guarantee.** The platform now distinguishes a write
+  that provably did not reach the backend from one whose outcome is unknown
+  and one that was applied but whose result was lost, and reports each with a
+  different status and machine code. That stops the platform *instructing* a
+  retry of a write that may have landed; it does not stop a client or a mesh
+  taking one — Envoy's `gateway-error` policy retries 502 and 503 regardless.
+  Closing it needs an idempotency key and a durable store the Data API does
+  not have. `fabric-data-api/docs/README.md` states the promise and names the
+  gap.
 - **No load or concurrency testing beyond the registry.** The atomic-swap
   behaviour has a multi-threaded test; the HTTP surface under concurrent load
   does not.

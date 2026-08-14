@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::wire::NdcType;
+use crate::wire::{NdcProcedureInfo, NdcRequestLevelArguments, NdcType};
 
 /// The body of `GET /schema`.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -19,9 +19,26 @@ pub(crate) struct NdcSchemaResponse {
     #[serde(default)]
     pub(crate) collections: Vec<NdcCollectionInfo>,
 
-    /// Procedures available for mutations.
+    /// Procedures available for mutations, with the arguments each declares.
+    ///
+    /// The arguments are the load-bearing half. See
+    /// [`NdcProcedureInfo`](crate::wire::NdcProcedureInfo) for what modelling
+    /// only the name cost.
     #[serde(default)]
-    pub(crate) procedures: Vec<NdcNamed>,
+    pub(crate) procedures: Vec<NdcProcedureInfo>,
+
+    /// The request-level arguments the connector requires.
+    ///
+    /// Declared `anyOf [RequestLevelArguments, null]`, so `None` covers both an
+    /// absent key and an explicit `null` — and both say the same thing: this
+    /// connector declares none, so nothing sent in `request_arguments` is
+    /// promised to have any effect on it.
+    ///
+    /// Checked against the configuration's routing at startup, in
+    /// `registration::routing_arguments`. Reading it and doing nothing with it
+    /// would be no better than not reading it.
+    #[serde(default)]
+    pub(crate) request_arguments: Option<NdcRequestLevelArguments>,
 }
 
 /// A scalar type and the operators defined over it.
@@ -101,13 +118,6 @@ pub(crate) struct NdcCollectionInfo {
     pub(crate) collection_type: String,
 }
 
-/// Anything in the schema identified only by name, such as a procedure.
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
-pub(crate) struct NdcNamed {
-    /// The name.
-    pub(crate) name: String,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -142,7 +152,11 @@ mod tests {
                     {"name": "customers", "type": "customers", "arguments": {}, "uniqueness_constraints": {}}
                 ],
                 "functions": [],
-                "procedures": [{"name": "insert_customers"}]
+                "procedures": [{
+                    "name": "insert_customers",
+                    "arguments": {"objects": {"type": {"type": "array", "element_type": {"type": "named", "name": "customers"}}}},
+                    "result_type": {"type": "named", "name": "int4"}
+                }]
             }"#,
         )
         .unwrap();

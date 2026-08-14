@@ -40,6 +40,13 @@ use crate::{
 ///   [`ExecutionTarget::connection`], and never to a default when the requested
 ///   connection is unavailable (§28).
 /// - **Never log a credential**, and never include one in an error (§29).
+/// - **Report an affected-row count that describes the operation sent.** A
+///   count above the number of rows handed to
+///   [`mutate`](Self::mutate) is not a large success, it is an answer to a
+///   different question, and callers treat it as a malformed response. Where a
+///   backend gives no usable count, report what it did rather than inventing a
+///   plausible one: an under-count is refused as a partial write, which is the
+///   safe failure, while a fabricated match is not.
 #[async_trait]
 pub trait DataConnector: Send + Sync {
     /// The id this connector is registered under.

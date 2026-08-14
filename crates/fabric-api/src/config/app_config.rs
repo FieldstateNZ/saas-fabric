@@ -34,11 +34,10 @@ pub struct AppConfig {
 
     /// How much clock skew to tolerate on `exp` and `nbf`.
     ///
-    /// Sits beside [`Self::token`] rather than inside it, for two reasons.
-    /// `TokenConfig::TrustedIngress` is a unit variant and cannot carry a
-    /// field at all; and more importantly, a per-posture setting would let a
-    /// deployment configure two different windows, when the whole point of
-    /// the type is that both postures agree about which tokens are current.
+    /// Sits beside [`Self::token`] rather than inside it: a per-posture
+    /// setting would let a deployment configure two different windows, when
+    /// the whole point of the type is that both postures agree about which
+    /// tokens are current. One value, so there is nothing to disagree about.
     pub leeway: LeewaySeconds,
 
     /// How the runtime registries stay current.

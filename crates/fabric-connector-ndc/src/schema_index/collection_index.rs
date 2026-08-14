@@ -6,14 +6,23 @@ use fabric_connector::{CollectionName, CollectionSchema, ConnectorSchema, FieldN
 
 use crate::wire::NdcSchemaResponse;
 
-/// Collection name → field name → scalar type name.
-pub(super) type CollectionIndex = BTreeMap<String, BTreeMap<String, String>>;
+/// Collection name → field name → the field's scalar type, where it has one.
+///
+/// `None` means **selectable but not comparable**: an array column, or a
+/// predicate-typed one. Keeping the entry rather than dropping it is what
+/// separates the two questions the request path asks. The neutral schema is
+/// built from the *keys*, so such a column stays readable; the scalar lookup
+/// finds nothing, so every comparison on it is refused. Dropping the field
+/// instead would have made an array column vanish from the platform's schema
+/// altogether, which is a wider loss than the fix needs — reading an array is
+/// fine, only filtering one is unsafe.
+pub(super) type CollectionIndex = BTreeMap<String, BTreeMap<String, Option<String>>>;
 
 /// Builds the collection index from a connector's schema.
 ///
-/// Fields whose type does not resolve to a named type — predicate-typed
-/// arguments, for instance — are skipped: they cannot be compared, so including
-/// them would only produce confusing lookups later.
+/// A collection whose object type the schema never defines is skipped: there
+/// are no fields to record, and the collection is then simply unknown, which
+/// fails closed if a catalogue points at it.
 pub(super) fn build(schema: &NdcSchemaResponse) -> CollectionIndex {
     schema
         .collections
@@ -24,12 +33,7 @@ pub(super) fn build(schema: &NdcSchemaResponse) -> CollectionIndex {
             let fields = object_type
                 .fields
                 .iter()
-                .filter_map(|(field_name, field)| {
-                    field
-                        .field_type
-                        .named()
-                        .map(|scalar| (field_name.clone(), scalar.to_owned()))
-                })
+                .map(|(field_name, field)| (field_name.clone(), field.field_type.named().map(str::to_owned)))
                 .collect();
 
             Some((collection.name.clone(), fields))

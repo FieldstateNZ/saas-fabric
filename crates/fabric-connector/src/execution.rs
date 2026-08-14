@@ -6,6 +6,7 @@ mod execution_target;
 #[cfg(test)]
 mod execution_target_tests;
 mod isolation_model;
+mod tagged_documents;
 
 pub use connection_selector::ConnectionSelector;
 pub use execution_target::ExecutionTarget;

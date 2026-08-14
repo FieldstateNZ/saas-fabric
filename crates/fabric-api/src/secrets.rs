@@ -27,7 +27,11 @@ pub struct EnvSecretResolver;
 
 impl EnvSecretResolver {
     /// The prefix applied to every derived variable name.
-    const PREFIX: &'static str = "FABRIC_SECRET_";
+    ///
+    /// Visible to the crate so `config::env_namespace` can assert this
+    /// namespace stays outside the settings one — the two shared a prefix
+    /// once, and supplying a secret aborted startup.
+    pub(crate) const PREFIX: &'static str = "FABRIC_SECRET_";
 
     /// Converts a reference into an environment variable name.
     ///

@@ -2,6 +2,7 @@
 
 use fabric_connector::{ComparisonOperator, UnsupportedFeature};
 
+use crate::schema_index::OperatorFit;
 use crate::wire::NdcComparisonOperatorDefinition;
 
 /// A comparison *meaning*, independent of what any connector calls it.
@@ -80,23 +81,38 @@ impl SemanticOperator {
         }
     }
 
-    /// Reads the semantic out of a connector's operator definition.
+    /// Reads the semantic out of a connector's operator definition, and how
+    /// exactly it fits.
     ///
-    /// Case-insensitive containment is accepted as containment — a deliberate
-    /// widening, safe because tenant scoping is always equality on a
-    /// discriminator, never containment. Prefix and suffix matching have no
-    /// neutral counterpart and are not offered; nor is anything a connector
-    /// invented.
-    pub(super) const fn from_definition(definition: &NdcComparisonOperatorDefinition) -> Option<Self> {
+    /// Case-insensitive containment is still accepted as containment, but only
+    /// as an [`OperatorFit::Widened`] fallback. `scalar-types.md` defines
+    /// `contains` and `icontains` as different predicates, so where a scalar
+    /// declares both, the exact one must win — see
+    /// [`operator_index`](super::operator_index). Where a scalar declares only
+    /// the insensitive form the widening still happens, and is safe there for
+    /// the same reason as before: tenant scoping is always equality on a
+    /// discriminator, never containment.
+    ///
+    /// Prefix and suffix matching have no neutral counterpart and are not
+    /// offered; nor is anything a connector invented.
+    pub(super) const fn from_definition(
+        definition: &NdcComparisonOperatorDefinition,
+    ) -> Option<(Self, OperatorFit)> {
         match definition {
-            NdcComparisonOperatorDefinition::Equal => Some(Self::Equal),
-            NdcComparisonOperatorDefinition::In => Some(Self::In),
-            NdcComparisonOperatorDefinition::LessThan => Some(Self::LessThan),
-            NdcComparisonOperatorDefinition::LessThanOrEqual => Some(Self::LessThanOrEqual),
-            NdcComparisonOperatorDefinition::GreaterThan => Some(Self::GreaterThan),
-            NdcComparisonOperatorDefinition::GreaterThanOrEqual => Some(Self::GreaterThanOrEqual),
-            NdcComparisonOperatorDefinition::Contains
-            | NdcComparisonOperatorDefinition::ContainsInsensitive => Some(Self::Contains),
+            NdcComparisonOperatorDefinition::Equal => Some((Self::Equal, OperatorFit::Exact)),
+            NdcComparisonOperatorDefinition::In => Some((Self::In, OperatorFit::Exact)),
+            NdcComparisonOperatorDefinition::LessThan => Some((Self::LessThan, OperatorFit::Exact)),
+            NdcComparisonOperatorDefinition::LessThanOrEqual => {
+                Some((Self::LessThanOrEqual, OperatorFit::Exact))
+            }
+            NdcComparisonOperatorDefinition::GreaterThan => Some((Self::GreaterThan, OperatorFit::Exact)),
+            NdcComparisonOperatorDefinition::GreaterThanOrEqual => {
+                Some((Self::GreaterThanOrEqual, OperatorFit::Exact))
+            }
+            NdcComparisonOperatorDefinition::Contains => Some((Self::Contains, OperatorFit::Exact)),
+            NdcComparisonOperatorDefinition::ContainsInsensitive => {
+                Some((Self::Contains, OperatorFit::Widened))
+            }
             NdcComparisonOperatorDefinition::StartsWith
             | NdcComparisonOperatorDefinition::StartsWithInsensitive
             | NdcComparisonOperatorDefinition::EndsWith

@@ -346,6 +346,86 @@ connector's own transactional behaviour, which this crate does not control
 and cannot observe once the future is gone. A caller that disconnects mid
 write should not assume the write did not happen.
 
+## What the platform promises about a write
+
+The section above documents the case where the *caller* walked away. This one
+documents the platform's own failure modes, which are the ones a caller actually
+has to write code against — and which, until recently, all looked identical from
+the outside.
+
+Every answer to a `POST`, `PATCH`, or `DELETE` carries one of these meanings.
+Branch on `error.code`, never on the message:
+
+| Response | `code` | The write was applied | What the caller should do |
+|---|---|---|---|
+| `2xx` | — | **exactly once** | nothing |
+| `503` | `connector_unavailable` | **zero times** | retry; a `Retry-After` says when |
+| `502` | `write_outcome_unknown` | **zero or one times** | read the current state, then decide |
+| `502` | `write_result_unavailable` | **exactly once** | do not retry; the affected count is gone |
+| `500` | `partial_write` | some of the batch | do not retry; see "Partial writes" |
+
+The three 5xx rows are the three positions a transport failure can occupy on the
+wire, and they are distinguishable only because `fabric-connector` keeps them
+apart: `Unreachable` fails before a request byte is written, `OutcomeUnknown`
+after the body is sent, `ResultLost` after a success status has been read.
+`ConnectorError::effect()` is the query that answers "did it happen?"; the
+mapping in `errors::connector_mapping` is what turns that into a status.
+
+A read never sees these distinctions. All three answer `503
+connector_unavailable`, because nothing was mutated in any of them and a retry
+is always safe.
+
+### The honest caveat
+
+**No 5xx is reliably non-retryable.** Envoy's `gateway-error` retry policy
+covers 502, 503 and 504, and most SDK retry lists include all three. Answering
+`502 write_outcome_unknown` does not stop a proxy or a client library from
+replaying a `POST` that may already have inserted 500 rows.
+
+What it buys is narrower and still worth having: **the platform stops
+instructing a retry.** It sends no `Retry-After`, it gives the ambiguity its own
+`code` so a client can branch on it, and it says in the message that the caller
+must reconcile first. That converts a duplicate write from something the
+platform *asked for* into something a client's own configuration chose.
+
+Closing it properly needs an idempotency key — a caller-supplied token the
+platform records against the outcome, so a replay returns the first answer
+instead of writing again. That needs a durable store this crate does not have
+and does not currently reach. **It is follow-up work, not a feature; nothing in
+the API accepts such a key today.**
+
+So, precisely: absent an idempotency key, the platform offers **at-most-once per
+accepted request** and makes no exactly-once guarantee across retries. A client
+that needs one has to supply it itself, by making its own writes idempotent —
+natural keys, upserts, or a reconciliation read.
+
+## Partial writes
+
+The same limit applies to a write that *completes*. A `POST` carries up to
+`max_mutation_batch_size` rows, and the platform puts all of them into a single
+connector operation — so whether they are applied atomically is the backend
+procedure's business, not something the platform arranges or can ask about.
+`ConnectorCapabilities::transactional_mutations` does not answer it: that flag
+is negotiated from NDC's `mutation.transactional`, which governs how many
+*operations* one request may carry, not what happens inside one of them.
+
+What the platform can do is refuse to misreport it. `execution::write_integrity`
+compares the affected-row count against the rows actually sent:
+
+| Reported | Outcome |
+|---|---|
+| exactly what was sent | success — `201` for create, `200` for update/delete |
+| fewer than sent (insert) | `500`, code `partial_write` |
+| more than sent | `500`, code `execution_failed` (a malformed response) — and the message says the write *was* carried out, because a malformed response is only ever built after a success status |
+| `0` for a keyed update/delete | success — the key matched nothing, which is legitimate |
+
+A `partial_write` is **not retryable**: the records that did apply are still
+there, so resending duplicates them. The response says how many of how many
+landed and states plainly that the platform cannot determine *which* — NDC's
+mutation response has no vocabulary for per-row status, so a connector
+implementing `RETURNING` is the only way a caller can find out, through the
+`data` array on the success path.
+
 ## Gotchas
 
 - **Connector error text never reaches a caller.** It names physical tables,
@@ -354,10 +434,24 @@ write should not assume the write did not happen.
   repeats a `&'static str` from this crate's own allowlist, never the string the
   connector supplied, and masks anything it does not recognise. There are tests
   pinning both halves.
+- **The same connector failure answers differently for a read and a write.**
+  `DataApiError::Connector` carries the `OperationKind` for exactly this reason,
+  and it is supplied by `Prepared`, not by the call site. There is deliberately
+  no `From<ConnectorError> for DataApiError`: a new execution path cannot reach
+  a status without saying what it was doing.
+- **`Retry-After` is present exactly on a 503, and nowhere else.** It is derived
+  from `status()` rather than matched separately, so a failure cannot pick up a
+  retry hint without also becoming a 503. Its *absence* on a 502 is the point.
 - **A read of another tenant's key is 404, not 403.** 403 would confirm the key
   exists somewhere.
 - **A delete of another tenant's key reports 0 affected, not an error.** Same
-  reasoning.
+  reasoning. This is why a keyed write reporting zero is *not* treated as a
+  partial write — only an insert has a known row count to fall short of.
+- **A caller cannot write the tenant discriminator, under any casing.** It is
+  refused as `unknown field` rather than named, because §26 keeps an
+  application unaware of its isolation model. The refusal happens before the
+  row is built, so it does not depend on the later overwrite in
+  `MutationSpec::for_target` matching the caller's spelling exactly.
 - **There is no unfiltered delete.** The route requires a key, so a caller
   cannot empty a collection whatever their scopes.
 - **`queryable_fields` covers filters, not just projections.** Filtering is an

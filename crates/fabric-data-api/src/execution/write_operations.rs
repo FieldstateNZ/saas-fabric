@@ -5,9 +5,10 @@ use fabric_core::LogicalResourceName;
 use fabric_identity::TenantIdentity;
 use serde_json::{Map, Value};
 
-use crate::execution::prepared::Prepared;
+use crate::execution::dispatch_write::dispatch;
 use crate::execution::row_mapping::{key_filter, to_row};
-use crate::{limits, logging, DataApiError, DataApiService, OperationKind, WriteResponse};
+use crate::execution::write_integrity::RowBudget;
+use crate::{limits, DataApiError, DataApiService, OperationKind, WriteResponse};
 
 impl DataApiService {
     /// Creates records.
@@ -15,7 +16,9 @@ impl DataApiService {
     /// # Errors
     ///
     /// Any [`DataApiError`], including [`DataApiError::BadRequest`] if `rows`
-    /// exceeds the configured maximum batch size (§28).
+    /// exceeds the configured maximum batch size (§28), and
+    /// [`DataApiError::PartiallyApplied`] if the backend reports writing fewer
+    /// records than were sent.
     pub async fn create(
         &self,
         identity: &TenantIdentity,
@@ -30,15 +33,22 @@ impl DataApiService {
 
         limits::enforce_batch_size(rows.len(), &self.config)?;
 
+        let writable = prepared.writable_fields();
+        let rows = rows
+            .iter()
+            .map(|row| to_row(row, &writable))
+            .collect::<Result<Vec<_>, _>>()?;
+
+        // Captured before the spec takes ownership, and the only number the
+        // platform can check the backend's answer against.
+        let budget = RowBudget::Batch(u64::try_from(rows.len()).unwrap_or(u64::MAX));
+
         let spec = MutationSpec::Insert {
             collection: prepared.resource.collection.clone(),
-            rows: rows
-                .iter()
-                .map(|row| to_row(row, prepared.resource))
-                .collect::<Result<Vec<_>, _>>()?,
+            rows,
         };
 
-        self.execute_mutation(&prepared, &spec, resource_name).await
+        dispatch(&prepared, &spec, resource_name, &budget).await
     }
 
     /// Updates one record by key.
@@ -62,10 +72,10 @@ impl DataApiService {
         let spec = MutationSpec::Update {
             collection: prepared.resource.collection.clone(),
             filter: Some(key_filter(prepared.resource, key)),
-            changes: to_row(changes, prepared.resource)?,
+            changes: to_row(changes, &prepared.writable_fields())?,
         };
 
-        self.execute_mutation(&prepared, &spec, resource_name).await
+        dispatch(&prepared, &spec, resource_name, &RowBudget::OneRecord).await
     }
 
     /// Deletes one record by key.
@@ -88,31 +98,6 @@ impl DataApiService {
             filter: Some(key_filter(prepared.resource, key)),
         };
 
-        self.execute_mutation(&prepared, &spec, resource_name).await
-    }
-
-    /// Applies tenant scoping and dispatches a write.
-    async fn execute_mutation(
-        &self,
-        prepared: &Prepared<'_>,
-        spec: &MutationSpec,
-        resource_name: &LogicalResourceName,
-    ) -> Result<WriteResponse, DataApiError> {
-        let target = &prepared.resolved.target;
-
-        logging::operation_dispatched(
-            resource_name,
-            &prepared.resource.data_source,
-            spec.operation_name(),
-            target,
-        );
-
-        // `for_target` scopes the predicate and stamps the tenant discriminator
-        // onto written rows. Every write goes through it.
-        let scoped = spec.for_target(target);
-
-        let outcome = prepared.connector.mutate(target, &scoped).await?;
-
-        Ok(WriteResponse::from_outcome(&outcome, &prepared.visible_fields()))
+        dispatch(&prepared, &spec, resource_name, &RowBudget::OneRecord).await
     }
 }

@@ -29,16 +29,6 @@ const fn default_http_connect_timeout_seconds() -> u64 {
     5
 }
 
-/// Matches `ndc-postgres` named dynamic connections.
-fn default_connection_name_argument() -> String {
-    "connection_name".to_owned()
-}
-
-/// Matches `ndc-postgres` dynamic connection strings.
-fn default_connection_string_argument() -> String {
-    "connection_string".to_owned()
-}
-
 /// One connector instance's configuration.
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -95,16 +85,27 @@ pub struct NdcConnectorConfig {
     /// The request-level argument carrying a named connection.
     ///
     /// Configurable because the argument name is the connector's to choose —
-    /// nothing in the specification fixes it.
-    #[serde(default = "default_connection_name_argument")]
-    pub connection_name_argument: String,
+    /// nothing in the specification fixes it. `ndc-postgres` uses
+    /// `connection_name`.
+    ///
+    /// `None` — the default — says this connector is **not** used for name
+    /// routing, and a tenant that asks for it is refused rather than quietly
+    /// sent somewhere. Naming an argument is the opposite statement, and one
+    /// the platform then holds the connector to at startup: see
+    /// `registration::routing_arguments` for why the configuration, rather
+    /// than any tenant, is what that check can read.
+    #[serde(default)]
+    pub connection_name_argument: Option<String>,
 
     /// The request-level argument carrying a full connection string.
     ///
     /// Used only for [`ConnectionSelector::Secret`](fabric_connector::ConnectionSelector).
     /// The value is a credential and never appears in telemetry.
-    #[serde(default = "default_connection_string_argument")]
-    pub connection_string_argument: String,
+    ///
+    /// Optional on the same terms as [`Self::connection_name_argument`], and
+    /// checked the same way.
+    #[serde(default)]
+    pub connection_string_argument: Option<String>,
 
     /// How each collection's writes map onto connector procedures.
     ///
@@ -124,14 +125,19 @@ impl NdcConnectorConfig {
 #[cfg(test)]
 impl NdcConnectorConfig {
     /// A minimal valid configuration, for tests anywhere in this crate.
+    ///
+    /// Names both routing arguments, because most tests in this crate care
+    /// about what happens once routing is configured. Tests about the
+    /// *unconfigured* case set them back to `None` explicitly, so that case
+    /// reads as the deliberate subject of the test rather than a default.
     pub(crate) fn for_test(procedures: BTreeMap<String, CollectionProcedures>) -> Self {
         Self {
             id: ConnectorId::try_new("postgres").unwrap(),
             endpoint: "http://connector:8080".to_owned(),
             http_timeout_seconds: default_http_timeout_seconds(),
             http_connect_timeout_seconds: default_http_connect_timeout_seconds(),
-            connection_name_argument: default_connection_name_argument(),
-            connection_string_argument: default_connection_string_argument(),
+            connection_name_argument: Some("connection_name".to_owned()),
+            connection_string_argument: Some("connection_string".to_owned()),
             procedures,
         }
     }

@@ -71,10 +71,11 @@ impl DataApiService {
     ///    catalogue. Step 3's reasoning one layer down: an unauthorised caller
     ///    must not learn where a tenant is placed, and an authorised one must
     ///    still be told the placement refuses writes.
-    /// 6. **Connector.** Looked up by the id the DataSource named. Last because
-    ///    it alone can fail for reasons outside this request — a connector still
-    ///    negotiating startup (§35) — which a caller should not meet until
-    ///    everything about the request itself has been accepted.
+    /// 6. **Connector.** Looked up by the id the DataSource named, its failure
+    ///    attributed to `operation` because that is what decides whether the
+    ///    caller is told to retry (`errors::connector_mapping`). Last because it
+    ///    alone can fail for reasons outside this request — a connector still
+    ///    negotiating startup (§35).
     ///
     /// # What must not happen before this runs
     ///
@@ -135,12 +136,14 @@ impl DataApiService {
             });
         }
 
-        let connector = Arc::clone(self.connectors.get(resolved.target.connector())?);
+        let lookup = self.connectors.get(resolved.target.connector());
+        let connector = lookup.map_err(|error| DataApiError::connector(error, operation))?;
 
         Ok(Prepared {
             resource,
             resolved,
-            connector,
+            connector: Arc::clone(connector),
+            operation,
         })
     }
 }

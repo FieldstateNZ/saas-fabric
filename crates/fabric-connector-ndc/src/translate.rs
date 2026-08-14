@@ -36,6 +36,7 @@ mod membership_tests;
 mod mutation;
 #[cfg(test)]
 mod mutation_tests;
+mod null_check;
 mod procedure_arguments;
 mod query;
 #[cfg(test)]

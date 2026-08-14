@@ -31,8 +31,11 @@ Three parts:
 
 1. `fabric-connector` defines a **neutral** `DataConnector` trait and a neutral
    logical operation model. No NDC type appears anywhere in it.
-2. `fabric-connector-ndc` implements that trait by speaking NDC v0.2.13 over
-   HTTP, using **hand-written wire types**.
+2. `fabric-connector-ndc` implements that trait by speaking NDC over HTTP,
+   using **hand-written wire types**. Those types were read from the v0.2.13
+   specification; the *floor* the client requires is 0.2.4, the version that
+   introduced the request-level arguments per-tenant routing depends on. The
+   two numbers are different on purpose — see the risk note below.
 3. Connector processes (for example `ndc-postgres`) are deployed alongside the
    runtime and consumed over the network. They are never linked into our binary.
 
@@ -157,9 +160,30 @@ placing the assembled string in a tracing field).
   reconciliation applies it to the connector. That does not move the mechanism
   back into this process, but it does mean a reviewer asking "does §22 hold for
   `shared-postgres-02`?" has one object to look at.
-- **We own our wire types.** They can drift from the specification. Mitigated by
-  pinning to 0.2.13, asserting the negotiated version against
-  `/capabilities` at startup, and keeping the implemented subset small.
+- **We own our wire types.** They can drift from the specification. Mitigated
+  by asserting the negotiated version at startup and keeping the implemented
+  subset small.
+
+  The first version of this said "mitigated by pinning to 0.2.13", and the
+  pin was doing less than it sounded like. `check_version` accepted any
+  matching major *and minor*, so every 0.2.x connector passed — including
+  0.2.0 through 0.2.3, which predate the request-level arguments that carry
+  per-tenant routing. `ndc-models` sets `deny_unknown_fields` nowhere, so such
+  a connector silently ignores the routing argument and serves every tenant
+  from one database. `ndc-postgres` v3.1.0 pins `ndc-models` at v0.2.4, so the
+  one connector we can actually check reported nine patches below the "pin"
+  and was accepted with a warning.
+
+  0.2.x adds protocol surface at patch level throughout — 0.2.4 request-level
+  arguments, 0.2.6 the `Interval` scalar, 0.2.8 `from_type` on casts — so
+  "the wire format is stable within a minor version" was simply false, and it
+  was written in the rustdoc as a justification.
+
+  The client now requires **0.2.4 or newer** and advertises exactly that in
+  `X-Hasura-NDC-Version`. `versioning.md` asks a client to send the minimum
+  non-breaking version it needs, and a connector reads the header as the
+  semver range `^{value}` — so floor and header being one constant is what
+  makes the range we advertise the range we actually accept.
 - **An extra network hop** per data operation. Acceptable: the connector sits
   next to the database, and pushing the whole operation down means one hop, not
   one per row.

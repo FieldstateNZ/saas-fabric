@@ -17,20 +17,26 @@ pub(crate) fn connector_ready(connector: &str, version: &str, collections: usize
     );
 }
 
-/// The connector implements a different specification version than this client.
+/// The connector implements a later patch version than this client requires.
 ///
-/// Warning rather than error for a patch difference: the wire format is stable
-/// within a minor version, and refusing to start over a patch mismatch would be
-/// needlessly brittle. A minor or major difference is rejected at startup
-/// instead — see `registration`.
-pub(crate) fn version_patch_mismatch(connector: &str, connector_version: &str, client_version: &str) {
+/// Warning rather than error, because a connector *ahead* of our floor is
+/// compatible: additions at patch level are gated behind capabilities this
+/// client does not claim. The drift is still worth an operator's attention,
+/// which is what this line is for.
+///
+/// Note the asymmetry, which is the whole point of the floor: a connector
+/// *behind* the floor never reaches this line. It is rejected at startup,
+/// because the wire format is not stable within a minor version and 0.2.4
+/// added the request-level arguments every tenant's routing rides on — see
+/// `registration::version`.
+pub(crate) fn version_ahead_of_floor(connector: &str, connector_version: &str, minimum_version: &str) {
     tracing::warn!(
-        event = "ndc.version_patch_mismatch",
+        event = "ndc.version_ahead_of_floor",
         event_id = event_id(DOMAIN_ID, EventType::Warning, 1),
         connector,
         connector_version,
-        client_version,
-        "connector implements a different NDC patch version; continuing"
+        minimum_version,
+        "connector implements a later NDC patch version than this client requires; continuing"
     );
 }
 

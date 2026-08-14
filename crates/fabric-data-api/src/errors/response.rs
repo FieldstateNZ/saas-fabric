@@ -2,9 +2,11 @@
 
 use axum::response::{IntoResponse, Response};
 use axum::Json;
-use fabric_connector::ConnectorError;
 use fabric_tenant_runtime::ResolveError;
+use http::header::RETRY_AFTER;
+use http::HeaderValue;
 
+use crate::errors::connector_mapping::{self, PublicMessage};
 use crate::{logging, request_id, DataApiError};
 
 impl DataApiError {
@@ -13,6 +15,11 @@ impl DataApiError {
     /// Internal failures collapse to a fixed string. The detail is not lost —
     /// it goes to the log with the trace id — but it does not travel to an
     /// application that has no use for it and should not learn it.
+    ///
+    /// *Which* fixed string is not always "internal error". A failure raised
+    /// while a mutation was in flight says what is known about whether the
+    /// mutation happened, because a caller who guesses that wrong either
+    /// duplicates a write or loses one. `connector_mapping` decides.
     pub(crate) fn public_message(&self) -> String {
         match self {
             Self::Resolve(ResolveError::RuntimeUnavailable) => {
@@ -33,24 +40,34 @@ impl DataApiError {
                 | ResolveError::IsolationNotEnforceable { .. },
             ) => "internal error".to_owned(),
 
-            // The connector's own text can name tables, schemas and servers.
-            Self::Connector(error) if error.is_internal() => "internal error".to_owned(),
+            // Connector text can name tables, schemas and servers, so what a
+            // caller is told is decided by the same table that decides the
+            // status — see `errors::connector_mapping`. Two things it settles
+            // that are easy to get wrong: a write whose outcome is unknown must
+            // not be told the request failed, and a write that provably landed
+            // must not be told to retry.
+            Self::Connector { error, operation } => {
+                match connector_mapping::answer(error, *operation).message {
+                    PublicMessage::Fixed(message) => message.to_owned(),
 
-            // The one arm that repeats anything a connector said — and what it
-            // repeats is a `&'static str` chosen from `UnsupportedFeature`'s
-            // closed set, so there are no connector-supplied bytes here to
-            // leak. This used to be an allowlist in this crate, because
-            // `feature` was a `String` and the producing side could not be
-            // trusted with it; the type carries that guarantee now, and the
-            // allowlist was deleted rather than left looking load-bearing.
-            //
-            // The refusal's `detail` — the collection, field, or procedure it
-            // was raised over — is not readable from here even by mistake:
-            // `RefusalDetail` has no `Display`. It is recorded below.
-            Self::Connector(ConnectorError::Unsupported { feature, .. }) => {
-                format!("this operation is not supported: {feature}")
+                    // The one message that repeats anything a connector said —
+                    // and it repeats a `&'static str` from
+                    // `UnsupportedFeature`'s closed set, so there are no
+                    // connector-supplied bytes here to leak. This used to be an
+                    // allowlist in this crate, because `feature` was a `String`
+                    // and the producing side could not be trusted with it; the
+                    // type carries that guarantee now, and the allowlist was
+                    // deleted rather than left looking load-bearing.
+                    //
+                    // The refusal's `detail` — the collection, field, or
+                    // procedure it was raised over — is not readable from here
+                    // even by mistake: `RefusalDetail` has no `Display`. It is
+                    // recorded below.
+                    PublicMessage::Unsupported(feature) => {
+                        format!("this operation is not supported: {feature}")
+                    }
+                }
             }
-            Self::Connector(_) => "the request could not be executed".to_owned(),
 
             other => other.to_string(),
         }
@@ -90,7 +107,7 @@ impl IntoResponse for DataApiError {
             //
             // Below the 5xx arm, so a connector error that is a 5xx keeps its
             // existing event and is never recorded twice.
-            Self::Connector(error) => {
+            Self::Connector { error, .. } => {
                 logging::connector_refused(self.code(), &error.operator_message(), &id);
             }
             _ => {}
@@ -107,6 +124,17 @@ impl IntoResponse for DataApiError {
             }
         });
 
-        (status, Json(body)).into_response()
+        let mut response = (status, Json(body)).into_response();
+
+        // Only where the platform is genuinely inviting a retry. Its absence is
+        // as load-bearing as its presence: a write whose outcome is unknown
+        // must not carry one, because the platform cannot make that retry safe.
+        if let Some(seconds) = self.retry_after() {
+            response
+                .headers_mut()
+                .insert(RETRY_AFTER, HeaderValue::from(seconds));
+        }
+
+        response
     }
 }

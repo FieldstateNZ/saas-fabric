@@ -3,9 +3,10 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use fabric_connector::{ConnectionName, ConnectionSelector, ConnectorId, SecretRef};
+use fabric_connector::ConnectorId;
 use fabric_core::DataSourceId;
 
+use crate::data_source::destination::{destination, Destination};
 use crate::DataSource;
 
 /// For each DataSource, the others that select the same connector *and* the
@@ -37,29 +38,22 @@ use crate::DataSource;
 ///
 /// Equality of the selector, never of the destination behind it. Two distinct
 /// [`ConnectionSelector::Named`] values pointing at one database, or two
-/// [`SecretRef`]s resolving to one credential, look like two destinations from
-/// here. The connector knows better and the runtime never asks it — §6 keeps
-/// the request path out of the control plane, and a connector round trip on
-/// every resolution is exactly what that rule forbids.
+/// secret references that a store resolves to one credential by aliasing, look
+/// like two destinations from here. The connector knows better and the runtime
+/// never asks it — §6 keeps the request path out of the control plane, and a
+/// connector round trip on every resolution is exactly what that rule forbids.
+///
+/// One case that *reads* like that limit is not: two secret references a
+/// **resolver's own mapping** flattens into one. That is decidable from this
+/// snapshot with a string comparison, so the private `Destination` key in
+/// `data_source/destination.rs` decides it rather than leaving it to the limit
+/// above — see that type for the argument and for what it still cannot reach.
+///
+/// [`ConnectionSelector::Default`]: fabric_connector::ConnectionSelector::Default
+/// [`ConnectionSelector::Named`]: fabric_connector::ConnectionSelector::Named
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct DestinationReuse {
     peers: HashMap<DataSourceId, Vec<DataSourceId>>,
-}
-
-/// One physical destination, as far as configuration can express it.
-///
-/// Borrowed rather than owned so deriving the fact allocates nothing per
-/// DataSource. A private enum rather than a formatted string because a string
-/// key would have to invent a separator no identifier could contain, and a
-/// collision here means refusing a tenant that was fine.
-#[derive(PartialEq, Eq, Hash)]
-enum Destination<'a> {
-    /// The connector's single configured connection.
-    Default,
-    /// A connection the connector holds configuration for.
-    Named(&'a ConnectionName),
-    /// A connection built from a resolved credential.
-    Secret(&'a SecretRef),
 }
 
 impl DestinationReuse {
@@ -103,14 +97,5 @@ impl DestinationReuse {
     #[must_use]
     pub fn peers(&self, data_source: &DataSourceId) -> &[DataSourceId] {
         self.peers.get(data_source).map_or(&[], Vec::as_slice)
-    }
-}
-
-/// Reduces a selector to the destination it names.
-const fn destination(selector: &ConnectionSelector) -> Destination<'_> {
-    match selector {
-        ConnectionSelector::Default => Destination::Default,
-        ConnectionSelector::Named { name } => Destination::Named(name),
-        ConnectionSelector::Secret { reference } => Destination::Secret(reference),
     }
 }

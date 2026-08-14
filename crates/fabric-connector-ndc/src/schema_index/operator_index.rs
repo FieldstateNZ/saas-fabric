@@ -4,34 +4,54 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use fabric_connector::ComparisonOperator;
 
-use crate::schema_index::SemanticOperator;
-use crate::wire::NdcSchemaResponse;
+use crate::schema_index::{OperatorFit, SemanticOperator};
+use crate::wire::{NdcScalarType, NdcSchemaResponse};
 
 /// Scalar type name → semantic → the connector's name for it.
 pub(super) type OperatorIndex = BTreeMap<String, BTreeMap<SemanticOperator, String>>;
 
 /// Builds the operator index from a connector's schema.
-///
-/// Where a scalar declares two names with the same meaning, the first in name
-/// order wins. Deterministic beats arbitrary: the generated query should not
-/// change between restarts.
 pub(super) fn build(schema: &NdcSchemaResponse) -> OperatorIndex {
     schema
         .scalar_types
         .iter()
-        .map(|(scalar_name, scalar)| {
-            let mut by_semantic = BTreeMap::new();
+        .map(|(scalar_name, scalar)| (scalar_name.clone(), best_names(scalar)))
+        .collect()
+}
 
-            for (operator_name, definition) in &scalar.comparison_operators {
-                if let Some(semantic) = SemanticOperator::from_definition(definition) {
-                    by_semantic
-                        .entry(semantic)
-                        .or_insert_with(|| operator_name.clone());
-                }
-            }
+/// Picks one operator name per semantic for a scalar type, preferring the
+/// operator that means exactly what was asked for.
+///
+/// Two tie-breaks, in this order:
+///
+/// 1. **Fit.** An [`OperatorFit::Exact`] definition always displaces a
+///    [`OperatorFit::Widened`] one. This is the rule that matters: `contains`
+///    and `contains_insensitive` both answer to
+///    [`SemanticOperator::Contains`], and without it whichever sorted first
+///    won — so `_ilike` beat `_like` alphabetically and a caller asking for
+///    containment got the case-insensitive predicate instead.
+/// 2. **Name order.** Between two definitions of equal fit, the first in name
+///    order wins. Deterministic beats arbitrary: the generated query should
+///    not change between restarts.
+fn best_names(scalar: &NdcScalarType) -> BTreeMap<SemanticOperator, String> {
+    let mut best: BTreeMap<SemanticOperator, (OperatorFit, String)> = BTreeMap::new();
 
-            (scalar_name.clone(), by_semantic)
-        })
+    for (operator_name, definition) in &scalar.comparison_operators {
+        let Some((semantic, fit)) = SemanticOperator::from_definition(definition) else {
+            continue;
+        };
+
+        let improves = best
+            .get(&semantic)
+            .is_none_or(|(kept, _)| *kept == OperatorFit::Widened && fit == OperatorFit::Exact);
+
+        if improves {
+            best.insert(semantic, (fit, operator_name.clone()));
+        }
+    }
+
+    best.into_iter()
+        .map(|(semantic, (_, name))| (semantic, name))
         .collect()
 }
 

@@ -5,16 +5,19 @@
 //! [`fabric_api::startup::build`], where it can be read — and tested — on its
 //! own.
 
-use fabric_api::config::AppConfig;
+use fabric_api::config::{AppConfig, CONFIG_PATH_VAR};
 use fabric_api::{startup, telemetry};
 
 #[tokio::main]
 async fn main() -> std::process::ExitCode {
     telemetry::init();
 
+    // `CONFIG_PATH_VAR` rather than a literal: it names the file to load and is
+    // deliberately *not* a setting, which only holds if the constant the
+    // settings namespace is tested against is the one actually read here.
     let path = std::env::args()
         .nth(1)
-        .or_else(|| std::env::var("FABRIC_CONFIG").ok())
+        .or_else(|| std::env::var(CONFIG_PATH_VAR).ok())
         .unwrap_or_else(|| "/etc/fabric/config.toml".to_owned());
 
     match run(&path).await {

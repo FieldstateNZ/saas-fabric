@@ -20,7 +20,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use fabric_connector::{
-    CollectionName, ConnectionSelector, ConnectorId, ExecutionTarget, IsolationModel, QuerySpec,
+    CollectionName, ConnectionSelector, ConnectorId, ExecutionTarget, IsolationModel, QuerySpec, SecretRef,
 };
 use fabric_core::{BindingRevision, LogicalDataSourceName};
 
@@ -64,6 +64,13 @@ fn data_source(id: &str, placement: PlacementClass, connection: ConnectionSelect
 /// A DataSource with a connection of its own, which is the safe default shape.
 fn distinct(id: &str, placement: PlacementClass) -> DataSource {
     data_source(id, placement, connection_for(id))
+}
+
+/// A connection built from a credential resolved at execution time.
+fn secret_connection(reference: &str) -> ConnectionSelector {
+    ConnectionSelector::Secret {
+        reference: SecretRef::new(reference),
+    }
 }
 
 fn registries(
@@ -369,6 +376,233 @@ fn one_tenant_may_hold_two_data_sources_over_one_destination() {
 
     assert!(resolver.resolve_data_source(&tenant("acme"), &primary()).is_ok());
     assert!(resolver.resolve_data_source(&tenant("acme"), &read_only).is_ok());
+}
+
+// -- Secret references a resolver's own mapping flattens together -----------
+
+/// The two references an ordinary `-`/`_` slip in a generated path produces.
+///
+/// `EnvSecretResolver` maps every non-alphanumeric character to `_`, so both of
+/// these are `FABRIC_SECRET_VAULT_PROD_CUSTOMER_DB_01` — one variable, one
+/// connection string, one database.
+const HYPHENATED: &str = "vault/prod/customer-db-01";
+const UNDERSCORED: &str = "vault/prod/customer_db_01";
+
+#[test]
+fn two_data_sources_whose_secret_references_collide_are_one_destination() {
+    // The reported leak, end to end. Both DataSources are `Dedicated`, each
+    // has exactly one tenant, and the two references are different strings —
+    // so co-tenancy saw nothing, reuse saw nothing, and both tenants were
+    // served `Database` isolation over one physical database.
+    let sources = vec![
+        data_source(
+            "acme-dedicated",
+            PlacementClass::Dedicated,
+            secret_connection(HYPHENATED),
+        ),
+        data_source(
+            "globex-dedicated",
+            PlacementClass::Dedicated,
+            secret_connection(UNDERSCORED),
+        ),
+    ];
+    let tenants = vec![
+        tenant_binding("acme", 1, "acme-dedicated"),
+        tenant_binding("globex", 1, "globex-dedicated"),
+    ];
+
+    for name in ["acme", "globex"] {
+        let error = resolve_one(name, tenants.clone(), sources.clone()).unwrap_err();
+
+        assert!(
+            matches!(error, ResolveError::IsolationNotEnforceable { .. }),
+            "{name}: {error:?}"
+        );
+    }
+}
+
+#[test]
+fn the_queries_the_collision_would_have_produced_are_byte_identical() {
+    // Why the refusal is total rather than a warning. Structural isolation
+    // contributes no predicate, so with one credential behind both references
+    // there is nothing whatever separating these two tenants. Targets built by
+    // hand because the resolver will no longer produce them.
+    let query = QuerySpec::new(CollectionName::try_new("customers").unwrap());
+    let target = |name: &str, reference: &str| {
+        ExecutionTarget::new(
+            tenant(name),
+            BindingRevision::new(1),
+            data_source_id(&format!("{name}-dedicated")),
+            BindingRevision::new(1),
+            ConnectorId::try_new("postgres").unwrap(),
+            secret_connection(reference),
+            IsolationModel::Database,
+        )
+    };
+
+    let acme = query.for_target(&target("acme", HYPHENATED));
+    let globex = query.for_target(&target("globex", UNDERSCORED));
+
+    assert_eq!(acme.filter, None, "structural isolation adds no predicate");
+    assert_eq!(acme, globex);
+}
+
+#[test]
+fn distinct_secret_references_still_keep_their_structural_isolation() {
+    // The over-approximation guard. The key folds punctuation and case and
+    // nothing else, so two references naming genuinely different credentials
+    // must still resolve — otherwise the fix would make secret-backed
+    // dedicated databases unusable, which is the arrangement they exist for.
+    for name in ["acme", "globex"] {
+        assert!(
+            resolve_one(
+                name,
+                vec![
+                    tenant_binding("acme", 1, "acme-dedicated"),
+                    tenant_binding("globex", 1, "globex-dedicated"),
+                ],
+                vec![
+                    data_source(
+                        "acme-dedicated",
+                        PlacementClass::Dedicated,
+                        secret_connection("tenant/acme/data-primary"),
+                    ),
+                    data_source(
+                        "globex-dedicated",
+                        PlacementClass::Dedicated,
+                        secret_connection("tenant/globex/data-primary"),
+                    ),
+                ],
+            )
+            .is_ok(),
+            "{name} must keep structural isolation on its own credential"
+        );
+    }
+}
+
+#[test]
+fn one_tenant_may_hold_two_data_sources_whose_references_collide() {
+    // Collision is not itself a refusal, for the same reason plain reuse is
+    // not: one tenant with a writable and a read-only DataSource over its own
+    // database shares that credential with nobody. The check still reads
+    // occupancy per peer.
+    let read_only = LogicalDataSourceName::try_new("reporting").unwrap();
+    let binding = tenant_binding("acme", 1, "acme-rw").with_data(
+        read_only.clone(),
+        TenantDataBinding::new(data_source_id("acme-ro"), IsolationModel::Database),
+    );
+    let sources = vec![
+        data_source(
+            "acme-rw",
+            PlacementClass::Dedicated,
+            secret_connection(HYPHENATED),
+        ),
+        data_source(
+            "acme-ro",
+            PlacementClass::Dedicated,
+            secret_connection(UNDERSCORED),
+        ),
+    ];
+
+    let (tenants, source_registry) = registries(vec![binding], sources);
+    let resolver = RuntimeResolver::new(tenants, source_registry);
+
+    assert!(resolver.resolve_data_source(&tenant("acme"), &primary()).is_ok());
+    assert!(resolver.resolve_data_source(&tenant("acme"), &read_only).is_ok());
+}
+
+#[test]
+fn colliding_secret_references_do_not_disturb_discriminator_isolation() {
+    // Discriminator isolation carries its own predicate, so one credential
+    // behind two references is as safe as one connection behind two names.
+    // Neither rule may narrow it.
+    assert!(resolve_one(
+        "acme",
+        vec![
+            shared_tenant_binding("acme", 1, "pg-a"),
+            shared_tenant_binding("globex", 1, "pg-b"),
+        ],
+        vec![
+            data_source("pg-a", PlacementClass::Shared, secret_connection(HYPHENATED)),
+            data_source("pg-b", PlacementClass::Shared, secret_connection(UNDERSCORED)),
+        ]
+    )
+    .is_ok());
+}
+
+#[test]
+fn a_collision_arriving_on_refresh_closes_the_first_tenants_structural_binding() {
+    // The reconciler that mints the colliding path does so at some later
+    // reconciliation, not at boot. The fact is re-derived when the snapshot
+    // installs, so the first tenant stops being served on the next request.
+    let (tenants, sources) = registries(
+        vec![tenant_binding("acme", 1, "acme-dedicated")],
+        vec![data_source(
+            "acme-dedicated",
+            PlacementClass::Dedicated,
+            secret_connection(HYPHENATED),
+        )],
+    );
+    let resolver = RuntimeResolver::new(Arc::clone(&tenants), Arc::clone(&sources));
+
+    assert!(
+        resolver.resolve_data_source(&tenant("acme"), &primary()).is_ok(),
+        "precondition: acme has its credential to itself"
+    );
+
+    assert!(sources.apply_one(data_source(
+        "globex-dedicated",
+        PlacementClass::Dedicated,
+        secret_connection(UNDERSCORED),
+    )));
+    assert!(tenants.apply_one(tenant_binding("globex", 1, "globex-dedicated")));
+
+    let error = resolver
+        .resolve_data_source(&tenant("acme"), &primary())
+        .unwrap_err();
+
+    assert!(
+        matches!(error, ResolveError::IsolationNotEnforceable { .. }),
+        "acme must stop being served the moment the collision appears: {error:?}"
+    );
+}
+
+#[test]
+fn a_collision_across_two_connectors_is_not_a_collision() {
+    // The destination is the connector *and* the connection. Two connectors
+    // reaching two different servers may legitimately hold credentials whose
+    // references flatten together, and refusing that would be a false
+    // refusal — the key never widens past its own connector.
+    for name in ["acme", "globex"] {
+        let sources = vec![
+            data_source(
+                "acme-dedicated",
+                PlacementClass::Dedicated,
+                secret_connection(HYPHENATED),
+            ),
+            DataSource {
+                connector: ConnectorId::try_new("postgres-elsewhere").unwrap(),
+                ..data_source(
+                    "globex-dedicated",
+                    PlacementClass::Dedicated,
+                    secret_connection(UNDERSCORED),
+                )
+            },
+        ];
+
+        assert!(
+            resolve_one(
+                name,
+                vec![
+                    tenant_binding("acme", 1, "acme-dedicated"),
+                    tenant_binding("globex", 1, "globex-dedicated"),
+                ],
+                sources,
+            )
+            .is_ok(),
+            "{name} is on its own connector"
+        );
+    }
 }
 
 #[test]

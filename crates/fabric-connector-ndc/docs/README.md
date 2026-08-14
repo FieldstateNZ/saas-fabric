@@ -109,6 +109,40 @@ somewhere to put the predicate, the tenant scoping added by
 `MutationSpec::for_target` would silently vanish and the write would reach every
 tenant's rows. This is checked at config validation *and* again at translation.
 
+Naming *an* argument is not enough — it has to be one the procedure actually
+declares. NDC's `ProcedureInfo` carries `arguments: {name → ArgumentInfo{type}}`,
+so `GET /schema` says exactly which names exist and which of them are
+predicate-typed. `registration::procedure_arguments` checks every configured
+`payload_argument` and `filter_argument` against that at startup, because an
+argument a connector never declared is not promised to do anything: a mapping
+saying `filter_argument: "where"` against a procedure declaring `filter` would
+put the tenant predicate somewhere the connector ignores and leave the real
+filter empty, and the delete that follows is unscoped and returns `200`.
+
+An insert or update mapping must also declare `payload_argument`. That one fails
+closed rather than open — every write is refused at translation — but it is
+startup-detectable, and "every write 400s in production" is a bad way to find
+out.
+
+## When a call to a connector fails
+
+The three transport failures this crate reports are **not interchangeable**, and
+which one comes back depends on where in the exchange it broke:
+
+| What happened | Error | Did the write happen? |
+|---|---|---|
+| Connect refused, DNS failure, connect timeout | `Unreachable` | No — nothing was sent |
+| Request sent, no conclusive answer (total timeout after send, reset mid-flight, closed with no status) | `OutcomeUnknown` | Maybe |
+| Success status read, body died mid-stream | `ResultLost` | Yes — only the result was lost |
+
+`reqwest::Error::is_connect()` draws the first line; the response's own status
+draws the second. Collapsing all three into `Unreachable` — which this crate did
+— made a connect refusal indistinguishable from a write that had already
+committed, and a retryable status on the latter tells a client to apply it
+twice. `ConnectorError::effect()` is the API for this; `client/delivery_tests.rs`
+pins each case against a real socket that counts what it applied before
+misbehaving.
+
 ## Timeout ownership
 
 A request passing through this crate is bounded by three separate clocks,

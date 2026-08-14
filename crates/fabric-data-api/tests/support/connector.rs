@@ -112,6 +112,14 @@ impl DataConnector for RecordingConnector {
         Ok(QueryOutcome::from_rows(self.rows.clone()))
     }
 
+    /// Reports having applied everything it was handed.
+    ///
+    /// The count is derived from the spec rather than fixed at 1, because the
+    /// Data API now checks a backend's count against the write it sent. A stub
+    /// that claimed one row for a two-row insert would be modelling a
+    /// *partially applied* batch — which is a real outcome, but one that
+    /// belongs in the tests written for it (`write_outcome`), not in the
+    /// default fixture every other suite builds on.
     async fn mutate(
         &self,
         target: &ExecutionTarget,
@@ -123,7 +131,13 @@ impl DataConnector for RecordingConnector {
             .mutations
             .push((target.clone(), spec.clone()));
 
-        Ok(MutationOutcome::affected(1))
+        let affected = match spec {
+            MutationSpec::Insert { rows, .. } => rows.len() as u64,
+            // Both are keyed by the Data API, so they reach at most one record.
+            MutationSpec::Update { .. } | MutationSpec::Delete { .. } => 1,
+        };
+
+        Ok(MutationOutcome::affected(affected))
     }
 
     async fn health(&self) -> Result<(), ConnectorError> {

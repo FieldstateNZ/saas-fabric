@@ -50,11 +50,15 @@ pub(super) fn translate_membership(
 /// Refuses membership of the empty set.
 ///
 /// The emitted `or[]` was safe in the narrowing direction — it matches nothing,
-/// which is what the predicate means — but it was the one path through this
-/// module that reached the wire without a single schema lookup, so it happily
-/// filtered on a column the connector does not have. That contradicts the
-/// module's own fail-closed rule, and a rule with one silent exception is the
-/// kind that erodes.
+/// which is what the predicate means — but it reached the wire without a single
+/// schema lookup, so it happily filtered on a column the connector does not
+/// have. That contradicts the translation layer's own fail-closed rule, and a
+/// rule with a silent exception is the kind that erodes.
+///
+/// It was not the *only* such path, as this comment previously claimed:
+/// `Filter::IsNull` had the same hole, and closing one while leaving the other
+/// open is how a rule ends up meaning less than it says. Both now check —
+/// see [`null_check`](super::expression) for the other half.
 ///
 /// It is also a caller mistake worth naming rather than satisfying: nothing
 /// upstream constructs an empty `In` deliberately, so one arriving here means

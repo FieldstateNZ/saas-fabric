@@ -15,6 +15,8 @@
 )]
 
 mod connector;
+mod connector_failures;
+mod counting_connector;
 mod delayed_connector;
 mod fixtures;
 mod requests;
@@ -22,6 +24,8 @@ mod scripted_connector;
 mod tracing_capture;
 
 pub use connector::RecordingConnector;
+pub use connector_failures::{malformed_response, outcome_unknown, rejected, result_lost, unreachable};
+pub use counting_connector::CountingConnector;
 pub use delayed_connector::DelayedConnector;
 pub use fixtures::{
     acme_data_source, catalog, data_sources, discriminator_data_source, draining_data_source, field,

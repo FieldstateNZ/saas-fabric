@@ -41,14 +41,20 @@ use crate::{DataSourceRegistry, TenantRegistry};
 /// # What neither fact can see
 ///
 /// Configuration only. Two [`ConnectionSelector::Named`] values reaching one
-/// database, two [`SecretRef`]s resolving to one credential, or a connector
-/// whose default connection is the server another named connection points at,
-/// all read as distinct destinations here. Closing those would mean asking a
-/// connector on the request path, which §6 forbids for the sound reason that it
-/// turns a control-plane outage into a data-plane one.
+/// database, two [`SecretRef`]s a secret store *aliases* onto one credential,
+/// or a connector whose default connection is the server another named
+/// connection points at, all read as distinct destinations here. Closing those
+/// would mean asking a connector on the request path, which §6 forbids for the
+/// sound reason that it turns a control-plane outage into a data-plane one.
+///
+/// Two [`SecretRef`]s that one *resolver's own mapping* flattens together are
+/// not in that category, and are not missed: they need no round trip to spot,
+/// so [`DestinationReuse`](crate::DestinationReuse) compares them on
+/// [`SecretRef::distinctness_key`] and reports them as one destination.
 ///
 /// [`ConnectionSelector::Named`]: fabric_connector::ConnectionSelector::Named
 /// [`SecretRef`]: fabric_connector::SecretRef
+/// [`SecretRef::distinctness_key`]: fabric_connector::SecretRef::distinctness_key
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Exclusivity {
     /// No other tenant the runtime can see reaches this destination.

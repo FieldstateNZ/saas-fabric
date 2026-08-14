@@ -4,7 +4,8 @@ use std::collections::BTreeSet;
 
 use fabric_connector::{CollectionName, ComparisonOperator, ConnectorSchema, FieldName};
 
-use crate::schema_index::{collection_index, operator_index, SemanticOperator};
+use crate::schema_index::procedure_index::{self, ProcedureIndex};
+use crate::schema_index::{collection_index, operator_index, ArgumentKind, SemanticOperator};
 use crate::wire::NdcSchemaResponse;
 
 /// A connector's schema, indexed for the two lookups the request path needs:
@@ -25,7 +26,7 @@ use crate::wire::NdcSchemaResponse;
 pub struct SchemaIndex {
     collections: collection_index::CollectionIndex,
     operators: operator_index::OperatorIndex,
-    procedures: BTreeSet<String>,
+    procedures: ProcedureIndex,
     neutral: ConnectorSchema,
     supported: BTreeSet<ComparisonOperator>,
 }
@@ -39,7 +40,7 @@ impl SchemaIndex {
         Self {
             neutral: collection_index::to_neutral_schema(&collections),
             supported: operator_index::supported_neutral_operators(&operators),
-            procedures: schema.procedures.iter().map(|p| p.name.clone()).collect(),
+            procedures: procedure_index::build(schema),
             collections,
             operators,
         }
@@ -60,13 +61,50 @@ impl SchemaIndex {
     /// Whether the connector exposes a procedure by this name.
     #[must_use]
     pub fn has_procedure(&self, name: &str) -> bool {
-        self.procedures.contains(name)
+        self.procedures.contains_key(name)
+    }
+
+    /// What kind of value a procedure's argument is declared to carry.
+    ///
+    /// `None` covers both "no such procedure" and "no such argument on it", and
+    /// the caller treats them the same way: a configured argument name that
+    /// resolves to nothing is refused. The two are told apart for the operator
+    /// by [`Self::declared_arguments`], not by this return type.
+    #[must_use]
+    pub fn procedure_argument(&self, procedure: &str, argument: &str) -> Option<ArgumentKind> {
+        self.procedures.get(procedure)?.get(argument).copied()
+    }
+
+    /// Every argument name a procedure declares, for an error message that can
+    /// tell an operator what to write instead.
+    #[must_use]
+    pub fn declared_arguments(&self, procedure: &str) -> Vec<&str> {
+        self.procedures
+            .get(procedure)
+            .map(|arguments| arguments.keys().map(String::as_str).collect())
+            .unwrap_or_default()
+    }
+
+    /// Whether the connector's schema declares this field on this collection.
+    ///
+    /// Existence on its own, without asking what the field's type permits.
+    /// `is_null` is NDC's one core unary operator and applies whatever the
+    /// field's type is — including an array, which has no scalar type and so
+    /// no operators at all — so a null test needs this and not
+    /// [`Self::operator_name`].
+    #[must_use]
+    pub fn has_field(&self, collection: &CollectionName, field: &FieldName) -> bool {
+        self.collections
+            .get(collection.as_str())
+            .is_some_and(|fields| fields.contains_key(field.as_str()))
     }
 
     /// This connector's name for a semantic operator on a given field.
     ///
-    /// Returns `None` when the collection or field is unknown, or when the
-    /// field's scalar type declares no operator with that meaning.
+    /// Returns `None` when the collection or field is unknown, when the field
+    /// has no scalar type at all — an array or predicate-typed column — or
+    /// when its scalar type declares no operator with that meaning. All four
+    /// are refusals rather than approximations.
     #[must_use]
     pub fn operator_name(
         &self,
@@ -74,7 +112,11 @@ impl SchemaIndex {
         field: &FieldName,
         semantic: SemanticOperator,
     ) -> Option<&str> {
-        let scalar = self.collections.get(collection.as_str())?.get(field.as_str())?;
+        let scalar = self
+            .collections
+            .get(collection.as_str())?
+            .get(field.as_str())?
+            .as_ref()?;
 
         self.operators.get(scalar)?.get(&semantic).map(String::as_str)
     }

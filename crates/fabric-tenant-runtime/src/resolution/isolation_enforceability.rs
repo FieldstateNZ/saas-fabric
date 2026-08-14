@@ -49,13 +49,15 @@ use crate::{DataSource, ResolveError};
 ///
 /// [`Exclusivity`] sets out the limits in full; the short version is that the
 /// runtime compares *configuration*, never infrastructure. Two differently
-/// named connections reaching one database, or two secret references resolving
-/// to one credential, are indistinguishable from two databases here, and
-/// asking a connector would put a control-plane round trip on the request path
-/// that §6 forbids. Structural isolation therefore still rests on the operator
-/// wiring distinct connections to distinct places; what has changed is that
-/// every way of getting that wrong *within configuration* is now refused
-/// rather than served silently.
+/// named connections reaching one database, or two secret references a store
+/// aliases onto one credential, are indistinguishable from two databases here,
+/// and asking a connector would put a control-plane round trip on the request
+/// path that §6 forbids. Structural isolation therefore still rests on the
+/// operator wiring distinct connections to distinct places; what has changed is
+/// that every way of getting that wrong *within configuration* is now refused
+/// rather than served silently — including two secret references that differ
+/// only in case or punctuation, which a resolver's own projection can flatten
+/// into one credential without anything reaching for the network to notice.
 ///
 /// # Errors
 ///

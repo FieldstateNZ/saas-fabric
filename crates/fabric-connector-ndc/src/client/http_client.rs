@@ -6,9 +6,9 @@ use fabric_connector::{ConnectorError, ConnectorId};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 
-use crate::client::error_mapping::unreachable;
+use crate::client::error_mapping::transport_failure;
 use crate::client::response_decoding::decode;
-use crate::{NdcConnectorConfig, NDC_VERSION, NDC_VERSION_HEADER};
+use crate::{NdcConnectorConfig, NDC_MINIMUM_VERSION, NDC_VERSION_HEADER};
 
 /// Talks to one NDC connector over HTTP.
 ///
@@ -68,7 +68,7 @@ impl NdcHttpClient {
             .request(reqwest::Method::GET, path)
             .send()
             .await
-            .map_err(|error| unreachable(&self.connector, error))?;
+            .map_err(|error| transport_failure(&self.connector, error))?;
 
         decode(&self.connector, response).await
     }
@@ -88,7 +88,7 @@ impl NdcHttpClient {
             .json(body)
             .send()
             .await
-            .map_err(|error| unreachable(&self.connector, error))?;
+            .map_err(|error| transport_failure(&self.connector, error))?;
 
         decode(&self.connector, response).await
     }
@@ -103,7 +103,7 @@ impl NdcHttpClient {
             .request(reqwest::Method::GET, "/health")
             .send()
             .await
-            .map_err(|error| unreachable(&self.connector, error))?;
+            .map_err(|error| transport_failure(&self.connector, error))?;
 
         if response.status().is_success() {
             return Ok(());
@@ -115,10 +115,16 @@ impl NdcHttpClient {
         })
     }
 
-    /// Starts a request carrying the negotiated protocol version.
+    /// Starts a request carrying the protocol version this client requires.
+    ///
+    /// The header value is the *minimum* version, not the newest one whose
+    /// wire format was read — see [`NDC_MINIMUM_VERSION`]. Per `versioning.md`
+    /// a connector reads this as the semver range `^{value}` and may refuse
+    /// the request if it cannot meet it, so sending a higher number than this
+    /// client genuinely needs would turn compatible connectors away.
     fn request(&self, method: reqwest::Method, path: &str) -> reqwest::RequestBuilder {
         self.http
             .request(method, format!("{}{path}", self.endpoint))
-            .header(NDC_VERSION_HEADER, NDC_VERSION)
+            .header(NDC_VERSION_HEADER, NDC_MINIMUM_VERSION)
     }
 }

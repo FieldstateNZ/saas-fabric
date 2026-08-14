@@ -22,9 +22,16 @@ fn index() -> SchemaIndex {
             }}},
             "collections": [{"name": "customers", "type": "customers"}],
             "procedures": [
-                {"name": "insert_customers"},
-                {"name": "update_customers"},
-                {"name": "delete_customers"}
+                {"name": "insert_customers", "arguments": {
+                    "objects": {"type": {"type": "array", "element_type": {"type": "named", "name": "customers"}}}
+                }},
+                {"name": "update_customers", "arguments": {
+                    "update_columns": {"type": {"type": "named", "name": "customers"}},
+                    "filter": {"type": {"type": "predicate", "object_type_name": "customers"}}
+                }},
+                {"name": "delete_customers", "arguments": {
+                    "filter": {"type": {"type": "predicate", "object_type_name": "customers"}}
+                }}
             ]
         }"#,
     )
@@ -240,6 +247,47 @@ fn a_delete_that_arrives_without_a_predicate_is_refused() {
 
     assert!(matches!(
         to_mutation_request(&spec, None, &config, &index()).unwrap_err(),
+        ConnectorError::InvalidOperation(_)
+    ));
+}
+
+#[test]
+fn a_filter_argument_the_procedure_never_declares_is_refused_at_translation_too() {
+    // Startup validation refuses this as well. Both checks are deliberate: the
+    // predicate would otherwise go out under a name the procedure never
+    // declared, and a connector that ignores unknown arguments would run the
+    // delete against every tenant's rows.
+    let config = config_with(CollectionProcedures {
+        delete: Some(ProcedureBinding {
+            filter_argument: Some("where".to_owned()),
+            ..delete_binding()
+        }),
+        ..CollectionProcedures::default()
+    });
+
+    let spec = MutationSpec::Delete {
+        collection: collection(),
+        filter: Some(tenant_predicate()),
+    };
+
+    assert!(matches!(
+        to_mutation_request(&spec, None, &config, &index()).unwrap_err(),
+        ConnectorError::InvalidOperation(_)
+    ));
+}
+
+#[test]
+fn a_filter_argument_naming_a_non_predicate_argument_is_refused() {
+    // `update_columns` exists on the procedure, so a name-only check passes
+    // this. It is typed as an object, and a predicate sent there is inert.
+    let config = update_config(ProcedureBinding {
+        payload_argument: Some("filter".to_owned()),
+        filter_argument: Some("update_columns".to_owned()),
+        ..update_binding()
+    });
+
+    assert!(matches!(
+        to_mutation_request(&update_spec(), None, &config, &index()).unwrap_err(),
         ConnectorError::InvalidOperation(_)
     ));
 }

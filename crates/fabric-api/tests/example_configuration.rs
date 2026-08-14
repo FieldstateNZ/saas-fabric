@@ -30,7 +30,7 @@ fn the_example_configuration_uses_the_canonical_identity_posture() {
     // The example is what people copy, so it must demonstrate the architecture
     // rather than an opt-in hardening mode. See ADR 0002.
     assert!(
-        matches!(config().token, TokenConfig::TrustedIngress),
+        matches!(config().token, TokenConfig::TrustedIngress {}),
         "the example config must ship the canonical trusted-ingress posture"
     );
 }

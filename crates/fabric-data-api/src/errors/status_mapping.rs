@@ -1,10 +1,18 @@
 //! Which status code, and which stable machine code, each failure carries.
 
-use fabric_connector::ConnectorError;
 use fabric_tenant_runtime::ResolveError;
 use http::StatusCode;
 
+use crate::errors::connector_mapping;
 use crate::DataApiError;
+
+/// How long a caller is told to wait before repeating a request.
+///
+/// Deliberately one coarse constant rather than a configuration knob: it is a
+/// hint, not a contract, and every client worth the name jitters it. Five
+/// seconds is long enough that a connector mid-restart (§35) or a runtime still
+/// priming has usually finished, and short enough not to look like a failure.
+const RETRY_AFTER_SECONDS: u32 = 5;
 
 impl DataApiError {
     /// The status code the caller sees.
@@ -42,43 +50,51 @@ impl DataApiError {
             Self::Resolve(ResolveError::IsolationNotEnforceable { .. }) => StatusCode::INTERNAL_SERVER_ERROR,
 
             Self::UnknownResource(_) | Self::NotFound => StatusCode::NOT_FOUND,
+
+            // A write the backend only partly applied. 5xx, not 4xx: nothing
+            // the caller sent was wrong. 500, not 503: the state is already
+            // inconsistent and a retry would re-send rows that did apply, so
+            // this must not be advertised as transient. `code()` gives it its
+            // own machine code so a client can tell it from the retryable
+            // failures rather than inferring from the status.
+            Self::PartiallyApplied { .. } => StatusCode::INTERNAL_SERVER_ERROR,
             Self::OperationNotAllowed { .. } | Self::ResourceIsReadOnly { .. } => {
                 StatusCode::METHOD_NOT_ALLOWED
             }
             Self::Forbidden { .. } => StatusCode::FORBIDDEN,
             Self::BadRequest(_) => StatusCode::BAD_REQUEST,
 
-            // A connector we could not reach is not a defect in this process,
-            // and 500 tells the caller the wrong thing about it: 500 says
-            // "something here is broken, retrying will not help", when in
-            // fact the connector may be mid-restart and the very next attempt
-            // may succeed. 503 says exactly that, and is the status every
-            // client library, load balancer, and retry policy already treats
-            // as transient. §35 makes this a routine state rather than an
-            // exceptional one — a connector that failed startup negotiation
-            // stays registered and keeps being retried in the background —
-            // so the status a caller sees during that window should be the
-            // retryable one.
-            //
-            // It also matches `ResolveError::RuntimeUnavailable` above, which
-            // is the same shape of problem one layer up: the platform is
-            // temporarily unable to serve, not wrong.
-            Self::Connector(ConnectorError::Unreachable { .. }) => StatusCode::SERVICE_UNAVAILABLE,
-
-            // The rest of `is_internal` stays 500, and the distinction is
-            // deliberate. A malformed response or an unexpected rejection
-            // means the connector answered but not in a way we can act on —
-            // a version skew, a misconfiguration, a bug. Retrying that
-            // reproduces it, so advertising it as transient would send
-            // clients into a pointless loop against a fault only an operator
-            // can clear.
-            Self::Connector(error) if error.is_internal() => StatusCode::INTERNAL_SERVER_ERROR,
-            Self::Connector(_) => StatusCode::BAD_REQUEST,
+            // Every connector failure, including the three transport variants
+            // whose answer depends on whether a mutation was in flight. The
+            // table is in `connector_mapping` rather than here because it
+            // decides a status, a code, *and* a message together, and those
+            // three must never describe different beliefs about one failure.
+            Self::Connector { error, operation } => connector_mapping::answer(error, *operation).status,
         }
+    }
+
+    /// How many seconds the caller should wait before repeating the request.
+    ///
+    /// Present exactly when the platform is *instructing* a retry, which is
+    /// every 503 it emits and nothing else. Deriving it from the status rather
+    /// than from a second match is what keeps that true: a failure cannot
+    /// acquire a retry hint without also becoming a 503, and no 503 can quietly
+    /// lose one.
+    ///
+    /// This is the header half of the write-path fix. A 502
+    /// `write_outcome_unknown` deliberately carries none, because the platform
+    /// does not know the retry is safe and must not say otherwise.
+    pub(crate) fn retry_after(&self) -> Option<u32> {
+        (self.status() == StatusCode::SERVICE_UNAVAILABLE).then_some(RETRY_AFTER_SECONDS)
     }
 
     /// A stable machine-readable code, so clients branch on this rather than on
     /// message text.
+    ///
+    /// The connector arm is where this earns its keep. Three transport failures
+    /// share a status with something else but need three different client
+    /// behaviours — retry, reconcile, or accept that the write landed — and the
+    /// code is the only field that can carry that.
     #[must_use]
     pub const fn code(&self) -> &'static str {
         match self {
@@ -96,8 +112,8 @@ impl DataApiError {
             Self::Forbidden { .. } => "forbidden",
             Self::BadRequest(_) => "bad_request",
             Self::NotFound => "not_found",
-            Self::Connector(ConnectorError::Unsupported { .. }) => "unsupported",
-            Self::Connector(_) => "execution_failed",
+            Self::PartiallyApplied { .. } => "partial_write",
+            Self::Connector { error, operation } => connector_mapping::answer(error, *operation).code,
         }
     }
 }

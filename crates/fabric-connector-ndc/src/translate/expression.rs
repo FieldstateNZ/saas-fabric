@@ -5,7 +5,8 @@ use serde_json::Value;
 
 use crate::schema_index::SemanticOperator;
 use crate::translate::membership::translate_membership;
-use crate::wire::{NdcComparisonTarget, NdcComparisonValue, NdcExpression, NdcUnaryOperator};
+use crate::translate::null_check::translate_null_check;
+use crate::wire::{NdcComparisonTarget, NdcComparisonValue, NdcExpression};
 use crate::SchemaIndex;
 
 /// Translates a neutral predicate into an NDC predicate.
@@ -13,8 +14,8 @@ use crate::SchemaIndex;
 /// # Errors
 ///
 /// [`ConnectorError::Unsupported`] when the connector's schema declares no
-/// operator with the required meaning for the field's type. The operation is
-/// refused rather than approximated.
+/// operator with the required meaning for the field's type, or names no such
+/// column at all. The operation is refused rather than approximated.
 ///
 /// [`ConnectorError::InvalidOperation`] for a membership test with no values.
 pub(crate) fn to_expression(
@@ -35,10 +36,7 @@ pub(crate) fn to_expression(
             expression: Box::new(to_expression(collection, clause, index)?),
         }),
 
-        Filter::IsNull { field } => Ok(NdcExpression::UnaryComparisonOperator {
-            column: NdcComparisonTarget::column(field.as_str()),
-            operator: NdcUnaryOperator::IsNull,
-        }),
+        Filter::IsNull { field } => translate_null_check(collection, field, index),
 
         Filter::Compare {
             field,

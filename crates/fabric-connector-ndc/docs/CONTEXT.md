@@ -23,7 +23,11 @@ Wire types are hand-written in `src/wire/` from the published spec.
   `is_writable()`.
 - `ProcedureBinding { procedure, payload_argument, filter_argument }`.
 - `SchemaIndex` — `neutral()`, `supported_operators()`, `has_procedure()`,
+  `procedure_argument(procedure, argument) -> Option<ArgumentKind>`,
+  `declared_arguments(procedure)`,
   `operator_name(collection, field, SemanticOperator)`.
+- `ArgumentKind { Predicate, Value }` — the one distinction NDC makes checkable
+  about a procedure argument. A `filter_argument` must be `Predicate`.
 - `SemanticOperator { Equal, In, LessThan, LessThanOrEqual, GreaterThan,
   GreaterThanOrEqual, Contains }` — **no NotEqual**; `for_neutral()` maps
   `ComparisonOperator::NotEqual` to `Equal` (negated at translation).
@@ -32,15 +36,17 @@ Wire types are hand-written in `src/wire/` from the published spec.
 ## Internal modules
 
 - `wire/` — `query.rs`, `expression.rs`, `mutation.rs`, `response.rs`,
-  `capabilities.rs`, `schema.rs`, `ndc_type.rs`. All `pub(crate)`. Field names
-  mirror NDC exactly.
+  `capabilities.rs`, `schema.rs`, `ndc_type.rs`, `procedure.rs`. All
+  `pub(crate)`. Field names mirror NDC exactly.
 - `translate/` — `query.rs`, `expression.rs`, `membership.rs`, `mutation.rs`,
   `procedure_arguments.rs`, `response.rs`, `capabilities.rs`. Refusals are built
   as `UnsupportedFeature::…refused_because(detail)` — see invariant 8.
 - `schema_index/` — `schema_index_type.rs`, `semantic_operator.rs`,
-  `operator_index.rs`, `collection_index.rs`.
-- `config/` — `connector_config.rs`, `procedures.rs`.
-- `client/` — `http_client.rs`, `error_mapping.rs`.
+  `operator_index.rs`, `collection_index.rs`, `procedure_index.rs`.
+- `config/` — `connector_config.rs`, `connector_validation.rs`,
+  `argument_validation.rs`, `procedures.rs`.
+- `client/` — `http_client.rs`, `error_mapping.rs`, `response_decoding.rs`,
+  `fake_connector.rs` (test-only, a real socket).
 - `routing.rs` — `request_arguments(config, selector, secrets)`.
 - `connector.rs`, `logging.rs`, `registration.rs`.
 
@@ -63,6 +69,11 @@ Wire types are hand-written in `src/wire/` from the published spec.
 - **Mutations are procedures only**: `MutationOperation::Procedure { name,
   arguments, fields }`. `MutationOperationResults::Procedure { result }` — shape
   undefined by the spec.
+- `ProcedureInfo { name, arguments: {name -> ArgumentInfo{type}}, result_type }`
+  — **`arguments` is required by `schema_response.jsonschema` and is
+  introspectable.** A predicate argument is typed
+  `{"type": "predicate", "object_type_name": …}`. Modelling only the name is what
+  let a `filter_argument` naming an undeclared argument reach the wire.
 - Filtering/ordering/paging are core, not negotiated capabilities.
 
 ## Hard invariants — do not break
@@ -72,6 +83,11 @@ Wire types are hand-written in `src/wire/` from the published spec.
    predicate may be the tenant boundary.
 3. **Update/delete require `filter_argument`.** Checked in `config::validate`
    and again in `translate::mutation`. Both checks must stay.
+3b. **Every configured `payload_argument` / `filter_argument` must be one the
+   procedure declares, and a `filter_argument` must be predicate-typed.**
+   Checked at startup in `registration::procedure_arguments`; the predicate half
+   is re-checked in `translate::mutation`. An argument a connector never declared
+   may be silently ignored, and for a filter that means an unscoped write.
 4. **A mutation reaching translation with no predicate is refused.**
 5. **`ResolvedSecret::expose()` is called in exactly one place** —
    `routing.rs`, straight into the request body. Never logged, never in a span,

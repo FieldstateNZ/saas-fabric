@@ -1,0 +1,205 @@
+name: Release
+
+# A release is a tag, and a tag is the only thing that publishes.
+#
+# `workflow_dispatch` builds the same three images and pushes nothing, so the
+# packaging can be exercised without minting a version. There is deliberately
+# no path that publishes from a branch: an image nobody can point at a tag is
+# an image nobody can reason about.
+on:
+  push:
+    tags:
+      - 'v*'
+  # Packaging that only runs at release time is packaging that breaks at
+  # release time. A pull request touching any of these builds all three images
+  # — on the architecture the cluster runs, which a developer's machine is not
+  # — and pushes nothing.
+  #
+  # Scoped by path so an unrelated change does not pay ten minutes for it.
+  pull_request:
+    paths:
+      - 'Dockerfile'
+      - '.dockerignore'
+      - 'apps/control-plane-ui/Dockerfile'
+      - 'apps/control-plane-ui/nginx.conf'
+      - 'apps/control-plane-ui/package*.json'
+      - '.github/workflows/release.yml'
+      - 'rust-toolchain.toml'
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Nothing is published from a commit that does not pass its own gates
+  # ---------------------------------------------------------------------------
+  #
+  # These duplicate `ci.yml`, and the duplication is the point. CI runs on every
+  # push, so a tagged commit has almost certainly been checked — but "almost
+  # certainly" is doing the work in that sentence, and the failure it admits is
+  # an artifact built from a red tree, which is then deployed and behaves in a
+  # way no gate reproduces.
+  #
+  # A release is rare. Paying for the gates twice is the cheaper side of that
+  # trade.
+  verify:
+    name: gates
+    runs-on: ubuntu-latest
+    # Only for a release. On a pull request `ci.yml` has already run every one
+    # of these against the same commit, and running them twice in parallel
+    # would double the queue to learn nothing.
+    if: github.ref_type == 'tag'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      # See "The toolchain" in ci.yml.
+      - run: rustup toolchain install
+      - run: rustup show active-toolchain
+
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace
+
+      - run: python3 scripts/check_file_sizes.py
+      - run: python3 scripts/check_architecture.py
+
+      # The one gate that exists for this workflow: the builder image must be
+      # the compiler the workspace is pinned to.
+      - run: python3 scripts/check_toolchain_pin.py
+
+  # ---------------------------------------------------------------------------
+  # Three images from one context
+  # ---------------------------------------------------------------------------
+  build:
+    name: ${{ matrix.image }}
+    runs-on: ubuntu-latest
+    needs: verify
+    # `always()` because `verify` is *skipped* on a pull request, and a skipped
+    # dependency would otherwise skip this job too.
+    #
+    # A job result is one of four values, and the condition has to name the one
+    # it wants rather than exclude the one it fears. `!= 'failure'` reads as
+    # "only when the gates passed" and is not: a `cancelled` gate — a killed
+    # run, a lost runner — is not a failure, and would have published.
+    #
+    #   ref      verify result   builds?  publishes?
+    #   ------------------------------------------------
+    #   tag      success         yes      yes
+    #   tag      failure         no       no
+    #   tag      cancelled       no       no
+    #   tag      skipped         no       no
+    #   branch   skipped         yes      no
+    #
+    # So: a tag requires success outright, and only a non-tag may proceed on a
+    # skip. Nothing is published from a commit whose gates did not pass.
+    if: >-
+      always() &&
+      ( needs.verify.result == 'success' ||
+      (github.ref_type != 'tag' && needs.verify.result == 'skipped') )
+    permissions:
+      contents: read
+      # The only elevated permission here, and it is the job's own token —
+      # there is no long-lived registry credential to store, rotate, or leak.
+      packages: write
+    strategy:
+      # Not `fail-fast`: if one image fails to build, knowing whether the other
+      # two would have is worth the minutes.
+      fail-fast: false
+      matrix:
+        include:
+          # The name the platform already expects for the runtime plane.
+          - image: saas-fabric
+            dockerfile: Dockerfile
+            target: runtime-api
+          - image: saas-fabric-control-plane
+            dockerfile: Dockerfile
+            target: control-plane-api
+          - image: saas-fabric-control-plane-ui
+            dockerfile: apps/control-plane-ui/Dockerfile
+            target: console
+    steps:
+      - uses: actions/checkout@v4
+
+      # The version comes from the tag, and must agree with the workspace.
+      # A tag that disagrees would publish an image whose name says one thing
+      # and whose `--version` says another.
+      - name: Determine the version
+        id: version
+        run: |
+          set -euo pipefail
+          workspace=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
+
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            tagged="${GITHUB_REF_NAME#v}"
+            if [ "$tagged" != "$workspace" ]; then
+              echo "::error::tag ${GITHUB_REF_NAME} does not match the workspace version ${workspace}"
+              exit 1
+            fi
+            echo "version=$tagged" >> "$GITHUB_OUTPUT"
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=${workspace}-dev" >> "$GITHUB_OUTPUT"
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Lower-cased because a registry namespace must be, and the organisation
+      # is not.
+      - name: Determine the repository
+        id: repo
+        run: echo "owner=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to the registry
+        if: steps.version.outputs.publish == 'true'
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" \
+            | docker login "${REGISTRY}" -u "${{ github.actor }}" --password-stdin
+
+      # Two tags, and **never `latest`**. The platform pins an explicit version
+      # (specification section 25); a floating tag is how a cluster ends up
+      # running something nobody chose. The commit tag is the one that answers
+      # "what is actually in this image".
+      - name: Build
+        run: |
+          set -euo pipefail
+          name="${REGISTRY}/${{ steps.repo.outputs.owner }}/${{ matrix.image }}"
+
+          docker build \
+            --file "${{ matrix.dockerfile }}" \
+            --target "${{ matrix.target }}" \
+            --tag "${name}:${{ steps.version.outputs.version }}" \
+            --tag "${name}:sha-${GITHUB_SHA}" \
+            --label "org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}" \
+            --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
+            --label "org.opencontainers.image.version=${{ steps.version.outputs.version }}" \
+            .
+
+      # A smoke test that the entry point is the binary and that it starts far
+      # enough to refuse a missing configuration. It catches the mistakes an
+      # image build cannot: a binary copied to the wrong path, an entry point
+      # naming something that is not there.
+      - name: Check the image runs
+        if: matrix.target != 'console'
+        run: |
+          set -euo pipefail
+          name="${REGISTRY}/${{ steps.repo.outputs.owner }}/${{ matrix.image }}"
+          output=$(docker run --rm "${name}:${{ steps.version.outputs.version }}" /nonexistent.toml 2>&1 || true)
+
+          echo "$output"
+          echo "$output" | grep -q "could not start" \
+            || { echo "::error::the image did not start and refuse a missing configuration"; exit 1; }
+
+      - name: Push
+        if: steps.version.outputs.publish == 'true'
+        run: |
+          set -euo pipefail
+          name="${REGISTRY}/${{ steps.repo.outputs.owner }}/${{ matrix.image }}"
+          docker push "${name}:${{ steps.version.outputs.version }}"
+          docker push "${name}:sha-${GITHUB_SHA}"

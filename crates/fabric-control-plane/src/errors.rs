@@ -97,6 +97,14 @@ pub enum ControlPlaneError {
     /// The desired-state repository refused the platform's request.
     #[error("the desired-state repository refused the platform's request")]
     RepositoryRejected,
+
+    /// The identity provider refused to redeem an authorization code.
+    #[error("the sign-in could not be completed; start again")]
+    SignInRefused,
+
+    /// The identity provider could not be reached to redeem a code.
+    #[error("the identity provider is unavailable")]
+    SignInUnavailable,
 }
 
 impl ControlPlaneError {

@@ -44,11 +44,13 @@ mod admin;
 mod config;
 mod credential;
 mod logging;
+mod operator;
 mod provider;
 mod wire;
 
 pub use config::KeycloakConfig;
 pub use credential::AdminCredential;
+pub use operator::RealmSignIn;
 pub use provider::KeycloakIdentityProvider;
 
 /// The event-ID domain number for this crate. See `fabric_core::event_id`.

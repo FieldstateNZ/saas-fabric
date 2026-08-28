@@ -84,6 +84,8 @@ may depend on a crate in the other.
 Operator-facing HTTP, in `fabric-control-plane`.
 
 ```text
+GET  /api/session                      where to sign in       (no operator)
+POST /api/session                      redeem a code          (no operator)
 GET /api/clients                       list clients
 GET /api/clients/{clientId}            one client's overview
 GET /api/clients/{clientId}/identity   its identity, and reconciliation state
@@ -101,6 +103,71 @@ Three things it does not do, each of them a rule rather than a gap:
 3. **It does not report a write as applied.** A successful `PUT` answers
    `pending`. Writing the document and converging the provider are different
    events that fail independently.
+
+### Who an operator is
+
+Two postures, and a deployment states which one it runs.
+
+`mode = "oidc"` is the production posture. The control plane verifies a token
+the platform's own realm issued: the signature against the realm's published
+keys, the issuer matched exactly, the token issued to the console's client, and
+a **realm role** that confers operator authority. Authority therefore lives in
+the identity provider, where joiners and leavers are already handled, rather
+than in a list of names in a deployment.
+
+```toml
+[control_plane.operator]
+mode = "oidc"
+issuer = "https://auth.example.test/realms/master"
+client_id = "saas-fabric-console"
+required_role = "fabric-operator"
+redirect_uri = "https://fabric.example.test/"
+```
+
+`mode = "trusted_header"` is the development posture, and what the shipped
+example uses — the example has to run without a cluster (§22), and OIDC cannot.
+It consumes an identity the operator-plane proxy established and checks it
+against an allowlist that may not be empty. It is safe only because of where
+the service sits; see [ADR 0010](../decisions/0010-operators-authenticate-against-the-platform-realm.md).
+
+**The realm needs two things before the OIDC posture works**, and neither is
+created by this application yet:
+
+| What | Why |
+|---|---|
+| A **public** client `saas-fabric-console`, PKCE required, redirect URI set to the console's origin | the console holds no secret, so PKCE is what replaces one |
+| A realm role `fabric-operator`, granted to each operator | this is what the control plane checks |
+
+Automating both in the reconciler is the obvious next step. It is deliberately
+not in this change: it needs a broader grant on the master realm than the
+platform's service account holds, and that grant deserves a decision of its own.
+
+### How the console signs in
+
+The console never talks to the identity provider. It cannot — its policy is
+`default-src 'self'`, so it may *navigate* to another origin but not `fetch`
+one.
+
+```text
+console  → GET /api/session          where do I sign in?
+browser  → provider                  top-level navigation, with a PKCE challenge
+provider → console                   redirect back with code + state
+console  → POST /api/session         code + verifier
+API      → provider                  redeems server-side
+API      → console                   the access token
+```
+
+The browser generates the PKCE verifier and keeps it; the state is compared
+against what the tab stored, so a callback the tab did not start is refused
+before anything is redeemed. The token is held in memory for the life of the
+tab — not `localStorage`, not a cookie, and no refresh token.
+
+**`redirect_uri` must be the console's origin root**, not a path beneath it.
+The console is served by nginx with `try_files $uri $uri/ =404` and
+deliberately has no history fallback, so a redirect to `/callback` would be
+answered with a 404 rather than the application. The provider returns to `/`
+with the code in the query string, which nginx serves as `index.html` and the
+console reads on load.
 
 ### Errors
 
@@ -244,5 +311,4 @@ Nothing in the audit module is handed a value that could contain one.
 
 Client creation, deletion of anything, OpenFGA/OpenBao/Grafana/Envoy
 reconciliation, database provisioning, runtime-binding publication, a workflow
-engine, and production-ready operator authentication beyond what the platform
-boundary can supply today.
+engine, and provisioning the realm's own console client and operator role.

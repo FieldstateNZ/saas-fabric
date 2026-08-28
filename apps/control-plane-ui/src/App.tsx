@@ -2,7 +2,9 @@ import { useState } from 'react'
 
 import { ClientDetail } from './components/ClientDetail'
 import { ClientList } from './components/ClientList'
+import { SignIn } from './components/SignIn'
 import { useClients } from './hooks/useClients'
+import { useSession } from './hooks/useSession'
 
 /**
  * The SaaS Fabric operator console.
@@ -19,8 +21,34 @@ import { useClients } from './hooks/useClients'
  * A list and a detail pane, no router, no framework beyond React. The first
  * increment of an operator console should be small enough that its correctness
  * is obvious; it grows a router when there is a second thing to route to.
+ *
+ * # Signing in comes first
+ *
+ * Nothing below renders until the operator has an identity — or until the API
+ * says this deployment establishes one at the network boundary instead.
  */
 export function App() {
+  const session = useSession()
+
+  if (session.state.status === 'checking') {
+    return <p className="empty">Loading...</p>
+  }
+
+  if (session.state.status === 'signed-out') {
+    return <SignIn error={session.state.error} onSignIn={session.signIn} />
+  }
+
+  return <Console />
+}
+
+/**
+ * The console proper.
+ *
+ * Separated from [`App`] so that every hook below runs only once there is an
+ * operator identity to run them for. Rendering the client list while signed
+ * out would fire requests that can only be refused.
+ */
+function Console() {
   const clients = useClients()
   const [selected, setSelected] = useState<string | null>(null)
 

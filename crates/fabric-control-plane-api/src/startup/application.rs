@@ -8,7 +8,7 @@ use fabric_core::SystemClock;
 use fabric_reconciliation::IdentityReconciler;
 
 use crate::config::ControlPlaneAppConfig;
-use crate::startup::{adapters, serving};
+use crate::startup::{adapters, operator_keys, serving};
 
 /// The assembled control plane, plus the work that must outlive a request.
 pub struct Application {
@@ -29,10 +29,14 @@ pub struct Application {
 ///
 /// 1. The desired-state repository, because everything else is about it.
 /// 2. The identity provider, and the reconciler over it.
-/// 3. The API, which is given the repository and the reconciliation status —
+/// 3. The operator posture's signing keys, and the sign-in surface when the
+///    posture has one. Neither requires the identity provider to be reachable
+///    now: keys arrive on a task, and a control plane that refused to start
+///    without its provider could not be used to diagnose the provider.
+/// 4. The API, which is given the repository and the reconciliation status —
 ///    and **not** the provider. There is no wiring here by which a handler
 ///    could reach Keycloak, which is the structural form of ADR 0008.
-/// 4. The reconciliation loop, which is the only thing holding both.
+/// 5. The reconciliation loop, which is the only thing holding both.
 ///
 /// # Errors
 ///
@@ -47,7 +51,15 @@ pub async fn build(config: &ControlPlaneAppConfig) -> Result<Application, String
     let provider = adapters::identity_provider(&config.identity_provider, Arc::clone(&clock))?;
     let reconciler = Arc::new(IdentityReconciler::new(provider));
 
-    let services = build_control_plane(&config.control_plane, Arc::clone(&repository), Arc::clone(&clock))?;
+    let (keys, sign_in) = operator_keys::establish(&config.control_plane.operator)?;
+
+    let services = build_control_plane(
+        &config.control_plane,
+        Arc::clone(&repository),
+        Arc::clone(&clock),
+        keys,
+        sign_in,
+    )?;
 
     let reconciliation = ReconciliationLoop::spawn(
         repository,

@@ -42,8 +42,10 @@ pub fn build_control_plane(
     config: &ControlPlaneConfig,
     repository: Arc<dyn ClientRepository>,
     clock: Arc<dyn Clock>,
+    keys: Arc<crate::KeyHolder>,
+    sign_in: Option<Arc<crate::SignInSurface>>,
 ) -> Result<ControlPlaneServices, String> {
-    let operators: Arc<dyn crate::OperatorAuthenticator> = Arc::from(config.operator.build()?);
+    let operators: Arc<dyn crate::OperatorAuthenticator> = Arc::from(config.operator.build(keys)?);
     let described = repository.describe();
     let statuses = Arc::new(ReconciliationStatusStore::new());
     let trigger = Arc::new(ReconciliationTrigger::new());
@@ -57,7 +59,11 @@ pub fn build_control_plane(
 
     logging::control_plane_ready(&described, &operators.describe());
 
-    let router = control_plane_routes(ControlPlaneState { service, operators });
+    let router = control_plane_routes(ControlPlaneState {
+        service,
+        operators,
+        sign_in,
+    });
 
     Ok(ControlPlaneServices {
         router,

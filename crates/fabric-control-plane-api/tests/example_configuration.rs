@@ -34,10 +34,17 @@ fn the_example_configuration_loads() {
 }
 
 #[test]
-fn the_example_states_an_operator_posture_with_a_non_empty_allowlist() {
+fn the_example_states_the_development_posture_with_a_non_empty_allowlist() {
+    // The example must be runnable without a cluster (§22), and the OIDC
+    // posture cannot be: it needs a realm to verify against. So the example
+    // demonstrates the trusted-header posture deliberately, and this test
+    // pins that choice rather than accepting whichever posture it drifts to.
+    //
     // An empty allowlist would authorise every identity the operator network
-    // can authenticate, so the example must not demonstrate one.
-    let OperatorConfig::TrustedHeader { header, allowlist } = example().control_plane.operator;
+    // can authenticate, so the example must not demonstrate one either.
+    let OperatorConfig::TrustedHeader { header, allowlist } = example().control_plane.operator else {
+        panic!("the example must demonstrate the trusted-header posture; see above");
+    };
 
     assert!(!header.is_empty());
     assert!(!allowlist.is_empty());
@@ -48,7 +55,7 @@ fn the_example_operator_posture_builds() {
     example()
         .control_plane
         .operator
-        .build()
+        .build(fabric_control_plane::KeyHolder::empty())
         .expect("the example posture must produce a usable authenticator");
 }
 

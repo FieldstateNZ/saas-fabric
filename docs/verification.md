@@ -5,7 +5,15 @@ command below is reproducible from the repository root; nothing here is
 asserted without one.
 
 Last run: 2026-08-28, against `claude/saas-fabric-control-plane-keycloak-7ac835`,
-covering both planes.
+covering both planes, on **Rust 1.98.0 stable** — the version matters and is
+recorded for the first time here. CI installs `stable` unpinned, so a clippy
+release can introduce a lint that fails a build touching none of the affected
+code. That happened to this increment: 1.98's `unused_async_trait_impl` fired
+on `fabric-identity`'s extractor, which had been unchanged for weeks. Both
+extractors now return an already-complete future rather than being `async fn`,
+which is a better statement of what they do — but the failure was toolchain
+drift, and knowing which toolchain a run used is what makes the next one
+diagnosable in a minute rather than an hour.
 
 The runtime plane's numbers come from the same tree as the previous run
 (2026-08-14, after six rounds of adversarial review; the last two ran narrow

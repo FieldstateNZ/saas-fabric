@@ -1,5 +1,6 @@
 //! The axum extractor that makes the operator a handler parameter.
 
+use std::future::{self, Future};
 use std::sync::Arc;
 
 use axum::extract::{FromRef, FromRequestParts};
@@ -23,11 +24,26 @@ where
 {
     type Rejection = ControlPlaneError;
 
-    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+    /// Not an `async fn`, for the same reason the runtime plane's tenant
+    /// extractor is not: authenticating an operator is a header read and a
+    /// lookup in an allowlist already in memory, so the future it returns is
+    /// already complete and there is no suspension point in it.
+    ///
+    /// That matters more here than it looks. When operator authentication
+    /// grows a second implementation — one that verifies a credential the
+    /// platform issued — the temptation will be to call something over the
+    /// network *per request*. Changing this return type is where that decision
+    /// has to be made explicitly rather than arrived at.
+    fn from_request_parts(
+        parts: &mut Parts,
+        state: &S,
+    ) -> impl Future<Output = Result<Self, Self::Rejection>> {
         let authenticator = Arc::<dyn OperatorAuthenticator>::from_ref(state);
 
-        authenticator
-            .authenticate(&parts.headers)
-            .map_err(ControlPlaneError::Unauthenticated)
+        future::ready(
+            authenticator
+                .authenticate(&parts.headers)
+                .map_err(ControlPlaneError::Unauthenticated),
+        )
     }
 }

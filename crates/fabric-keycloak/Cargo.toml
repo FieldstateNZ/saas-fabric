@@ -1,0 +1,25 @@
+[package]
+name = "fabric-keycloak"
+description = "The Keycloak identity-provider adapter. Every Keycloak representation in this platform lives inside this crate."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+fabric-client-model.workspace = true
+fabric-core.workspace = true
+fabric-reconciliation.workspace = true
+
+async-trait.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["sync"] }
+tracing.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+
+[lints]
+workspace = true

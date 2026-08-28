@@ -1,0 +1,5 @@
+{
+  "//": "A solution file. The application and the build tooling are checked as separate projects, so the browser code cannot reach a Node global by accident and the config files can.",
+  "files": [],
+  "references": [{ "path": "./tsconfig.app.json" }, { "path": "./tsconfig.node.json" }]
+}

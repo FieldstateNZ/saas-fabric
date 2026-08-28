@@ -1,0 +1,29 @@
+# A second example client, with no application clients declared yet.
+#
+# A legitimate intermediate state rather than an error: a client whose realm
+# and roles exist but whose applications have not been declared reconciles
+# cleanly.
+apiVersion: fabric.fieldstate.nz/v1
+kind: Client
+
+metadata:
+  name: northwind
+
+spec:
+  displayName: Northwind Traders
+
+  hosts:
+    - northwind.example.com
+
+  identity:
+    realm: northwind
+
+    roles:
+      - Client Realm Administrator
+      - Client Realm User
+      - Invoicing Approver
+
+    clients: []
+
+  features:
+    invoicing: true

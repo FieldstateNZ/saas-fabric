@@ -1,0 +1,48 @@
+# An example client's desired state.
+#
+# This is the document format the control plane reads and writes, and the shape
+# a `saas-fabric-clients` repository holds at
+# `clients/<client id>/client.yaml`. See
+# docs/architecture/client-desired-state.md for the contract.
+apiVersion: fabric.fieldstate.nz/v1
+kind: Client
+
+metadata:
+  name: acme
+
+spec:
+  displayName: Acme
+
+  hosts:
+    - www.example.com
+
+  identity:
+    # Conventionally the client id, but stated rather than derived:
+    # reconciliation has to name it.
+    realm: acme
+
+    # Both required roles are present. Removing either is refused — the
+    # platform's contract with a client assumes a realm distinguishes an
+    # administrator of the client from an ordinary user of it.
+    roles:
+      - Client Realm Administrator
+      - Client Realm User
+
+    clients:
+      - id: web
+        type: oidc
+        redirectUris:
+          - https://www.example.com/callback
+
+  # Sections the control plane does not model yet. They are here precisely so
+  # the examples demonstrate the guarantee that matters most: editing identity
+  # through the API leaves every one of them untouched.
+  features:
+    invoicing: true
+    analytics: false
+
+  data:
+    primary:
+      class: dedicated
+      provider: sql
+      region: au-east

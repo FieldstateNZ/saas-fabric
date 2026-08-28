@@ -1,0 +1,17 @@
+[package]
+name = "fabric-client-model"
+description = "The control plane's desired-state model: what a SaaS Fabric client is, and the declarative document that expresses it."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+fabric-core.workspace = true
+
+serde.workspace = true
+serde_norway.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

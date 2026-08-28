@@ -249,6 +249,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "fabric-client-git"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "base64",
+ "fabric-client-model",
+ "fabric-control-plane",
+ "fabric-core",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "fabric-client-model"
+version = "0.1.0"
+dependencies = [
+ "fabric-core",
+ "serde",
+ "serde_norway",
+ "thiserror",
+]
+
+[[package]]
 name = "fabric-connector"
 version = "0.1.0"
 dependencies = [
@@ -273,6 +299,46 @@ dependencies = [
  "thiserror",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "fabric-control-plane"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "axum",
+ "fabric-client-model",
+ "fabric-core",
+ "fabric-reconciliation",
+ "http",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "tower",
+ "tracing",
+]
+
+[[package]]
+name = "fabric-control-plane-api"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "fabric-client-git",
+ "fabric-client-model",
+ "fabric-control-plane",
+ "fabric-core",
+ "fabric-keycloak",
+ "fabric-reconciliation",
+ "figment",
+ "http",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tower",
+ "tower-http",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -316,6 +382,34 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror",
+ "tracing",
+]
+
+[[package]]
+name = "fabric-keycloak"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "fabric-client-model",
+ "fabric-core",
+ "fabric-reconciliation",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "fabric-reconciliation"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "fabric-client-model",
+ "fabric-core",
+ "serde",
+ "thiserror",
+ "tokio",
  "tracing",
 ]
 
@@ -1203,6 +1297,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde_norway"
+version = "0.9.42"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e408f29489b5fd500fab51ff1484fc859bb655f32c671f307dcd733b72e8168c"
+dependencies = [
+ "indexmap",
+ "itoa",
+ "ryu",
+ "serde",
+ "unsafe-libyaml-norway",
+]
+
+[[package]]
 name = "serde_path_to_error"
 version = "0.1.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1652,6 +1759,12 @@ name = "unicode-ident"
 version = "1.0.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e6e4313cd5fcd3dad5cafa179702e2b244f760991f45397d14d4ebf38247da75"
+
+[[package]]
+name = "unsafe-libyaml-norway"
+version = "0.2.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b39abd59bf32521c7f2301b52d05a6a2c975b6003521cbd0c6dc1582f0a22104"
 
 [[package]]
 name = "untrusted"

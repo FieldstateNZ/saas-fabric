@@ -6,10 +6,44 @@ A GitOps-driven SaaS control plane and tenant runtime that maps an established
 tenant identity onto logical platform services, and resolves those services to
 tenant-specific physical infrastructure.
 
-This repository implements the **runtime plane** and the **Data API**. The full
-architecture is specified in
+This repository implements two planes of one product:
+
+- the **runtime plane** — tenant identity, the tenant registry, the Data API —
+  which serves every tenant's applications and never reads Git;
+- the first slice of the **control plane** — the operator console, the
+  Control Plane API, Git desired state, and reconciliation into Keycloak.
+
+The full architecture is specified in
 [docs/architecture/tenant-runtime-data-api.md](docs/architecture/tenant-runtime-data-api.md);
-section references throughout the code (§7, §18, §28…) point there.
+section references throughout the code (§7, §18, §28…) point there. The control
+plane's own architecture is
+[docs/architecture/control-plane.md](docs/architecture/control-plane.md).
+
+```text
+                         saas-fabric
+
+       ┌─────────────────────────────────────────┐
+       │              CONTROL PLANE              │
+       │  React console                          │
+       │      ↓                                  │
+       │  Control Plane API                      │
+       │      ↓                                  │
+       │  Client desired state → Git             │
+       │      ↓                                  │
+       │  Reconciliation → Keycloak adapter      │
+       └─────────────────────────────────────────┘
+
+       ┌─────────────────────────────────────────┐
+       │              RUNTIME PLANE              │
+       │  trusted identity → tenant runtime      │
+       │      → Data API → connector             │
+       └─────────────────────────────────────────┘
+```
+
+The two planes share exactly one crate, and
+[`scripts/check_architecture.py`](scripts/check_architecture.py) fails the build
+if either depends on the other. They face different networks, fail
+independently, and authenticate different things.
 
 ## The contract
 
@@ -60,15 +94,39 @@ Kubernetes, or opens a connection (§6).
 
 ## Crates
 
+**Shared kernel**
+
 | Crate | Role |
 |---|---|
-| [`fabric-core`](crates/fabric-core) | Shared kernel: validated identifiers, event IDs, the clock seam. No I/O. |
+| [`fabric-core`](crates/fabric-core) | Validated identifiers, event IDs, the clock seam. No I/O. The only crate both planes share. |
+
+**Runtime plane**
+
+| Crate | Role |
+|---|---|
 | [`fabric-identity`](crates/fabric-identity) | Bearer token → tenant identity context. Not authentication. |
 | [`fabric-tenant-runtime`](crates/fabric-tenant-runtime) | Tenant bindings and DataSources. Revisioned, lock-free, fail-closed. |
 | [`fabric-connector`](crates/fabric-connector) | The neutral execution boundary. No protocol or database types. |
 | [`fabric-connector-ndc`](crates/fabric-connector-ndc) | Speaks Hasura NDC — wire types read from v0.2.13, requires 0.2.4 or newer. The only crate that knows NDC exists. |
 | [`fabric-data-api`](crates/fabric-data-api) | The public HTTP surface. |
-| [`fabric-api`](crates/fabric-api) | The composition root. |
+| [`fabric-api`](crates/fabric-api) | The runtime plane's composition root. |
+
+**Control plane**
+
+| Crate | Role |
+|---|---|
+| [`fabric-client-model`](crates/fabric-client-model) | What a client is, and the declarative document that says so. No I/O. |
+| [`fabric-reconciliation`](crates/fabric-reconciliation) | Comparison and convergence. Owns the identity-provider port; owns no protocol. |
+| [`fabric-control-plane`](crates/fabric-control-plane) | The operator-facing API, the desired-state port, and the operator identity seam. |
+| [`fabric-keycloak`](crates/fabric-keycloak) | The Keycloak adapter. The only crate that knows Keycloak exists. |
+| [`fabric-client-git`](crates/fabric-client-git) | The Git-backed desired-state repository. The only crate that knows Git exists. |
+| [`fabric-control-plane-api`](crates/fabric-control-plane-api) | The control plane's composition root. |
+
+**Applications**
+
+| Application | Role |
+|---|---|
+| [`control-plane-ui`](apps/control-plane-ui) | The React operator console. Talks to the control-plane API and nothing else. |
 
 Each crate carries `docs/README.md` (for developers) and `docs/CONTEXT.md` (a
 summary that avoids reading every file).
@@ -123,6 +181,34 @@ approximated. Silently dropping a predicate is merely wrong in a single-tenant
 app; here the dropped predicate might be the tenant boundary, and the failure
 looks exactly like success — rows come back, status 200, nothing logged.
 
+### 6. Operators write desired state; reconciliation makes it true
+
+The control plane never calls a platform service on an operator's behalf. A
+change to a client's identity writes a document to Git, and reconciliation
+converges Keycloak onto it — so Git is the authority rather than one of two
+writers racing (ADR 0008).
+
+The visible consequence is that a successful write reports `pending`, not
+`applied`. Writing the document and converging the provider are different events
+that fail independently, and an API that reported them as one would be lying
+about the second one every time. Reconciliation is idempotent and **only adds**:
+it creates what is missing and corrects what it manages, and deletes nothing.
+
+Because it observes before it acts, a realm changed outside SaaS Fabric is
+reported as `drifted` rather than silently corrected — the one signal that says
+something else is editing the realms the platform owns.
+
+### 7. Keycloak stops at its adapter, exactly as NDC does
+
+`RealmRepresentation` and the admin token exist in `fabric-keycloak` and
+nowhere else; a blob hash and a commit exist in `fabric-client-git` and nowhere
+else. `scripts/check_architecture.py` fails the build if either vocabulary
+escapes.
+
+The operator console says Client, Identity, and Domains. It never says the name
+of the service underneath, and there is no workflow anywhere that redirects an
+operator into one.
+
 ## Data execution: NDC as a protocol, not a product
 
 Rather than writing a query engine per database dialect, the platform delegates
@@ -150,15 +236,34 @@ The reasoning, the licence audit, and the consequences are recorded in
 | [0001](docs/decisions/0001-ndc-as-connector-boundary.md) | NDC as the internal connector boundary, as a protocol only |
 | [0002](docs/decisions/0002-trusted-ingress-is-the-canonical-identity-model.md) | Trusted ingress is the canonical identity model |
 | [0003](docs/decisions/0003-data-sources-are-first-class-resources.md) | DataSources are first-class resources |
+| [0008](docs/decisions/0008-desired-state-is-the-authority.md) | Control-plane mutations write desired state; platform services are reconciliation targets |
+| [0009](docs/decisions/0009-operator-identity-is-not-tenant-identity.md) | Operator identity is separate from tenant identity |
 
 ## Running it
+
+The runtime plane:
 
 ```bash
 cargo run -p fabric-api -- examples/config.toml
 ```
 
-The example configuration, catalogue, tenant bindings, and DataSources in
-[`examples/`](examples) are covered by tests, so they cannot drift from the code.
+The control plane, with development adapters — no cluster, no Keycloak, no
+GitHub token:
+
+```bash
+cargo run -p fabric-control-plane-api -- examples/control-plane.toml
+```
+
+And the operator console against it:
+
+```bash
+npm install --prefix apps/control-plane-ui
+npm run dev --prefix apps/control-plane-ui
+```
+
+Every example in [`examples/`](examples) — both configurations, the catalogue,
+the tenant bindings, the DataSources, and the client documents — is covered by
+tests, so none of them can drift from the code.
 
 ```bash
 cargo test --workspace
@@ -183,16 +288,37 @@ RUST_LOG=info,fabric_tenant_runtime=debug,fabric_connector_ndc=trace
   tests; clippy pedantic is on; `unsafe` is forbidden.
 - Every public item carries rustdoc explaining *why*, written for someone who
   does not know the domain yet.
+- The console gets the same treatment in its own language: `any`, floating
+  promises and unused code are errors, and the same 150-line limit applies.
 
 ## Status
 
-The runtime plane and Data API are implemented and tested. Not yet built:
+**Runtime plane:** implemented and tested — tenant identity, the tenant
+registry, the Data API, the connector boundary, and the NDC connector.
+
+**Control plane:** the first capability, **client identity**, is implemented and
+tested end to end. An operator lists clients and edits a client's realm roles in
+the console; the change is written to a client document in Git with optimistic
+concurrency; reconciliation converges a Keycloak realm onto it; and the console
+shows whether that has actually happened.
+
+Not yet built:
 
 - The Configuration, Feature, Storage, Events, and Secrets APIs (§27). The
   binding format already carries their state.
-- Reconciliation itself. The runtime reads tenant bindings and DataSources that
-  a controller writes; the file-backed `JsonFileSource` is the contract between
-  them.
+- **Runtime binding publication.** The runtime reads tenant bindings and
+  DataSources that a controller writes; the file-backed `JsonFileSource` is the
+  contract between them, and publishing into it is a reconciliation target
+  beside Keycloak rather than a control-plane mutation — see
+  [the control-plane architecture](docs/architecture/control-plane.md#runtime-publication-boundary).
+- **The other platform capabilities**: authorization (OpenFGA), secrets
+  (OpenBao), routing (Envoy), observability (Grafana). Each follows the shape
+  identity established.
+- **Client creation and deletion.** Creating a client is a workflow — routing,
+  data placement, secrets, a database — and this increment is the identity slice
+  of it. Deletion needs its own confirmation semantics (ADR 0008).
+- **Operator authentication beyond a trusted network boundary.** The posture is
+  the runtime plane's, and carries the same obligation (ADR 0009).
 - A JWKS refresher. `VerificationKeys` is a snapshot, so rotation in the opt-in
   defence-in-depth mode means rebuilding the reader.
 
@@ -203,11 +329,14 @@ and per version — see ADR 0001 for how that is done and why it matters.
 
 ## CI
 
-Every push and pull request runs `cargo fmt --all --check`,
-`cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`,
-`cargo deny check`, and a file-size check
-([`.github/workflows/ci.yml`](.github/workflows/ci.yml)). The latter two are
-policy, not just tooling defaults:
+Every push and pull request runs, for the Rust workspace,
+`cargo fmt --all --check`,
+`cargo clippy --workspace --all-targets -- -D warnings`, `cargo doc`,
+`cargo test --workspace`, `cargo deny check`, a file-size check and an
+architecture check; and for the operator console, `eslint`, `tsc -b`, `vitest`
+and `vite build` ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)).
+
+Three of those are policy rather than tooling defaults:
 
 - [`deny.toml`](deny.toml) mechanically enforces
   [`docs/architecture/dependency-policy.md`](docs/architecture/dependency-policy.md) —
@@ -216,4 +345,12 @@ policy, not just tooling defaults:
 - [`scripts/check_file_sizes.py`](scripts/check_file_sizes.py) enforces
   [`docs/architecture/file-size-policy.md`](docs/architecture/file-size-policy.md) —
   production `.rs` files over 150 lines fail the build unless the script's
-  exemption list documents why.
+  exemption list documents why. The console's ESLint configuration applies the
+  same limit to its own source.
+- [`scripts/check_architecture.py`](scripts/check_architecture.py) enforces the
+  invariants no unit test can catch, because the violation is the code
+  compiling: NDC types outside their crate, Keycloak representations or
+  Git-hosting details outside theirs, an edge between the two planes, a database
+  driver or Git library anywhere in the graph, `X-Tenant-Id` being read, a
+  dependency the documented graph does not allow, or the operator console naming
+  another platform service's API.

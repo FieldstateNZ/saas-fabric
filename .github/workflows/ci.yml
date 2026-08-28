@@ -115,10 +115,54 @@ jobs:
         with:
           python-version: '3.x'
       # The invariants no unit test can catch, because the violation is the
-      # code compiling: NDC vocabulary escaping its crate, transport reaching
-      # a domain crate, a database driver or Kubernetes client entering the
-      # graph at all, X-Tenant-Id being read anywhere, or the dependency
-      # direction diverging from docs/architecture/crate-dependencies.md.
-      # Needs a toolchain because it reads `cargo metadata` rather than
-      # parsing manifests by hand.
+      # code compiling: NDC vocabulary escaping its crate, Keycloak
+      # representations or Git-hosting details escaping theirs, an edge between
+      # the runtime and control planes, transport reaching a domain crate, a
+      # database driver or Git/Kubernetes client entering the graph at all,
+      # X-Tenant-Id being read anywhere, the dependency direction diverging from
+      # docs/architecture/crate-dependencies.md, or the operator console naming
+      # another platform service's API. Needs a toolchain because it reads
+      # `cargo metadata` rather than parsing manifests by hand.
       - run: python3 scripts/check_architecture.py
+
+  # ---------------------------------------------------------------------------
+  # The operator console
+  # ---------------------------------------------------------------------------
+  #
+  # One job rather than four, deliberately: `npm ci` dominates the runtime of
+  # each, and splitting them would pay for the install four times to parallelise
+  # a few seconds of checking. The step names still say which check failed.
+  console:
+    name: control-plane-ui
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/control-plane-ui
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: apps/control-plane-ui/package-lock.json
+      # `ci`, not `install`: it installs exactly what the lockfile pins and
+      # fails if `package.json` and the lockfile disagree, which is the same
+      # guarantee `Cargo.lock` gives the Rust half.
+      - run: npm ci
+
+      # The frontend half of the quality policy: no `any`, no floating
+      # promises, no unused code, and the 150-line file limit from
+      # docs/architecture/file-size-policy.md.
+      - name: eslint
+        run: npm run lint
+
+      - name: tsc
+        run: npm run typecheck
+
+      - name: vitest
+        run: npm test
+
+      # Last, because a type error or a lint failure is a clearer message than
+      # whatever the bundler would say about the same mistake.
+      - name: vite build
+        run: npm run build

@@ -1,9 +1,13 @@
 # File-size policy
 
 - **Status:** Accepted
-- **Applies to:** production `.rs` files under `crates/*/src/`.
-- **Enforced by:** [`scripts/check_file_sizes.py`](../../scripts/check_file_sizes.py),
-  run in CI (see [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml)).
+- **Applies to:** production `.rs` files under `crates/*/src/`, and production
+  `.ts`/`.tsx` files under `apps/control-plane-ui/src/`.
+- **Enforced by:** [`scripts/check_file_sizes.py`](../../scripts/check_file_sizes.py)
+  for Rust, and the `max-lines` rule in
+  [`apps/control-plane-ui/eslint.config.js`](../../apps/control-plane-ui/eslint.config.js)
+  for the console. Both run in CI (see
+  [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml)).
 
 ## Why a line-count rule at all
 
@@ -85,6 +89,18 @@ item that is *not* the file's final module (for example a scattered
 `#[cfg(test)] use` or helper) is not treated specially and counts as normal
 file content, since it is not the "tests pulled out of the line count"
 convention this rule is accommodating.
+
+## The console
+
+The operator console gets the same 150-line limit, through ESLint's `max-lines`
+rule with `skipBlankLines` and `skipComments`, and the same exemption for test
+files. It is a different mechanism because there is no reason to write a second
+line counter, and the same policy because a reviewer reading either half of this
+repository should meet the same standard.
+
+There is no exemption list on that side. If one is ever needed, it belongs in
+the ESLint config beside the rule, for the same `git blame` reason the Rust
+list lives in the script.
 
 ## Exemptions
 

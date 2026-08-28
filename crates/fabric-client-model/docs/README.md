@@ -44,12 +44,18 @@ the only evidence would be in a Git diff nobody reads until something stops
 working.
 
 So `with_identity` replaces exactly the `spec.identity` sub-tree of the parsed
-document and leaves everything else byte-identical, then re-parses the result
-so the two halves cannot disagree.
+document, keeping every other key and value — and their order — then re-parses
+the result so the two halves cannot disagree.
 
-What is *not* preserved is comments and blank lines: this is a YAML data
-parser. That cost is why the control plane rewrites only documents an operator
-actually changed, rather than normalising the repository on read.
+What it does *not* keep is formatting. This is a YAML data parser and the
+writer reprints the file, so comments and blank lines are lost, quoting is
+normalised, flow sequences become block sequences, and a folded scalar comes
+back as a literal block holding the same string. Values survive; the shape of
+the file does not.
+
+That cost is why the control plane rewrites only documents an operator actually
+changed, rather than normalising the repository on read. See
+`docs/architecture/client-desired-state.md` for the worked example.
 
 ## Client and tenant
 

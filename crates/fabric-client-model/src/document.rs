@@ -22,17 +22,21 @@ pub use schema::{API_VERSION, KIND};
 /// something stops working.
 ///
 /// Holding `raw` as well makes the safe behaviour the default one: an edit
-/// replaces exactly the sub-tree it is about, and everything else survives
-/// byte for byte. The typed half is derived from `raw` and re-derived after
-/// every edit, so the two cannot disagree.
+/// replaces exactly the sub-tree it is about, and every other key and value —
+/// and their order — survives unchanged. The typed half is derived from `raw`
+/// and re-derived after every edit, so the two cannot disagree.
 ///
 /// # What is not preserved
 ///
-/// Comments and blank lines. The parser is a YAML *data* parser, so a
-/// round-trip through this type loses them. That is a real cost in a
-/// repository humans also edit by hand, and it is why the control plane
-/// rewrites only documents an operator has actually changed rather than
-/// normalising the repository on read.
+/// **Formatting.** This is a YAML *data* parser and [`render`](Self::render)
+/// reprints the whole file, so a round trip loses comments and blank lines,
+/// normalises quoting, turns flow sequences into block sequences, and returns
+/// a folded scalar as a literal block. The *values* are identical either way;
+/// the file is not.
+///
+/// That is a real cost in a repository humans also edit by hand, and it is why
+/// the control plane rewrites only documents an operator has actually changed
+/// rather than normalising the repository on read.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ClientDocument {
     /// The complete parsed document, including sections this model does not

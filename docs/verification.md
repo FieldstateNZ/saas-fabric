@@ -5,15 +5,16 @@ command below is reproducible from the repository root; nothing here is
 asserted without one.
 
 Last run: 2026-08-28, against `claude/saas-fabric-control-plane-keycloak-7ac835`,
-covering both planes, on **Rust 1.98.0 stable** — the version matters and is
-recorded for the first time here. CI installs `stable` unpinned, so a clippy
-release can introduce a lint that fails a build touching none of the affected
-code. That happened to this increment: 1.98's `unused_async_trait_impl` fired
-on `fabric-identity`'s extractor, which had been unchanged for weeks. Both
+covering both planes, on **Rust 1.98.0** — recorded here for the first time,
+and now pinned in [`rust-toolchain.toml`](../rust-toolchain.toml).
+
+The version is recorded because it mattered. CI used to install `stable`
+unpinned, and 1.98's `unused_async_trait_impl` failed this increment's pull
+request on `fabric-identity`'s extractor — a file it had not touched. Both
 extractors now return an already-complete future rather than being `async fn`,
-which is a better statement of what they do — but the failure was toolchain
-drift, and knowing which toolchain a run used is what makes the next one
-diagnosable in a minute rather than an hour.
+which is a better statement of what they do, but the failure itself was
+toolchain drift. `docs/architecture/toolchain-policy.md` records the pin and
+the obligation that comes with it.
 
 The runtime plane's numbers come from the same tree as the previous run
 (2026-08-14, after six rounds of adversarial review; the last two ran narrow
@@ -32,7 +33,7 @@ is at the end, under "The control plane, end to end".
 | --- | --- | --- |
 | Formatting | `cargo fmt --all --check` | clean |
 | Lints | `cargo clippy --workspace --all-targets -- -D warnings` | 0 findings |
-| Tests | `cargo test --workspace` | 1155 passing, 0 failing, 1 ignored |
+| Tests | `cargo test --workspace` | 1158 passing, 0 failing, 1 ignored |
 | Docs | `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps` | 0 warnings |
 | Dependencies | `cargo deny check` | advisories, bans, licences, sources — all ok |
 | File sizes | `python3 scripts/check_file_sizes.py` | 0 over the 150-line limit |
@@ -50,12 +51,22 @@ dominates each of them.
 The single ignored test is a `#[doc(ignore)]` example in `fabric-identity`'s
 extractor, and predates this work.
 
-The workspace total rose from 977 to 1155: **178 new Rust tests**, plus the
+The workspace total rose from 977 to 1158: **181 new Rust tests**, plus the
 console's 17, which run separately.
+
+Three of the 181 arrived after the merge, and are worth singling out because of
+what they are: `an_edit_preserves_every_other_key_and_value`,
+`an_edit_preserves_the_order_keys_were_written_in`, and
+`an_edit_does_not_preserve_formatting`. The last pins a **limitation** rather
+than a feature — comments, blank lines, quoting and flow style are all lost on
+a round trip — because the documentation had claimed the opposite ("byte for
+byte") in three places and nothing checked it. If a future parser starts
+preserving any of them, that test fails and the prose is corrected in the same
+change.
 
 | Crate | Tests | What they pin |
 | --- | --- | --- |
-| `fabric-client-model` | 34 | the document format, preservation, every name's rule |
+| `fabric-client-model` | 37 | the document format, what an edit preserves and what it does not, every name's rule |
 | `fabric-reconciliation` | 24 | the diff, idempotence, the status state machine |
 | `fabric-control-plane` | 63 | the API contract, concurrency, the operator seam, boundaries |
 | `fabric-keycloak` | 18 | the admin protocol, over a real socket |

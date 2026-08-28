@@ -146,6 +146,101 @@ fn an_edit_that_breaks_a_rule_produces_no_document() {
     ));
 }
 
+/// A document written the way a human writes one: comments, blank lines,
+/// quoting, a flow sequence, a folded scalar.
+const HAND_WRITTEN: &str = r#"# Acme's client definition.
+apiVersion: fabric.fieldstate.nz/v1
+kind: Client
+metadata:
+  name: acme
+spec:
+  displayName: "Acme"      # quoted on purpose
+
+  hosts: [www.example.com, api.example.com]
+
+  identity:
+    realm: acme
+    roles:
+      - Client Realm Administrator
+      - Client Realm User
+    clients: []
+
+  features:
+    invoicing: true
+"#;
+
+/// The fixture's identity with one more role, so an edit has something to do.
+fn with_extra_role(document: &ClientDocument) -> ClientDocument {
+    let mut identity = document.client().identity.clone();
+    identity
+        .roles
+        .push(RoleName::try_new("Invoicing Approver").unwrap());
+
+    document.with_identity(identity).unwrap()
+}
+
+#[test]
+fn an_edit_preserves_every_other_key_and_value() {
+    let document = ClientDocument::parse(HAND_WRITTEN).unwrap();
+
+    let rendered = with_extra_role(&document).render().unwrap();
+    let reread = ClientDocument::parse(&rendered).unwrap();
+
+    // Values, including the ones this model does not understand.
+    assert!(rendered.contains("invoicing: true"));
+    assert_eq!(reread.client().display_name, "Acme");
+    assert_eq!(reread.client().hosts.len(), 2);
+    assert_eq!(reread.client().hosts[0].as_str(), "www.example.com");
+    assert_eq!(reread.client().hosts[1].as_str(), "api.example.com");
+}
+
+#[test]
+fn an_edit_preserves_the_order_keys_were_written_in() {
+    // Part of the guarantee the documentation now states. A mapping that
+    // reordered on write would turn every one-line change into a whole-file
+    // diff, which is the thing that makes a Git-backed authority reviewable.
+    let document = ClientDocument::parse(HAND_WRITTEN).unwrap();
+
+    let rendered = with_extra_role(&document).render().unwrap();
+    let position = |key: &str| rendered.find(key).unwrap();
+
+    assert!(position("apiVersion") < position("kind"));
+    assert!(position("kind") < position("metadata"));
+    assert!(position("displayName") < position("hosts"));
+    assert!(position("hosts:") < position("identity:"));
+    assert!(position("identity:") < position("features:"));
+}
+
+#[test]
+fn an_edit_does_not_preserve_formatting() {
+    // Pinning a **limitation**, not a feature, because the documentation makes
+    // a specific claim about it and prose nobody checks is prose that drifts —
+    // this test exists because it did drift, and said "byte for byte".
+    //
+    // If a future parser starts preserving any of these, this test fails and
+    // the documentation gets corrected in the same change rather than years
+    // later.
+    let document = ClientDocument::parse(HAND_WRITTEN).unwrap();
+
+    let rendered = with_extra_role(&document).render().unwrap();
+
+    assert!(
+        !rendered.contains("# Acme's client definition."),
+        "comments survived"
+    );
+    assert!(!rendered.contains("# quoted on purpose"), "comments survived");
+    assert!(!rendered.contains("\n\n"), "blank lines survived");
+    assert!(!rendered.contains("\"Acme\""), "quoting survived");
+    assert!(
+        !rendered.contains("[www.example.com"),
+        "the flow sequence survived"
+    );
+
+    // What the flow sequence became, so the test says what *does* happen
+    // rather than only what does not.
+    assert!(rendered.contains("- www.example.com"));
+}
+
 #[test]
 fn an_edited_document_reads_back_as_what_was_written() {
     let identity = IdentityConfiguration {

@@ -134,16 +134,38 @@ Supporting confidential clients means designing secret delivery first.
 
 ## Preservation
 
-An identity edit through the control plane rewrites `spec.identity` and leaves
-every other byte of the document alone. That is the reason `ClientDocument`
-keeps the whole parsed document rather than round-tripping through a struct: a
-struct would silently drop every section it has no field for, and the only
-evidence would be a Git diff nobody reads until a feature flag stops working.
+An identity edit through the control plane rewrites `spec.identity` and
+preserves **every other key and value in the document, and their order**. That
+is the reason `ClientDocument` keeps the whole parsed document rather than
+round-tripping through a struct: a struct would silently drop every section it
+has no field for, and the only evidence would be a Git diff nobody reads until
+a feature flag stops working.
 
-What is **not** preserved is comments and blank lines: the parser is a YAML data
-parser. That is a real cost in a repository humans also edit by hand, and it is
-why the control plane rewrites only documents an operator has actually changed
-rather than normalising the repository on read.
+What it does **not** preserve is the document's *formatting*. The parser reads
+YAML as data and the writer reprints the whole file, so a round trip normalises
+it:
+
+| Written by hand | Comes back as |
+|---|---|
+| `# a comment` | gone |
+| a blank line between sections | gone |
+| `displayName: "Acme"` | `displayName: Acme` |
+| `hosts: [a.example.com, b.example.com]` | a block sequence, one host per line |
+| `note: >` (folded) | `note: \|` (literal), with the same value |
+
+The values survive all of that — a folded scalar and the literal block it
+becomes hold the same string — but the file an operator wrote is not the file
+that comes back.
+
+This is the sharpest cost of the design, and it is why the control plane
+rewrites **only documents an operator has actually changed** rather than
+normalising the repository on read. One client's identity edit reformats one
+client's file; it never touches the other ninety-nine.
+
+If comment-preserving edits become a requirement, that is a change of parser
+(a document model that keeps its own trivia) rather than a change of policy —
+and it is worth knowing that before the repository fills with comments somebody
+expects to survive.
 
 ## Revisions
 

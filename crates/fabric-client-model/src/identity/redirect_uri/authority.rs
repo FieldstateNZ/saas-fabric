@@ -11,11 +11,12 @@ const KIND: &str = "redirect uri";
 /// Hosts that are the machine the browser is already on.
 const LOOPBACK: [&str; 2] = ["localhost", "127.0.0.1"];
 
-/// The IANA special-use top-level domain for private networks.
+/// The top-level domain ICANN reserved for private-use applications.
 ///
-/// Delegated in 2024 for exactly this purpose: names that resolve only inside
-/// an organisation. It is what makes the plain-HTTP exception below a rule
-/// rather than a favour to one deployment.
+/// Its board resolved in July 2024 to withhold `.internal` from delegation
+/// permanently, for exactly this purpose: names that resolve only inside an
+/// organisation. It is what makes the plain-HTTP exception below a rule rather
+/// than a favour to one deployment.
 const PRIVATE_TLD: &str = "internal";
 
 /// Checks the scheme and host of a redirect URI.
@@ -29,12 +30,13 @@ const PRIVATE_TLD: &str = "internal";
 ///
 /// - **Loopback.** The code never leaves the machine. This is what RFC 8252
 ///   recommends for native applications, for the same reason.
-/// - **The `.internal` top-level domain.** IANA delegated it in 2024 for
-///   private-use internal networks. It is guaranteed never to resolve on the
-///   public internet, and no public certificate authority will issue for it —
-///   so an internal environment reached over plain HTTP is not a deployment
-///   that *should* have TLS and skipped it; it is one where the public TLS
-///   ecosystem does not apply.
+/// - **The `.internal` top-level domain.** ICANN resolved in July 2024 to
+///   withhold it from delegation permanently, reserving it for private-use
+///   applications. Because it will never exist in the public DNS root, it
+///   cannot resolve on the internet and no public certificate authority will
+///   issue for it — so an internal environment reached over plain HTTP is not
+///   a deployment that *should* have TLS and skipped it; it is one where the
+///   public TLS ecosystem does not apply.
 ///
 /// Everything else must be `https://`. `http://www.example.com` is refused, and
 /// that is the case this rule exists for.

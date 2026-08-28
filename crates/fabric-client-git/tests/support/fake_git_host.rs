@@ -29,6 +29,18 @@ struct State {
 
     /// How many writes have been accepted, which is where hashes come from.
     writes: u64,
+
+    /// How many installation tokens have been minted.
+    mints: u64,
+
+    /// A bearer the host refuses with `401`, as a revoked token would be.
+    rejected_bearer: Option<String>,
+
+    /// Whether every bearer is refused, as a revoked installation would be.
+    reject_all: bool,
+
+    /// Whether the host reports itself rate limited.
+    rate_limited: bool,
 }
 
 /// A Git host holding files in memory.
@@ -76,6 +88,21 @@ impl FakeGitHost {
             state,
             requests,
         }
+    }
+
+    /// Makes the host reject one specific bearer with `401`.
+    pub fn reject_bearer(&self, bearer: String) {
+        self.state.lock().unwrap().rejected_bearer = Some(bearer);
+    }
+
+    /// Makes the host reject every bearer with `401`.
+    pub fn reject_all_bearers(&self) {
+        self.state.lock().unwrap().reject_all = true;
+    }
+
+    /// Makes the host answer as though the installation is rate limited.
+    pub fn rate_limit(&self) {
+        self.state.lock().unwrap().rate_limited = true;
     }
 
     /// Declares a directory that holds no file.
@@ -132,7 +159,11 @@ impl FakeGitHost {
     }
 }
 
-/// The bearer the fake mints for a GitHub App installation.
+/// The stem of the bearer the fake mints for a GitHub App installation.
+///
+/// Each mint appends its ordinal — `…-1`, `…-2` — so a test can tell a
+/// *replaced* token from a reused one, which is the whole subject of the
+/// rejection-retry behaviour.
 pub const MINTED_TOKEN: &str = "ghs_mintedinstallationtoken";
 
 /// Answers one request.
@@ -141,14 +172,38 @@ fn respond(state: &Arc<Mutex<State>>, request: &RecordedRequest) -> (u16, String
     // here rather than by a test's own responder so that every test exercising
     // the App posture mints through the same code the real host would.
     if request.path.contains("/access_tokens") {
+        let mut held = state.lock().unwrap();
+        held.mints += 1;
+
         return (
             201,
             serde_json::json!({
-                "token": MINTED_TOKEN,
-                "expires_at": "2026-08-28T09:00:00Z",
+                "token": format!("{MINTED_TOKEN}-{}", held.mints),
+                // An hour after the fixture clock the tests run at, so the
+                // adapter caches rather than re-minting per request.
+                "expires_at": "2023-11-14T23:13:20Z",
             })
             .to_string(),
         );
+    }
+
+    {
+        let held = state.lock().unwrap();
+
+        if held.rate_limited {
+            // GitHub's shape for an exhausted quota: 403 with no remaining
+            // requests. A fresh token does not fix it.
+            return (403, r#"{"message":"API rate limit exceeded"}"#.to_owned());
+        }
+
+        let bearer = request
+            .authorization
+            .as_deref()
+            .map(|value| value.trim_start_matches("Bearer ").to_owned());
+
+        if held.reject_all || (held.rejected_bearer.is_some() && held.rejected_bearer == bearer) {
+            return (401, r#"{"message":"Bad credentials"}"#.to_owned());
+        }
     }
 
     let path = repository_path(&request.path);

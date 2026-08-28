@@ -20,6 +20,7 @@ jsonwebtoken.workspace = true
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+time.workspace = true
 # `sync` only: the installation-token cache is the one piece of shared mutable
 # state in this crate, and it is held across an await.
 tokio = { workspace = true, features = ["sync"] }

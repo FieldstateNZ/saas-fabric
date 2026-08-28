@@ -1,27 +1,18 @@
 //! Obtaining the bearer the contents API is called with.
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use fabric_control_plane::RepositoryError;
 use fabric_core::Clock;
 use tokio::sync::Mutex;
 
 mod assertion;
+mod lifetime;
 
 use crate::github::errors::{status_failure, transport_failure};
 use crate::github::wire::InstallationToken;
 use crate::GitCredential;
-
-/// How long a minted installation token is treated as usable.
-///
-/// GitHub issues them for an hour. The response says so in `expires_at`, as an
-/// RFC 3339 string — which is deliberately **not** parsed: doing so would put a
-/// date-time library in the control plane to read one field, and a fixed margin
-/// well inside the documented lifetime is the same answer with less to go
-/// wrong. If GitHub ever shortens the lifetime, this becomes wrong in the
-/// direction of a `401`, which the next sweep retries.
-const TOKEN_LIFETIME: Duration = Duration::from_mins(50);
 
 /// A minted token, and when it stops being used.
 struct Cached {
@@ -87,14 +78,34 @@ impl BearerSource {
 
         let assertion = assertion::build(app_id, private_key, self.clock.now_unix_seconds())?;
         let minted = self.mint(http, installation_id, &assertion).await?;
-        let value = minted.clone();
+
+        // The host's stated expiry, measured monotonically — see
+        // `lifetime::usable_for` for why the two clocks are mixed on purpose.
+        let usable_for = lifetime::usable_for(&minted.expires_at, self.clock.now_unix_seconds());
+        let value = minted.token.clone();
 
         *cached = Some(Cached {
-            value: minted,
-            good_until: self.clock.now() + TOKEN_LIFETIME,
+            value: minted.token,
+            good_until: self.clock.now() + usable_for,
         });
 
         Ok(value)
+    }
+
+    /// Discards the cached token, so the next request mints a fresh one.
+    ///
+    /// # Why a token inside its stated lifetime is ever thrown away
+    ///
+    /// Because a stated expiry is not a guarantee that the token still works.
+    /// An App can be uninstalled, its key rotated, or its installation
+    /// suspended — and every one of those invalidates a token the platform
+    /// believes it may use for another forty minutes.
+    ///
+    /// Without this, a token that stopped working would be presented on every
+    /// request until the local deadline passed, and every sweep in between
+    /// would fail identically. `operations` calls it on a `401`.
+    pub(crate) async fn invalidate(&self) {
+        *self.cached.lock().await = None;
     }
 
     /// Exchanges the assertion for an installation token.
@@ -103,7 +114,7 @@ impl BearerSource {
         http: &reqwest::Client,
         installation_id: &str,
         assertion: &str,
-    ) -> Result<String, RepositoryError> {
+    ) -> Result<InstallationToken, RepositoryError> {
         let url = format!(
             "{}/app/installations/{installation_id}/access_tokens",
             self.api_base_url.trim_end_matches('/')
@@ -127,11 +138,9 @@ impl BearerSource {
             ));
         }
 
-        let minted: InstallationToken = response
+        response
             .json()
             .await
-            .map_err(|error| transport_failure("minting an installation token", &error))?;
-
-        Ok(minted.token)
+            .map_err(|error| transport_failure("minting an installation token", &error))
     }
 }

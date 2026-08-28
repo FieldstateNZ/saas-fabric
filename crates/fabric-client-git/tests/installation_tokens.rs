@@ -138,7 +138,7 @@ async fn the_contents_api_is_called_with_the_minted_token() {
 
     assert_eq!(
         contents.authorization.as_deref(),
-        Some(format!("Bearer {MINTED_TOKEN}").as_str())
+        Some(format!("Bearer {MINTED_TOKEN}-1").as_str())
     );
 }
 
@@ -160,6 +160,78 @@ async fn the_token_is_minted_once_and_reused() {
         .count();
 
     assert_eq!(mints, 1, "the key was exchanged more than once for a live token");
+}
+
+#[tokio::test]
+async fn a_token_the_host_rejects_is_replaced_and_the_request_retried() {
+    // A stated expiry is not a guarantee: an App can be uninstalled, its key
+    // rotated, or its installation suspended, and each kills a token the
+    // platform believes it may use for another forty minutes.
+    //
+    // Here the host rejects the first minted token and accepts any later one.
+    let host = FakeGitHost::start(&[(ACME_PATH, ACME)]).await;
+    host.reject_bearer(format!("{MINTED_TOKEN}-1"));
+
+    let stored = app_repository(&host, TEST_KEY).get(&client()).await;
+
+    assert!(
+        stored.is_ok(),
+        "a dead token must not fail the operation: {stored:?}"
+    );
+    assert_eq!(
+        host.requests()
+            .iter()
+            .filter(|request| request.path.contains("/access_tokens"))
+            .count(),
+        2,
+        "the rejected token must be re-minted rather than presented until it expires"
+    );
+}
+
+#[tokio::test]
+async fn a_rejected_token_is_re_minted_once_and_not_repeatedly() {
+    // A host that rejects every token is a revoked installation. Minting per
+    // request would spend a round trip proving that on every call.
+    let host = FakeGitHost::start(&[(ACME_PATH, ACME)]).await;
+    host.reject_all_bearers();
+
+    let error = app_repository(&host, TEST_KEY).get(&client()).await.unwrap_err();
+
+    assert!(matches!(error, RepositoryError::NotPermitted), "{error}");
+    assert_eq!(
+        host.requests()
+            .iter()
+            .filter(|request| request.path.contains("/contents/"))
+            .count(),
+        2,
+        "exactly one retry: the first attempt and one more with a fresh token"
+    );
+}
+
+#[tokio::test]
+async fn a_forbidden_response_does_not_cost_a_mint() {
+    // GitHub answers `403` for rate limiting and for permissions the
+    // installation genuinely lacks. A fresh token fixes neither, so re-minting
+    // would spend a round trip on every rate-limited request. This is why the
+    // adapter retries only `401`, where the Keycloak one also retries `403` —
+    // the two hosts mean different things by it.
+    //
+    // Which `403` it was, and whether that is transient, is decided by the
+    // status mapping and tested in `github::errors_tests`.
+    let host = FakeGitHost::start(&[]).await;
+    host.rate_limit();
+
+    let outcome = app_repository(&host, TEST_KEY).get(&client()).await;
+
+    assert!(outcome.is_err());
+    assert_eq!(
+        host.requests()
+            .iter()
+            .filter(|request| request.path.contains("/access_tokens"))
+            .count(),
+        1,
+        "a forbidden response must not cost a mint"
+    );
 }
 
 #[tokio::test]

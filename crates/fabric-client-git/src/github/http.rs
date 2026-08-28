@@ -3,9 +3,7 @@
 use std::sync::Arc;
 
 use fabric_client_model::ClientId;
-use fabric_control_plane::RepositoryError;
 use fabric_core::Clock;
-use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, USER_AGENT};
 
 use crate::github::tokens::BearerSource;
 use crate::{GitCredential, GitRepositoryConfig};
@@ -14,10 +12,10 @@ use crate::{GitCredential, GitRepositoryConfig};
 ///
 /// Pinned in a header rather than assumed, so a provider-side default moving
 /// on does not silently change what these calls mean.
-const API_VERSION_HEADER: &str = "X-GitHub-Api-Version";
+pub(super) const API_VERSION_HEADER: &str = "X-GitHub-Api-Version";
 
 /// The version pinned above.
-const API_VERSION: &str = "2022-11-28";
+pub(super) const API_VERSION: &str = "2022-11-28";
 
 /// Issues authenticated requests against one repository's contents API.
 pub(crate) struct GitHost {
@@ -28,7 +26,7 @@ pub(crate) struct GitHost {
     ///
     /// Not a stored token: under the App posture the bearer is minted and
     /// expires, so every request asks rather than holding one.
-    bearers: BearerSource,
+    pub(super) bearers: BearerSource,
 
     /// Where the repository is.
     pub(super) config: GitRepositoryConfig,
@@ -66,27 +64,6 @@ impl GitHost {
             "{}/{} on {}",
             self.config.owner, self.config.repository, self.config.branch
         )
-    }
-
-    /// Applies the headers every request needs, including a current bearer.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`RepositoryError`] if a bearer could not be obtained, which
-    /// under the App posture means the installation token could not be minted.
-    pub(super) async fn request(
-        &self,
-        builder: reqwest::RequestBuilder,
-    ) -> Result<reqwest::RequestBuilder, RepositoryError> {
-        let mut headers = HeaderMap::new();
-        headers.insert(ACCEPT, HeaderValue::from_static("application/vnd.github+json"));
-        headers.insert(API_VERSION_HEADER, HeaderValue::from_static(API_VERSION));
-        // Required by the host, which refuses requests without one.
-        headers.insert(USER_AGENT, HeaderValue::from_static("saas-fabric-control-plane"));
-
-        let bearer = self.bearers.bearer(&self.http).await?;
-
-        Ok(builder.headers(headers).bearer_auth(bearer))
     }
 
     /// The contents-API URL for a path within the repository.

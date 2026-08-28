@@ -130,11 +130,12 @@ would require a certificate that **cannot exist**:
 
 - **Loopback**, where the code never leaves the machine. This is what RFC 8252
   recommends for native applications, for the same reason.
-- **The `.internal` top-level domain**, which IANA delegated in 2024 for
-  private-use internal networks. It cannot resolve on the public internet and
-  no public certificate authority will issue for it — so an internal
-  environment reached over plain HTTP is not a deployment that should have TLS
-  and skipped it.
+- **The `.internal` top-level domain.** ICANN resolved in July 2024 to withhold
+  it from delegation permanently, reserving it for private-use applications.
+  Because it will never exist in the public DNS root it cannot resolve on the
+  internet, and no public certificate authority will issue for it — so an
+  internal environment reached over plain HTTP is not a deployment that should
+  have TLS and skipped it.
 
 LucentRoot is the second case: its gateway has one listener, on port 80, and
 its hosts are `*.lucentroot.internal`.

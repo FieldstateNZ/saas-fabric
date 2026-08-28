@@ -20,7 +20,7 @@ use fabric_core::IdentifierError;
 /// with its own source of truth.
 ///
 /// `https://` is the rule. Plain `http://` is permitted only where a
-/// certificate cannot exist — loopback, and the IANA-reserved `.internal`
+/// certificate cannot exist — loopback, and the ICANN-reserved `.internal`
 /// top-level domain. The `authority` module carries that argument in full,
 /// along with the host checks a substring test would get wrong.
 ///

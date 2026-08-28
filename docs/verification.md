@@ -33,7 +33,7 @@ is at the end, under "The control plane, end to end".
 | --- | --- | --- |
 | Formatting | `cargo fmt --all --check` | clean |
 | Lints | `cargo clippy --workspace --all-targets -- -D warnings` | 0 findings |
-| Tests | `cargo test --workspace` | 1179 passing, 0 failing, 1 ignored |
+| Tests | `cargo test --workspace` | 1189 passing, 0 failing, 1 ignored |
 | Docs | `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps` | 0 warnings |
 | Dependencies | `cargo deny check` | advisories, bans, licences, sources — all ok |
 | File sizes | `python3 scripts/check_file_sizes.py` | 0 over the 150-line limit |
@@ -51,7 +51,7 @@ dominates each of them.
 The single ignored test is a `#[doc(ignore)]` example in `fabric-identity`'s
 extractor, and predates this work.
 
-The workspace total rose from 977 to 1179: **202 new Rust tests**, plus the
+The workspace total rose from 977 to 1189: **212 new Rust tests**, plus the
 console's 17, which run separately.
 
 Three of the 181 arrived after the merge, and are worth singling out because of
@@ -70,7 +70,7 @@ change.
 | `fabric-reconciliation` | 24 | the diff, idempotence, the status state machine |
 | `fabric-control-plane` | 63 | the API contract, concurrency, the operator seam, boundaries |
 | `fabric-keycloak` | 20 | the admin protocol over a real socket, including the refusal-retry a real Keycloak forced |
-| `fabric-client-git` | 33 | optimistic concurrency and the GitHub App token exchange, over a real socket |
+| `fabric-client-git` | 43 | optimistic concurrency, the GitHub App token exchange, and how a rejected or expiring token is replaced — all over a real socket |
 | `fabric-control-plane-api` | 15 | configuration, secrets, the shipped examples |
 | `control-plane-ui` | 17 | the API client, the badge, the role editor |
 
@@ -329,7 +329,8 @@ The seeded Acme client declares `http://acme.lucentroot.internal/*`, and the
 model refused it: `RedirectUri` permitted plain HTTP only on loopback.
 
 LucentRoot's gateway has one listener, on port 80, with no TLS — because
-`.internal` is an IANA special-use top-level domain that cannot resolve
+ICANN resolved in July 2024 to withhold `.internal` from delegation
+permanently, reserving it for private-use applications — so it cannot resolve
 publicly or receive a trusted certificate. So the rule was wrong, not the
 environment. Plain HTTP is now permitted on loopback *and* under `.internal`,
 and `authority_tests.rs` pins the hostile cases a substring check would have
@@ -343,6 +344,11 @@ Named here rather than left for a reader to discover.
 
 **Control plane:**
 
+- **The installation token's expiry is honoured but never observed.** The
+  adapter reads GitHub's `expires_at` and caches to it, with a margin, a floor
+  and a ceiling — all tested against a socket. What no test can show is that
+  GitHub's stated expiry matches when the token actually stops working. The
+  `401` retry is what covers the difference.
 - **No test against a real Git host.** The concurrency mechanism is tested
   against a stateful fake that moves blob hashes and refuses stale ones, which
   is what the contents API does — but "the host answers `409` for a stale

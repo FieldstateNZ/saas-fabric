@@ -75,3 +75,26 @@ pub(super) struct WrittenContent {
     /// The blob hash the write produced, which becomes the new revision.
     pub(super) sha: String,
 }
+
+/// What the installation-token endpoint returns.
+///
+/// The one wire type here carrying a secret. It is never logged and never
+/// returned upward — the port this crate implements has no operation that
+/// could hand a token to a caller.
+#[derive(serde::Deserialize)]
+pub(super) struct InstallationToken {
+    /// The bearer to present to the contents API.
+    pub(super) token: String,
+
+    /// When the host says it stops working, as an RFC 3339 timestamp.
+    ///
+    /// Read rather than assumed. An earlier version cached every token for a
+    /// fixed fifty minutes on the grounds that GitHub issues them for an hour
+    /// — which is true today, is not a promise, and left the platform holding
+    /// a dead token for the remainder of the window if it ever stopped being
+    /// true.
+    pub(super) expires_at: String,
+}
+
+// No `Debug` on the type above: deriving one would put an installation token
+// into any error or log line that formatted a value containing it.

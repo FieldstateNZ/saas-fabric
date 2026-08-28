@@ -83,6 +83,27 @@ failure aborts *before* the write.
 `desired_state_repository.rs` asserts the property directly — it decodes what
 reached the host and parses it.
 
+## The credential is an App, not a token
+
+The production posture is a **GitHub App** installed on the desired-state
+repository and nothing else, with `contents: read` and `contents: write`.
+
+The platform holds the App's private key. Every request needs a bearer, so the
+adapter signs a short-lived assertion with that key, exchanges it at
+`/app/installations/{id}/access_tokens`, and presents the *minted* token — which
+GitHub expires after an hour, and which the adapter caches for fifty minutes.
+
+The distinction that matters: the durable secret is a key that is never sent
+anywhere, and the thing that *is* sent expires on its own. A personal access
+token inverts both — it is the durable secret, it is sent on every request, and
+it outlives whoever issued it. `GitAuthConfig::Token` exists for a host that is
+not GitHub and for tests that drive a socket; it is not what a deployment runs.
+
+`installation_id` is configured rather than discovered. Looking it up would mean
+granting the App enough scope to enumerate its own installations, and repeating
+that lookup on every process start for a value that changes only when somebody
+reinstalls the App.
+
 ## Attribution
 
 Commits are authored by the platform's machine identity, because that is who

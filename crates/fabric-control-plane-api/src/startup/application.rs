@@ -43,7 +43,7 @@ pub struct Application {
 pub async fn build(config: &ControlPlaneAppConfig) -> Result<Application, String> {
     let clock = SystemClock::shared();
 
-    let repository = adapters::desired_state(&config.desired_state).await?;
+    let repository = adapters::desired_state(&config.desired_state, Arc::clone(&clock)).await?;
     let provider = adapters::identity_provider(&config.identity_provider, Arc::clone(&clock))?;
     let reconciler = Arc::new(IdentityReconciler::new(provider));
 

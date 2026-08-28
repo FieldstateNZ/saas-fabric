@@ -15,6 +15,7 @@
 // Each test binary compiles the whole support module but uses a subset.
 #![allow(
     dead_code,
+    unused_imports,
     clippy::unwrap_used,
     clippy::expect_used,
     clippy::panic,
@@ -24,4 +25,4 @@
 mod fake_git_host;
 mod http_server;
 
-pub use fake_git_host::FakeGitHost;
+pub use fake_git_host::{FakeGitHost, MINTED_TOKEN};

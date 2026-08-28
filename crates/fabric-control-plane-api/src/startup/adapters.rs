@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use fabric_client_git::{GitClientRepository, GitCredential};
+use fabric_client_git::{GitAuthConfig, GitClientRepository, GitCredential};
 use fabric_control_plane::{ClientRepository, InMemoryClientRepository};
 use fabric_core::Clock;
 use fabric_keycloak::{AdminCredential, KeycloakIdentityProvider};
@@ -19,12 +19,27 @@ use crate::startup::local_documents;
 ///
 /// Returns a message if the repository cannot be built — an invalid URL, a
 /// missing credential, or a local directory that cannot be read.
-pub(super) async fn desired_state(config: &DesiredStateConfig) -> Result<Arc<dyn ClientRepository>, String> {
+pub(super) async fn desired_state(
+    config: &DesiredStateConfig,
+    clock: Arc<dyn Clock>,
+) -> Result<Arc<dyn ClientRepository>, String> {
     match config {
         DesiredStateConfig::Git(git) => {
-            let credential = GitCredential::new(secrets::resolve(&git.token_ref)?);
+            // One secret either way; which one it is depends on the posture.
+            // Resolving before the match keeps the failure "this secret is not
+            // set" rather than one message per posture.
+            let secret = secrets::resolve(git.auth.secret_ref())?;
 
-            Ok(Arc::new(GitClientRepository::new(git, credential)?))
+            let credential = match &git.auth {
+                GitAuthConfig::GithubApp {
+                    app_id,
+                    installation_id,
+                    ..
+                } => GitCredential::app(app_id, installation_id, secret),
+                GitAuthConfig::Token { .. } => GitCredential::token(secret),
+            };
+
+            Ok(Arc::new(GitClientRepository::new(git, credential, clock)?))
         }
 
         DesiredStateConfig::LocalDirectory { path } => {

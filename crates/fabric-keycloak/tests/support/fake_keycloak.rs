@@ -20,6 +20,13 @@ pub struct RecordedRequest {
 
     /// Whether the request carried a bearer token.
     pub authorised: bool,
+
+    /// The bearer it carried, if any.
+    ///
+    /// Recorded rather than only counted so a test can tell a *stale* token
+    /// from a fresh one — which is the whole subject of the refusal-retry
+    /// behaviour.
+    pub bearer: Option<String>,
 }
 
 /// A stand-in Keycloak.
@@ -98,9 +105,20 @@ async fn serve(mut stream: TcpStream, responder: &Responder, recorded: &Arc<Mute
         recorded.lock().unwrap().push(request.clone());
 
         let (status, body) = if request.path.contains("/protocol/openid-connect/token") {
+            // A different token per mint, so a test can assert that a *fresh*
+            // one was presented rather than merely that a request was retried.
+            // The in-flight request is already recorded, so the first mint is
+            // `test-token-1`.
+            let minted = recorded
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|seen| seen.path.contains("/protocol/openid-connect/token"))
+                .count();
+
             (
                 200,
-                r#"{"access_token":"test-token","expires_in":300}"#.to_owned(),
+                format!(r#"{{"access_token":"test-token-{minted}","expires_in":300}}"#),
             )
         } else {
             responder(&request)
@@ -160,13 +178,17 @@ async fn read_request(stream: &mut TcpStream, buffer: &mut Vec<u8>) -> Option<Re
     let body = String::from_utf8_lossy(buffer.get(head_end..head_end + length)?).to_string();
     buffer.drain(..head_end + length);
 
+    let bearer = headers
+        .get("authorization")
+        .and_then(|value| value.strip_prefix("Bearer "))
+        .map(ToOwned::to_owned);
+
     Some(RecordedRequest {
         method,
         path,
         body,
-        authorised: headers
-            .get("authorization")
-            .is_some_and(|value| value.starts_with("Bearer ")),
+        authorised: bearer.is_some(),
+        bearer,
     })
 }
 

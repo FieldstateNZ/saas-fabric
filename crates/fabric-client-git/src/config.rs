@@ -1,9 +1,13 @@
 //! What the Git-backed repository needs to be told.
 
+mod auth;
+
+pub use auth::GitAuthConfig;
+
 /// Where desired state lives, and how to reach it.
 ///
 /// Every field is non-secret and belongs in a `ConfigMap`. The token itself is
-/// named, never carried — see [`Self::token_ref`].
+/// named, never carried — see [`Self::auth`].
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct GitRepositoryConfig {
@@ -35,14 +39,12 @@ pub struct GitRepositoryConfig {
     /// The file within a client's directory that carries its desired state.
     pub document_file: String,
 
-    /// **The name of the token**, not the token.
+    /// How SaaS Fabric authenticates to the host.
     ///
-    /// The same contract [`KeycloakConfig::client_secret_ref`] states: this
-    /// application says which value it needs, and `saas-fabric-platform`
-    /// decides how it arrives (§20, §21).
-    ///
-    /// [`KeycloakConfig::client_secret_ref`]: https://docs.rs/fabric-keycloak
-    pub token_ref: String,
+    /// Names the secret it needs; never carries one. This application says
+    /// which value it requires, and `saas-fabric-platform` decides how it
+    /// arrives (§20, §21).
+    pub auth: GitAuthConfig,
 
     /// The name commits are attributed to.
     ///
@@ -67,7 +69,7 @@ impl Default for GitRepositoryConfig {
             branch: "main".to_owned(),
             path_prefix: "clients".to_owned(),
             document_file: "client.yaml".to_owned(),
-            token_ref: "git/saas-fabric-clients".to_owned(),
+            auth: GitAuthConfig::default(),
             committer_name: "SaaS Fabric".to_owned(),
             committer_email: "saas-fabric@users.noreply.github.com".to_owned(),
             http_timeout_seconds: 15,
@@ -98,13 +100,12 @@ impl GitRepositoryConfig {
             ("branch", &self.branch),
             ("path_prefix", &self.path_prefix),
             ("document_file", &self.document_file),
-            ("token_ref", &self.token_ref),
         ] {
             if value.trim().is_empty() {
                 return Err(format!("clients repository: {name} must not be empty"));
             }
         }
 
-        Ok(())
+        self.auth.validate()
     }
 }

@@ -1,26 +1,32 @@
 //! The contents-API client.
 
-use fabric_client_model::ClientId;
-use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, USER_AGENT};
+use std::sync::Arc;
 
+use fabric_client_model::ClientId;
+use fabric_core::Clock;
+
+use crate::github::tokens::BearerSource;
 use crate::{GitCredential, GitRepositoryConfig};
 
 /// The API version this adapter is written against.
 ///
 /// Pinned in a header rather than assumed, so a provider-side default moving
 /// on does not silently change what these calls mean.
-const API_VERSION_HEADER: &str = "X-GitHub-Api-Version";
+pub(super) const API_VERSION_HEADER: &str = "X-GitHub-Api-Version";
 
 /// The version pinned above.
-const API_VERSION: &str = "2022-11-28";
+pub(super) const API_VERSION: &str = "2022-11-28";
 
 /// Issues authenticated requests against one repository's contents API.
 pub(crate) struct GitHost {
     /// The HTTP client, which owns the keep-alive connection pool.
     pub(super) http: reqwest::Client,
 
-    /// The credential presented on every request.
-    credential: GitCredential,
+    /// Supplies the bearer for each request.
+    ///
+    /// Not a stored token: under the App posture the bearer is minted and
+    /// expires, so every request asks rather than holding one.
+    pub(super) bearers: BearerSource,
 
     /// Where the repository is.
     pub(super) config: GitRepositoryConfig,
@@ -33,7 +39,11 @@ impl GitHost {
     ///
     /// Returns a message if the configuration is invalid or the HTTP client
     /// cannot be constructed.
-    pub(crate) fn new(config: &GitRepositoryConfig, credential: GitCredential) -> Result<Self, String> {
+    pub(crate) fn new(
+        config: &GitRepositoryConfig,
+        credential: GitCredential,
+        clock: Arc<dyn Clock>,
+    ) -> Result<Self, String> {
         config.validate()?;
 
         let http = reqwest::Client::builder()
@@ -43,7 +53,7 @@ impl GitHost {
 
         Ok(Self {
             http,
-            credential,
+            bearers: BearerSource::new(credential, config.api_base_url.clone(), clock),
             config: config.clone(),
         })
     }
@@ -54,17 +64,6 @@ impl GitHost {
             "{}/{} on {}",
             self.config.owner, self.config.repository, self.config.branch
         )
-    }
-
-    /// Applies the headers every request needs.
-    pub(super) fn request(&self, builder: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
-        let mut headers = HeaderMap::new();
-        headers.insert(ACCEPT, HeaderValue::from_static("application/vnd.github+json"));
-        headers.insert(API_VERSION_HEADER, HeaderValue::from_static(API_VERSION));
-        // Required by the host, which refuses requests without one.
-        headers.insert(USER_AGENT, HeaderValue::from_static("saas-fabric-control-plane"));
-
-        builder.headers(headers).bearer_auth(self.credential.expose())
     }
 
     /// The contents-API URL for a path within the repository.

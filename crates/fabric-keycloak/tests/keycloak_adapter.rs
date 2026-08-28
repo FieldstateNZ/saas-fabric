@@ -234,6 +234,56 @@ async fn a_client_that_vanished_between_observation_and_update_is_created() {
 }
 
 #[tokio::test]
+async fn a_token_refused_after_the_platform_changed_its_own_grants_is_replaced() {
+    // Found against real Keycloak, not reasoned about. Creating a realm causes
+    // Keycloak to grant the creator that realm's administrative roles — into
+    // tokens minted *afterwards*. So the first pass over a new client creates
+    // the realm with the token it holds, and is then refused for everything
+    // inside it, with a token that is valid and simply too old.
+    //
+    // Here: every admin call bearing the first minted token is refused, and
+    // anything bearing a later one succeeds.
+    let keycloak = FakeKeycloak::start(Arc::new(|request: &RecordedRequest| {
+        if request.bearer.as_deref() == Some("test-token-1") {
+            (403, "{}".to_owned())
+        } else {
+            (201, String::new())
+        }
+    }))
+    .await;
+
+    let outcome = provider(&keycloak)
+        .create_realm_role(&realm(), &RoleName::try_new("Client Realm User").unwrap())
+        .await;
+
+    assert_eq!(outcome, Ok(()), "a stale grant set must not fail the operation");
+    assert_eq!(
+        keycloak.count("POST", "/realms/master/protocol/openid-connect/token"),
+        2,
+        "the refused token must be replaced rather than waited out"
+    );
+}
+
+#[tokio::test]
+async fn a_genuine_permissions_failure_is_not_retried_forever() {
+    // The retry must be once. A provider that refuses every token is a
+    // misconfigured credential, and hammering it would turn one bad secret
+    // into a request storm.
+    let keycloak = FakeKeycloak::start(Arc::new(|_: &RecordedRequest| (403, "{}".to_owned()))).await;
+
+    let outcome = provider(&keycloak)
+        .create_realm_role(&realm(), &RoleName::try_new("Client Realm User").unwrap())
+        .await;
+
+    assert_eq!(outcome, Err(ProviderError::NotPermitted));
+    assert_eq!(
+        keycloak.admin_requests().len(),
+        2,
+        "exactly one retry: the first attempt and one more with a fresh token"
+    );
+}
+
+#[tokio::test]
 async fn a_refused_credential_is_reported_as_not_permitted() {
     let keycloak = FakeKeycloak::start(Arc::new(|_: &RecordedRequest| (403, "{}".to_owned()))).await;
 

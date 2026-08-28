@@ -7,6 +7,8 @@ mod errors;
 mod errors_tests;
 mod http;
 mod operations;
+mod sending;
+mod tokens;
 mod wire;
 
 pub(crate) use http::GitHost;

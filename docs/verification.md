@@ -33,7 +33,7 @@ is at the end, under "The control plane, end to end".
 | --- | --- | --- |
 | Formatting | `cargo fmt --all --check` | clean |
 | Lints | `cargo clippy --workspace --all-targets -- -D warnings` | 0 findings |
-| Tests | `cargo test --workspace` | 1158 passing, 0 failing, 1 ignored |
+| Tests | `cargo test --workspace` | 1179 passing, 0 failing, 1 ignored |
 | Docs | `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps` | 0 warnings |
 | Dependencies | `cargo deny check` | advisories, bans, licences, sources — all ok |
 | File sizes | `python3 scripts/check_file_sizes.py` | 0 over the 150-line limit |
@@ -51,7 +51,7 @@ dominates each of them.
 The single ignored test is a `#[doc(ignore)]` example in `fabric-identity`'s
 extractor, and predates this work.
 
-The workspace total rose from 977 to 1158: **181 new Rust tests**, plus the
+The workspace total rose from 977 to 1179: **202 new Rust tests**, plus the
 console's 17, which run separately.
 
 Three of the 181 arrived after the merge, and are worth singling out because of
@@ -66,11 +66,11 @@ change.
 
 | Crate | Tests | What they pin |
 | --- | --- | --- |
-| `fabric-client-model` | 37 | the document format, what an edit preserves and what it does not, every name's rule |
+| `fabric-client-model` | 47 | the document format, what an edit preserves and what it does not, every name's rule, and the redirect-URI authority rule |
 | `fabric-reconciliation` | 24 | the diff, idempotence, the status state machine |
 | `fabric-control-plane` | 63 | the API contract, concurrency, the operator seam, boundaries |
-| `fabric-keycloak` | 18 | the admin protocol, over a real socket |
-| `fabric-client-git` | 24 | optimistic concurrency, over a real socket |
+| `fabric-keycloak` | 20 | the admin protocol over a real socket, including the refusal-retry a real Keycloak forced |
+| `fabric-client-git` | 33 | optimistic concurrency and the GitHub App token exchange, over a real socket |
 | `fabric-control-plane-api` | 15 | configuration, secrets, the shipped examples |
 | `control-plane-ui` | 17 | the API client, the badge, the role editor |
 
@@ -262,25 +262,99 @@ console at `localhost:5173`, and:
 The console was also checked at 375 px, where the layout stacks rather than
 scrolling sideways.
 
+## Real integration: LucentRoot
+
+Everything above is this workspace testing itself. This section is different:
+it records what has been run **against the real platform**, and it exists
+because "tested against a protocol fake" and "known to work" are different
+claims and were previously not distinguished.
+
+Run on 2026-08-28 against LucentRoot — a single-node k3s cluster reached over
+the operator tailnet — with **Keycloak 26.7.2**.
+
+### Keycloak: proven
+
+| Claimed | How |
+|---|---|
+| The adapter speaks the real admin protocol | A machine identity was created in `master` and reconciliation ran against it. No fake in the path. |
+| A missing realm is created | Keycloak held only `master`; one sweep produced `acme`, enabled, display name `Acme`. |
+| Required roles are created | `Client Realm Administrator` and `Client Realm User`, alongside the three Keycloak creates for itself. |
+| A declared application client is created | `web`: public, `standardFlowEnabled`, `openid-connect`, the declared redirect URI, and **no secret field**. |
+| Reconciliation is idempotent | `reconciliation.applying` fired exactly once across three sweeps while the observed timestamp kept advancing. |
+| Drift is detected | `Client Realm User` was deleted directly through the admin API. The next sweep reported `drifted`, corrected it, and the sweep after that reported `applied`. |
+| The narrow permission is sufficient | The identity holds `create-realm` and nothing else. See below. |
+
+### Two things only the real instance could have told us
+
+**`create-realm` is enough.** Keycloak grants a service account that creates a
+realm the full administrative role set *for that realm*, on the corresponding
+`<realm>-realm` client. So the identity earns authority over exactly what it
+created. No master-realm administrator role, and no bootstrap debt.
+
+**And it is granted into later tokens.** The first pass over a new client mints
+a token, creates the realm, and is then refused inside it — holding a token
+that is valid and was minted a moment too early. This failed a real
+reconciliation before it was understood. `admin::requests` now discards the
+cached token and retries once on `401` or `403`; `keycloak_adapter.rs` pins
+both the retry and the fact that it happens only once.
+
+Neither was findable from inside this workspace. Both are the reason this
+section exists.
+
+### Git: the adapter is proven, the deployment is not
+
+The GitHub App path — signing an assertion, exchanging it for an installation
+token, presenting the token rather than the key, and minting once rather than
+per request — is tested against a real socket in `installation_tokens.rs`.
+
+It has **not** run against GitHub, because the App does not exist yet: creating
+one is a human action in an organisation's settings, and nothing in this
+repository can perform it. Until then, `FieldstateNZ/saas-fabric-clients`
+exists and holds Acme's document, and the control plane has read that document
+through its real parser — but by way of the local-directory development
+adapter, not the Git one.
+
+So the honest split is:
+
+| Component | Status |
+|---|---|
+| Keycloak adapter | **Real integration proven** |
+| Desired-state document contract | **Real document proven** — the seeded file parses and serves |
+| Git adapter | Protocol fake only; blocked on a GitHub App |
+| Deployment through `saas-fabric-platform` | Not started |
+
+### What the real document changed
+
+The seeded Acme client declares `http://acme.lucentroot.internal/*`, and the
+model refused it: `RedirectUri` permitted plain HTTP only on loopback.
+
+LucentRoot's gateway has one listener, on port 80, with no TLS — because
+`.internal` is an IANA special-use top-level domain that cannot resolve
+publicly or receive a trusted certificate. So the rule was wrong, not the
+environment. Plain HTTP is now permitted on loopback *and* under `.internal`,
+and `authority_tests.rs` pins the hostile cases a substring check would have
+let through.
+
+That is a defect the first real document found on its first read.
+
 ## What is not verified
 
 Named here rather than left for a reader to discover.
 
 **Control plane:**
 
-- **No test against a real Keycloak.** The adapter is tested against a socket
-  that answers like one — which pins the paths, the bodies, the bearer, and how
-  `404` and `409` are read — but not against Keycloak itself. The same gap the
-  runtime plane has with NDC, and the same lesson applies: the failures that
-  survive this kind of testing are the ones where our requests are well-formed
-  and our assumptions about the other side are wrong. The specific assumptions
-  worth checking first are that a realm update applies only the fields it is
-  given, and that `POST /admin/realms/{realm}/roles` answers `409` rather than
-  `400` for a role that exists.
-- **No test against a real Git host.** Likewise. The concurrency mechanism is
-  tested against a stateful fake that moves blob hashes and refuses stale ones,
-  which is what the contents API does — but "the host answers `409` for a stale
-  `sha`" is read from its documentation, not observed.
+- **No test against a real Git host.** The concurrency mechanism is tested
+  against a stateful fake that moves blob hashes and refuses stale ones, which
+  is what the contents API does — but "the host answers `409` for a stale
+  `sha`" is still read from documentation rather than observed. Blocked on the
+  GitHub App; see "Real integration" above.
+- **A realm update has not been observed.** Reconciliation created `acme` and
+  has never had to change its display name, so the claim that Keycloak's realm
+  update applies only the fields it is given — the reason `RealmUpdate` carries
+  two — remains read rather than measured.
+- **`409` on a duplicate role has not been observed.** The adapter treats it as
+  success because the port requires idempotence, and the diff means it is
+  rarely reached. Against real Keycloak the diff has always been right first.
 - **Reconciliation status is process-local and lost on restart.** Safe, because
   reconciliation is idempotent and re-observes every client within one sweep.
   What is genuinely lost is history: that a client was `drifted` an hour ago.

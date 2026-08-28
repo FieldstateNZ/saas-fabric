@@ -13,9 +13,16 @@ fabric-core.workspace = true
 
 async-trait.workspace = true
 base64.workspace = true
+# Signs the App assertion the installation-token endpoint authenticates. The
+# same crate the runtime plane verifies bearer tokens with; this is the only
+# place in the control plane that touches JWTs.
+jsonwebtoken.workspace = true
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+# `sync` only: the installation-token cache is the one piece of shared mutable
+# state in this crate, and it is held across an await.
+tokio = { workspace = true, features = ["sync"] }
 tracing.workspace = true
 
 [dev-dependencies]

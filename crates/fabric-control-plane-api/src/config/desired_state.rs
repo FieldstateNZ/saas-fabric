@@ -19,7 +19,13 @@ pub enum DesiredStateConfig {
     /// A Git repository, reached over its hosting provider's contents API.
     ///
     /// The production mode, and the one ADR 0008 describes.
-    Git(GitRepositoryConfig),
+    ///
+    /// Boxed because it is much larger than the other variant — a repository
+    /// location plus an authentication posture, against one path — and an
+    /// unboxed enum is as big as its largest variant everywhere it is moved.
+    /// Nothing here is on a hot path; the box is for the type's size, not its
+    /// speed.
+    Git(Box<GitRepositoryConfig>),
 
     /// Documents loaded from a local directory into memory at startup.
     ///

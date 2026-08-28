@@ -1,8 +1,13 @@
 //! The contents-API client.
 
+use std::sync::Arc;
+
 use fabric_client_model::ClientId;
+use fabric_control_plane::RepositoryError;
+use fabric_core::Clock;
 use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, USER_AGENT};
 
+use crate::github::tokens::BearerSource;
 use crate::{GitCredential, GitRepositoryConfig};
 
 /// The API version this adapter is written against.
@@ -19,8 +24,11 @@ pub(crate) struct GitHost {
     /// The HTTP client, which owns the keep-alive connection pool.
     pub(super) http: reqwest::Client,
 
-    /// The credential presented on every request.
-    credential: GitCredential,
+    /// Supplies the bearer for each request.
+    ///
+    /// Not a stored token: under the App posture the bearer is minted and
+    /// expires, so every request asks rather than holding one.
+    bearers: BearerSource,
 
     /// Where the repository is.
     pub(super) config: GitRepositoryConfig,
@@ -33,7 +41,11 @@ impl GitHost {
     ///
     /// Returns a message if the configuration is invalid or the HTTP client
     /// cannot be constructed.
-    pub(crate) fn new(config: &GitRepositoryConfig, credential: GitCredential) -> Result<Self, String> {
+    pub(crate) fn new(
+        config: &GitRepositoryConfig,
+        credential: GitCredential,
+        clock: Arc<dyn Clock>,
+    ) -> Result<Self, String> {
         config.validate()?;
 
         let http = reqwest::Client::builder()
@@ -43,7 +55,7 @@ impl GitHost {
 
         Ok(Self {
             http,
-            credential,
+            bearers: BearerSource::new(credential, config.api_base_url.clone(), clock),
             config: config.clone(),
         })
     }
@@ -56,15 +68,25 @@ impl GitHost {
         )
     }
 
-    /// Applies the headers every request needs.
-    pub(super) fn request(&self, builder: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+    /// Applies the headers every request needs, including a current bearer.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RepositoryError`] if a bearer could not be obtained, which
+    /// under the App posture means the installation token could not be minted.
+    pub(super) async fn request(
+        &self,
+        builder: reqwest::RequestBuilder,
+    ) -> Result<reqwest::RequestBuilder, RepositoryError> {
         let mut headers = HeaderMap::new();
         headers.insert(ACCEPT, HeaderValue::from_static("application/vnd.github+json"));
         headers.insert(API_VERSION_HEADER, HeaderValue::from_static(API_VERSION));
         // Required by the host, which refuses requests without one.
         headers.insert(USER_AGENT, HeaderValue::from_static("saas-fabric-control-plane"));
 
-        builder.headers(headers).bearer_auth(self.credential.expose())
+        let bearer = self.bearers.bearer(&self.http).await?;
+
+        Ok(builder.headers(headers).bearer_auth(bearer))
     }
 
     /// The contents-API URL for a path within the repository.

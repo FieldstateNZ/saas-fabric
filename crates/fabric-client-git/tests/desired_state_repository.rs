@@ -7,10 +7,27 @@
 
 mod support;
 
-use fabric_client_git::{GitClientRepository, GitCredential, GitRepositoryConfig};
+use std::sync::Arc;
+use std::time::Instant;
+
+use fabric_client_git::{GitAuthConfig, GitClientRepository, GitCredential, GitRepositoryConfig};
 use fabric_client_model::{ClientDocument, ClientId, ClientRevision, RoleName};
 use fabric_control_plane::{ChangeContext, ClientRepository, RepositoryError};
+use fabric_core::Clock;
 use support::FakeGitHost;
+
+/// A clock the token cache can measure against.
+struct TestClock;
+
+impl Clock for TestClock {
+    fn now(&self) -> Instant {
+        Instant::now()
+    }
+
+    fn now_unix_seconds(&self) -> u64 {
+        1_700_000_000
+    }
+}
 
 /// Where the fixture client's document lives.
 const ACME_PATH: &str = "clients/acme/client.yaml";
@@ -51,11 +68,21 @@ fn repository(host: &FakeGitHost) -> GitClientRepository {
         api_base_url: host.base_url.clone(),
         owner: "FieldstateNZ".to_owned(),
         repository: "saas-fabric-clients".to_owned(),
+        // The token posture, because these tests drive a socket rather than
+        // GitHub and have no App to mint against. The App posture's own
+        // behaviour is covered in `installation_tokens.rs`.
+        auth: GitAuthConfig::Token {
+            token_ref: "git/test".to_owned(),
+        },
         ..GitRepositoryConfig::default()
     };
 
-    GitClientRepository::new(&config, GitCredential::new("ghp_notarealtoken"))
-        .expect("the repository must build")
+    GitClientRepository::new(
+        &config,
+        GitCredential::token("ghp_notarealtoken"),
+        Arc::new(TestClock),
+    )
+    .expect("the repository must build")
 }
 
 /// The fixture document with one more role.

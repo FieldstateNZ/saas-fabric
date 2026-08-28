@@ -132,8 +132,25 @@ impl FakeGitHost {
     }
 }
 
+/// The bearer the fake mints for a GitHub App installation.
+pub const MINTED_TOKEN: &str = "ghs_mintedinstallationtoken";
+
 /// Answers one request.
 fn respond(state: &Arc<Mutex<State>>, request: &RecordedRequest) -> (u16, String) {
+    // The installation-token endpoint is not a contents path. It is answered
+    // here rather than by a test's own responder so that every test exercising
+    // the App posture mints through the same code the real host would.
+    if request.path.contains("/access_tokens") {
+        return (
+            201,
+            serde_json::json!({
+                "token": MINTED_TOKEN,
+                "expires_at": "2026-08-28T09:00:00Z",
+            })
+            .to_string(),
+        );
+    }
+
     let path = repository_path(&request.path);
 
     match request.method.as_str() {

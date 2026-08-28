@@ -3,9 +3,12 @@
 mod list;
 mod write;
 
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use fabric_client_model::{ClientDocument, ClientId, ClientRevision};
 use fabric_control_plane::{ChangeContext, ClientRepository, RepositoryError, StoredClient};
+use fabric_core::Clock;
 
 use crate::github::GitHost;
 use crate::{GitCredential, GitRepositoryConfig};
@@ -23,9 +26,13 @@ impl GitClientRepository {
     ///
     /// Returns a message if the configuration is invalid or the HTTP client
     /// cannot be built.
-    pub fn new(config: &GitRepositoryConfig, credential: GitCredential) -> Result<Self, String> {
+    pub fn new(
+        config: &GitRepositoryConfig,
+        credential: GitCredential,
+        clock: Arc<dyn Clock>,
+    ) -> Result<Self, String> {
         Ok(Self {
-            host: GitHost::new(config, credential)?,
+            host: GitHost::new(config, credential, clock)?,
         })
     }
 

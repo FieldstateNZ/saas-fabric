@@ -83,7 +83,7 @@ reinterpretation of documents already in the repository.
 | `spec.identity.roles` | yes | unique; must include both required roles |
 | `spec.identity.clients` | no | unique `id`s; each needs at least one redirect URI |
 | `spec.identity.clients[].type` | yes | `oidc` |
-| `spec.identity.clients[].redirectUris` | yes | `https://` anywhere, `http://` only on loopback, at most one trailing `*` |
+| `spec.identity.clients[].redirectUris` | yes | `https://` anywhere; `http://` only on loopback or under `.internal`; at most one trailing `*` |
 | anything else under `spec` | — | preserved untouched |
 
 Unknown fields **inside `spec.identity`** are refused. Unknown fields
@@ -122,6 +122,28 @@ and the platform is arguing with its own source of truth.
 A single trailing `*` is allowed because a callback path prefix is the ordinary
 case. A `*` anywhere else is refused: a wildcard in the *host* is the mistake
 this check exists to prevent.
+
+### Why plain HTTP is permitted at all
+
+`https://` is the rule. The exceptions are the two cases where requiring TLS
+would require a certificate that **cannot exist**:
+
+- **Loopback**, where the code never leaves the machine. This is what RFC 8252
+  recommends for native applications, for the same reason.
+- **The `.internal` top-level domain**, which IANA delegated in 2024 for
+  private-use internal networks. It cannot resolve on the public internet and
+  no public certificate authority will issue for it — so an internal
+  environment reached over plain HTTP is not a deployment that should have TLS
+  and skipped it.
+
+LucentRoot is the second case: its gateway has one listener, on port 80, and
+its hosts are `*.lucentroot.internal`.
+
+The check examines the **authority only** — a `.internal` anywhere else in the
+URI is not the question, and `http://evil.example.com/.internal` is refused.
+Userinfo is refused outright rather than parsed around, because
+`http://x.internal@evil.example.com/` is a public host wearing an
+internal-looking prefix.
 
 ## What may never appear
 

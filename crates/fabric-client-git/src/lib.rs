@@ -44,7 +44,7 @@ mod github;
 mod logging;
 mod repository;
 
-pub use config::GitRepositoryConfig;
+pub use config::{GitAuthConfig, GitRepositoryConfig};
 pub use credential::GitCredential;
 pub use repository::GitClientRepository;
 

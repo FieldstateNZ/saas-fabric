@@ -1,5 +1,9 @@
 //! Where an application client may be sent back to after authenticating.
 
+mod authority;
+#[cfg(test)]
+mod authority_tests;
+
 use std::fmt;
 
 use fabric_core::IdentifierError;
@@ -15,12 +19,14 @@ use fabric_core::IdentifierError;
 /// dangerous value is already the desired state and the platform is arguing
 /// with its own source of truth.
 ///
-/// The rule permits `https://` anywhere, and `http://` only for `localhost` and
-/// `127.0.0.1`, which is what a development flow genuinely needs and is the
-/// narrowest exception that covers it. A single trailing `*` is allowed
-/// because Keycloak's own path wildcard is the ordinary way to register a
-/// callback path prefix; a `*` anywhere else is refused, since a wildcard in
-/// the host is the mistake this check exists to prevent.
+/// `https://` is the rule. Plain `http://` is permitted only where a
+/// certificate cannot exist — loopback, and the IANA-reserved `.internal`
+/// top-level domain. The `authority` module carries that argument in full,
+/// along with the host checks a substring test would get wrong.
+///
+/// A single trailing `*` is allowed because a path wildcard is the ordinary
+/// way to register a callback prefix; a `*` anywhere else is refused, since a
+/// wildcard in the host is the mistake this check exists to prevent.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub struct RedirectUri(String);
@@ -34,19 +40,17 @@ impl RedirectUri {
 
     /// The permitted set, described for the error message.
     const EXPECTED: &'static str =
-        "an https:// URI, or an http:// URI on localhost, with no spaces and at most one \
-         trailing wildcard";
-
-    /// The prefixes an `http://` URI may start with.
-    const LOOPBACK_PREFIXES: [&'static str; 2] = ["http://localhost", "http://127.0.0.1"];
+        "an https:// URI, or an http:// URI on loopback or a .internal host, with no spaces \
+         and at most one trailing wildcard";
 
     /// Parses a redirect URI.
     ///
     /// # Errors
     ///
     /// Returns [`IdentifierError`] if the value is empty, longer than 512
-    /// bytes, does not use a permitted scheme, contains whitespace or a
-    /// control character, or contains a `*` anywhere but the final position.
+    /// bytes, names a scheme or host the `authority` rule refuses, contains
+    /// whitespace or a control character, or contains a `*` anywhere but the
+    /// final position.
     pub fn try_new(value: impl AsRef<str>) -> Result<Self, IdentifierError> {
         let value = value.as_ref();
 
@@ -62,7 +66,7 @@ impl RedirectUri {
             });
         }
 
-        Self::check_scheme(value)?;
+        authority::check(value)?;
         Self::check_characters(value)?;
 
         Ok(Self(value.to_owned()))
@@ -72,20 +76,6 @@ impl RedirectUri {
     #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
-    }
-
-    /// Refuses any scheme but `https://`, and `http://` off the loopback host.
-    fn check_scheme(value: &str) -> Result<(), IdentifierError> {
-        let permitted = value.starts_with("https://")
-            || Self::LOOPBACK_PREFIXES
-                .into_iter()
-                .any(|prefix| value.starts_with(prefix));
-
-        if permitted {
-            Ok(())
-        } else {
-            Err(IdentifierError::BadBoundary { kind: Self::KIND })
-        }
     }
 
     /// Refuses whitespace, control characters, and a misplaced wildcard.

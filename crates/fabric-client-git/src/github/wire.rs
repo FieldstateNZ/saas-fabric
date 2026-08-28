@@ -75,3 +75,19 @@ pub(super) struct WrittenContent {
     /// The blob hash the write produced, which becomes the new revision.
     pub(super) sha: String,
 }
+
+/// What the installation-token endpoint returns.
+///
+/// The one wire type here carrying a secret. It is never logged and never
+/// returned upward — the port this crate implements has no operation that
+/// could hand a token to a caller. `expires_at` is deliberately not modelled;
+/// see `tokens::TOKEN_LIFETIME` for why a fixed margin is preferred to parsing
+/// a timestamp.
+#[derive(serde::Deserialize)]
+pub(super) struct InstallationToken {
+    /// The bearer to present to the contents API.
+    pub(super) token: String,
+}
+
+// No `Debug` on the type above: deriving one would put an installation token
+// into any error or log line that formatted a value containing it.

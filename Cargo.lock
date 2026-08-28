@@ -257,6 +257,7 @@ dependencies = [
  "fabric-client-model",
  "fabric-control-plane",
  "fabric-core",
+ "jsonwebtoken",
  "reqwest",
  "serde",
  "serde_json",

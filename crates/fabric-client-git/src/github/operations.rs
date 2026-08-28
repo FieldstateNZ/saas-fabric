@@ -78,6 +78,7 @@ impl GitHost {
         let url = self.contents_url(&self.document_path(client));
         let response = self
             .request(self.http.put(url).json(&body))
+            .await?
             .send()
             .await
             .map_err(|error| transport_failure("writing a client", &error))?;
@@ -110,6 +111,7 @@ impl GitHost {
     ) -> Result<T, RepositoryError> {
         let response = self
             .request(self.http.get(url))
+            .await?
             .send()
             .await
             .map_err(|error| transport_failure(operation, &error))?;

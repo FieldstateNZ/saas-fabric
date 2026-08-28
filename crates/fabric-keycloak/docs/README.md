@@ -48,14 +48,52 @@ that does not.
 application defines a configuration *contract* — "there is a value called this,
 and I need it" — and how it arrives is `saas-fabric-platform`'s decision (§20).
 
-The credential must be a confidential Keycloak client created for SaaS Fabric,
-with the realm-management permissions reconciliation needs. Never a human
-administrator's password, never a browser session, and never anything the
-operator console could supply.
+The credential must be a confidential Keycloak client created for SaaS Fabric.
+Never a human administrator's password, never a browser session, and never
+anything the operator console could supply.
 
 The token is cached for its own reported lifetime less a 30-second margin, and
 the lock is held across the refresh so two concurrent sweeps do not both
 re-authenticate.
+
+## The permission it needs is one realm role
+
+**`create-realm` on the administrative realm. That is all.**
+
+This was an open question — grant broad master-realm administration, or find
+something narrower? — and it was settled by measurement against LucentRoot
+rather than by reading. When a service account holding `create-realm` creates a
+realm, Keycloak grants *that account* the new realm's full administrative role
+set on the corresponding `<realm>-realm` client. So the identity earns
+authority over exactly the realms it created, and over nothing else.
+
+Verified on Keycloak 26.7.2: after the service account created `acme`, its
+mappings held `manage-realm`, `manage-clients`, `view-realm`, `view-clients`
+and the rest — on `acme-realm`, and on no other realm's client.
+
+No master-realm administrator role is needed, and no bootstrap debt is
+outstanding.
+
+## The refusal that is not a permissions problem
+
+There is a consequence of the above that only appears against a real Keycloak,
+and it cost a failed reconciliation to find.
+
+Those roles are granted into tokens minted **after** the realm exists. The first
+pass over a new client mints a token, creates the realm with it, and then tries
+to create a role inside it — with the token it is still holding, which was
+minted a moment before the realm did. Keycloak answers `403`. The credential is
+correct, the grant is correct, and the token is simply too old to know about
+either.
+
+So `admin::requests` retries **once** on `401` or `403`, after discarding the
+cached token. That turns a client's first reconciliation from "fails, then
+succeeds a minute later once the cache expires, for reasons no log explains"
+into one extra round trip on the one pass where it matters.
+
+It is once, deliberately. A provider that refuses a freshly minted token is a
+misconfigured credential, and retrying that would turn one bad secret into a
+request storm.
 
 ## Failures, and why three kinds
 

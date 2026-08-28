@@ -1,0 +1,180 @@
+# Example SaaS Fabric runtime plane configuration.
+#
+# Load with:  fabric-api examples/config.toml
+# Or:         FABRIC_CONFIG=examples/config.toml fabric-api
+#
+# Environment variables override the file. Settings are namespaced
+# FABRIC_SETTING_, with `__` for nesting:
+#     FABRIC_SETTING_DATA_API__MAX_LIMIT=200
+#
+# That namespace is deliberately narrower than FABRIC_, which this process also
+# uses for things that are not settings: FABRIC_CONFIG above, the FABRIC_SECRET_*
+# variables the environment secret resolver reads, and the FABRIC_*_SERVICE_HOST /
+# FABRIC_*_PORT variables Kubernetes injects for every Service named fabric-*
+# while enableServiceLinks is at its default of true. All three used to be parsed
+# as settings and abort startup — the documented invocation on line 4 among them.
+#
+# An unrecognised FABRIC_SETTING_* variable is still a startup failure, so a
+# typo'd setting never silently does nothing.
+
+listen = "0.0.0.0:8080"
+
+# Clock skew tolerated on a token's `exp` and `nbf`, in seconds. One value for
+# both postures on purpose: a per-posture setting would let a deployment
+# configure two different windows, and the two are supposed to agree about
+# which tokens are current. Capped at an hour — NTP-scale skew is tens of
+# seconds, so that is ample headroom while still too small to neutralise the
+# expiry check.
+leeway = 60
+
+# Files that reconciliation writes and the runtime reads. None is queried during
+# request handling — see specification §6.
+#
+# Tenant bindings and DataSources are separate files because they are separate
+# resources with separate lifecycles. A DataSource is shared by many tenants:
+# resizing its pool or correcting its connection rewrites one record here and
+# leaves every tenant binding — and every tenant revision — untouched.
+tenants_path = "examples/tenants.json"
+data_sources_path = "examples/data-sources.json"
+catalog_path = "examples/catalog.json"
+
+# How often the background loop retries a connector that failed to negotiate
+# at startup (§35). A separate knob from [tenant_runtime]'s refresh interval
+# below: that one bounds staleness for two local file reads, this one bounds
+# how quickly a remote connector process coming back gets noticed.
+connector_retry_interval_seconds = 30
+
+# The overall Data API request budget — the outermost of three timeout
+# scopes (§36). Must never be shorter than the longest `http_timeout_seconds`
+# among [[connectors]] below, or that connector's own timeout could never
+# fire before this one cuts the request off first. The other two scopes: the
+# HTTP call to a connector (each connector's own `http_timeout_seconds`,
+# below) and database execution inside the connector (that process's own
+# configuration, invisible to SaaS Fabric). See the timeout-ownership table
+# on `NdcConnectorConfig::http_timeout_seconds` for the full picture.
+request_timeout_seconds = 30
+
+[identity]
+# The canonical tenant claim (§10). Configurable, but should be standardised
+# across every platform service.
+tenant_claim = "tenant_id"
+subject_claim = "sub"
+roles_claim = "roles"
+
+# The claim carrying granted scopes. `scope` is the OAuth 2 name; Entra ID
+# emits `scp` and Auth0 emits `permissions`. Getting this wrong yields an empty
+# scope list, which surfaces as blanket 403s rather than as an error — which is
+# why it is configurable alongside the other three rather than assumed.
+scope_claim = "scope"
+
+# Reject requests carrying X-Tenant-Id rather than ignoring them (§11). The
+# header is never read as a tenant source either way; this decides whether an
+# attempt to use one is a 400 or is silent.
+reject_tenant_header = true
+
+[token]
+# The canonical posture (§8, §9). The gateway authenticates the caller and
+# validates the bearer token; the runtime consumes the identity it established
+# and reads tenant_id from the token. SaaS Fabric is authentication-agnostic.
+#
+# This depends on the other half of §9: protected runtime APIs must not be
+# reachable through an untrusted path. Enforce that with NetworkPolicy, private
+# cluster networking, service mesh policy, mTLS, or ingress-only exposure.
+mode = "trusted_ingress"
+
+# Switching posture means changing `mode` *and* supplying the settings below. A
+# [token] table naming mode = "trusted_ingress" while still carrying jwks_path,
+# issuers or audiences is rejected at startup rather than silently ignoring
+# them — which is what it used to do, on the one setting that decides the
+# security posture.
+
+# Optional defence in depth — a second layer over sound network policy, not a
+# replacement for it. Use where an environment genuinely expects verification at
+# more than one hop:
+#
+#   [token]
+#   mode = "validating"
+#   jwks_path = "/etc/fabric/jwks.json"
+#   issuers = ["https://id.example.com/realms/platform"]
+#   audiences = ["saas-fabric"]
+#
+# Setting either allowlist makes that claim mandatory: a token omitting `iss`
+# is refused rather than skipping the issuer check. Omitting the setting
+# entirely means the claim is not examined at all.
+#
+# There is no third state. `issuers = []` is a startup failure, not a way to
+# switch the check off, and a blank entry is refused with it — as an unrendered
+# template would be. An earlier version of this comment claimed an empty list
+# refused every token; it was true of the builder and false of the
+# configuration, which took the no-allowlist branch and accepted everything.
+#
+# Even then the runtime performs no issuer discovery and no JWKS fetching: the
+# document is read once at startup, so identity-provider lifecycle stays with
+# the identity provider (§24).
+
+[tenant_runtime]
+# The safety net, not the primary propagation mechanism. A reconciler that knows
+# a tenant changed should trigger a refresh; this bounds staleness if that
+# notification is ever lost.
+refresh_interval_seconds = 30
+
+# Refuse to start if bindings cannot be loaded. A process that can serve no
+# tenant should fail where the deployment pipeline will catch it.
+fail_fast_on_prime = true
+
+[data_api]
+default_limit = 50
+# A hard ceiling on how much work one request can ask a shared database for.
+# One tenant's unbounded scan is every co-tenant's latency.
+max_limit = 1000
+
+[permissions]
+require_scopes = true
+administrator_role = "platform-admin"
+
+# One entry per connector process. Each is negotiated once at startup:
+# GET /capabilities and GET /schema, both cached.
+[[connectors]]
+id = "postgres-au-east"
+endpoint = "http://ndc-postgres.data.svc.cluster.local:8080"
+# Two clocks, both bounding this host's HTTP call to the connector and
+# nothing beyond it. The connector's own database timeout is its
+# configuration, and the overall Data API request budget is the host's —
+# see the timeout-ownership table in the fabric-connector-ndc docs.
+http_timeout_seconds = 10
+http_connect_timeout_seconds = 5
+
+# The request-level argument this connector routes on (NDC 0.2.4). Naming one
+# is a statement that the connector declares it, and startup checks that
+# against the connector's own /schema — a name it does not declare is refused
+# there rather than being sent and silently ignored, which is what used to
+# happen and put every tenant on one database.
+#
+# So name only the one matching the deployment. `ndc-postgres` is configured
+# Named *or* Dynamic, never both: `connection_name_argument` for a Named
+# deployment, `connection_string_argument` for a Dynamic one. Setting both
+# requires the connector to declare both, which no real one does. Omit both
+# only where the connector serves exactly one database for every tenant.
+#
+# Nothing in the specification fixes the names; these match ndc-postgres.
+connection_name_argument = "connection_name"
+
+# Writes require an explicit procedure mapping. Core NDC 0.2 has no generic
+# insert/update/delete — the only mutation operation is invoking a procedure the
+# connector declares, and procedure names are the connector's to choose. Without
+# a mapping here the connector is read-only, which is the fail-closed default.
+[connectors.procedures.customers.insert]
+procedure = "insert_customers"
+payload_argument = "objects"
+
+[connectors.procedures.customers.update]
+procedure = "update_customers"
+payload_argument = "update_columns"
+# Mandatory for update and delete. Without somewhere to put the predicate, the
+# tenant scoping would be dropped and the write would reach every tenant's rows.
+# Startup validation rejects a mapping that omits it.
+filter_argument = "filter"
+
+[connectors.procedures.customers.delete]
+procedure = "delete_customers"
+filter_argument = "filter"

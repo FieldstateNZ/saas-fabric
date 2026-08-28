@@ -1,0 +1,23 @@
+{
+  "customers": {
+    "data_source": "primary",
+    "collection": "customers",
+    "key_field": "id",
+    "operations": ["read", "list", "create", "update", "delete"],
+    "queryable_fields": ["id", "name", "email", "status", "created_at"]
+  },
+
+  "orders": {
+    "data_source": "primary",
+    "collection": "orders",
+    "key_field": "id",
+    "operations": ["read", "list", "create"]
+  },
+
+  "auditEvents": {
+    "data_source": "audit",
+    "collection": "audit_events",
+    "key_field": "event_id",
+    "operations": ["read", "list"]
+  }
+}

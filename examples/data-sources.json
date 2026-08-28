@@ -1,0 +1,91 @@
+[
+  {
+    "id": "sql-au-east-03",
+    "revision": 4,
+    "connector": "postgres-au-east",
+    "connection": {
+      "kind": "named",
+      "name": "acme-prod"
+    },
+    "placement": "dedicated",
+    "residency": {
+      "region": "au-east",
+      "jurisdiction": "AU"
+    },
+    "pool": {
+      "max_connections": 20,
+      "idle_timeout_seconds": 300,
+      "acquire_timeout_seconds": 5
+    },
+    "capabilities": {
+      "writable": true,
+      "accepts_new_tenants": false
+    },
+    "labels": {
+      "owner": "platform",
+      "tier": "gold"
+    }
+  },
+  {
+    "id": "globex-schema-01",
+    "revision": 11,
+    "connector": "postgres-au-east",
+    "connection": {
+      "kind": "named",
+      "name": "globex-schema"
+    },
+    "placement": "dedicated",
+    "residency": {
+      "region": "au-east",
+      "jurisdiction": "AU"
+    },
+    "pool": {
+      "max_connections": 50,
+      "idle_timeout_seconds": 300,
+      "acquire_timeout_seconds": 5
+    },
+    "labels": {
+      "owner": "platform",
+      "tier": "standard"
+    },
+    "capabilities": {
+      "writable": true,
+      "accepts_new_tenants": false
+    }
+  },
+  {
+    "id": "shared-audit-02",
+    "revision": 3,
+    "connector": "postgres-au-east",
+    "connection": {
+      "kind": "named",
+      "name": "audit-02"
+    },
+    "placement": "shared",
+    "residency": {
+      "region": "au-east"
+    },
+    "capabilities": {
+      "writable": true,
+      "accepts_new_tenants": true
+    }
+  },
+  {
+    "id": "initech-dedicated",
+    "revision": 1,
+    "connector": "postgres-au-east",
+    "connection": {
+      "kind": "secret",
+      "reference": "tenant/initech/data-primary"
+    },
+    "placement": "regulated",
+    "residency": {
+      "region": "au-east",
+      "jurisdiction": "AU"
+    },
+    "capabilities": {
+      "writable": true,
+      "accepts_new_tenants": false
+    }
+  }
+]

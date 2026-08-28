@@ -1,0 +1,22 @@
+[package]
+name = "fabric-identity"
+description = "Derives the canonical tenant identity context from an established bearer token."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+fabric-core.workspace = true
+
+axum.workspace = true
+base64.workspace = true
+http.workspace = true
+jsonwebtoken.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,124 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+# Cancel superseded runs on the same branch/PR so pushing a fix doesn't queue
+# behind a run that's already obsolete.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fmt:
+    name: cargo fmt --check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all --check
+
+  clippy:
+    name: cargo clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      # Workspace lints (crates/**/Cargo.toml -> [lints] workspace = true,
+      # rooted in the workspace Cargo.toml) already deny unwrap/expect/panic/
+      # indexing and missing_docs, and warn on clippy::pedantic. `-D warnings`
+      # is what turns those (and everything else clippy reports) into a CI
+      # failure instead of noise nobody reads.
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+
+  docs:
+    name: cargo doc
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # `missing_docs` is denied at compile time, so clippy already catches an
+      # undocumented item. What it does not catch is a documented one whose
+      # links have rotted -- an intra-doc link to a renamed type, or to an
+      # item that has since become crate-private. Only rustdoc sees those, and
+      # only as warnings unless they are promoted here.
+      - run: cargo doc --workspace --no-deps
+        env:
+          RUSTDOCFLAGS: -D warnings
+
+  test:
+    name: cargo test --workspace
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --workspace
+
+  deny:
+    name: cargo deny check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # cargo-deny's own RustSec advisory-db clone, at its default path
+      # ($CARGO_HOME/advisory-dbs, named explicitly in deny.toml). Caching it
+      # avoids a full git clone of the advisory database on every run.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cargo/advisory-dbs
+          key: advisory-db-${{ github.run_id }}
+          restore-keys: advisory-db-
+      # Enforces docs/architecture/dependency-policy.md via deny.toml at the
+      # repository root: approved licences only, no unlicensed crates, no
+      # banned advisories, no unexpected registries or git sources. Uses the
+      # prebuilt cargo-deny binary rather than `cargo install` so this job
+      # doesn't spend several minutes compiling the checker itself on every
+      # run.
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
+
+  file-size:
+    name: file-size policy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      # Enforces docs/architecture/file-size-policy.md: fails if any
+      # production .rs file under crates/ exceeds 150 lines and isn't in the
+      # script's documented exemption list.
+      - run: python3 scripts/check_file_sizes.py
+
+  architecture:
+    name: architectural invariants
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      # The invariants no unit test can catch, because the violation is the
+      # code compiling: NDC vocabulary escaping its crate, transport reaching
+      # a domain crate, a database driver or Kubernetes client entering the
+      # graph at all, X-Tenant-Id being read anywhere, or the dependency
+      # direction diverging from docs/architecture/crate-dependencies.md.
+      # Needs a toolchain because it reads `cargo metadata` rather than
+      # parsing manifests by hand.
+      - run: python3 scripts/check_architecture.py

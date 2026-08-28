@@ -1,0 +1,17 @@
+[package]
+name = "fabric-core"
+description = "Shared kernel for the SaaS Fabric runtime plane: validated identifiers, event IDs, and the clock seam."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+
+[lints]
+workspace = true

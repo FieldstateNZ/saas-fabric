@@ -1,0 +1,67 @@
+[
+  {
+    "tenant": "acme",
+    "revision": 42,
+    "data": {
+      "primary": {
+        "data_source": "sql-au-east-03",
+        "isolation": {
+          "kind": "database"
+        }
+      },
+      "audit": {
+        "data_source": "shared-audit-02",
+        "isolation": {
+          "kind": "discriminator",
+          "column": "tenant_key",
+          "value": "tenant-482"
+        }
+      }
+    },
+    "configuration": {
+      "store": "appconfig",
+      "profile": "enterprise"
+    },
+    "secrets": "vault/tenants/acme",
+    "features": {
+      "invoicing": true,
+      "analytics": true
+    }
+  },
+  {
+    "tenant": "globex",
+    "revision": 7,
+    "data": {
+      "primary": {
+        "data_source": "globex-schema-01",
+        "isolation": {
+          "kind": "schema",
+          "schema": "globex"
+        }
+      }
+    },
+    "configuration": {
+      "store": "appconfig",
+      "profile": "standard"
+    },
+    "features": {
+      "invoicing": true,
+      "analytics": false
+    }
+  },
+  {
+    "tenant": "initech",
+    "revision": 3,
+    "data": {
+      "primary": {
+        "data_source": "initech-dedicated",
+        "isolation": {
+          "kind": "database"
+        }
+      }
+    },
+    "features": {
+      "invoicing": false
+    }
+  }
+]

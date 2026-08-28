@@ -82,10 +82,28 @@ jobs:
     name: ${{ matrix.image }}
     runs-on: ubuntu-latest
     needs: verify
-    # `always()` because `verify` is skipped on a pull request, and a skipped
-    # dependency would otherwise skip this too. What must not pass is a
-    # *failed* one — which is the whole reason the gates run before a release.
-    if: always() && needs.verify.result != 'failure' 
+    # `always()` because `verify` is *skipped* on a pull request, and a skipped
+    # dependency would otherwise skip this job too.
+    #
+    # A job result is one of four values, and the condition has to name the one
+    # it wants rather than exclude the one it fears. `!= 'failure'` reads as
+    # "only when the gates passed" and is not: a `cancelled` gate — a killed
+    # run, a lost runner — is not a failure, and would have published.
+    #
+    #   ref      verify result   builds?  publishes?
+    #   ------------------------------------------------
+    #   tag      success         yes      yes
+    #   tag      failure         no       no
+    #   tag      cancelled       no       no
+    #   tag      skipped         no       no
+    #   branch   skipped         yes      no
+    #
+    # So: a tag requires success outright, and only a non-tag may proceed on a
+    # skip. Nothing is published from a commit whose gates did not pass.
+    if: >-
+      always() &&
+      ( needs.verify.result == 'success' ||
+      (github.ref_type != 'tag' && needs.verify.result == 'skipped') )
     permissions:
       contents: read
       # The only elevated permission here, and it is the job's own token —

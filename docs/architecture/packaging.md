@@ -102,7 +102,7 @@ layer down and much harder to see. Base images are pinned by digest as well as
 tag, because a tag is a moving reference and a release should be reproducible
 from its own source.
 
-## Nothing is published from a red commit
+## Nothing is published from a commit whose gates did not pass
 
 The release workflow re-runs the gates before it builds. That duplicates
 `ci.yml`, and the duplication is the point: CI runs on every push, so a tagged
@@ -111,6 +111,35 @@ work in that sentence. What it admits is an artifact built from a red tree,
 deployed, behaving in a way no gate reproduces.
 
 Releases are rare. Paying twice is the cheaper side of that trade.
+
+### The condition has to name what it wants
+
+A GitHub job result is one of **four** values, and that is the trap. The build
+job's condition first read:
+
+```yaml
+if: always() && needs.verify.result != 'failure'
+```
+
+which reads as "only when the gates passed" and is not. A `cancelled` gate — a
+killed run, a lost runner, a cancelled workflow — is not a `failure`, so that
+condition **would have published from a release whose gates never finished**.
+Excluding the result you fear is not the same as requiring the one you want.
+
+The condition now requires success outright for a tag, and permits the
+deliberate skip only when the ref is not one:
+
+| ref | `verify` | builds? | publishes? |
+|---|---|---|---|
+| tag | success | yes | yes |
+| tag | failure | no | no |
+| tag | cancelled | no | no |
+| tag | skipped | no | no |
+| branch | skipped | yes | no |
+
+Publishing is gated a second time inside the job, on the ref being a tag — so a
+pull-request build cannot push even if the first condition were ever wrong
+again.
 
 ## Building locally
 

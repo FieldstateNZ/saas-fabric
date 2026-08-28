@@ -19,6 +19,11 @@ jsonwebtoken = "9"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-native-roots"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# The maintained fork of `serde_yaml`, whose author archived it. Verified at
+# 0.9.42: MIT OR Apache-2.0, so Apache-2.0 is taken (dependency policy rule 2).
+# Confined to the control plane -- desired state is YAML because a GitOps
+# repository is edited by humans; nothing in the runtime plane reads it.
+serde_norway = "0.9"
 thiserror = "2"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }
 tower = "0.5"
@@ -27,13 +32,24 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 
-# Internal crates
+# Internal crates -- shared kernel
+fabric-core = { path = "crates/fabric-core" }
+
+# Internal crates -- runtime plane
 fabric-connector = { path = "crates/fabric-connector" }
 fabric-connector-ndc = { path = "crates/fabric-connector-ndc" }
-fabric-core = { path = "crates/fabric-core" }
 fabric-data-api = { path = "crates/fabric-data-api" }
 fabric-identity = { path = "crates/fabric-identity" }
 fabric-tenant-runtime = { path = "crates/fabric-tenant-runtime" }
+
+# Internal crates -- control plane. Deliberately a separate block: no crate in
+# the runtime block may depend on anything in this one, and
+# scripts/check_architecture.py fails the build if one ever does.
+fabric-client-git = { path = "crates/fabric-client-git" }
+fabric-client-model = { path = "crates/fabric-client-model" }
+fabric-control-plane = { path = "crates/fabric-control-plane" }
+fabric-keycloak = { path = "crates/fabric-keycloak" }
+fabric-reconciliation = { path = "crates/fabric-reconciliation" }
 
 [workspace.lints.rust]
 # Deny, not warn. Every public item in this workspace is documented today, so

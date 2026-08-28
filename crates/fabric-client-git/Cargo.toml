@@ -1,0 +1,26 @@
+[package]
+name = "fabric-client-git"
+description = "The Git-backed desired-state repository. Every Git-hosting detail in this platform lives inside this crate."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+fabric-client-model.workspace = true
+fabric-control-plane.workspace = true
+fabric-core.workspace = true
+
+async-trait.workspace = true
+base64.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt-multi-thread"] }
+
+[lints]
+workspace = true

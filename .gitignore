@@ -1,3 +1,16 @@
 /target
 **/*.rs.bk
 .env
+.DS_Store
+
+# Claude Code keeps its worktrees under here, so this directory holds checkouts
+# of the repository itself and must never be committed into it.
+.claude/
+
+# The control-plane UI's install and build outputs. `package-lock.json` is
+# committed: the Rust half pins every dependency version in `Cargo.lock`, and
+# the frontend gets the same treatment for the same reason.
+node_modules/
+dist/
+coverage/
+.tmp/

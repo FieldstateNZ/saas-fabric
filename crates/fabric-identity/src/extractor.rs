@@ -1,5 +1,6 @@
 //! The axum extractor that makes tenant identity a handler parameter.
 
+use std::future::{self, Future};
 use std::sync::Arc;
 
 use axum::extract::{FromRef, FromRequestParts};
@@ -32,8 +33,28 @@ where
 {
     type Rejection = IdentityError;
 
-    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+    /// Not an `async fn`, and the difference is not cosmetic.
+    ///
+    /// Resolving a tenant is pure: it reads headers, decodes a token, and
+    /// checks claims against keys already in memory. There is nothing to await
+    /// — deliberately, because §6 keeps Git, Kubernetes and every other remote
+    /// lookup off the request path, and an extractor that could await is an
+    /// extractor somebody could put a network call inside.
+    ///
+    /// Returning an already-complete future says that at the call site: the
+    /// work happens before the future is built, so there is no suspension
+    /// point for anything to be added to. `async fn` here would compile a
+    /// state machine that never yields, and quietly leave that door open.
+    ///
+    /// `impl Future` rather than the concrete [`Ready`](std::future::Ready):
+    /// naming it would refine the trait's return type into this crate's public
+    /// API, committing to a future shape nobody needs.
+    fn from_request_parts(
+        parts: &mut Parts,
+        state: &S,
+    ) -> impl Future<Output = Result<Self, Self::Rejection>> {
         let resolver = Arc::<IdentityResolver>::from_ref(state);
-        resolver.resolve(&parts.headers)
+
+        future::ready(resolver.resolve(&parts.headers))
     }
 }

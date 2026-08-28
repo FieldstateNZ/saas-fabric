@@ -1,0 +1,102 @@
+# Example SaaS Fabric control plane configuration.
+#
+# Load with:  fabric-control-plane-api examples/control-plane.toml
+# Or:         FABRIC_CP_CONFIG=examples/control-plane.toml fabric-control-plane-api
+#
+# Environment variables override the file. Settings are namespaced
+# FABRIC_CP_SETTING_, with `__` for nesting:
+#     FABRIC_CP_SETTING_CONTROL_PLANE__RECONCILIATION__INTERVAL_SECONDS=10
+#
+# That namespace is narrower than the runtime plane's FABRIC_SETTING_ on
+# purpose: both processes run in one Kubernetes namespace, and a shared
+# settings prefix would let one process's override land in the other's
+# configuration — where `deny_unknown_fields` would abort startup for a reason
+# nobody could see. FABRIC_CP_CONFIG above and the FABRIC_SECRET_* variables
+# sit outside it by construction.
+#
+# This example runs the control plane with **development adapters**: desired
+# state from a local directory, and an in-memory identity provider. It needs no
+# cluster, no Keycloak, and no GitHub token. Both are refused as production
+# postures by being named explicitly — see the comments on each.
+
+listen = "0.0.0.0:8081"
+
+# The overall budget for one operator request. Longer than the Git adapter's
+# own per-call timeout so the adapter's failure is the one that surfaces.
+request_timeout_seconds = 30
+
+
+# ---------------------------------------------------------------------------
+# Operator identity
+# ---------------------------------------------------------------------------
+#
+# The control plane consumes an operator identity that the operator-plane proxy
+# has already established (ADR 0009). It is authentication-agnostic in the same
+# way the runtime plane is (ADR 0002) — and it carries the same obligation:
+# this API must be reachable only from the operator network, because a header
+# is trivially forgeable by anything that can reach the service directly.
+#
+# For local development, send the header yourself:
+#     curl -H 'Tailscale-User-Login: operator@example.com' \
+#          http://localhost:8081/api/clients
+[control_plane.operator]
+mode = "trusted_header"
+header = "Tailscale-User-Login"
+
+# May not be empty. Being on the operator network establishes who someone is;
+# it does not establish that they administer this platform.
+allowlist = ["operator@example.com"]
+
+
+# ---------------------------------------------------------------------------
+# Reconciliation
+# ---------------------------------------------------------------------------
+[control_plane.reconciliation]
+# How often every client is swept. This bounds how long **drift** — a realm
+# changed outside SaaS Fabric — goes unnoticed, which is what sets the value;
+# a lost trigger is the lesser concern, because an accepted write asks for a
+# pass immediately.
+interval_seconds = 60
+
+
+# ---------------------------------------------------------------------------
+# Desired state
+# ---------------------------------------------------------------------------
+#
+# Production uses `mode = "git"`:
+#
+#     [desired_state]
+#     mode = "git"
+#     api_base_url = "https://api.github.com"
+#     owner = "FieldstateNZ"
+#     repository = "saas-fabric-clients"
+#     branch = "main"
+#     path_prefix = "clients"
+#     document_file = "client.yaml"
+#     token_ref = "git/saas-fabric-clients"
+#
+# `token_ref` names a secret; it never carries one. The platform delivers the
+# value (§20) — this application only states that it needs one.
+[desired_state]
+mode = "local_directory"
+path = "examples/clients"
+
+
+# ---------------------------------------------------------------------------
+# Identity provider
+# ---------------------------------------------------------------------------
+#
+# Production uses `mode = "keycloak"`:
+#
+#     [identity_provider]
+#     mode = "keycloak"
+#     base_url = "http://keycloak-http.identity.svc.cluster.local"
+#     admin_realm = "master"
+#     client_id = "saas-fabric"
+#     client_secret_ref = "keycloak/saas-fabric"
+#
+# The credential must be a machine identity created for SaaS Fabric — never a
+# human administrator's, never a browser session, and never anything the
+# operator UI could supply.
+[identity_provider]
+mode = "in_memory"

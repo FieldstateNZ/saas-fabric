@@ -100,6 +100,29 @@ subset of NDC's wire types this platform actually uses, implementing the
 protocol for interoperability without importing `ndc-models`. That is rule 5
 above, applied to the case that produced it.
 
+## Verifications since
+
+Each new dependency has been checked the same way — the specific crate, at the
+specific version in `Cargo.lock`, not the ecosystem it came from.
+
+| Component | Version checked | Licence | Verdict |
+|---|---|---|---|
+| `serde_norway` | `0.9.42` | MIT OR Apache-2.0 | ✅ Acceptable — Apache-2.0 is taken (rule 2) |
+| `unsafe-libyaml-norway` | `0.2.15` | MIT | ✅ Acceptable |
+
+Both arrived with the control plane, which reads and writes client desired
+state as YAML because the repository holding it is edited by humans. The
+obvious choice was `serde_yaml`, whose author has archived it; `serde_norway` is
+the maintained fork. The dependency is confined to `fabric-client-model` —
+nothing in the runtime plane parses YAML.
+
+`unsafe-libyaml-norway` is libyaml transpiled to Rust, and it does contain
+`unsafe`. That is worth noting and is not a policy violation: `unsafe_code =
+"forbid"` in `[workspace.lints.rust]` applies to this workspace's own crates,
+and every non-trivial parser in the Rust ecosystem depends on something like
+it. The relevant question this policy asks is about the *licence*, and both
+crates answer it.
+
 ## How this is enforced
 
 [`deny.toml`](../../deny.toml) at the repository root is the mechanical

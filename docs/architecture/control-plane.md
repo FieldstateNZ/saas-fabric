@@ -1,0 +1,248 @@
+# The control plane
+
+- **Status:** Implemented (identity only)
+- **Related:** [ADR 0008](../decisions/0008-desired-state-is-the-authority.md),
+  [ADR 0009](../decisions/0009-operator-identity-is-not-tenant-identity.md),
+  the platform specification §4–§6 and §30
+
+The platform specification describes two planes. The runtime plane — tenant
+identity, the tenant registry, the Data API — is described in
+[tenant-runtime-data-api.md](tenant-runtime-data-api.md) and was built first.
+This document describes the other one.
+
+## The principle
+
+> **Operators express desired SaaS state through SaaS Fabric. Reconciliation
+> makes platform services conform to it. Applications consume the resulting
+> runtime state without depending on the control plane.**
+
+And its corollary, which is what most of the design follows from:
+
+> **SaaS Fabric manages platform concepts. Shared platform services implement
+> them.**
+
+| SaaS Fabric concept | Implementation |
+|---|---|
+| Client Identity | Keycloak realm |
+| Authorization | OpenFGA |
+| Secrets | OpenBao |
+| Observability | Grafana |
+| Routing / domains | Envoy |
+
+This increment implements **Identity** only. The others are named here so the
+shape is visible, not because anything reconciles them yet.
+
+## The flow
+
+```text
+Human operator
+      │
+      ▼
+SaaS Fabric UI                    apps/control-plane-ui
+      │
+      ▼
+Control Plane API                 fabric-control-plane
+      │
+      ▼
+Client desired state              fabric-client-model
+      │
+      ▼
+saas-fabric-clients               fabric-client-git
+      │
+      ▼
+Reconciliation                    fabric-reconciliation
+      │
+      ▼
+Keycloak Admin API                fabric-keycloak
+      │
+      ▼
+Client realm
+```
+
+The UI never administers Keycloak. Keycloak remains an implementation detail
+behind SaaS Fabric.
+
+## Why the two planes are separate processes
+
+They are separate images, separate deployments, and separate dependency graphs
+sharing only `fabric-core`.
+
+- **Different networks.** The runtime API is on the product edge, reachable by
+  every tenant's application. The control-plane API is on the operator plane and
+  must not be reachable from the product edge at all.
+- **Different failure modes.** A control plane that cannot reach Git is broken.
+  A runtime plane in the same situation has not noticed, because it never reads
+  Git (§6). Sharing a process couples their availability, which is exactly what
+  §6 forbids.
+- **Different identities.** A tenant, and a platform operator. See ADR 0009.
+
+`scripts/check_architecture.py` enforces the separation: no crate in one plane
+may depend on a crate in the other.
+
+## Control Plane API
+
+Operator-facing HTTP, in `fabric-control-plane`.
+
+```text
+GET /api/clients                       list clients
+GET /api/clients/{clientId}            one client's overview
+GET /api/clients/{clientId}/identity   its identity, and reconciliation state
+PUT /api/clients/{clientId}/identity   replace its identity  (If-Match required)
+```
+
+Three things it does not do, each of them a rule rather than a gap:
+
+1. **It does not call a platform service.** There is no code path from a handler
+   to Keycloak. Router state holds the domain service and the operator
+   authenticator, and the absence of anything else is the design.
+2. **It does not expose repository internals.** No path, no branch, no file, no
+   YAML (§8). An operator is told "the client changed since you read it", never
+   "the blob sha of `clients/acme/client.yaml` moved".
+3. **It does not report a write as applied.** A successful `PUT` answers
+   `pending`. Writing the document and converging the provider are different
+   events that fail independently.
+
+### Errors
+
+Ten codes, because an operator needs to tell the cases apart (§23):
+`unauthenticated`, `unknown_client`, `invalid_request`, `desired_state_invalid`,
+`revision_required`, `revision_conflict`, `realm_immutable`,
+`repository_unavailable`, `repository_denied`, `repository_rejected`.
+
+Two things no error says: anything an upstream system said verbatim, and
+anything about the repository's internals.
+
+"Reconciliation pending" is deliberately **not** an error. §23 asks that it be
+distinguishable, and it is — as a status on a successful response. Reporting a
+good write as a failure because a downstream convergence has not happened yet
+would make the normal path look broken.
+
+## Desired State Repository
+
+`ClientRepository` is the port; `GitClientRepository` is the implementation.
+
+The domain asks for a client and writes a document at a revision. Whether that
+lands as a commit on `main` in `saas-fabric-clients` or as an entry in a map is
+the implementation's business — and there is a second implementation,
+`InMemoryClientRepository`, which implements the same concurrency rule rather
+than a shortcut past it.
+
+**Optimistic concurrency.** A revision is the stored file's blob hash. A write
+carries the hash the caller believed it was editing, and the hosting API applies
+it only if that hash is still current. The check is atomic on the server, so a
+second control-plane replica cannot interleave with it. There is no
+last-writer-wins path.
+
+**No Git library.** The adapter speaks the hosting provider's contents API over
+HTTPS. `git2`, `gix` and `gitoxide` are banned workspace-wide, which keeps "Git
+is never in the request path" a structural fact about every binary this
+workspace builds.
+
+## Reconciliation
+
+`fabric-reconciliation` owns comparison and convergence; an adapter owns one
+provider's protocol. The seam is `IdentityProvider`, written in the platform's
+words.
+
+**Idempotent.** A second pass over unchanged desired state produces an empty
+plan and makes no changing calls. Asserted, not assumed.
+
+**Additive only.** Nothing deletes a realm, a role, or an application client. A
+role the document does not mention is left alone: a role that exists is a role
+something may already be granted, and removing a line from a YAML file is not
+enough evidence to revoke it.
+
+**Four statuses**, and the fourth is the one worth having:
+
+| Status | Means |
+|---|---|
+| `Pending` | Desired state has changed and has not been reconciled since |
+| `Applied` | The provider matches the desired state |
+| `Failed` | The last pass could not converge it |
+| `Drifted` | The provider had stopped matching a desired state already converged |
+
+Without `Drifted`, an out-of-band change that reconciliation quietly corrects
+looks exactly like an ordinary pass, and nobody learns that something outside
+SaaS Fabric is editing the realms the platform owns.
+
+A report is only meaningful for the revision it was made against. If an operator
+has written a newer one, the honest answer is `pending` — even though a report
+exists saying `applied`.
+
+**On a schedule, and on demand.** A sweep runs every `interval_seconds`, and an
+accepted write asks for one immediately. The interval is the one that makes the
+design correct: triggers get lost, and without a poll a lost one would strand a
+client forever. The interval also bounds how long drift goes unnoticed, which is
+what actually sets the value.
+
+## Platform Service Adapters
+
+Two so far, holding the same boundary:
+
+| Adapter | Owns | Nothing above it may name |
+|---|---|---|
+| `fabric-keycloak` | Keycloak admin REST | `RealmRepresentation`, `publicClient`, the admin token |
+| `fabric-client-git` | the hosting contents API | `ContentsEntry`, `PutContents`, a blob, a commit |
+
+Both are checked by `scripts/check_architecture.py`, the same way ADR 0001
+contains the NDC protocol in the runtime plane. A representation that escapes
+its adapter turns the platform's own model into a thin wrapper over somebody
+else's.
+
+Both are handed a **credential**, never a credential's location: `client_secret_ref`
+and `token_ref` name a secret, and the host resolves it. This application
+defines the configuration contract; `saas-fabric-platform` decides how the value
+arrives (§20).
+
+Both credentials are redacting newtypes with no `Display` and a fixed `Debug`.
+
+## Runtime publication boundary
+
+This is the seam this increment deliberately **documents rather than builds**.
+
+```text
+Git desired state
+      ↓
+reconciliation
+      ├── Keycloak            ← implemented
+      ├── Envoy               ← not built
+      ├── OpenBao             ← not built
+      ├── OpenFGA             ← not built
+      └── runtime bindings    ← not built
+```
+
+The runtime plane reads tenant bindings and DataSources from files a controller
+writes, and resolves them in memory with no control-plane dependency (§6, §7).
+That must not change: publishing a binding is another reconciliation target, on
+the same footing as Keycloak, and **not** a control-plane mutation reaching into
+a runtime registry.
+
+Concretely, when it is built:
+
+- it belongs in `fabric-reconciliation` or a sibling, behind a port of its own;
+- it writes what `fabric_tenant_runtime::ResourceSource` reads;
+- it does **not** give `fabric-control-plane` a dependency on
+  `fabric-tenant-runtime`, and the architecture check will refuse one.
+
+## Auditability
+
+Every control-plane mutation is attributable (§24). `fabric-control-plane`
+emits a structured audit event carrying who requested it, which client, the
+domain operation, and the resulting revision; the log pipeline supplies the
+time.
+
+Git history is a **second** copy: the commit message carries a `Requested-by:`
+trailer, because every commit is authored by the platform's machine identity and
+would otherwise record only that SaaS Fabric changed something. It is not
+sufficient on its own — a refused write leaves no commit and is still worth
+knowing about, and a future repository may not be Git at all.
+
+No audit record carries a secret, a token, or an administrative credential.
+Nothing in the audit module is handed a value that could contain one.
+
+## What this increment does not include
+
+Client creation, deletion of anything, OpenFGA/OpenBao/Grafana/Envoy
+reconciliation, database provisioning, runtime-binding publication, a workflow
+engine, and production-ready operator authentication beyond what the platform
+boundary can supply today.

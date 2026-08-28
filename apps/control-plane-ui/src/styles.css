@@ -1,0 +1,309 @@
+/*
+ * The operator console's styling.
+ *
+ * One stylesheet, no framework, no design system. The console is small enough
+ * that a few dozen rules cover it, and a dependency here would be paid for on
+ * every build to save writing them.
+ */
+
+:root {
+  --ink: #16191d;
+  --muted: #5c6570;
+  --line: #dfe3e8;
+  --surface: #ffffff;
+  --shell: #f6f7f9;
+  --accent: #1f5fa9;
+
+  --applied: #14794a;
+  --pending: #8a6100;
+  --failed: #b4232c;
+  --drifted: #7a3ba8;
+
+  color-scheme: light;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: var(--ink);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--shell);
+}
+
+.app {
+  display: grid;
+  grid-template-columns: 18rem minmax(0, 1fr);
+  min-height: 100vh;
+}
+
+/*
+ * The console is desktop-first -- an operator is at a workstation -- but a
+ * fixed 18rem sidebar beside a `1fr` column overflows horizontally on a narrow
+ * viewport, and a page that scrolls sideways is worse than one that stacks.
+ */
+@media (max-width: 48rem) {
+  .app {
+    /* `start`, so the stacked list takes the height it needs rather than half
+       the viewport. */
+    grid-template-columns: minmax(0, 1fr);
+    align-content: start;
+  }
+
+  .sidebar {
+    border-right: none;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .main {
+    padding: 1.5rem 1rem;
+  }
+}
+
+.sidebar {
+  border-right: 1px solid var(--line);
+  background: var(--surface);
+  padding: 1.5rem 1rem;
+}
+
+.sidebar__title {
+  margin: 0 0 1.5rem;
+  font-size: 1rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.sidebar__heading,
+.identity h3 {
+  margin: 1.5rem 0 0.5rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.clients {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.clients__item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  width: 100%;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.clients__item:hover {
+  background: var(--shell);
+}
+
+.clients__item--selected {
+  border-color: var(--line);
+  background: var(--shell);
+}
+
+.clients__name {
+  font-weight: 500;
+}
+
+.clients__id,
+.detail__id {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.main {
+  padding: 2rem 2.5rem;
+}
+
+.detail__header h1 {
+  margin: 0;
+  font-size: 1.5rem;
+}
+
+.overview,
+.identity {
+  margin-top: 2rem;
+  padding: 1.25rem 1.5rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.overview h2,
+.identity h2 {
+  margin: 0 0 1rem;
+  font-size: 1.05rem;
+}
+
+.overview__fields {
+  display: grid;
+  grid-template-columns: 8rem 1fr;
+  gap: 0.4rem 1rem;
+  margin: 0;
+}
+
+.overview__fields dt {
+  color: var(--muted);
+}
+
+.overview__fields dd {
+  margin: 0;
+}
+
+.badge {
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--line);
+  border-left-width: 4px;
+  border-radius: 6px;
+  background: var(--shell);
+}
+
+.badge--applied {
+  border-left-color: var(--applied);
+}
+.badge--pending {
+  border-left-color: var(--pending);
+}
+.badge--failed {
+  border-left-color: var(--failed);
+}
+.badge--drifted {
+  border-left-color: var(--drifted);
+}
+
+.badge__row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+}
+
+.badge__status {
+  font-weight: 600;
+  text-transform: capitalize;
+}
+
+.badge__when,
+.badge__detail,
+.identity__note {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.badge__explanation {
+  margin: 0.35rem 0 0;
+  font-size: 0.9rem;
+}
+
+.badge__detail {
+  margin: 0.35rem 0 0;
+}
+
+.identity__realm {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  margin: 0;
+}
+
+.roles__list,
+.applications,
+.applications__uris {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.roles__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.4rem 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.roles__required {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.roles__add {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+.roles__label {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.roles__input {
+  flex: 1;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  font: inherit;
+}
+
+button {
+  padding: 0.4rem 0.9rem;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--surface);
+  font: inherit;
+  cursor: pointer;
+}
+
+button:disabled {
+  color: var(--muted);
+  cursor: default;
+}
+
+.identity__actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+
+.applications > li {
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.applications__id {
+  font-weight: 500;
+}
+
+.applications__uris {
+  font-size: 0.85rem;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.empty {
+  color: var(--muted);
+}
+
+.error {
+  padding: 0.6rem 0.85rem;
+  border: 1px solid var(--failed);
+  border-radius: 6px;
+  color: var(--failed);
+  background: #fdf3f3;
+}

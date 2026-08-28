@@ -41,9 +41,52 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CRATES = REPO_ROOT / "crates"
 
-# The composition root. It is the one crate allowed to know about every other
-# crate at once, because assembling them is its entire job.
+# The composition roots. Each is the one crate in its plane allowed to know
+# about every other crate in that plane at once, because assembling them is its
+# entire job.
 HOST = "fabric-api"
+CONTROL_PLANE_HOST = "fabric-control-plane-api"
+
+# The two planes, as sets of crates. `fabric-core` belongs to neither: it is
+# the shared kernel, and both planes depend on it deliberately.
+#
+# The separation these two lists express is the point of the whole control
+# plane increment. The runtime plane serves tenant requests and must keep
+# working when Git and Keycloak are down; the control plane administers
+# desired state and is useless without them. An edge between them would put
+# control-plane availability behind every tenant request (specification §6),
+# which is exactly the coupling the architecture forbids.
+RUNTIME_PLANE = frozenset(
+    {
+        "fabric-identity",
+        "fabric-tenant-runtime",
+        "fabric-connector",
+        "fabric-connector-ndc",
+        "fabric-data-api",
+        "fabric-api",
+    }
+)
+
+CONTROL_PLANE = frozenset(
+    {
+        "fabric-client-model",
+        "fabric-reconciliation",
+        "fabric-control-plane",
+        "fabric-client-git",
+        "fabric-keycloak",
+        "fabric-control-plane-api",
+    }
+)
+
+# The crate that owns Keycloak's protocol. ADR 0008 makes this boundary the
+# point of adopting Keycloak behind a port: SaaS Fabric manages *client
+# identity*, and Keycloak is the thing that happens to implement it.
+KEYCLOAK_CRATE = "fabric-keycloak"
+
+# The crate that owns the Git hosting provider's protocol. Same boundary, same
+# reasoning: the control plane writes *desired state*, and Git is where it
+# happens to land (specification §8).
+GIT_CRATE = "fabric-client-git"
 
 # The crate that owns the NDC protocol. ADR 0001 makes this boundary the whole
 # point of adopting NDC: the specification is an internal connector protocol,
@@ -61,9 +104,15 @@ NDC_NAMES_THE_HOST_MAY_USE = frozenset(
     }
 )
 
-# Crates that model the domain. None of them may know what HTTP is: the Data
-# API's shape must be replaceable without touching tenant resolution, and a
-# transport type reaching into a domain crate is how that stops being true.
+# Crates that model a domain. None of them may know what HTTP is.
+#
+# In the runtime plane the reason is that the Data API's shape must be
+# replaceable without touching tenant resolution. In the control plane it is
+# the same shape of claim about a different pair: `fabric-client-model` and
+# `fabric-reconciliation` decide what a client is and what has to change about
+# an identity provider, and neither should acquire an opinion about how an
+# operator asked or how an adapter talks. A transport type reaching into any of
+# them is how that stops being true.
 #
 # `fabric-identity` is deliberately absent, and it is worth saying why rather
 # than leaving the omission to look like an oversight. Turning an inbound HTTP
@@ -80,6 +129,8 @@ DOMAIN_CRATES = frozenset(
         "fabric-core",
         "fabric-connector",
         "fabric-tenant-runtime",
+        "fabric-client-model",
+        "fabric-reconciliation",
     }
 )
 
@@ -106,9 +157,16 @@ DATABASE_DRIVERS = frozenset(
 )
 
 # Control-plane clients. Section 6 is explicit that Git and Kubernetes are
-# never in the request path. Again the strongest form is structural: if no
-# client is linked, no handler can reach one no matter how a future change is
-# written.
+# never in the request path, and the strongest form of that is structural: if
+# no client is linked, no handler can reach one no matter how a future change
+# is written.
+#
+# This stayed a **workspace-wide** ban after the control plane arrived, and
+# that is worth saying out loud, because the obvious reading is that a control
+# plane needs a Git library. It does not: `fabric-client-git` speaks the
+# hosting provider's contents API over HTTPS, so the platform needs no clone,
+# no working copy, and no disk — and the claim "nothing in this binary can
+# invoke Git" stays true of every binary the workspace builds.
 CONTROL_PLANE_CLIENTS = frozenset(
     {
         "kube",
@@ -410,6 +468,36 @@ def check_dependency_direction(graph: Graph) -> list[Failure]:
             "fabric-connector-ndc",
             "fabric-data-api",
         },
+        # The control plane. A separate graph, sharing only `fabric-core`.
+        "fabric-client-model": {"fabric-core"},
+        "fabric-reconciliation": {"fabric-core", "fabric-client-model"},
+        "fabric-control-plane": {
+            "fabric-core",
+            "fabric-client-model",
+            "fabric-reconciliation",
+        },
+        # The two adapters depend *inward* on the ports they implement, which
+        # is why the arrows point this way and not the other. Nothing in the
+        # control-plane domain depends on either of them; only the composition
+        # root does.
+        "fabric-keycloak": {
+            "fabric-core",
+            "fabric-client-model",
+            "fabric-reconciliation",
+        },
+        "fabric-client-git": {
+            "fabric-core",
+            "fabric-client-model",
+            "fabric-control-plane",
+        },
+        "fabric-control-plane-api": {
+            "fabric-core",
+            "fabric-client-model",
+            "fabric-reconciliation",
+            "fabric-control-plane",
+            "fabric-keycloak",
+            "fabric-client-git",
+        },
     }
 
     failures = []
@@ -442,12 +530,171 @@ def check_dependency_direction(graph: Graph) -> list[Failure]:
     return failures
 
 
+def check_the_planes_do_not_meet(graph: Graph) -> list[Failure]:
+    """No crate in one plane depends on a crate in the other."""
+    failures = []
+
+    for crate in graph.crates:
+        if crate in RUNTIME_PLANE:
+            offenders = graph.direct_dependencies(crate) & CONTROL_PLANE
+            other = "the control plane"
+        elif crate in CONTROL_PLANE:
+            offenders = graph.direct_dependencies(crate) & RUNTIME_PLANE
+            other = "the runtime plane"
+        else:
+            continue
+
+        if offenders:
+            failures.append(
+                Failure(
+                    "The runtime and control planes share only fabric-core (ADR 0008)",
+                    f"{crate} depends on {sorted(offenders)}, which is in {other}",
+                    "The runtime plane must keep serving tenants while Git and "
+                    "Keycloak are unreachable, and the control plane must be "
+                    "deployable on a different network with a different identity "
+                    "model. One edge between them puts control-plane availability "
+                    "behind every tenant request, which section 6 forbids.",
+                )
+            )
+
+    return failures
+
+
+def check_adapter_containment(graph: Graph) -> list[Failure]:
+    """Platform-service vocabulary stays inside its adapter crate.
+
+    Two adapters, one rule. `fabric-keycloak` owns every Keycloak
+    representation, and `fabric-client-git` owns every Git-hosting concept.
+    Neither vocabulary may appear anywhere else -- which is the same
+    containment ADR 0001 applies to NDC, for the same reason: a representation
+    that escapes its adapter turns the platform's own model into a thin wrapper
+    over somebody else's, and the API stops being about clients and starts
+    being about realms and blobs.
+    """
+    adapters = (
+        (
+            KEYCLOAK_CRATE,
+            re.compile(
+                r"\b\w*Representation\b|\bRealmUpdate\b|\bTokenResponse\b"
+                r"|\bpublicClient\b|\bstandardFlowEnabled\b|\bopenid-connect\b"
+            ),
+            "Keycloak representations stay inside fabric-keycloak (ADR 0008)",
+            "Keycloak is an implementation of client identity, not the "
+            "platform's model of it. A representation reaching a crate above "
+            "the adapter is the first step toward the control-plane API "
+            "becoming the Keycloak admin API, which the UI is explicitly not "
+            "allowed to be (section 16).",
+        ),
+        (
+            GIT_CRATE,
+            re.compile(
+                r"\bContentsEntry\b|\bPutContents\w*\b|\bWrittenContent\b"
+                r"|\bcontents/\b|\bblob_sha\b|\bgit_url\b"
+            ),
+            "Git-hosting details stay inside fabric-client-git (section 8)",
+            "Git is an implementation detail of the control plane. A path, a "
+            "blob, or a commit reaching a crate above the adapter is how an "
+            "operator ends up being told which file and which line, instead of "
+            "which client and which rule.",
+        ),
+    )
+
+    failures = []
+
+    for owner, pattern, invariant, consequence in adapters:
+        for crate in graph.crates:
+            if crate == owner:
+                continue
+
+            for path in source_files(crate):
+                code = strip_comments_and_docs(path.read_text(encoding="utf-8"))
+                found = {match.group(0) for match in pattern.finditer(code)}
+
+                if found:
+                    failures.append(
+                        Failure(
+                            invariant,
+                            f"{path.relative_to(REPO_ROOT)} names {sorted(found)}",
+                            consequence,
+                        )
+                    )
+
+        # The dependency edge itself, not just the vocabulary. Only the
+        # control-plane composition root may see an adapter crate.
+        for crate in graph.crates:
+            if crate in (owner, CONTROL_PLANE_HOST):
+                continue
+            if owner in graph.direct_dependencies(crate):
+                failures.append(
+                    Failure(
+                        invariant,
+                        f"{crate} declares a dependency on {owner}",
+                        consequence,
+                    )
+                )
+
+    return failures
+
+
+def check_the_browser_gets_no_platform_credentials() -> list[Failure]:
+    """The operator UI holds no credential and calls no platform service.
+
+    Section 15 and acceptance criteria 13 and 14: the browser must never
+    receive a Keycloak administrative credential and must never call the
+    Keycloak admin API -- or the Git host -- directly.
+
+    Checked as a property of the UI's own source rather than of what a
+    particular response happened to contain, because that is the form the rule
+    actually takes: the UI talks to the SaaS Fabric control-plane API and to
+    nothing else. A fetch to another origin is the violation, whether or not a
+    credential is in the same commit.
+    """
+    ui = REPO_ROOT / "apps" / "control-plane-ui" / "src"
+    if not ui.is_dir():
+        return []
+
+    forbidden = re.compile(
+        r"client_secret|clientSecret"
+        r"|/admin/realms"
+        r"|api\.github\.com"
+        r"|keycloak.*admin|admin.*keycloak",
+        re.IGNORECASE,
+    )
+
+    failures = []
+
+    for path in sorted(ui.rglob("*.ts")) + sorted(ui.rglob("*.tsx")):
+        text = path.read_text(encoding="utf-8")
+        # Line comments are prose and may explain the boundary; the rest is code.
+        code = re.sub(r"^\s*(//|\*|/\*).*$", "", text, flags=re.MULTILINE)
+        found = {match.group(0) for match in forbidden.finditer(code)}
+
+        if found:
+            failures.append(
+                Failure(
+                    "The operator UI reaches only the control-plane API (section 15)",
+                    f"{path.relative_to(REPO_ROOT)} names {sorted(found)}",
+                    "A browser that can call Keycloak's admin API or the Git "
+                    "host is a browser holding a credential for one of them. "
+                    "The control plane exists so that no such credential ever "
+                    "leaves the cluster.",
+                )
+            )
+
+    return failures
+
+
 CHECKS = (
     ("NDC containment", check_ndc_containment),
+    ("Platform-service adapter containment", check_adapter_containment),
+    ("The planes do not meet", check_the_planes_do_not_meet),
     ("Transport stays out of the domain", check_domain_crates_have_no_transport),
     ("No drivers, no control-plane clients", check_no_forbidden_dependencies),
     ("X-Tenant-Id is never an identity source", check_tenant_header_is_never_a_source),
     ("Dependency direction", check_dependency_direction),
+    # Takes no graph: it is a statement about the UI's source, not about
+    # cargo's resolution. `main` calls it with no argument.
+    ("The browser gets no platform credentials", check_the_browser_gets_no_platform_credentials),
 )
 
 
@@ -459,7 +706,10 @@ def main() -> int:
 
     total = 0
     for title, check in CHECKS:
-        failures = check(graph)
+        # One check inspects the UI's source rather than the crate graph, so it
+        # takes no argument. Branching on the signature keeps the table one
+        # list rather than two.
+        failures = check() if check.__code__.co_argcount == 0 else check(graph)
         status = "ok" if not failures else f"FAILED ({len(failures)})"
         print(f"{status:>14}  {title}")
         for failure in failures:

@@ -2,10 +2,13 @@
 
 The dependency graph is an invariant, not an accident. It is what keeps the
 neutral connector boundary replaceable, keeps HTTP concerns out of the runtime,
-and will keep the Experience, Configuration, Feature and Storage APIs from
-tangling into each other as they arrive.
+keeps the control plane out of the request path entirely, and will keep the
+Experience, Configuration, Feature and Storage APIs from tangling into each
+other as they arrive.
 
-## The intended graph
+There are **two** graphs, sharing exactly one crate.
+
+## The runtime plane
 
 ```
 fabric-core            (nothing internal)
@@ -28,7 +31,56 @@ fabric-data-api        → fabric-core
 fabric-api             → all of the above (composition root)
 ```
 
-Verified as of the current tree; it matches exactly.
+## The control plane
+
+```
+fabric-core            (the only crate both planes share)
+
+fabric-client-model    → fabric-core
+
+fabric-reconciliation  → fabric-core
+                       → fabric-client-model
+
+fabric-control-plane   → fabric-core
+                       → fabric-client-model
+                       → fabric-reconciliation
+
+fabric-keycloak        → fabric-core
+                       → fabric-client-model
+                       → fabric-reconciliation      (implements IdentityProvider)
+
+fabric-client-git      → fabric-core
+                       → fabric-client-model
+                       → fabric-control-plane       (implements ClientRepository)
+
+fabric-control-plane-api → all of the above (composition root)
+```
+
+Both verified as of the current tree; they match exactly.
+
+## The planes do not meet
+
+No crate in one plane may depend on a crate in the other, and
+`scripts/check_architecture.py` fails the build if one does.
+
+This is not tidiness. The runtime plane must keep serving tenants while Git and
+Keycloak are unreachable, and the control plane must be deployable on a
+different network with a different identity model (ADR 0009). One edge between
+them puts control-plane availability behind every tenant request, which
+specification §6 forbids in as many words.
+
+`fabric-core` is shared deliberately: identifier rules, the event-ID scheme and
+the clock seam are genuinely the same concept in both planes, and having two
+copies of the tenant-id character set would be worse than the edge.
+
+What is *not* shared, despite looking shareable:
+
+| Runtime | Control plane | Why not shared |
+|---|---|---|
+| `TenantId` | `ClientId` | Same string, different planes, established by different means. Sharing one type would let a runtime tenant identity reach a control-plane operation. |
+| `ResolvedSecret` | `AdminCredential`, `GitCredential` | Forty lines each. Sharing would put a runtime-plane crate in the control plane's graph. |
+| `BindingRevision` | `ClientRevision` | A counter you can order, and a content hash you cannot. |
+| `telemetry::init` | `telemetry::init` | Fifteen lines, no invariant riding on them being identical. |
 
 ## The rules behind it
 
@@ -64,14 +116,28 @@ architecture check enforces.
 wired in at the composition root and nowhere else. If any other crate ever needs
 it, NDC has leaked and the boundary has failed.
 
+**Adapters depend inward; the domain never depends on an adapter.**
+`fabric-keycloak` depends on `fabric-reconciliation` for the port it implements,
+and `fabric-client-git` on `fabric-control-plane` for the same reason. The
+arrows point that way and not the other, which is what lets the reconciler be
+tested against a fake provider and the control plane against an in-memory
+repository — with no conditional compilation and no test-only feature flag.
+
+Only `fabric-control-plane-api` depends on either adapter. If any other crate
+ever needs one, Keycloak or Git has leaked and the boundary has failed — the
+same statement ADR 0001 makes about NDC, for the same reason (ADR 0008).
+
 ## Enforcement
 
 Direction is enforced by Cargo: a cycle will not compile, and a new edge
 requires editing a `Cargo.toml`, which is visible in review. Beyond that:
 
-- The architecture invariant tests assert that NDC types do not appear outside
-  `fabric-connector-ndc`, and that no Git or Kubernetes client exists in any
-  request-handling crate.
+- `scripts/check_architecture.py` asserts that NDC types do not appear outside
+  `fabric-connector-ndc`, that Keycloak representations stay inside
+  `fabric-keycloak` and Git-hosting details inside `fabric-client-git`, that no
+  crate in one plane depends on the other, and that no Git or Kubernetes client
+  exists **anywhere in the workspace** — including the control plane, which
+  reaches its Git host over HTTPS rather than by linking a Git library.
 - CI runs `cargo deny check` including a `[bans]` section, so a surprise
   transitive dependency is visible.
 
@@ -107,8 +173,18 @@ What core currently holds, and why each earns its place:
 
 ## Adding a crate
 
-New platform APIs (Configuration, Feature, Storage, Events, Experience) should
-sit at the same level as `fabric-data-api`: depending on core, identity, tenant
+**A new runtime API** (Configuration, Feature, Storage, Events, Experience)
+sits at the same level as `fabric-data-api`: depending on core, identity, tenant
 runtime and connector, depended on only by `fabric-api`. They must not depend on
 each other. If two of them need to share something, that is a signal for a new
 shared crate or a core primitive — decided deliberately, not by adding an edge.
+
+**A new control-plane capability** (authorization, secrets, routing,
+observability) follows the shape identity established: the concept in
+`fabric-client-model`, the convergence semantics in `fabric-reconciliation` or a
+sibling, the port beside the existing one, and the platform service's protocol
+in an adapter crate of its own that nothing but the composition root can see.
+
+Whichever it is, add it to `expected` in `scripts/check_architecture.py`. A
+crate nobody has placed in the graph is a crate whose dependency direction
+nothing is checking, and the script fails until someone does.

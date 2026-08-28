@@ -60,12 +60,17 @@ not pretending all infrastructure behaves identically.**
 
 ## Not in the first release
 
-Deliberately deferred, each for its own reason rather than for lack of time:
+Deliberately deferred, each for its own reason rather than for lack of time.
+
+Two of these have since been built and are struck from the list: **reconciliation
+itself**, which now converges Keycloak onto client desired state, and the
+control-plane API and console that produce that desired state. See
+[control-plane.md](control-plane.md). What remains:
 
 | Not built | Why |
 |---|---|
 | Configuration, Feature, Storage, Events, Secrets APIs (§27) | Same architecture, separate slices. The binding format already carries their state, so adding them changes no tenant model. |
 | The Experience API | Belongs in SaaS Fabric, but it composes identity, tenant enablement, permissions, feature state and application UX declaration — it needs the foundation merged underneath it first. |
-| Reconciliation itself | The runtime reads what a controller writes. `ResourceSource` is the contract between them, and the file-backed adapter is one implementation of it. |
+| Runtime binding publication | Reconciliation now exists — it converges Keycloak onto client desired state — but nothing yet writes what the *runtime* reads. `ResourceSource` is still the contract, and publishing into it is a reconciliation target beside Keycloak rather than a control-plane mutation reaching into a registry (ADR 0008). |
 | A JWKS refresher | Only relevant in the opt-in defence-in-depth identity mode, where key rotation currently means rebuilding the reader. |
 | A migration engine | §19's cut-over is expressible today (provision, migrate, validate, rebind, drain). Automating it is separate work, and the binding model deliberately does not assume a tenant's DataSource is immutable. |

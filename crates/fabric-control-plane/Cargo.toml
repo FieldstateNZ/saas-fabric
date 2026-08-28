@@ -1,0 +1,30 @@
+[package]
+name = "fabric-control-plane"
+description = "The operator-facing control plane: desired-state operations over client identity, and the ports the adapters implement."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+fabric-client-model.workspace = true
+fabric-core.workspace = true
+fabric-reconciliation.workspace = true
+
+async-trait.workspace = true
+axum.workspace = true
+http.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
+tracing.workspace = true
+
+[dev-dependencies]
+fabric-reconciliation.workspace = true
+
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util"] }
+tower = { workspace = true, features = ["util"] }
+
+[lints]
+workspace = true

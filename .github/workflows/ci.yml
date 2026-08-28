@@ -135,6 +135,17 @@ jobs:
       # script's documented exemption list.
       - run: python3 scripts/check_file_sizes.py
 
+      # Enforces docs/architecture/toolchain-policy.md's "one version, one
+      # place" rule where it is easiest to break it: a Dockerfile has to name a
+      # builder image, and nothing else connects that to the pin. Without this,
+      # CI could check the workspace with one compiler and ship an artifact
+      # built by another.
+      #
+      # In this job rather than its own: both are a Python script over the
+      # working tree, and a second runner for six lines of regex is not worth
+      # the queue time.
+      - run: python3 scripts/check_toolchain_pin.py
+
   architecture:
     name: architectural invariants
     runs-on: ubuntu-latest

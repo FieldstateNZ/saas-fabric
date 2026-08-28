@@ -279,6 +279,21 @@ Per-domain log levels come free from the crate layout — note the underscores:
 RUST_LOG=info,fabric_tenant_runtime=debug,fabric_connector_ndc=trace
 ```
 
+## Releases
+
+Three images, published to GHCR by a tag and by nothing else:
+
+| Image | Contains |
+|---|---|
+| `saas-fabric` | the runtime plane |
+| `saas-fabric-control-plane` | the control-plane API |
+| `saas-fabric-control-plane-ui` | the operator console |
+
+Never `latest` — `saas-fabric-platform` pins an explicit version. The builder's
+compiler is checked against `rust-toolchain.toml`, so an image cannot be built
+by a compiler no gate ran. See
+[`docs/architecture/packaging.md`](docs/architecture/packaging.md).
+
 ## Conventions
 
 - Small files: roughly 50–80 lines, split by responsibility. Inline tests live
@@ -353,6 +368,10 @@ Three of those gates are policy rather than tooling defaults:
   production `.rs` files over 150 lines fail the build unless the script's
   exemption list documents why. The console's ESLint configuration applies the
   same limit to its own source.
+- [`scripts/check_toolchain_pin.py`](scripts/check_toolchain_pin.py) enforces
+  the toolchain policy's "one version, one place" rule where it is easiest to
+  break: a Dockerfile has to name a builder image, and nothing else connects
+  that to the pin.
 - [`scripts/check_architecture.py`](scripts/check_architecture.py) enforces the
   invariants no unit test can catch, because the violation is the code
   compiling: NDC types outside their crate, Keycloak representations or

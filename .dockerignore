@@ -1,0 +1,24 @@
+# Everything the image build does not need, and one thing it must not have.
+#
+# `target/` is the important entry: it is gigabytes, and without this line
+# every build sends all of it to the daemon before running a single
+# instruction. The rest is noise that would invalidate layer caching on
+# changes that cannot affect a binary.
+
+target/
+**/node_modules/
+**/dist/
+coverage/
+
+.git/
+.github/
+.claude/
+
+docs/
+examples/
+*.md
+
+.gitignore
+.dockerignore
+deny.toml
+clippy.toml

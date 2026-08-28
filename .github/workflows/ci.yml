@@ -16,15 +16,39 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
 
+# ---------------------------------------------------------------------------
+# The toolchain
+# ---------------------------------------------------------------------------
+#
+# Every Rust job installs the version `rust-toolchain.toml` pins, rather than
+# whatever `stable` means on the day. That file carries the reasoning; the
+# short version is that this workspace denies every lint, so a new clippy
+# release does not produce a warning somebody notices later -- it fails the
+# build, on whichever pull request happens to be open, in code that pull
+# request never touched.
+#
+# `rustup toolchain install` with no argument reads that file and installs it
+# with its components. It replaced `dtolnay/rust-toolchain@stable`, which would
+# have overridden the pin; rustup is preinstalled on the GitHub-hosted runner
+# images, so dropping the action costs nothing and removes a third-party
+# dependency from every Rust job.
+#
+# `rustup show active-toolchain` then records the version in the log, because
+# when a gate fails for a reason nobody changed, the first question is which
+# compiler ran.
+#
+# Upgrading is a deliberate change -- see docs/architecture/toolchain-policy.md.
+
 jobs:
   fmt:
     name: cargo fmt --check
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt
+      # See "The toolchain" above: installs exactly what rust-toolchain.toml
+      # pins, then records which version ran.
+      - run: rustup toolchain install
+      - run: rustup show active-toolchain
       - run: cargo fmt --all --check
 
   clippy:
@@ -32,9 +56,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
+      # See "The toolchain" above: installs exactly what rust-toolchain.toml
+      # pins, then records which version ran.
+      - run: rustup toolchain install
+      - run: rustup show active-toolchain
       - uses: Swatinem/rust-cache@v2
       # Workspace lints (crates/**/Cargo.toml -> [lints] workspace = true,
       # rooted in the workspace Cargo.toml) already deny unwrap/expect/panic/
@@ -48,7 +73,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      # See "The toolchain" above: installs exactly what rust-toolchain.toml
+      # pins, then records which version ran.
+      - run: rustup toolchain install
+      - run: rustup show active-toolchain
       - uses: Swatinem/rust-cache@v2
       # `missing_docs` is denied at compile time, so clippy already catches an
       # undocumented item. What it does not catch is a documented one whose
@@ -64,7 +92,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      # See "The toolchain" above: installs exactly what rust-toolchain.toml
+      # pins, then records which version ran.
+      - run: rustup toolchain install
+      - run: rustup show active-toolchain
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --workspace
 
@@ -109,7 +140,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      # See "The toolchain" above: installs exactly what rust-toolchain.toml
+      # pins, then records which version ran.
+      - run: rustup toolchain install
+      - run: rustup show active-toolchain
       - uses: Swatinem/rust-cache@v2
       - uses: actions/setup-python@v5
         with:

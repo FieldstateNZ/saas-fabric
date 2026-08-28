@@ -1,0 +1,31 @@
+# The Rust version this repository is built and checked with.
+#
+# Pinned rather than tracking `stable`, and the reason is specific to how
+# strict this workspace is. Every lint is denied (`-D warnings`, plus
+# `unwrap`/`expect`/`panic`/`indexing` denied in `[workspace.lints]`), so a new
+# clippy release does not produce a warning somebody notices later — it fails
+# the build. On an unpinned toolchain that happens to whichever pull request is
+# open when the release lands, in code that pull request never touched.
+#
+# That is not hypothetical: it is what happened to pull request #2, where
+# clippy 1.98's `unused_async_trait_impl` failed a control-plane branch on a
+# runtime-plane file that had been unchanged for weeks.
+#
+# Pinning also makes "clippy is clean" mean the same thing locally and in CI.
+# Without this file, it means "clean on whatever stable each developer last
+# installed", which is how a branch passes on one machine and fails on another.
+#
+# Upgrading is a deliberate change with its own commit. See
+# docs/architecture/toolchain-policy.md for who does it and when.
+[toolchain]
+channel = "1.98.0"
+
+# Both are used by CI gates, so they are part of the pin rather than something
+# each job installs for itself. `cargo fmt` and `cargo clippy` disagreeing with
+# the compiler about which version they belong to is its own class of confusing
+# failure.
+components = ["clippy", "rustfmt"]
+
+# Everything the gates need and nothing else. `cargo doc --no-deps` builds this
+# workspace's own documentation, which needs no `rust-docs`.
+profile = "minimal"

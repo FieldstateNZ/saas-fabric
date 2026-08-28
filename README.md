@@ -336,7 +336,13 @@ Every push and pull request runs, for the Rust workspace,
 architecture check; and for the operator console, `eslint`, `tsc -b`, `vitest`
 and `vite build` ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)).
 
-Three of those are policy rather than tooling defaults:
+The Rust version is pinned in [`rust-toolchain.toml`](rust-toolchain.toml), so
+CI and a developer's machine answer "is clippy clean?" the same way. See
+[`docs/architecture/toolchain-policy.md`](docs/architecture/toolchain-policy.md)
+for why, and for the obligation that comes with it — a pin nobody bumps keeps
+the reproducibility and loses the lints.
+
+Three of those gates are policy rather than tooling defaults:
 
 - [`deny.toml`](deny.toml) mechanically enforces
   [`docs/architecture/dependency-policy.md`](docs/architecture/dependency-policy.md) —

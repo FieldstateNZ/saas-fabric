@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use axum::extract::FromRef;
 
+use crate::git_integration::GitIntegrationService;
 use crate::integration::IntegrationHealth;
 use crate::operator::OperatorAuthenticator;
 use crate::repository::DesiredStateBinding;
@@ -51,6 +52,26 @@ pub(crate) struct ControlPlaneState {
 
     /// What the last sweep observed about reading desired state.
     pub(crate) health: Arc<IntegrationHealth>,
+
+    /// The connection flow, when this deployment has one.
+    ///
+    /// `None` where desired state is stated by the deployment rather than
+    /// connected by an operator: there is nothing to connect, and offering a
+    /// flow that would overwrite a stated repository would be offering to
+    /// undo the deployment.
+    pub(crate) git_integration: Option<Arc<GitIntegrationService>>,
+
+    /// Where this control plane is reachable from a browser.
+    pub(crate) public_base_url: String,
+}
+
+impl ControlPlaneState {
+    /// The connection flow, or a refusal naming why there is none.
+    pub(crate) fn git_integration(&self) -> Result<&Arc<GitIntegrationService>, crate::ControlPlaneError> {
+        self.git_integration
+            .as_ref()
+            .ok_or(crate::ControlPlaneError::IntegrationNotManaged)
+    }
 }
 
 impl FromRef<ControlPlaneState> for Arc<dyn OperatorAuthenticator> {

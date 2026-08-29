@@ -12,7 +12,13 @@
  */
 import { currentToken, forgetToken } from '../session/session'
 import { ControlPlaneError } from './errors'
-import type { Client, Identity, IdentityRequest, Integration } from './types'
+import type {
+  Candidate,
+  Client,
+  Identity,
+  IdentityRequest,
+  Integration,
+} from './types'
 
 /** Every client the platform manages. */
 export async function listClients(): Promise<readonly Client[]> {
@@ -30,6 +36,49 @@ export async function listClients(): Promise<readonly Client[]> {
  */
 export async function getIntegration(): Promise<Integration> {
   return request<Integration>('/api/integrations/git')
+}
+
+/**
+ * Describes the application to create, and where the browser must post it.
+ *
+ * Creating one through a manifest needs an HTTP POST of a form field, which a
+ * browser can only do by submitting a real form — so the control plane hands
+ * back what to post rather than a URL to follow.
+ */
+export async function beginConnection(
+  organisation: string,
+): Promise<{ post_url: string; manifest: unknown }> {
+  return request('/api/integrations/git/connect', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ organisation }),
+  })
+}
+
+/** Where the operator installs the application once it exists. */
+export async function beginInstall(): Promise<{ url: string }> {
+  return request('/api/integrations/git/install')
+}
+
+/** Every repository the installation can reach. */
+export async function listRepositories(): Promise<readonly Candidate[]> {
+  const body = await request<{ repositories: Candidate[] }>('/api/integrations/git/repositories')
+
+  return body.repositories
+}
+
+/** Settles on the repository client configuration lives in. */
+export async function chooseRepository(owner: string, name: string): Promise<void> {
+  await request('/api/integrations/git/repository', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ owner, name }),
+  })
+}
+
+/** Forgets the integration this platform holds. */
+export async function disconnectIntegration(): Promise<void> {
+  await request('/api/integrations/git', { method: 'DELETE' })
 }
 
 /** One client's identity configuration and reconciliation state. */
@@ -91,6 +140,12 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     }
 
     throw await refusal(response)
+  }
+
+  // A 204 has no body. Parsing one would throw on exactly the responses that
+  // mean "that worked", which is the least helpful place to fail.
+  if (response.status === 204) {
+    return undefined as T
   }
 
   return (await response.json()) as T

@@ -1,4 +1,7 @@
 //! Signing the assertion the installation-token endpoint authenticates.
+//!
+//! Shared with provisioning, which mints a token to *prove* an installation
+//! works before recording it. One signer, so the two cannot drift.
 
 use fabric_control_plane::RepositoryError;
 use jsonwebtoken::{Algorithm, EncodingKey, Header};
@@ -24,7 +27,7 @@ const JWT_BACKDATE_SECONDS: u64 = 60;
 /// this can sign with. The underlying error is deliberately dropped:
 /// `jsonwebtoken` includes the offending input in some of its messages, and
 /// the offending input here is the private key.
-pub(super) fn build(app_id: &str, private_key: &str, now_unix: u64) -> Result<String, RepositoryError> {
+pub(crate) fn build(app_id: &str, private_key: &str, now_unix: u64) -> Result<String, RepositoryError> {
     let issued_at = now_unix.saturating_sub(JWT_BACKDATE_SECONDS);
 
     let claims = serde_json::json!({

@@ -50,6 +50,7 @@ pub fn build_control_plane(
     clock: Arc<dyn Clock>,
     keys: Arc<crate::KeyHolder>,
     sign_in: Option<Arc<crate::SignInSurface>>,
+    git_integration: Option<Arc<crate::GitIntegrationService>>,
 ) -> Result<ControlPlaneServices, String> {
     let operators: Arc<dyn crate::OperatorAuthenticator> = Arc::from(config.operator.build(keys)?);
     let described = repository.current().describe();
@@ -70,6 +71,8 @@ pub fn build_control_plane(
         service,
         operators,
         sign_in,
+        git_integration,
+        public_base_url: config.public_base_url.clone(),
         desired_state: Arc::clone(repository),
         health: Arc::clone(&health),
     });

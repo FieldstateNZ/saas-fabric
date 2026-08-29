@@ -92,6 +92,24 @@ interval_seconds = 60
 # that an operator can connect one through the console. Nothing about a Git
 # host belongs in a deployment any more.
 #
+# Two more sections go with it, and both have workable defaults:
+#
+#     # Where this instance keeps what it must not lose. The default is an
+#     # in-memory store, which is right for development and says so loudly at
+#     # startup; a real deployment states OpenBao.
+#     [secret_store]
+#     mode = "open_bao"
+#     address = "http://openbao.secrets.svc.cluster.local:8200"
+#     role = "saas-fabric-control-plane"
+#
+#     # Only needed for an enterprise Git host or a different commit identity.
+#     [git_host]
+#     api_base_url = "https://api.github.com"
+#     web_base_url = "https://github.com"
+#
+# And `control_plane.public_base_url` must be set: the Git host returns the
+# operator's browser to it after each approval.
+#
 # `mode = "git"` remains for a deployment that genuinely wants to state where
 # desired state lives, and is what the integration tests drive. A deployment
 # that states it has opted out of the managed path, so stating it wrongly is

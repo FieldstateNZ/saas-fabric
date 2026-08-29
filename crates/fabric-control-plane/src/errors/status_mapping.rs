@@ -13,8 +13,20 @@ impl ControlPlaneError {
             // and for the same reason: in both cases the operator holds no
             // usable identity and their next step is to sign in.
             Self::Unauthenticated(_) | Self::SignInRefused => StatusCode::UNAUTHORIZED,
-            Self::UnknownClient(_) => StatusCode::NOT_FOUND,
-            Self::InvalidRequest(_) | Self::RealmImmutable { .. } => StatusCode::BAD_REQUEST,
+            // 404 for both, and they mean different things: one client does
+            // not exist, and for this deployment the connection surface does
+            // not exist. Neither is a permission problem, which is why neither
+            // is a 403 sending an operator to look for a grant.
+            Self::UnknownClient(_) | Self::IntegrationNotManaged => StatusCode::NOT_FOUND,
+            // `InvalidFlow` joins these at 400 rather than 401, and that is
+            // the interesting one: its caller is a browser the Git host
+            // redirected here, holding no identity to be wrong about. What is
+            // wrong is the callback, and answering 401 would send an operator
+            // round a sign-in loop that cannot end.
+            Self::InvalidRequest(_)
+            | Self::RealmImmutable { .. }
+            | Self::IntegrationRefused(_)
+            | Self::InvalidFlow => StatusCode::BAD_REQUEST,
 
             // 428, not 400. The request is well-formed; what is missing is the
             // precondition that makes it safe to apply, and 428 is the status
@@ -45,11 +57,14 @@ impl ControlPlaneError {
                 StatusCode::SERVICE_UNAVAILABLE
             }
 
-            // 502, not 503, for both. A refused credential and a refused
-            // request are misconfigurations of this platform that will still
-            // be refused in five seconds, and advertising either as transient
-            // would turn one bad secret into a retry storm.
-            Self::RepositoryDenied | Self::RepositoryRejected => StatusCode::BAD_GATEWAY,
+            // 502, not 503, for all three. A refused credential, a refused
+            // request and a Git host that said no are misconfigurations of
+            // this platform that will still be refused in five seconds, and
+            // advertising any of them as transient would turn one bad
+            // credential into a retry storm.
+            Self::RepositoryDenied | Self::RepositoryRejected | Self::GitHostRefused => {
+                StatusCode::BAD_GATEWAY
+            }
         }
     }
 
@@ -66,6 +81,10 @@ impl ControlPlaneError {
             Self::RevisionConflict => "revision_conflict",
             Self::RealmImmutable { .. } => "realm_immutable",
             Self::RepositoryUnavailable => "repository_unavailable",
+            Self::InvalidFlow => "invalid_flow",
+            Self::IntegrationNotManaged => "integration_not_managed",
+            Self::GitHostRefused => "git_host_refused",
+            Self::IntegrationRefused(_) => "integration_refused",
             Self::IntegrationNotConfigured => "integration_not_configured",
             Self::SignInRefused => "sign_in_refused",
             Self::SignInUnavailable => "sign_in_unavailable",

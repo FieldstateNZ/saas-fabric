@@ -52,7 +52,13 @@ fabric-keycloak        → fabric-core
 
 fabric-client-git      → fabric-core
                        → fabric-client-model
-                       → fabric-control-plane       (implements ClientRepository)
+                       → fabric-control-plane       (implements ClientRepository,
+                                                     GitAppProvisioning,
+                                                     DesiredStateFactory)
+
+fabric-openbao         → fabric-core
+                       → fabric-control-plane       (implements SecretStore,
+                                                     IntegrationStore)
 
 fabric-control-plane-api → all of the above (composition root)
 ```
@@ -133,8 +139,8 @@ arrows point that way and not the other, which is what lets the reconciler be
 tested against a fake provider and the control plane against an in-memory
 repository — with no conditional compilation and no test-only feature flag.
 
-Only `fabric-control-plane-api` depends on either adapter. If any other crate
-ever needs one, Keycloak or Git has leaked and the boundary has failed — the
+Only `fabric-control-plane-api` depends on any adapter. If any other crate
+ever needs one, Keycloak, Git or OpenBao has leaked and the boundary has failed — the
 same statement ADR 0001 makes about NDC, for the same reason (ADR 0008).
 
 ## Enforcement

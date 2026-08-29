@@ -20,6 +20,7 @@ fabric-client-model.workspace = true
 fabric-control-plane.workspace = true
 fabric-core.workspace = true
 fabric-keycloak.workspace = true
+fabric-openbao.workspace = true
 fabric-reconciliation.workspace = true
 
 axum.workspace = true

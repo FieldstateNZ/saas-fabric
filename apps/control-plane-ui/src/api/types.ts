@@ -71,4 +71,22 @@ export interface Integration {
   readonly status: IntegrationStatus
   readonly connection: string | null
   readonly last_success_at: number | null
+  /** Whether this deployment connects its own integration, or states it. */
+  readonly managed: boolean
+  readonly application: Application | null
+}
+
+/** The application the platform created on the Git host. Public facts only. */
+export interface Application {
+  readonly slug: string
+  readonly account: string | null
+  readonly installed: boolean
+  readonly repository: string | null
+}
+
+/** A repository the installation can reach. */
+export interface Candidate {
+  readonly owner: string
+  readonly name: string
+  readonly default_branch: string
 }

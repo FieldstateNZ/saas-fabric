@@ -84,9 +84,16 @@ may depend on a crate in the other.
 Operator-facing HTTP, in `fabric-control-plane`.
 
 ```text
-GET  /api/session                      where to sign in       (no operator)
-POST /api/session                      redeem a code          (no operator)
-GET  /api/integrations/git             can desired state be read?
+GET    /api/session                      where to sign in       (no operator)
+POST   /api/session                      redeem a code          (no operator)
+GET    /api/integrations/git             can desired state be read?
+POST   /api/integrations/git/connect     describe the app to create
+GET    /api/integrations/git/created     host callback          (no operator)
+GET    /api/integrations/git/install     where to install it
+GET    /api/integrations/git/installed   host callback          (no operator)
+GET    /api/integrations/git/repositories  what the install reaches
+PUT    /api/integrations/git/repository  choose one
+DELETE /api/integrations/git             forget the integration
 GET /api/clients                       list clients
 GET /api/clients/{clientId}            one client's overview
 GET /api/clients/{clientId}/identity   its identity, and reconciliation state
@@ -132,6 +139,67 @@ A deployment that *states* a repository has opted out of the managed path, so
 stating it wrongly still fails at startup. Silently starting unconfigured would
 hide the mistake behind a screen inviting somebody to connect a repository the
 deployment had already named.
+
+### Connecting the integration
+
+An operator establishes it from inside the product; nothing about a Git host is
+in a deployment. The flow is two approvals on the host, because that is what
+the host requires, and the console shows whichever is outstanding rather than
+pretending it is one action that sometimes half-works.
+
+```text
+operator names the organisation
+        ↓
+browser POSTs a manifest to the host        ← a real form; a manifest is a POST
+        ↓
+host returns with a one-time code
+        ↓
+platform redeems it → private key → secret partition, then the record
+        ↓
+operator installs the application
+        ↓
+host returns with an installation id
+        ↓
+platform mints a token → only then records the installation
+        ↓
+one repository → adopted;  several → the operator chooses
+        ↓
+desired state is bound, live, with no restart
+```
+
+**Nothing is recorded before it is proven.** The private key is stored *before*
+the record, because a record without its key describes an application the
+platform can never authenticate as and the key arrives exactly once. An
+installation is recorded only after a token has been minted for it, so
+"recorded" means "working".
+
+**The two callbacks take no operator.** The host redirects a *browser*, which
+carries no bearer token. What they require instead is a correlation token this
+platform issued to an authenticated operator moments earlier — random,
+server-side, single-use, ten minutes. A captured callback URL is not
+replayable, which a signed stateless blob would be for as long as it is valid.
+An in-flight flow does not survive a restart; that means "start again", takes
+seconds, and cannot produce a wrong outcome.
+
+**Disconnecting does not uninstall.** It removes the record, the key and the
+binding. Deleting an organisation's application from a console button would be
+doing more than the button said.
+
+### Where the platform keeps its own state
+
+Two ports, one backing service, and the separation is in the types rather than
+the location:
+
+| Port | Holds | May be shown to an operator |
+|---|---|---|
+| `SecretStore` | the application's private key | never |
+| `IntegrationStore` | application id, slug, installation, repository | yes |
+
+`fabric-openbao` implements both and is the only crate that knows OpenBao
+exists. It authenticates with the pod's own Kubernetes identity, so there is
+still no credential for a human to create or transport — which is the whole
+point, since secrets projected *into* a pod are a one-way path and the platform
+now generates credential material of its own.
 
 ### Integration status
 

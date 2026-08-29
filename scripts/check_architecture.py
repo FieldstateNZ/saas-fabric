@@ -74,6 +74,7 @@ CONTROL_PLANE = frozenset(
         "fabric-control-plane",
         "fabric-client-git",
         "fabric-keycloak",
+        "fabric-openbao",
         "fabric-control-plane-api",
     }
 )
@@ -499,6 +500,13 @@ def check_dependency_direction(graph: Graph) -> list[Failure]:
             "fabric-client-model",
             "fabric-control-plane",
         },
+        # The third adapter, and the first that is not about a client at all:
+        # it implements the ports through which the platform keeps its *own*
+        # durable state. Same direction as the other two.
+        "fabric-openbao": {
+            "fabric-core",
+            "fabric-control-plane",
+        },
         "fabric-control-plane-api": {
             "fabric-core",
             "fabric-client-model",
@@ -506,6 +514,7 @@ def check_dependency_direction(graph: Graph) -> list[Failure]:
             "fabric-control-plane",
             "fabric-keycloak",
             "fabric-client-git",
+            "fabric-openbao",
         },
     }
 

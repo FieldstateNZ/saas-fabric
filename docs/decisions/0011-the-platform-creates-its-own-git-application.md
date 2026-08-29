@@ -1,0 +1,110 @@
+# ADR 0011 — The platform creates its own Git application
+
+- **Status:** Accepted
+- **Date:** 2026-08-29
+- **Applies to:** `fabric-control-plane`, `fabric-client-git`, `fabric-openbao`, `fabric-control-plane-api`, `apps/control-plane-ui`
+- **Related:** [ADR 0008](0008-desired-state-is-the-authority.md); [ADR 0010](0010-operators-authenticate-against-the-platform-realm.md); [the Workspec analysis](../architecture/git-integration-reference.md)
+
+## Context
+
+Reaching client desired state needed a GitHub App. Getting one meant a human
+creating it by hand, copying its private key into a secret store, and writing
+an application id and an installation id into a deployment file — *before the
+platform could start*.
+
+That is the wrong shape for a product whose purpose is to administer a
+platform. It made onboarding somebody else's job, it made a private key a thing
+people handled, and it made the console — the one tool for fixing a broken
+integration — the thing that could not start when the integration was missing.
+
+[ADR 0010](0010-operators-authenticate-against-the-platform-realm.md) removed
+the first prerequisite by making operators authenticate against the platform's
+own realm. This removes the second.
+
+## Decision
+
+**An authorised operator establishes the Git integration from inside the
+product, and the platform owns everything that results.**
+
+GitHub's App Manifest flow is what makes it possible: the platform describes
+the application it wants, the operator approves it in their organisation, and
+the host hands back the identity — including a private key that arrives exactly
+once.
+
+Three properties are taken from
+[Workspec's implementation](../architecture/git-integration-reference.md)
+deliberately:
+
+- **The application is created, not configured.** No App to hand-make, no key
+  to copy.
+- **State is derived from ground truth.** There is no stored "connected" flag;
+  what is reported comes from whether a repository is bound and what the last
+  sweep saw.
+- **Nothing is recorded before it is proven.** An installation is written only
+  after a token has been minted for it, so "recorded" means "working" and no
+  separate verified flag can drift.
+
+### Where SaaS Fabric diverges
+
+**No webhooks.** The control plane is published on the operator plane and on no
+public one, so GitHub's servers cannot reach it. The manifest declares no hook
+and subscribes to no events. The consequence is stated rather than hidden: the
+platform is not *told* when an installation is revoked, and finds out on its
+next sweep — which is why integration health is probed rather than remembered,
+and why `invalid` is a status separate from `error`.
+
+**Callback correlation is server-side and genuinely single-use.** Workspec signs
+a stateless blob and verifies it within a window, which is right when callbacks
+may land on any of several processes and has a cost it does not hide: nothing
+is consumed, so a captured state is replayable while it is valid. This platform
+runs one control-plane process, so a flow is a random token held in memory and
+removed when used. Replay is impossible rather than merely brief, and there is
+no signing key to manage.
+
+The trade is real and small: an in-flight flow does not survive a restart, and
+would not survive a second replica. Both mean "start the connection again", the
+flow takes seconds, and neither can produce a wrong outcome — only a repeated
+one.
+
+**Credentials go to the instance's secret partition.** Workspec encrypts them
+into its own database with an application-held key. This platform has no
+database, and the brief is explicit that credential material belongs to the
+Fabric instance's secret partition. Two ports — `SecretStore` and
+`IntegrationStore` — are implemented by `fabric-openbao`, the only crate in the
+workspace that knows OpenBao exists.
+
+**No `connect-existing` path.** Workspec offers one, and it reintroduces
+pasting a private key into a browser form — the exact posture this change
+removes. Recovery is re-running the flow.
+
+**The platform declines to guess a repository.** An installation reaching
+exactly one repository is adopted; one reaching several is reported as
+undecided and the operator chooses. Guessing would write client configuration
+somewhere nobody expects, and it would look like it worked.
+
+## Consequences
+
+**The control plane becomes a client of the secret store.** Secrets projected
+into a pod by External Secrets are a one-way path, and the moment the platform
+started *generating* credential material it needed somewhere to put it. It
+authenticates with the pod's own Kubernetes identity, so there is still no
+credential anybody has to create or transport.
+
+**`saas-fabric-platform` no longer supplies GitHub App identifiers or a private
+key.** That is the deployment consequence the brief asks for, and the reason
+its open pull request was parked rather than patched.
+
+**A private key exists that nobody has ever seen.** It is generated by GitHub,
+read once by this platform, and written straight to the secret partition. No
+log names it, no API returns it, and the record the console is shown is a
+different type that cannot carry it.
+
+**Two things still need a human**, and both are on the host rather than here:
+approving the application's creation, and choosing which repositories to
+install it on. Neither can or should be automated — they are the approvals that
+make the platform's access deliberate.
+
+**Disconnecting does not uninstall.** It removes what this platform holds: the
+record, the key, and the binding. Deleting an organisation's application
+because somebody clicked a button in a console would be doing considerably more
+than the button said.

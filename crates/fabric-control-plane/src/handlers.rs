@@ -23,7 +23,10 @@ mod session;
 
 pub(crate) use get_client::get_client;
 pub(crate) use get_identity::get_identity;
-pub(crate) use integration::get_integration;
+pub(crate) use integration::{
+    begin_connection, begin_install, choose_repository, created, disconnect, get_integration, installed,
+    list_repositories,
+};
 pub(crate) use list_clients::list_clients;
 pub(crate) use put_identity::put_identity;
 pub(crate) use session::{redeem_session, session_config};

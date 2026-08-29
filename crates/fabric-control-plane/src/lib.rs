@@ -53,6 +53,7 @@ mod errors;
 mod extraction;
 #[cfg(test)]
 mod fixtures;
+mod git_integration;
 mod handlers;
 mod integration;
 mod logging;
@@ -69,6 +70,12 @@ mod state;
 
 pub use config::{ControlPlaneConfig, OperatorConfig, ReconciliationConfig};
 pub use errors::ControlPlaneError;
+pub use git_integration::{
+    AccessibleRepository, AppCreationRequest, CreatedApp, DesiredStateFactory, GitAppProvisioning,
+    GitIntegration, GitIntegrationService, InMemoryIntegrationStore, InMemorySecretStore, Installation,
+    InstallationDetail, IntegrationError, IntegrationStore, IntegrationStoreError, PendingFlows,
+    ProvisioningError, SecretName, SecretStore, SecretStoreError, SecretValue, SelectedRepository,
+};
 pub use integration::{IntegrationHealth, IntegrationStatus, Observation};
 pub use operator::{
     KeyHolder, OidcOperators, Operator, OperatorAuthError, OperatorAuthenticator, TrustedHeaderOperators,

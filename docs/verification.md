@@ -4,7 +4,7 @@ What was measured, what it showed, and where the numbers came from. Every
 command below is reproducible from the repository root; nothing here is
 asserted without one.
 
-Last run: 2026-08-29, against `claude/git-integration-foundation`,
+Last run: 2026-08-29, against `claude/github-app-manifest-flow`,
 covering both planes, on **Rust 1.98.0** — pinned in
 [`rust-toolchain.toml`](../rust-toolchain.toml).
 
@@ -33,15 +33,15 @@ is at the end, under "The control plane, end to end".
 | --- | --- | --- |
 | Formatting | `cargo fmt --all --check` | clean |
 | Lints | `cargo clippy --workspace --all-targets -- -D warnings` | 0 findings |
-| Tests | `cargo test --workspace` | 1218 passing, 0 failing, 0 ignored |
+| Tests | `cargo test --workspace` | 1262 passing, 0 failing, 0 ignored |
 | Docs | `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps` | 0 warnings |
 | Dependencies | `cargo deny check` | advisories, bans, licences, sources — all ok |
 | File sizes | `python3 scripts/check_file_sizes.py` | 0 over the 150-line limit |
-| Architecture | `python3 scripts/check_architecture.py` | 8 invariants hold across 13 crates |
+| Architecture | `python3 scripts/check_architecture.py` | 8 invariants hold across 14 crates |
 | Console lint | `npm run lint` | 0 findings |
 | Console types | `npm run typecheck` | 0 errors |
-| Console tests | `npm test` | 30 passing, 0 failing |
-| Console build | `npm run build` | 206 kB, 65 kB gzipped |
+| Console tests | `npm test` | 35 passing, 0 failing |
+| Console build | `npm run build` | 210 kB, 65 kB gzipped |
 
 All eleven run in CI on every push and pull request
 (`.github/workflows/ci.yml`); the four Rust gates and the architecture check as
@@ -49,6 +49,47 @@ parallel jobs, the four console checks as steps of one job because `npm ci`
 dominates each of them.
 
 Nothing is ignored.
+
+## Connecting the integration: what these tests do and do not prove
+
+Thirteen tests drive the flow end to end against a Git host that does what a
+test tells it to. What they pin is the **ordering**, because that is what
+turns a half-finished connection into one an operator can retry rather than one
+only somebody with store access can repair.
+
+- An installation that cannot mint a token is **not recorded**, and the
+  application stays recorded so the operator can retry the install leg alone.
+- A key that cannot be stored leaves **no record at all** — the key arrives
+  exactly once, so a record written without it would describe an application
+  this platform can never authenticate as, and no retry could fix it.
+- A callback carrying a token this platform never issued establishes nothing.
+- A creation callback **cannot be replayed**: the second presentation of the
+  same token is refused.
+- An installation reaching several repositories is recorded as undecided rather
+  than guessed at, and the platform reports itself unconfigured until somebody
+  says which.
+- Choosing a repository the installation cannot reach is refused, so an
+  operator working from a stale list cannot point the platform at something it
+  cannot read.
+- A stored integration is restored after a restart.
+- An organisation name that could steer a URL — `../evil`, `a/b`, a name with a
+  space — never reaches the URL a browser is handed.
+
+Nine unit tests cover the correlation token itself, including that spending it
+at the *wrong* leg still spends it: refusing without removing would leave a
+token an attacker could probe against both callbacks until one accepted it.
+
+Eight tests drive `fabric-openbao` over a real socket, which is where the
+protocol mistakes live: reading a version 2 entry's double nesting, treating a
+`404` as absence rather than failure, deleting through `metadata` so previous
+versions of a private key do not survive, and logging in again when a token is
+refused mid-lease.
+
+**Not proven here.** No test has created a real GitHub App, redeemed a real
+manifest code, or read a real OpenBao. The fakes answer the protocol these
+adapters speak, which is what the Keycloak and Git adapters' own socket tests
+established as the standard here — but the end-to-end run against LucentRoot is
+still outstanding, and it needs the master realm configured first (ADR 0010).
 
 ## Starting with nothing connected
 
@@ -111,8 +152,9 @@ realm once that realm has the console client and the operator role — which
 nothing creates yet, deliberately (ADR 0010).
 
 The workspace total rose from 977 to 1189 over the control-plane increment
-(**212 new Rust tests**), to 1201 with operator sign-in, and to 1218 with
-late-bound desired state — plus the console's 30, which run separately.
+(**212 new Rust tests**), to 1201 with operator sign-in, to 1218 with
+late-bound desired state, and to 1262 with the connection flow — plus the
+console's 35, which run separately.
 
 Three of the 181 arrived after the merge, and are worth singling out because of
 what they are: `an_edit_preserves_every_other_key_and_value`,
@@ -128,11 +170,12 @@ change.
 | --- | --- | --- |
 | `fabric-client-model` | 47 | the document format, what an edit preserves and what it does not, every name's rule, and the redirect-URI authority rule |
 | `fabric-reconciliation` | 24 | the diff, idempotence, the status state machine |
-| `fabric-control-plane` | 99 | the API contract, concurrency, both operator postures, late-bound desired state, boundaries |
+| `fabric-control-plane` | 135 | the API contract, concurrency, both operator postures, late-bound desired state, the connection flow, boundaries |
 | `fabric-keycloak` | 20 | the admin protocol over a real socket, including the refusal-retry a real Keycloak forced |
-| `fabric-client-git` | 43 | optimistic concurrency, the GitHub App token exchange, and how a rejected or expiring token is replaced — all over a real socket |
-| `fabric-control-plane-api` | 15 | configuration, secrets, the shipped examples |
-| `control-plane-ui` | 30 | the API client, the badge, the role editor, the sign-in round trip, what an operator is told about the integration |
+| `fabric-client-git` | 52 | optimistic concurrency, the GitHub App token exchange, and how a rejected or expiring token is replaced — all over a real socket |
+| `fabric-control-plane-api` | 16 | configuration, secrets, the shipped examples |
+| `fabric-openbao` | 8 | the KV protocol over a real socket, including the re-login a refused token forces |
+| `control-plane-ui` | 35 | the API client, the badge, the role editor, the sign-in round trip, what an operator is told and offered about the integration |
 
 ## File sizes
 

@@ -1,0 +1,112 @@
+//! Reporting whether the platform can reach client desired state.
+
+use axum::extract::State;
+use axum::Json;
+use serde::Serialize;
+
+use crate::integration::IntegrationStatus;
+use crate::state::ControlPlaneState;
+use crate::Operator;
+
+/// What an operator is told about the desired-state integration.
+///
+/// # Status, never credentials
+///
+/// Nothing here is secret and nothing here is a reference to something secret.
+/// No token, no key, no key *name*, and no path: an operator is told whether
+/// the platform can read desired state, where from in the terms they connected
+/// it, and when it last worked. Section 15 makes that a rule rather than a
+/// habit, and `scripts/check_architecture.py` checks the console never learns
+/// otherwise.
+#[derive(Serialize)]
+pub(crate) struct IntegrationReport {
+    /// What state the connection is in.
+    status: IntegrationStatus,
+
+    /// How the connected repository describes itself, in operator terms.
+    ///
+    /// `None` when nothing is connected. This is a sentence for a human, not
+    /// a structured location — the structured form arrives with the flow that
+    /// establishes it, and inventing one here would mean guessing its shape.
+    connection: Option<String>,
+
+    /// When desired state was last read successfully, in Unix seconds.
+    ///
+    /// Usually the first question asked about a broken integration, which is
+    /// why it survives the failure that broke it.
+    last_success_at: Option<u64>,
+
+    /// Whether this deployment connects its own integration at all.
+    ///
+    /// `false` where the deployment states its repository. The console uses it
+    /// to decide whether to offer a connect button, so that a deployment which
+    /// opted out is not shown a control that would undo its own configuration.
+    managed: bool,
+
+    /// The application this platform created, once it has one.
+    application: Option<Application>,
+}
+
+/// What an operator is told about the application itself.
+///
+/// Public identifiers only. The slug and the installation identifier are
+/// visible to anyone looking at the organisation's settings page; the private
+/// key is not here, is not referenced here, and is not obtainable through this
+/// API at all.
+#[derive(Serialize)]
+struct Application {
+    /// The application's slug on the host.
+    slug: String,
+
+    /// The account it is installed on, once it has been installed.
+    account: Option<String>,
+
+    /// Whether an installation exists.
+    installed: bool,
+
+    /// The repository client desired state lives in, once settled.
+    repository: Option<String>,
+}
+
+/// Reports the desired-state integration.
+///
+/// Takes an [`Operator`] like every other client-facing handler. Integration
+/// status is not public information: it says whether this platform is
+/// connected to a repository and names it, which is exactly the reconnaissance
+/// an unauthenticated caller should not get for free.
+pub(crate) async fn get_integration(
+    _operator: Operator,
+    State(state): State<ControlPlaneState>,
+) -> Json<IntegrationReport> {
+    let configured = state.desired_state.is_configured();
+
+    // A store this platform cannot read is reported as no application rather
+    // than as a failure of the whole report. The status above already says the
+    // integration is unhealthy; failing the request as well would take the
+    // console's only view of the problem away with it.
+    let application = match state.git_integration.as_ref() {
+        Some(service) => service.current().await.ok().flatten().as_ref().map(describe),
+        None => None,
+    };
+
+    Json(IntegrationReport {
+        status: state.health.status(configured),
+        connection: configured.then(|| state.desired_state.current().describe()),
+        last_success_at: state.health.last_success(),
+        managed: state.git_integration.is_some(),
+        application,
+    })
+}
+
+/// The public half of a stored integration.
+fn describe(integration: &crate::GitIntegration) -> Application {
+    Application {
+        slug: integration.app_slug.clone(),
+        account: integration
+            .installation
+            .as_ref()
+            .map(|installation| installation.account.clone()),
+        installed: integration.installation.is_some(),
+        repository: integration.repository().map(crate::SelectedRepository::describe),
+    }
+}

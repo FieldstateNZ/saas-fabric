@@ -7,7 +7,7 @@ use fabric_control_plane::RepositoryError;
 use fabric_core::Clock;
 use tokio::sync::Mutex;
 
-mod assertion;
+pub(crate) mod assertion;
 mod lifetime;
 
 use crate::github::errors::{status_failure, transport_failure};

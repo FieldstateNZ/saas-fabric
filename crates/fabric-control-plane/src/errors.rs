@@ -1,5 +1,7 @@
 //! Everything the control plane can refuse to do.
 
+mod from_repository;
+
 #[cfg(test)]
 mod error_tests;
 mod response;
@@ -8,7 +10,6 @@ mod status_mapping;
 use fabric_client_model::{ClientId, DesiredStateError, RealmName};
 
 use crate::operator::OperatorAuthError;
-use crate::repository::RepositoryError;
 
 /// A refused control-plane request.
 ///
@@ -106,6 +107,32 @@ pub enum ControlPlaneError {
     #[error("this platform is not connected to a client desired-state repository yet")]
     IntegrationNotConfigured,
 
+    /// A Git-host callback did not name a connection this platform started.
+    ///
+    /// One error for four causes — never issued, already spent, expired, or
+    /// belonging to the other leg of the flow. They are the same thing to an
+    /// operator, and distinguishing them in a response would tell whoever is
+    /// guessing which guess was closest.
+    #[error("that connection did not start here; start it again")]
+    InvalidFlow,
+
+    /// This deployment states where desired state lives, so there is nothing
+    /// to connect.
+    ///
+    /// A deployment that names a repository has opted out of the managed path.
+    /// Offering it a connection flow would be offering to overwrite a decision
+    /// somebody made in a file, from a browser.
+    #[error("this deployment states its desired-state repository; it is not managed here")]
+    IntegrationNotManaged,
+
+    /// The Git host refused something the connection flow asked of it.
+    #[error("the Git host refused the request")]
+    GitHostRefused,
+
+    /// The operator asked for something the platform will not do.
+    #[error("{0}")]
+    IntegrationRefused(String),
+
     /// The identity provider refused to redeem an authorization code.
     #[error("the sign-in could not be completed; start again")]
     SignInRefused,
@@ -113,26 +140,4 @@ pub enum ControlPlaneError {
     /// The identity provider could not be reached to redeem a code.
     #[error("the identity provider is unavailable")]
     SignInUnavailable,
-}
-
-impl ControlPlaneError {
-    /// Translates a repository failure into the operator-facing error.
-    ///
-    /// Deliberately not a `From` impl. Every call site has to name the client
-    /// it was working on, because [`RepositoryError::Unavailable`] carries a
-    /// detail that must not reach the browser and this is where it is dropped
-    /// — a blanket conversion would make it easy to add a call site that
-    /// forwards it.
-    #[must_use]
-    pub(crate) fn from_repository(error: RepositoryError) -> Self {
-        match error {
-            RepositoryError::NotConfigured => Self::IntegrationNotConfigured,
-            RepositoryError::NotFound { client } => Self::UnknownClient(client),
-            RepositoryError::Conflict => Self::RevisionConflict,
-            RepositoryError::Unavailable { .. } => Self::RepositoryUnavailable,
-            RepositoryError::NotPermitted => Self::RepositoryDenied,
-            RepositoryError::Rejected { .. } => Self::RepositoryRejected,
-            RepositoryError::Invalid { client, source } => Self::InvalidDesiredState { client, source },
-        }
-    }
 }

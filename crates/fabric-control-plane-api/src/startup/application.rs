@@ -8,7 +8,7 @@ use fabric_core::SystemClock;
 use fabric_reconciliation::IdentityReconciler;
 
 use crate::config::ControlPlaneAppConfig;
-use crate::startup::{adapters, operator_keys, serving};
+use crate::startup::{adapters, integration, operator_keys, serving};
 
 /// The assembled control plane, plus the work that must outlive a request.
 pub struct Application {
@@ -37,7 +37,9 @@ pub struct Application {
 /// 4. The API, which is given the repository and the reconciliation status —
 ///    and **not** the provider. There is no wiring here by which a handler
 ///    could reach Keycloak, which is the structural form of ADR 0008.
-/// 5. The reconciliation loop, which is the only thing holding both.
+/// 5. The Git connection flow, which is given the binding so that an
+///    operator connecting a repository takes effect without a restart.
+/// 6. The reconciliation loop, which is the only thing holding both.
 ///
 /// # Errors
 ///
@@ -61,6 +63,7 @@ pub async fn build(config: &ControlPlaneAppConfig) -> Result<Application, String
     let reconciler = Arc::new(IdentityReconciler::new(provider));
 
     let (keys, sign_in) = operator_keys::establish(&config.control_plane.operator)?;
+    let git_integration = integration::establish(config, &repository, &clock).await?;
 
     let services = build_control_plane(
         &config.control_plane,
@@ -68,6 +71,7 @@ pub async fn build(config: &ControlPlaneAppConfig) -> Result<Application, String
         Arc::clone(&clock),
         keys,
         sign_in,
+        git_integration,
     )?;
 
     let reconciliation = ReconciliationLoop::spawn(

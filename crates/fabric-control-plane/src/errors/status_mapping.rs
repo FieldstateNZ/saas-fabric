@@ -35,7 +35,15 @@ impl ControlPlaneError {
 
             // 503 and retryable: Git being briefly unreachable is the ordinary
             // transient failure of this API.
-            Self::RepositoryUnavailable | Self::SignInUnavailable => StatusCode::SERVICE_UNAVAILABLE,
+            // Three failures, one status, and they are not the same thing.
+            // Two are transient and carry a `Retry-After`; the third is a
+            // platform waiting for an operator and deliberately does not —
+            // retrying will not connect it. That distinction lives on the
+            // error rather than the status (see `response.rs`), and the
+            // machine code below is how the console tells them apart.
+            Self::RepositoryUnavailable | Self::SignInUnavailable | Self::IntegrationNotConfigured => {
+                StatusCode::SERVICE_UNAVAILABLE
+            }
 
             // 502, not 503, for both. A refused credential and a refused
             // request are misconfigurations of this platform that will still
@@ -58,6 +66,7 @@ impl ControlPlaneError {
             Self::RevisionConflict => "revision_conflict",
             Self::RealmImmutable { .. } => "realm_immutable",
             Self::RepositoryUnavailable => "repository_unavailable",
+            Self::IntegrationNotConfigured => "integration_not_configured",
             Self::SignInRefused => "sign_in_refused",
             Self::SignInUnavailable => "sign_in_unavailable",
             Self::RepositoryDenied => "repository_denied",

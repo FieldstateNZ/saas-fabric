@@ -6,7 +6,7 @@ use axum::Router;
 use fabric_core::Clock;
 use fabric_reconciliation::ReconciliationStatusStore;
 
-use crate::repository::ClientRepository;
+use crate::repository::DesiredStateBinding;
 use crate::routes::control_plane_routes;
 use crate::service::ClientService;
 use crate::state::ControlPlaneState;
@@ -28,6 +28,12 @@ pub struct ControlPlaneServices {
 
     /// Asks the reconciliation loop for a pass now.
     pub trigger: Arc<ReconciliationTrigger>,
+
+    /// What the last sweep observed about reading desired state.
+    ///
+    /// Held by the loop, which records into it, and by the API, which reports
+    /// it. Nothing else needs it, and nothing else may write to it.
+    pub health: Arc<crate::IntegrationHealth>,
 }
 
 /// Validates configuration, builds the service, and returns its router.
@@ -40,18 +46,19 @@ pub struct ControlPlaneServices {
 /// when an operator cannot sign in.
 pub fn build_control_plane(
     config: &ControlPlaneConfig,
-    repository: Arc<dyn ClientRepository>,
+    repository: &Arc<DesiredStateBinding>,
     clock: Arc<dyn Clock>,
     keys: Arc<crate::KeyHolder>,
     sign_in: Option<Arc<crate::SignInSurface>>,
 ) -> Result<ControlPlaneServices, String> {
     let operators: Arc<dyn crate::OperatorAuthenticator> = Arc::from(config.operator.build(keys)?);
-    let described = repository.describe();
+    let described = repository.current().describe();
     let statuses = Arc::new(ReconciliationStatusStore::new());
+    let health = Arc::new(crate::IntegrationHealth::new());
     let trigger = Arc::new(ReconciliationTrigger::new());
 
     let service = Arc::new(ClientService::new(
-        repository,
+        Arc::clone(repository),
         Arc::clone(&statuses),
         Arc::clone(&trigger),
         clock,
@@ -63,11 +70,14 @@ pub fn build_control_plane(
         service,
         operators,
         sign_in,
+        desired_state: Arc::clone(repository),
+        health: Arc::clone(&health),
     });
 
     Ok(ControlPlaneServices {
         router,
         statuses,
         trigger,
+        health,
     })
 }

@@ -80,6 +80,7 @@ impl ClientService {
 
         let revision = self
             .repository
+            .current()
             .update(client, &updated, expected, &change)
             .await
             .map_err(ControlPlaneError::from_repository)?;

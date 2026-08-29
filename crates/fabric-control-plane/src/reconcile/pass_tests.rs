@@ -11,6 +11,7 @@ use fabric_reconciliation::{
 use crate::fixtures::{repository_with_acme, FixedClock};
 use crate::reconcile::pass;
 use crate::repository::ClientRepository;
+use crate::IntegrationHealth;
 
 fn client() -> ClientId {
     ClientId::try_new("acme").unwrap()
@@ -23,7 +24,14 @@ async fn a_sweep_reconciles_every_client_and_records_the_result() {
     let reconciler = IdentityReconciler::new(provider.clone());
     let statuses = ReconciliationStatusStore::new();
 
-    let swept = pass::run(repository.as_ref(), &reconciler, &statuses, &FixedClock).await;
+    let swept = pass::run(
+        repository.as_ref(),
+        &reconciler,
+        &statuses,
+        &IntegrationHealth::new(),
+        &FixedClock,
+    )
+    .await;
 
     assert_eq!(swept, 1);
 
@@ -41,9 +49,23 @@ async fn a_second_sweep_changes_nothing() {
     let reconciler = IdentityReconciler::new(provider.clone());
     let statuses = ReconciliationStatusStore::new();
 
-    pass::run(repository.as_ref(), &reconciler, &statuses, &FixedClock).await;
+    pass::run(
+        repository.as_ref(),
+        &reconciler,
+        &statuses,
+        &IntegrationHealth::new(),
+        &FixedClock,
+    )
+    .await;
     provider.clear_calls();
-    pass::run(repository.as_ref(), &reconciler, &statuses, &FixedClock).await;
+    pass::run(
+        repository.as_ref(),
+        &reconciler,
+        &statuses,
+        &IntegrationHealth::new(),
+        &FixedClock,
+    )
+    .await;
 
     assert_eq!(provider.calls(), ["observe_realm:acme"]);
     assert_eq!(
@@ -62,7 +84,14 @@ async fn a_provider_failure_is_recorded_and_desired_state_is_untouched() {
     let reconciler = IdentityReconciler::new(provider);
     let statuses = ReconciliationStatusStore::new();
 
-    pass::run(repository.as_ref(), &reconciler, &statuses, &FixedClock).await;
+    pass::run(
+        repository.as_ref(),
+        &reconciler,
+        &statuses,
+        &IntegrationHealth::new(),
+        &FixedClock,
+    )
+    .await;
 
     assert_eq!(
         statuses.report(&client()).unwrap().status,
@@ -80,11 +109,25 @@ async fn an_unreadable_repository_leaves_recorded_status_alone() {
     let reconciler = IdentityReconciler::new(provider);
     let statuses = ReconciliationStatusStore::new();
 
-    pass::run(repository.as_ref(), &reconciler, &statuses, &FixedClock).await;
+    pass::run(
+        repository.as_ref(),
+        &reconciler,
+        &statuses,
+        &IntegrationHealth::new(),
+        &FixedClock,
+    )
+    .await;
     let before = statuses.report(&client());
 
     repository.set_unavailable(Some("connection refused".to_owned()));
-    let swept = pass::run(repository.as_ref(), &reconciler, &statuses, &FixedClock).await;
+    let swept = pass::run(
+        repository.as_ref(),
+        &reconciler,
+        &statuses,
+        &IntegrationHealth::new(),
+        &FixedClock,
+    )
+    .await;
 
     assert_eq!(swept, 0);
     assert_eq!(statuses.report(&client()), before);

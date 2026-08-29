@@ -15,7 +15,7 @@ use fabric_reconciliation::ReconciliationStatusStore;
 
 use crate::models::ReconciliationResponse;
 use crate::reconcile::ReconciliationTrigger;
-use crate::repository::{ClientRepository, StoredClient};
+use crate::repository::{DesiredStateBinding, StoredClient};
 use crate::ControlPlaneError;
 
 /// Everything an operator can do to a client, expressed once.
@@ -36,8 +36,13 @@ use crate::ControlPlaneError;
 /// is not a coincidence of the current wiring: it is the structural form of
 /// ADR 0008, and it is why no operator action can bypass Git.
 pub struct ClientService {
-    /// Where desired state lives.
-    repository: Arc<dyn ClientRepository>,
+    /// Where desired state lives — or the fact that it does not yet.
+    ///
+    /// A binding rather than a repository, because the platform starts without
+    /// one and an operator connects it later. Every method reads the current
+    /// binding, so a connection made while the process runs takes effect on
+    /// the next operation rather than at the next restart.
+    repository: Arc<DesiredStateBinding>,
 
     /// What is known about whether desired state has taken effect.
     reconciliation: Arc<ReconciliationStatusStore>,
@@ -53,7 +58,7 @@ impl ClientService {
     /// Assembles the service.
     #[must_use]
     pub fn new(
-        repository: Arc<dyn ClientRepository>,
+        repository: Arc<DesiredStateBinding>,
         reconciliation: Arc<ReconciliationStatusStore>,
         trigger: Arc<ReconciliationTrigger>,
         clock: Arc<dyn Clock>,
@@ -74,6 +79,7 @@ impl ClientService {
     /// repository holding no clients is an empty list, not an error.
     pub async fn list(&self) -> Result<Vec<StoredClient>, ControlPlaneError> {
         self.repository
+            .current()
             .list()
             .await
             .map_err(ControlPlaneError::from_repository)
@@ -88,6 +94,7 @@ impl ClientService {
     /// a document that will not parse.
     pub async fn get(&self, client: &ClientId) -> Result<StoredClient, ControlPlaneError> {
         self.repository
+            .current()
             .get(client)
             .await
             .map_err(ControlPlaneError::from_repository)

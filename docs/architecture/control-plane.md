@@ -86,6 +86,7 @@ Operator-facing HTTP, in `fabric-control-plane`.
 ```text
 GET  /api/session                      where to sign in       (no operator)
 POST /api/session                      redeem a code          (no operator)
+GET  /api/integrations/git             can desired state be read?
 GET /api/clients                       list clients
 GET /api/clients/{clientId}            one client's overview
 GET /api/clients/{clientId}/identity   its identity, and reconciliation state
@@ -103,6 +104,61 @@ Three things it does not do, each of them a rule rather than a gap:
 3. **It does not report a write as applied.** A successful `PUT` answers
    `pending`. Writing the document and converging the provider are different
    events that fail independently.
+
+### Desired state is late-bound
+
+`mode = "managed"` is the production mode: **the control plane starts without
+knowing where client desired state lives.** It runs, serves, reports itself
+unconfigured, and an operator connects a repository through the console.
+
+That is a change of posture, not a relaxation. The alternative was a deployment
+holding a Git host's identifiers and a credential that a human had to create by
+hand *before the platform could start at all*, which made the platform's own
+onboarding somebody else's problem — and left the console, the one tool for
+fixing it, unable to start for exactly the reason it was needed.
+
+"Not configured" is a `ClientRepository` implementation rather than an
+`Option` threaded through the service, the loop and every handler. Every caller
+has one code path, and the state arrives as an ordinary `RepositoryError` that
+is impossible to forget to handle.
+
+| Mode | Where desired state comes from | Bad configuration |
+|---|---|---|
+| `managed` | connected by an operator, in the product | n/a — there is none to be wrong |
+| `git` | stated by the deployment | **fatal at startup** |
+| `local_directory` | a directory, held in memory | fatal at startup; development only |
+
+A deployment that *states* a repository has opted out of the managed path, so
+stating it wrongly still fails at startup. Silently starting unconfigured would
+hide the mistake behind a screen inviting somebody to connect a repository the
+deployment had already named.
+
+### Integration status
+
+`GET /api/integrations/git` answers whether the platform can read desired
+state. It is **derived, never advanced** — there is no stored "connected" flag
+for something to forget to clear:
+
+| Reported | Derived from | What an operator does |
+|---|---|---|
+| `not_configured` | nothing is bound | connect a repository |
+| `connected` | bound, and the last sweep read it | nothing |
+| `invalid` | bound, and the credential was refused | reconnect |
+| `error` | bound, and reads are failing otherwise | look at the platform |
+
+`invalid` is separated from `error` because only one of them is fixed by
+reconnecting. A revoked or removed installation lands in `invalid`, and that is
+the case this platform cannot be *told* about — the operator plane is a tailnet
+with no inbound path from a Git host, so there is no webhook and the platform
+has to notice for itself on the next sweep.
+
+The response carries status, a human-readable connection description, and when
+desired state was last read successfully. **No credential, no reference to one,
+and no path** — section 15, checked by `scripts/check_architecture.py`.
+
+It requires an operator like every other client-facing handler: whether this
+platform is connected, and to what, is reconnaissance an unauthenticated caller
+should not get for free.
 
 ### Who an operator is
 

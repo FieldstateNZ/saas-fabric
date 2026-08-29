@@ -12,7 +12,7 @@ use crate::{ClientService, ControlPlaneError, Operator};
 
 fn service(repository: Arc<InMemoryClientRepository>) -> ClientService {
     ClientService::new(
-        repository,
+        crate::DesiredStateBinding::to(repository),
         Arc::new(ReconciliationStatusStore::new()),
         Arc::new(ReconciliationTrigger::new()),
         Arc::new(FixedClock),

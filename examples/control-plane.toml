@@ -82,7 +82,20 @@ interval_seconds = 60
 # Desired state
 # ---------------------------------------------------------------------------
 #
-# Production uses `mode = "git"`:
+# Production uses `mode = "managed"`, which is the whole of it:
+#
+#     [desired_state]
+#     mode = "managed"
+#
+# The control plane then starts knowing only that it has no client
+# configuration repository, reports itself unconfigured, and stays available so
+# that an operator can connect one through the console. Nothing about a Git
+# host belongs in a deployment any more.
+#
+# `mode = "git"` remains for a deployment that genuinely wants to state where
+# desired state lives, and is what the integration tests drive. A deployment
+# that states it has opted out of the managed path, so stating it wrongly is
+# still fatal at startup:
 #
 #     [desired_state]
 #     mode = "git"

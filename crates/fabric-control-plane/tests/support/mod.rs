@@ -16,7 +16,9 @@ use std::time::Instant;
 use axum::body::Body;
 use axum::Router;
 use fabric_client_model::{ClientDocument, ClientRevision};
-use fabric_control_plane::{build_control_plane, ControlPlaneConfig, InMemoryClientRepository};
+use fabric_control_plane::{
+    build_control_plane, ControlPlaneConfig, DesiredStateBinding, InMemoryClientRepository,
+};
 use fabric_core::Clock;
 use fabric_reconciliation::ReconciliationStatusStore;
 use http::{header, Request, Response};
@@ -82,6 +84,11 @@ pub struct TestControlPlane {
     /// loop could otherwise produce — a failed pass, say — without running a
     /// loop.
     pub statuses: Arc<ReconciliationStatusStore>,
+
+    /// The binding behind the router, so a test can connect or disconnect
+    /// desired state while the control plane is running — which is what an
+    /// operator does, and what no restart-based test would exercise.
+    pub binding: Arc<DesiredStateBinding>,
 }
 
 /// Builds a control plane holding one client.
@@ -100,9 +107,11 @@ pub fn control_plane() -> TestControlPlane {
     }))
     .expect("the fixture configuration must load");
 
+    let binding = DesiredStateBinding::to(repository.clone());
+
     let services = build_control_plane(
         &config,
-        repository.clone(),
+        &binding,
         Arc::new(FixedClock),
         fabric_control_plane::KeyHolder::empty(),
         None,
@@ -114,6 +123,7 @@ pub fn control_plane() -> TestControlPlane {
         repository,
         revision,
         statuses: services.statuses,
+        binding,
     }
 }
 

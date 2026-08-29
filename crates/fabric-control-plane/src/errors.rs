@@ -98,6 +98,14 @@ pub enum ControlPlaneError {
     #[error("the desired-state repository refused the platform's request")]
     RepositoryRejected,
 
+    /// No desired-state repository has been established yet.
+    ///
+    /// The platform is healthy; it has not been connected to where client
+    /// desired state lives. Kept distinct from every other failure because it
+    /// is the one an operator can fix from the console.
+    #[error("this platform is not connected to a client desired-state repository yet")]
+    IntegrationNotConfigured,
+
     /// The identity provider refused to redeem an authorization code.
     #[error("the sign-in could not be completed; start again")]
     SignInRefused,
@@ -118,6 +126,7 @@ impl ControlPlaneError {
     #[must_use]
     pub(crate) fn from_repository(error: RepositoryError) -> Self {
         match error {
+            RepositoryError::NotConfigured => Self::IntegrationNotConfigured,
             RepositoryError::NotFound { client } => Self::UnknownClient(client),
             RepositoryError::Conflict => Self::RevisionConflict,
             RepositoryError::Unavailable { .. } => Self::RepositoryUnavailable,

@@ -3,6 +3,7 @@
 use fabric_core::Clock;
 use fabric_reconciliation::{IdentityReconciler, ReconciliationStatusStore};
 
+use crate::integration::{IntegrationHealth, Observation};
 use crate::logging;
 use crate::repository::ClientRepository;
 
@@ -27,13 +28,22 @@ pub(super) async fn run(
     repository: &dyn ClientRepository,
     reconciler: &IdentityReconciler,
     statuses: &ReconciliationStatusStore,
+    health: &IntegrationHealth,
     clock: &dyn Clock,
 ) -> usize {
     let clients = match repository.list().await {
-        Ok(clients) => clients,
+        Ok(clients) => {
+            health.record(Observation::Read, clock.now_unix_seconds());
+            clients
+        }
         Err(error) => {
             // Deliberately leaves every recorded status untouched. A briefly
             // unreadable repository is not evidence that anything changed.
+            //
+            // The *integration's* health is a different question and is
+            // recorded, because "the platform cannot read desired state" is
+            // exactly what the operator console has to be able to show.
+            health.record(Observation::of(&error), clock.now_unix_seconds());
             logging::sweep_failed(&repository.describe(), &error);
             return 0;
         }

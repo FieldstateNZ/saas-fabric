@@ -7,8 +7,9 @@ use fabric_core::Clock;
 use fabric_reconciliation::{IdentityReconciler, ReconciliationStatusStore};
 use tokio::sync::Notify;
 
+use crate::integration::IntegrationHealth;
 use crate::reconcile::{handle::ReconciliationLoopHandle, pass, ReconciliationTrigger};
-use crate::repository::ClientRepository;
+use crate::repository::DesiredStateBinding;
 use crate::{logging, ReconciliationConfig};
 
 /// Sweeps every client on an interval, and whenever asked.
@@ -30,9 +31,10 @@ impl ReconciliationLoop {
     /// seconds instead of showing a screen full of `pending` for a minute.
     #[must_use]
     pub fn spawn(
-        repository: Arc<dyn ClientRepository>,
+        repository: Arc<DesiredStateBinding>,
         reconciler: Arc<IdentityReconciler>,
         statuses: Arc<ReconciliationStatusStore>,
+        health: Arc<IntegrationHealth>,
         trigger: Arc<ReconciliationTrigger>,
         clock: Arc<dyn Clock>,
         config: &ReconciliationConfig,
@@ -41,14 +43,15 @@ impl ReconciliationLoop {
         let shutdown = Arc::new(Notify::new());
         let task_shutdown = Arc::clone(&shutdown);
 
-        logging::reconciliation_started(&repository.describe(), config.interval_seconds);
+        logging::reconciliation_started(&repository.current().describe(), config.interval_seconds);
 
         let task = tokio::spawn(async move {
             loop {
                 pass::run(
-                    repository.as_ref(),
+                    repository.current().as_ref(),
                     reconciler.as_ref(),
                     statuses.as_ref(),
+                    health.as_ref(),
                     clock.as_ref(),
                 )
                 .await;

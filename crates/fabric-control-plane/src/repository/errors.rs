@@ -4,7 +4,7 @@ use fabric_client_model::{ClientId, DesiredStateError};
 
 /// A failure reading or writing desired state.
 ///
-/// # Six, not one
+/// # Seven, not one
 ///
 /// Because the control plane answers each differently, and an operator needs
 /// to be able to tell them apart. A conflict means "read it again and redo
@@ -15,6 +15,20 @@ use fabric_client_model::{ClientId, DesiredStateError};
 /// §23 exists to prevent.
 #[derive(Debug, thiserror::Error)]
 pub enum RepositoryError {
+    /// No desired-state repository has been established yet.
+    ///
+    /// Not a failure of the repository — there is no repository. The platform
+    /// is running and healthy, and an operator has not yet connected it to
+    /// where client desired state lives.
+    ///
+    /// It is its own variant rather than an [`Unavailable`](Self::Unavailable)
+    /// with a friendly message, because the two lead somewhere completely
+    /// different: unavailable means wait, and this means *do something*. The
+    /// console renders a connect screen for one and an error for the other,
+    /// and it can only tell them apart if the platform says which it is.
+    #[error("no desired-state repository is configured")]
+    NotConfigured,
+
     /// No such client.
     #[error("no client named {client}")]
     NotFound {

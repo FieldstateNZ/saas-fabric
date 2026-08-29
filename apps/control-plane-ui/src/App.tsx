@@ -2,8 +2,10 @@ import { useState } from 'react'
 
 import { ClientDetail } from './components/ClientDetail'
 import { ClientList } from './components/ClientList'
+import { IntegrationNotice } from './components/IntegrationNotice'
 import { SignIn } from './components/SignIn'
 import { useClients } from './hooks/useClients'
+import { useIntegration } from './hooks/useIntegration'
 import { useSession } from './hooks/useSession'
 
 /**
@@ -49,10 +51,16 @@ export function App() {
  * out would fire requests that can only be refused.
  */
 function Console() {
+  const integration = useIntegration()
   const clients = useClients()
   const [selected, setSelected] = useState<string | null>(null)
 
   const current = clients.value?.find((client) => client.id === selected) ?? null
+
+  // When the platform cannot reach client configuration, the client list's own
+  // failure is that same fact reported a second time. Showing both would send
+  // an operator looking for two problems.
+  const unreachable = integration.value !== null && integration.value.status !== 'connected'
 
   return (
     <div className="app">
@@ -61,18 +69,21 @@ function Console() {
         <h2 className="sidebar__heading">Clients</h2>
 
         {clients.loading && <p className="empty">Loading...</p>}
-        {clients.error !== null && <p className="error">{clients.error}</p>}
+        {clients.error !== null && !unreachable && <p className="error">{clients.error}</p>}
         {clients.value !== null && (
           <ClientList clients={clients.value} selected={selected} onSelect={setSelected} />
         )}
       </nav>
 
       <main className="main">
-        {current === null ? (
-          <p className="empty">Select a client to see its configuration.</p>
-        ) : (
-          <ClientDetail key={current.id} client={current} />
-        )}
+        {integration.value !== null && <IntegrationNotice integration={integration.value} />}
+
+        {!unreachable &&
+          (current === null ? (
+            <p className="empty">Select a client to see its configuration.</p>
+          ) : (
+            <ClientDetail key={current.id} client={current} />
+          ))}
       </main>
     </div>
   )

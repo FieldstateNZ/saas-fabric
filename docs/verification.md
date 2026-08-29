@@ -4,7 +4,7 @@ What was measured, what it showed, and where the numbers came from. Every
 command below is reproducible from the repository root; nothing here is
 asserted without one.
 
-Last run: 2026-08-29, against `claude/in-product-github-app-installation`,
+Last run: 2026-08-29, against `claude/git-integration-foundation`,
 covering both planes, on **Rust 1.98.0** — pinned in
 [`rust-toolchain.toml`](../rust-toolchain.toml).
 
@@ -33,15 +33,15 @@ is at the end, under "The control plane, end to end".
 | --- | --- | --- |
 | Formatting | `cargo fmt --all --check` | clean |
 | Lints | `cargo clippy --workspace --all-targets -- -D warnings` | 0 findings |
-| Tests | `cargo test --workspace` | 1201 passing, 0 failing, 0 ignored |
+| Tests | `cargo test --workspace` | 1218 passing, 0 failing, 0 ignored |
 | Docs | `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps` | 0 warnings |
 | Dependencies | `cargo deny check` | advisories, bans, licences, sources — all ok |
 | File sizes | `python3 scripts/check_file_sizes.py` | 0 over the 150-line limit |
 | Architecture | `python3 scripts/check_architecture.py` | 8 invariants hold across 13 crates |
 | Console lint | `npm run lint` | 0 findings |
 | Console types | `npm run typecheck` | 0 errors |
-| Console tests | `npm test` | 24 passing, 0 failing |
-| Console build | `npm run build` | 205 kB, 64 kB gzipped |
+| Console tests | `npm test` | 30 passing, 0 failing |
+| Console build | `npm run build` | 206 kB, 65 kB gzipped |
 
 All eleven run in CI on every push and pull request
 (`.github/workflows/ci.yml`); the four Rust gates and the architecture check as
@@ -49,6 +49,33 @@ parallel jobs, the four console checks as steps of one job because `npm ci`
 dominates each of them.
 
 Nothing is ignored.
+
+## Starting with nothing connected
+
+Seven integration tests drive the case that used to be impossible: a control
+plane with no desired-state repository at all. They run against the real router
+`build_control_plane` returns, so the operator extractor and the error mapping
+are the deployed ones.
+
+What they pin is that the platform *stays useful* in that state. Listing
+clients answers `503 integration_not_configured` rather than a 500 or — worse —
+an empty list, because a platform with no clients and a platform nobody has
+connected look identical to an operator and only one of them needs somebody to
+act. That response carries **no `Retry-After`**, because retrying will not
+connect it; the two other failures that share 503 do carry one, which is why
+that header is now decided by the error rather than by the status.
+
+Two are worth singling out. `connecting_desired_state_takes_effect_without_a_restart`
+binds a repository into a running control plane and asserts the next request is
+served — the whole point of late binding, and something no restart-based test
+would have caught. `the_integration_status_is_not_public` asserts an
+unauthenticated caller gets `401` from the status endpoint: whether this
+platform is connected, and to what, is reconnaissance.
+
+Nine unit tests cover the status derivation, including the two cases that make
+a status display trustworthy: a platform bound but not yet swept reports
+`connected` rather than showing a fault for the first seconds after every
+restart, and a *failing* integration still reports when it last worked.
 
 ## Operator sign-in: what these tests do and do not prove
 
@@ -84,8 +111,8 @@ realm once that realm has the console client and the operator role — which
 nothing creates yet, deliberately (ADR 0010).
 
 The workspace total rose from 977 to 1189 over the control-plane increment
-(**212 new Rust tests**), and to 1201 with operator sign-in — plus the
-console's 24, which run separately.
+(**212 new Rust tests**), to 1201 with operator sign-in, and to 1218 with
+late-bound desired state — plus the console's 30, which run separately.
 
 Three of the 181 arrived after the merge, and are worth singling out because of
 what they are: `an_edit_preserves_every_other_key_and_value`,
@@ -101,11 +128,11 @@ change.
 | --- | --- | --- |
 | `fabric-client-model` | 47 | the document format, what an edit preserves and what it does not, every name's rule, and the redirect-URI authority rule |
 | `fabric-reconciliation` | 24 | the diff, idempotence, the status state machine |
-| `fabric-control-plane` | 83 | the API contract, concurrency, both operator postures, boundaries |
+| `fabric-control-plane` | 99 | the API contract, concurrency, both operator postures, late-bound desired state, boundaries |
 | `fabric-keycloak` | 20 | the admin protocol over a real socket, including the refusal-retry a real Keycloak forced |
 | `fabric-client-git` | 43 | optimistic concurrency, the GitHub App token exchange, and how a rejected or expiring token is replaced — all over a real socket |
 | `fabric-control-plane-api` | 15 | configuration, secrets, the shipped examples |
-| `control-plane-ui` | 24 | the API client, the badge, the role editor, the sign-in round trip |
+| `control-plane-ui` | 30 | the API client, the badge, the role editor, the sign-in round trip, what an operator is told about the integration |
 
 ## File sizes
 

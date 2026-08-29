@@ -54,6 +54,7 @@ mod extraction;
 #[cfg(test)]
 mod fixtures;
 mod handlers;
+mod integration;
 mod logging;
 mod models;
 mod operator;
@@ -68,6 +69,7 @@ mod state;
 
 pub use config::{ControlPlaneConfig, OperatorConfig, ReconciliationConfig};
 pub use errors::ControlPlaneError;
+pub use integration::{IntegrationHealth, IntegrationStatus, Observation};
 pub use operator::{
     KeyHolder, OidcOperators, Operator, OperatorAuthError, OperatorAuthenticator, TrustedHeaderOperators,
     VerificationKeys,
@@ -75,7 +77,8 @@ pub use operator::{
 pub use reconcile::{ReconciliationLoop, ReconciliationLoopHandle, ReconciliationTrigger};
 pub use registration::{build_control_plane, ControlPlaneServices};
 pub use repository::{
-    ChangeContext, ClientRepository, InMemoryClientRepository, RepositoryError, StoredClient,
+    ChangeContext, ClientRepository, DesiredStateBinding, InMemoryClientRepository, RepositoryError,
+    StoredClient,
 };
 pub use routes::API_PREFIX;
 pub use service::ClientService;

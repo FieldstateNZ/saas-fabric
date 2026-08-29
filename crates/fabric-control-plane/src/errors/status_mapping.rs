@@ -9,7 +9,10 @@ impl ControlPlaneError {
     #[must_use]
     pub fn status(&self) -> StatusCode {
         match self {
-            Self::Unauthenticated(_) => StatusCode::UNAUTHORIZED,
+            // A refused redemption joins an unauthenticated request at 401,
+            // and for the same reason: in both cases the operator holds no
+            // usable identity and their next step is to sign in.
+            Self::Unauthenticated(_) | Self::SignInRefused => StatusCode::UNAUTHORIZED,
             Self::UnknownClient(_) => StatusCode::NOT_FOUND,
             Self::InvalidRequest(_) | Self::RealmImmutable { .. } => StatusCode::BAD_REQUEST,
 
@@ -32,7 +35,7 @@ impl ControlPlaneError {
 
             // 503 and retryable: Git being briefly unreachable is the ordinary
             // transient failure of this API.
-            Self::RepositoryUnavailable => StatusCode::SERVICE_UNAVAILABLE,
+            Self::RepositoryUnavailable | Self::SignInUnavailable => StatusCode::SERVICE_UNAVAILABLE,
 
             // 502, not 503, for both. A refused credential and a refused
             // request are misconfigurations of this platform that will still
@@ -55,6 +58,8 @@ impl ControlPlaneError {
             Self::RevisionConflict => "revision_conflict",
             Self::RealmImmutable { .. } => "realm_immutable",
             Self::RepositoryUnavailable => "repository_unavailable",
+            Self::SignInRefused => "sign_in_refused",
+            Self::SignInUnavailable => "sign_in_unavailable",
             Self::RepositoryDenied => "repository_denied",
             Self::RepositoryRejected => "repository_rejected",
         }

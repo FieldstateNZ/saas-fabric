@@ -100,8 +100,14 @@ pub fn control_plane() -> TestControlPlane {
     }))
     .expect("the fixture configuration must load");
 
-    let services = build_control_plane(&config, repository.clone(), Arc::new(FixedClock))
-        .expect("the control plane must build");
+    let services = build_control_plane(
+        &config,
+        repository.clone(),
+        Arc::new(FixedClock),
+        fabric_control_plane::KeyHolder::empty(),
+        None,
+    )
+    .expect("the control plane must build");
 
     TestControlPlane {
         router: services.router,

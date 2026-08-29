@@ -313,6 +313,7 @@ dependencies = [
  "fabric-core",
  "fabric-reconciliation",
  "http",
+ "jsonwebtoken",
  "serde",
  "serde_json",
  "thiserror",
@@ -393,6 +394,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "fabric-client-model",
+ "fabric-control-plane",
  "fabric-core",
  "fabric-reconciliation",
  "reqwest",

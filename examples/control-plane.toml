@@ -39,6 +39,10 @@ request_timeout_seconds = 30
 # For local development, send the header yourself:
 #     curl -H 'Tailscale-User-Login: operator@example.com' \
 #          http://localhost:8081/api/clients
+# The **development** posture, and the reason this example uses it: the
+# production posture verifies tokens against a real realm, and this file has to
+# be runnable without a cluster. See the block below for what a deployment
+# actually runs.
 [control_plane.operator]
 mode = "trusted_header"
 header = "Tailscale-User-Login"
@@ -46,6 +50,21 @@ header = "Tailscale-User-Login"
 # May not be empty. Being on the operator network establishes who someone is;
 # it does not establish that they administer this platform.
 allowlist = ["operator@example.com"]
+
+# The production posture. The control plane verifies a token the platform's own
+# realm issued, and authority is a realm role rather than a list of names here
+# — so adding an operator happens where joiners and leavers are already
+# handled. See ADR 0010.
+#
+#   [control_plane.operator]
+#   mode = "oidc"
+#   issuer = "https://auth.example.com/realms/master"
+#   client_id = "saas-fabric-console"
+#   required_role = "fabric-operator"
+#
+#   # The console's origin root, not a path beneath it: the console is served
+#   # with no history fallback, so a redirect to /callback would 404.
+#   redirect_uri = "https://fabric.example.com/"
 
 
 # ---------------------------------------------------------------------------

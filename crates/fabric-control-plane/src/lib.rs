@@ -63,11 +63,15 @@ mod registration;
 mod repository;
 mod routes;
 mod service;
+mod sign_in;
 mod state;
 
 pub use config::{ControlPlaneConfig, OperatorConfig, ReconciliationConfig};
 pub use errors::ControlPlaneError;
-pub use operator::{Operator, OperatorAuthError, OperatorAuthenticator, TrustedHeaderOperators};
+pub use operator::{
+    KeyHolder, OidcOperators, Operator, OperatorAuthError, OperatorAuthenticator, TrustedHeaderOperators,
+    VerificationKeys,
+};
 pub use reconcile::{ReconciliationLoop, ReconciliationLoopHandle, ReconciliationTrigger};
 pub use registration::{build_control_plane, ControlPlaneServices};
 pub use repository::{
@@ -75,6 +79,7 @@ pub use repository::{
 };
 pub use routes::API_PREFIX;
 pub use service::ClientService;
+pub use sign_in::{IssuedToken, OperatorSignIn, SignInError, SignInSurface};
 
 /// The event-ID domain number for this crate. See `fabric_core::event_id`.
 pub(crate) const DOMAIN_ID: u32 = 10;

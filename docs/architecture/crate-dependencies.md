@@ -48,6 +48,7 @@ fabric-control-plane   → fabric-core
 fabric-keycloak        → fabric-core
                        → fabric-client-model
                        → fabric-reconciliation      (implements IdentityProvider)
+                       → fabric-control-plane       (implements OperatorSignIn)
 
 fabric-client-git      → fabric-core
                        → fabric-client-model
@@ -117,8 +118,17 @@ wired in at the composition root and nowhere else. If any other crate ever needs
 it, NDC has leaked and the boundary has failed.
 
 **Adapters depend inward; the domain never depends on an adapter.**
-`fabric-keycloak` depends on `fabric-reconciliation` for the port it implements,
-and `fabric-client-git` on `fabric-control-plane` for the same reason. The
+`fabric-keycloak` depends on `fabric-reconciliation` and `fabric-control-plane`
+for the two ports it implements, and `fabric-client-git` on
+`fabric-control-plane` for the same reason.
+
+That Keycloak implements *two* ports is not a smell, it is the honest shape:
+Keycloak is two different things to this platform. It is the identity provider
+reconciliation drives towards a client's desired state, and it is separately
+the realm the platform's own operators authenticate against. Those are
+different jobs for different callers, so they are different ports — and a
+single `Keycloak` interface covering both would have coupled operator sign-in
+to client reconciliation for no reason other than the vendor being the same. The
 arrows point that way and not the other, which is what lets the reconciler be
 tested against a fake provider and the control plane against an in-memory
 repository — with no conditional compilation and no test-only feature flag.

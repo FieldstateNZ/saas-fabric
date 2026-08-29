@@ -4,9 +4,9 @@ What was measured, what it showed, and where the numbers came from. Every
 command below is reproducible from the repository root; nothing here is
 asserted without one.
 
-Last run: 2026-08-28, against `claude/saas-fabric-control-plane-keycloak-7ac835`,
-covering both planes, on **Rust 1.98.0** — recorded here for the first time,
-and now pinned in [`rust-toolchain.toml`](../rust-toolchain.toml).
+Last run: 2026-08-29, against `claude/in-product-github-app-installation`,
+covering both planes, on **Rust 1.98.0** — pinned in
+[`rust-toolchain.toml`](../rust-toolchain.toml).
 
 The version is recorded because it mattered. CI used to install `stable`
 unpinned, and 1.98's `unused_async_trait_impl` failed this increment's pull
@@ -33,26 +33,59 @@ is at the end, under "The control plane, end to end".
 | --- | --- | --- |
 | Formatting | `cargo fmt --all --check` | clean |
 | Lints | `cargo clippy --workspace --all-targets -- -D warnings` | 0 findings |
-| Tests | `cargo test --workspace` | 1189 passing, 0 failing, 1 ignored |
+| Tests | `cargo test --workspace` | 1201 passing, 0 failing, 0 ignored |
 | Docs | `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps` | 0 warnings |
 | Dependencies | `cargo deny check` | advisories, bans, licences, sources — all ok |
 | File sizes | `python3 scripts/check_file_sizes.py` | 0 over the 150-line limit |
 | Architecture | `python3 scripts/check_architecture.py` | 8 invariants hold across 13 crates |
 | Console lint | `npm run lint` | 0 findings |
 | Console types | `npm run typecheck` | 0 errors |
-| Console tests | `npm test` | 17 passing, 0 failing |
-| Console build | `npm run build` | 202 kB, 63 kB gzipped |
+| Console tests | `npm test` | 24 passing, 0 failing |
+| Console build | `npm run build` | 205 kB, 64 kB gzipped |
 
 All eleven run in CI on every push and pull request
 (`.github/workflows/ci.yml`); the four Rust gates and the architecture check as
 parallel jobs, the four console checks as steps of one job because `npm ci`
 dominates each of them.
 
-The single ignored test is a `#[doc(ignore)]` example in `fabric-identity`'s
-extractor, and predates this work.
+Nothing is ignored.
 
-The workspace total rose from 977 to 1189: **212 new Rust tests**, plus the
-console's 17, which run separately.
+## Operator sign-in: what these tests do and do not prove
+
+Twenty new Rust tests cover the OIDC operator posture and seven cover the
+console's half of the round trip. What they pin is worth being precise about,
+because the gap matters.
+
+**Proven here.** A token from another issuer, one issued to another client in
+the same realm, one whose holder lacks the required role, an expired one, one
+signed by a key the provider does not publish, and one naming a key id the
+provider did not publish are each refused — and refused as *not an operator*
+rather than as *no identity*, which is the distinction that decides whether the
+console offers a sign-in or an error. A request with no token, or a malformed
+`Authorization` header, is refused as missing. Before the first key set
+arrives, everything is refused rather than accepted.
+
+On the console side: a callback whose `state` this tab did not issue is refused
+*before* anything is redeemed, a tab that started no sign-in refuses a callback
+outright, the verifier is spent once so a second attempt fails, and the code is
+cleared from the address bar so a reload cannot replay it.
+
+**Not proven here.** These tests sign with HS256 against a fixture secret, so
+that no private key exists in this repository. Production pins RS256 and the
+algorithm is the one thing that differs; every decision under test is made by
+the same code either way. What has *not* been exercised is a real realm: no
+test has read a live JWKS document, redeemed a real authorization code, or
+verified a token Keycloak actually issued.
+
+That is the same distinction [the Keycloak adapter's](architecture/control-plane.md)
+own tests draw, and the reason its 20 tests were worth running over a real
+socket. The equivalent for this posture is a run against LucentRoot's master
+realm once that realm has the console client and the operator role — which
+nothing creates yet, deliberately (ADR 0010).
+
+The workspace total rose from 977 to 1189 over the control-plane increment
+(**212 new Rust tests**), and to 1201 with operator sign-in — plus the
+console's 24, which run separately.
 
 Three of the 181 arrived after the merge, and are worth singling out because of
 what they are: `an_edit_preserves_every_other_key_and_value`,
@@ -68,11 +101,11 @@ change.
 | --- | --- | --- |
 | `fabric-client-model` | 47 | the document format, what an edit preserves and what it does not, every name's rule, and the redirect-URI authority rule |
 | `fabric-reconciliation` | 24 | the diff, idempotence, the status state machine |
-| `fabric-control-plane` | 63 | the API contract, concurrency, the operator seam, boundaries |
+| `fabric-control-plane` | 83 | the API contract, concurrency, both operator postures, boundaries |
 | `fabric-keycloak` | 20 | the admin protocol over a real socket, including the refusal-retry a real Keycloak forced |
 | `fabric-client-git` | 43 | optimistic concurrency, the GitHub App token exchange, and how a rejected or expiring token is replaced — all over a real socket |
 | `fabric-control-plane-api` | 15 | configuration, secrets, the shipped examples |
-| `control-plane-ui` | 17 | the API client, the badge, the role editor |
+| `control-plane-ui` | 24 | the API client, the badge, the role editor, the sign-in round trip |
 
 ## File sizes
 

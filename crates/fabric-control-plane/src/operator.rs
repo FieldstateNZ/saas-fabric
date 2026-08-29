@@ -13,7 +13,12 @@
 //! realm — is not an operator here and cannot become one. ADR 0009 records
 //! why that seam is worth a separate mechanism rather than a shared one.
 //!
-//! # The posture
+//! # The postures
+//!
+//! [`OidcOperators`] verifies a token the platform's own identity provider
+//! issued and takes authority from a realm role. It is the production posture,
+//! and the one that means the control plane does not depend on being
+//! unreachable in order to be safe.
 //!
 //! [`TrustedHeaderOperators`] consumes an identity that the **operator network
 //! boundary** has already established: the control plane is reachable only
@@ -30,6 +35,7 @@ mod authenticator;
 mod errors;
 mod extractor;
 mod identity;
+mod oidc;
 mod trusted_header;
 #[cfg(test)]
 mod trusted_header_tests;
@@ -37,4 +43,5 @@ mod trusted_header_tests;
 pub use authenticator::OperatorAuthenticator;
 pub use errors::OperatorAuthError;
 pub use identity::Operator;
+pub use oidc::{KeyHolder, OidcOperators, VerificationKeys};
 pub use trusted_header::TrustedHeaderOperators;

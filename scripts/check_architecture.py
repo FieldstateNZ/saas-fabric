@@ -480,10 +480,19 @@ def check_dependency_direction(graph: Graph) -> list[Failure]:
         # is why the arrows point this way and not the other. Nothing in the
         # control-plane domain depends on either of them; only the composition
         # root does.
+        #
+        # `fabric-keycloak` implements two ports from two crates, because
+        # Keycloak is two things to this platform: the identity provider
+        # reconciliation drives (`IdentityProvider`, owned by
+        # `fabric-reconciliation`) and the realm operators themselves sign in
+        # against (`OperatorSignIn`, owned by `fabric-control-plane`). The
+        # second edge is the same shape as `fabric-client-git`'s and is there
+        # for the same reason.
         "fabric-keycloak": {
             "fabric-core",
             "fabric-client-model",
             "fabric-reconciliation",
+            "fabric-control-plane",
         },
         "fabric-client-git": {
             "fabric-core",

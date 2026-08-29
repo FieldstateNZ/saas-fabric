@@ -10,6 +10,7 @@
  * That is not a convention. `scripts/check_architecture.py` fails the build if
  * anything under `src/` names another platform service's API.
  */
+import { currentToken, forgetToken } from '../session/session'
 import { ControlPlaneError } from './errors'
 import type { Client, Identity, IdentityRequest } from './types'
 
@@ -60,9 +61,24 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers)
   headers.set('Accept', 'application/json')
 
+  // The operator's own token, when this deployment signs operators in. Under
+  // the trusted-header posture there is none and the proxy has already said
+  // who is calling, so an absent token is not an error here.
+  const token = currentToken()
+  if (token !== null) {
+    headers.set('Authorization', `Bearer ${token}`)
+  }
+
   const response = await fetch(path, { ...init, headers })
 
   if (!response.ok) {
+    // An expired or rejected token is not a failure of the request the
+    // operator made. Forgetting it is what lets the shell notice and offer to
+    // sign in again, rather than showing an error on every panel at once.
+    if (response.status === 401) {
+      forgetToken()
+    }
+
     throw await refusal(response)
   }
 

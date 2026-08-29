@@ -27,6 +27,8 @@ pub const API_PREFIX: &str = "/api";
 /// Every path this crate serves is visible here, in one file.
 ///
 /// ```text
+/// GET /api/session                       where to sign in   (no operator)
+/// POST /api/session                      redeem a code      (no operator)
 /// GET /api/clients                       list clients
 /// GET /api/clients/{clientId}            one client's overview
 /// GET /api/clients/{clientId}/identity   its identity, and reconciliation state
@@ -38,6 +40,18 @@ pub const API_PREFIX: &str = "/api";
 /// 0008). Note also what `PUT` means here and does not mean in the Data API —
 /// this is a genuine whole-resource replacement, so `PUT` is the honest verb.
 pub(crate) fn control_plane_routes(state: ControlPlaneState) -> Router {
+    // Mounted only when the deployment has a sign-in. Under the trusted-header
+    // posture there is nothing to sign in to, and a route that exists in order
+    // to refuse every call is a route somebody eventually makes work.
+    let session = if state.sign_in.is_some() {
+        Router::new().route(
+            "/session",
+            get(handlers::session_config).post(handlers::redeem_session),
+        )
+    } else {
+        Router::new()
+    };
+
     let clients = Router::new()
         .route("/clients", get(handlers::list_clients))
         .route("/clients/{client_id}", get(handlers::get_client))
@@ -46,5 +60,7 @@ pub(crate) fn control_plane_routes(state: ControlPlaneState) -> Router {
             get(handlers::get_identity).put(handlers::put_identity),
         );
 
-    Router::new().nest(API_PREFIX, clients).with_state(state)
+    Router::new()
+        .nest(API_PREFIX, clients.merge(session))
+        .with_state(state)
 }

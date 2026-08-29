@@ -4,6 +4,7 @@ mod adapters;
 mod application;
 mod health;
 mod local_documents;
+mod operator_keys;
 mod serving;
 mod shutdown;
 

@@ -8,6 +8,7 @@ repository.workspace = true
 
 [dependencies]
 fabric-client-model.workspace = true
+fabric-control-plane.workspace = true
 fabric-core.workspace = true
 fabric-reconciliation.workspace = true
 

@@ -8,7 +8,8 @@
  */
 import { useCallback, useEffect, useState } from 'react'
 
-import { beginSignIn, completeSignIn, currentToken } from '../session/session'
+import { beginSignIn, clearQuery, completeSignIn, currentToken, discardPending } from '../session/session'
+import { attemptPending, callbackError, forgetAttempt, needsTheOperator, recordAttempt } from '../session/silent'
 
 /** Where the operator stands with respect to signing in. */
 export type SessionState =
@@ -56,19 +57,58 @@ export function useSession(): Session {
   return { state, signIn }
 }
 
-/** Works out where this page load stands. */
+/**
+ * Works out where this page load stands, and signs in again if it can.
+ *
+ * Four outcomes, in the order they have to be checked.
+ */
 async function establish(): Promise<SessionState> {
   if (currentToken() !== null) {
     return { status: 'signed-in' }
   }
 
+  // The provider refusing a silent attempt. Usually it simply has no session
+  // for this browser, which is not a fault and is not worth alarming anybody
+  // about -- the button below says the rest.
+  const refusal = callbackError()
+  if (refusal !== null) {
+    forgetAttempt()
+    discardPending()
+    clearQuery()
+
+    return {
+      status: 'signed-out',
+      error: needsTheOperator(refusal) ? null : `Signing in failed (${refusal}).`,
+    }
+  }
+
   // Is this the provider returning with a code? Do this before probing, so a
   // completed sign-in never depends on a second request succeeding.
   if (await completeSignIn()) {
+    forgetAttempt()
     return { status: 'signed-in' }
   }
 
-  return { status: 'signed-out', error: null }
+  // Back from an attempt carrying neither a code nor an error, so something
+  // ate the callback. One wasted redirect is acceptable; a loop is not.
+  if (attemptPending()) {
+    forgetAttempt()
+    return { status: 'signed-out', error: null }
+  }
+
+  // Nothing in hand and nothing tried yet. The provider probably still holds a
+  // session from earlier -- ask it, rather than asking the operator.
+  recordAttempt()
+
+  try {
+    await beginSignIn({ silent: true })
+  } catch (error: unknown) {
+    forgetAttempt()
+    return { status: 'signed-out', error: message(error) }
+  }
+
+  // `beginSignIn` navigated away; this render never lands.
+  return { status: 'checking' }
 }
 
 /** An operator-readable message for anything thrown above. */

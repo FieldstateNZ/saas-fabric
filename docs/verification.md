@@ -4,7 +4,7 @@ What was measured, what it showed, and where the numbers came from. Every
 command below is reproducible from the repository root; nothing here is
 asserted without one.
 
-Last run: 2026-08-29, against `claude/operator-authorised-keycloak`,
+Last run: 2026-08-29, against `claude/split-issuer-from-endpoints`,
 covering both planes, on **Rust 1.98.0** — pinned in
 [`rust-toolchain.toml`](../rust-toolchain.toml).
 
@@ -33,7 +33,7 @@ is at the end, under "The control plane, end to end".
 | --- | --- | --- |
 | Formatting | `cargo fmt --all --check` | clean |
 | Lints | `cargo clippy --workspace --all-targets -- -D warnings` | 0 findings |
-| Tests | `cargo test --workspace` | 1252 passing, 0 failing, 0 ignored |
+| Tests | `cargo test --workspace` | 1256 passing, 0 failing, 0 ignored |
 | Docs | `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps` | 0 warnings |
 | Dependencies | `cargo deny check` | advisories, bans, licences, sources — all ok |
 | File sizes | `python3 scripts/check_file_sizes.py` | 0 over the 150-line limit |

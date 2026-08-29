@@ -50,7 +50,16 @@ request_timeout_seconds = 30
 # fake, and pretending otherwise is what the removed posture did.
 [control_plane.operator]
 mode = "oidc"
+
+# What appears in a token, and where the browser is sent.
 issuer = "http://localhost:8080/realms/master"
+
+# Where *this process* reaches the same realm. Defaults to the issuer and is
+# omitted here because one URL serves both locally. On a cluster it usually
+# does not: the issuer is a public hostname resolved outside, and the pod has a
+# service address resolved inside.
+#
+#     reachable_at = "http://keycloak-http.identity.svc.cluster.local/realms/master"
 client_id = "saas-fabric-console"
 required_role = "fabric-operator"
 

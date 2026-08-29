@@ -114,3 +114,17 @@ fn an_example_client_carries_sections_the_control_plane_does_not_model() {
     assert!(text.contains("data:"));
     assert!(ClientDocument::parse(&text).is_ok());
 }
+
+#[test]
+fn the_managed_desired_state_mode_needs_nothing_else_stated() {
+    // The production mode. It carries no repository, no credential and no
+    // identifiers -- that is the point of it, and a deployment must be able to
+    // state it without also stating where desired state lives. A mode that
+    // still required the fields it exists to remove would be no change at all.
+    let config: DesiredStateConfig = serde_json::from_value(serde_json::json!({
+        "mode": "managed",
+    }))
+    .expect("the managed mode must load with nothing else stated");
+
+    assert!(matches!(config, DesiredStateConfig::Managed));
+}

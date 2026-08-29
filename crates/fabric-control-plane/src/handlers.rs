@@ -16,12 +16,14 @@
 
 mod get_client;
 mod get_identity;
+mod integration;
 mod list_clients;
 mod put_identity;
 mod session;
 
 pub(crate) use get_client::get_client;
 pub(crate) use get_identity::get_identity;
+pub(crate) use integration::get_integration;
 pub(crate) use list_clients::list_clients;
 pub(crate) use put_identity::put_identity;
 pub(crate) use session::{redeem_session, session_config};

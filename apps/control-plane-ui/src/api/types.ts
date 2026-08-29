@@ -56,3 +56,19 @@ export interface IdentityRequest {
   readonly roles: readonly string[]
   readonly clients: readonly ApplicationClient[]
 }
+
+/** What state the platform's connection to client desired state is in. */
+export type IntegrationStatus = 'not_configured' | 'connected' | 'invalid' | 'error'
+
+/**
+ * What the platform reports about that connection.
+ *
+ * Status, never credentials. There is no token here, no key, and no reference
+ * to one — the control plane does not send them and this console could not
+ * display them if it wanted to.
+ */
+export interface Integration {
+  readonly status: IntegrationStatus
+  readonly connection: string | null
+  readonly last_success_at: number | null
+}

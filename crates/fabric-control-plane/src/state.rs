@@ -4,7 +4,9 @@ use std::sync::Arc;
 
 use axum::extract::FromRef;
 
+use crate::integration::IntegrationHealth;
 use crate::operator::OperatorAuthenticator;
+use crate::repository::DesiredStateBinding;
 use crate::service::ClientService;
 use crate::sign_in::SignInSurface;
 
@@ -38,6 +40,17 @@ pub(crate) struct ControlPlaneState {
     /// The session routes are then not mounted, so this is never `None` behind
     /// a handler that needs it.
     pub(crate) sign_in: Option<Arc<SignInSurface>>,
+
+    /// Whether desired state is connected, for the integration status only.
+    ///
+    /// The *binding*, not a repository: this is the one caller that needs to
+    /// ask whether anything is bound rather than to use what is. Client
+    /// handlers go through [`ClientService`], which is what keeps the rules in
+    /// one place.
+    pub(crate) desired_state: Arc<DesiredStateBinding>,
+
+    /// What the last sweep observed about reading desired state.
+    pub(crate) health: Arc<IntegrationHealth>,
 }
 
 impl FromRef<ControlPlaneState> for Arc<dyn OperatorAuthenticator> {

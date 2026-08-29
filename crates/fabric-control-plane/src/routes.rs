@@ -29,6 +29,7 @@ pub const API_PREFIX: &str = "/api";
 /// ```text
 /// GET /api/session                       where to sign in   (no operator)
 /// POST /api/session                      redeem a code      (no operator)
+/// GET /api/integrations/git              can the platform read desired state?
 /// GET /api/clients                       list clients
 /// GET /api/clients/{clientId}            one client's overview
 /// GET /api/clients/{clientId}/identity   its identity, and reconciliation state
@@ -52,6 +53,8 @@ pub(crate) fn control_plane_routes(state: ControlPlaneState) -> Router {
         Router::new()
     };
 
+    let integrations = Router::new().route("/integrations/git", get(handlers::get_integration));
+
     let clients = Router::new()
         .route("/clients", get(handlers::list_clients))
         .route("/clients/{client_id}", get(handlers::get_client))
@@ -61,6 +64,6 @@ pub(crate) fn control_plane_routes(state: ControlPlaneState) -> Router {
         );
 
     Router::new()
-        .nest(API_PREFIX, clients.merge(session))
+        .nest(API_PREFIX, clients.merge(session).merge(integrations))
         .with_state(state)
 }

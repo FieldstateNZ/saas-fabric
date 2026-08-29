@@ -86,6 +86,18 @@ pub(crate) fn client_reconciled(client: &ClientId, status: ReconciliationStatus,
 
 /// A sweep could not read desired state.
 pub(crate) fn sweep_failed(repository: &str, error: &RepositoryError) {
+    // Nothing configured is a state, not a fault. Logging it at `error` every
+    // interval would fill the log of a perfectly healthy platform that is
+    // simply waiting for an operator, and would train whoever reads it to
+    // ignore the level that matters.
+    if matches!(error, RepositoryError::NotConfigured) {
+        tracing::debug!(
+            event = "control_plane.sweep_skipped",
+            "no desired-state repository is configured; nothing to reconcile"
+        );
+        return;
+    }
+
     tracing::error!(
         event = "control_plane.sweep_failed",
         event_id = event_id(DOMAIN_ID, EventType::Error, 3),

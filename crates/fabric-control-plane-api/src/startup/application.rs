@@ -27,7 +27,8 @@ pub struct Application {
 ///
 /// # The order, and what it rules out
 ///
-/// 1. The desired-state repository, because everything else is about it.
+/// 1. The desired-state binding, because everything else is about it. It may
+///    hold no repository at all — that is the production mode.
 /// 2. The identity provider, and the reconciler over it.
 /// 3. The operator posture's signing keys, and the sign-in surface when the
 ///    posture has one. Neither requires the identity provider to be reachable
@@ -40,10 +41,18 @@ pub struct Application {
 ///
 /// # Errors
 ///
-/// Returns a message from whichever step failed. Every failure here is fatal:
-/// a control plane that cannot reach its desired state, or cannot authenticate
-/// to its identity provider, can do nothing useful, and failing at startup
-/// surfaces the problem where a deployment pipeline catches it.
+/// Returns a message from whichever step failed. What is fatal here changed
+/// with operator-managed desired state, and the distinction is the point:
+///
+/// - **Fatal** — configuration this deployment *stated* and stated wrongly: a
+///   Git repository it named with a credential that is not set, an identity
+///   provider URL that will not parse. A pipeline should catch these, and
+///   starting anyway would hide a mistake behind a healthy-looking process.
+/// - **Not fatal** — having no desired-state repository at all, and being
+///   unable to reach the identity provider right now. Neither is a
+///   misconfiguration; the first is a platform waiting for an operator and the
+///   second is an outage. Refusing to start for either would take away the
+///   console that exists to resolve them.
 pub async fn build(config: &ControlPlaneAppConfig) -> Result<Application, String> {
     let clock = SystemClock::shared();
 
@@ -55,7 +64,7 @@ pub async fn build(config: &ControlPlaneAppConfig) -> Result<Application, String
 
     let services = build_control_plane(
         &config.control_plane,
-        Arc::clone(&repository),
+        &repository,
         Arc::clone(&clock),
         keys,
         sign_in,
@@ -65,6 +74,7 @@ pub async fn build(config: &ControlPlaneAppConfig) -> Result<Application, String
         repository,
         reconciler,
         Arc::clone(&services.statuses),
+        Arc::clone(&services.health),
         Arc::clone(&services.trigger),
         clock,
         &config.control_plane.reconciliation,

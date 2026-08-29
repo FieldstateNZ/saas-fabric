@@ -1,18 +1,22 @@
 //! Where desired state is kept, as far as this crate is concerned.
 
+mod binding;
 mod change_context;
 mod errors;
 mod in_memory;
 mod in_memory_behaviour;
 mod stored_client;
+mod unconfigured;
 
 use async_trait::async_trait;
 use fabric_client_model::{ClientDocument, ClientId, ClientRevision};
 
+pub use binding::DesiredStateBinding;
 pub use change_context::ChangeContext;
 pub use errors::RepositoryError;
 pub use in_memory::InMemoryClientRepository;
 pub use stored_client::StoredClient;
+pub use unconfigured::UnconfiguredRepository;
 
 /// Reads and writes clients' desired state.
 ///

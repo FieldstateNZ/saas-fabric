@@ -12,13 +12,24 @@
  */
 import { currentToken, forgetToken } from '../session/session'
 import { ControlPlaneError } from './errors'
-import type { Client, Identity, IdentityRequest } from './types'
+import type { Client, Identity, IdentityRequest, Integration } from './types'
 
 /** Every client the platform manages. */
 export async function listClients(): Promise<readonly Client[]> {
   const body = await request<{ clients: Client[] }>('/api/clients')
 
   return body.clients
+}
+
+/**
+ * Whether the platform can reach client desired state, and where from.
+ *
+ * Asked before the client list, because "not connected yet" and "the list
+ * failed to load" are different things to show an operator and only the
+ * platform can tell them apart.
+ */
+export async function getIntegration(): Promise<Integration> {
+  return request<Integration>('/api/integrations/git')
 }
 
 /** One client's identity configuration and reconciliation state. */

@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use fabric_client_git::{GitAuthConfig, GitClientRepository, GitCredential};
-use fabric_control_plane::{ClientRepository, InMemoryClientRepository};
+use fabric_control_plane::{DesiredStateBinding, InMemoryClientRepository};
 use fabric_core::Clock;
 use fabric_keycloak::{AdminCredential, KeycloakIdentityProvider};
 use fabric_reconciliation::testing::FakeIdentityProvider;
@@ -13,17 +13,34 @@ use crate::config::{DesiredStateConfig, IdentityProviderConfig};
 use crate::secrets;
 use crate::startup::local_documents;
 
-/// Builds the desired-state repository this deployment is configured for.
+/// Builds the desired-state binding this deployment starts with.
+///
+/// A *binding* rather than a repository, because the production mode starts
+/// with none: the platform reports itself unconfigured and stays available so
+/// that an operator can connect one.
 ///
 /// # Errors
 ///
-/// Returns a message if the repository cannot be built — an invalid URL, a
-/// missing credential, or a local directory that cannot be read.
+/// Returns a message if a **stated** repository cannot be built — an invalid
+/// URL, a missing credential, or a local directory that cannot be read. A
+/// deployment that states where desired state lives and states it wrongly
+/// still fails at startup: it has opted out of the managed path, and silently
+/// starting unconfigured would hide the mistake behind a screen inviting
+/// somebody to connect a repository the deployment already named.
 pub(super) async fn desired_state(
     config: &DesiredStateConfig,
     clock: Arc<dyn Clock>,
-) -> Result<Arc<dyn ClientRepository>, String> {
+) -> Result<Arc<DesiredStateBinding>, String> {
     match config {
+        DesiredStateConfig::Managed => {
+            tracing::info!(
+                event = "control_plane.desired_state_unconfigured",
+                "no desired-state repository yet; an operator connects one through the console"
+            );
+
+            Ok(DesiredStateBinding::unconfigured())
+        }
+
         DesiredStateConfig::Git(git) => {
             // One secret either way; which one it is depends on the posture.
             // Resolving before the match keeps the failure "this secret is not
@@ -39,7 +56,9 @@ pub(super) async fn desired_state(
                 GitAuthConfig::Token { .. } => GitCredential::token(secret),
             };
 
-            Ok(Arc::new(GitClientRepository::new(git, credential, clock)?))
+            Ok(DesiredStateBinding::to(Arc::new(GitClientRepository::new(
+                git, credential, clock,
+            )?)))
         }
 
         DesiredStateConfig::LocalDirectory { path } => {
@@ -57,7 +76,7 @@ pub(super) async fn desired_state(
                  are lost when this process stops"
             );
 
-            Ok(repository)
+            Ok(DesiredStateBinding::to(repository))
         }
     }
 }

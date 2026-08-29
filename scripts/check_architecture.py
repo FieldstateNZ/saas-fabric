@@ -702,6 +702,78 @@ def check_the_browser_gets_no_platform_credentials() -> list[Failure]:
     return failures
 
 
+def check_the_console_widens_its_policy_only_for_the_manifest_post() -> list[Failure]:
+    """The console's CSP permits github.com for form submission, and only that.
+
+    Two failures this guards, in opposite directions.
+
+    Tightening `form-action` back to `'self'` silently breaks in-product
+    installation at its first step: creating the GitHub App is a cross-origin
+    form POST, because the App Manifest flow takes the manifest as POST data
+    and navigates the operator to an approval screen. Nothing else fails, no
+    test goes red, and the console reports only a console message the operator
+    will not see.
+
+    Widening any *other* directive is the opposite mistake. The exception is
+    for submitting a form, not for loading or calling anything: github.com in
+    `default-src` or `connect-src` would let the console fetch from an origin
+    the control plane exists to keep it away from -- the rule
+    `check_the_browser_gets_no_platform_credentials` states about source, held
+    here about the policy that enforces it.
+    """
+    conf = REPO_ROOT / "apps" / "control-plane-ui" / "nginx.conf"
+    if not conf.is_file():
+        return []
+
+    text = re.sub(r"^\s*#.*$", "", conf.read_text(encoding="utf-8"), flags=re.MULTILINE)
+    header = re.search(r'add_header\s+Content-Security-Policy\s+"([^"]*)"', text)
+
+    if not header:
+        return [
+            Failure(
+                "The console serves a Content-Security-Policy",
+                "apps/control-plane-ui/nginx.conf declares no CSP header",
+                "The console is the operator's only interface and it ships "
+                "with a policy. Serving none is not a smaller policy.",
+            )
+        ]
+
+    directives = {}
+    for directive in header.group(1).split(";"):
+        parts = directive.split()
+        if parts:
+            directives[parts[0]] = set(parts[1:])
+
+    failures = []
+    host = "https://github.com"
+
+    if host not in directives.get("form-action", set()):
+        failures.append(
+            Failure(
+                "The console can post the App manifest to GitHub",
+                f"form-action is {sorted(directives.get('form-action', set()))},"
+                f" which does not permit {host}",
+                "Creating the GitHub App is a cross-origin form POST. Without "
+                "this the browser blocks the submission and in-product "
+                "installation stops at its first step, silently.",
+            )
+        )
+
+    for name, values in sorted(directives.items()):
+        if name != "form-action" and any("github" in value for value in values):
+            failures.append(
+                Failure(
+                    "GitHub is permitted for form submission and nothing else",
+                    f"{name} names {sorted(value for value in values if 'github' in value)}",
+                    "The console posts a manifest to GitHub; it never loads "
+                    "from GitHub or calls it. A fetch to the Git host is a "
+                    "browser holding a credential for it.",
+                )
+            )
+
+    return failures
+
+
 CHECKS = (
     ("NDC containment", check_ndc_containment),
     ("Platform-service adapter containment", check_adapter_containment),
@@ -713,6 +785,7 @@ CHECKS = (
     # Takes no graph: it is a statement about the UI's source, not about
     # cargo's resolution. `main` calls it with no argument.
     ("The browser gets no platform credentials", check_the_browser_gets_no_platform_credentials),
+    ("The console's policy widens for one post", check_the_console_widens_its_policy_only_for_the_manifest_post),
 )
 
 

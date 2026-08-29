@@ -14,6 +14,7 @@
 //! they are how an operator obtains the token the extractor then demands.
 //! Neither can read or change anything.
 
+mod converge;
 mod get_client;
 mod get_identity;
 mod integration;
@@ -21,6 +22,7 @@ mod list_clients;
 mod put_identity;
 mod session;
 
+pub(crate) use converge::converge;
 pub(crate) use get_client::get_client;
 pub(crate) use get_identity::get_identity;
 pub(crate) use integration::{

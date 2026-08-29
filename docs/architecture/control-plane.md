@@ -232,7 +232,7 @@ should not get for free.
 
 Two postures, and a deployment states which one it runs.
 
-`mode = "oidc"` is the production posture. The control plane verifies a token
+`mode = "oidc"` is the only posture. The control plane verifies a token
 the platform's own realm issued: the signature against the realm's published
 keys, the issuer matched exactly, the token issued to the console's client, and
 a **realm role** that confers operator authority. Authority therefore lives in
@@ -248,11 +248,16 @@ required_role = "fabric-operator"
 redirect_uri = "https://fabric.example.test/"
 ```
 
-`mode = "trusted_header"` is the development posture, and what the shipped
-example uses — the example has to run without a cluster (§22), and OIDC cannot.
-It consumes an identity the operator-plane proxy established and checks it
-against an allowlist that may not be empty. It is safe only because of where
-the service sits; see [ADR 0010](../decisions/0010-operators-authenticate-against-the-platform-realm.md).
+**There is no second posture, and no development shortcut.** A trusted-header
+one used to sit beside this. It was safe only because of *where the service
+sat*, and it asserted a name while lending nothing — which matters now that the
+platform acts on Keycloak with an operator's own bearer
+([ADR 0012](../decisions/0012-the-platform-acts-on-keycloak-as-the-operator.md)).
+An operator established by a proxy header could not authorise a realm, so half
+the control plane would not work under it.
+
+Local development therefore needs a Keycloak. The shipped example says so
+rather than faking it.
 
 **The realm needs two things before the OIDC posture works**, and neither is
 created by this application yet:
@@ -260,7 +265,15 @@ created by this application yet:
 | What | Why |
 |---|---|
 | A **public** client `saas-fabric-console`, PKCE required, redirect URI set to the console's origin | the console holds no secret, so PKCE is what replaces one |
-| A realm role `fabric-operator`, granted to each operator | this is what the control plane checks |
+| A realm role `fabric-operator`, granted to each operator | this is what the control plane checks to let them in |
+| Each operator holding master-realm **`admin`** | this is what *Keycloak* checks when the platform creates a realm as them |
+
+The last row is easy to get wrong and expensive to discover. `create-realm`
+alone is not enough: creating a realm grants the creator that realm's
+administrative roles into tokens minted *afterwards*, and a borrowed token
+cannot be re-minted — so an operator with only `create-realm` creates a realm
+and is then refused on the first role inside it. See
+[ADR 0012](../decisions/0012-the-platform-acts-on-keycloak-as-the-operator.md).
 
 Automating both in the reconciler is the obvious next step. It is deliberately
 not in this change: it needs a broader grant on the master realm than the
@@ -380,12 +393,26 @@ contains the NDC protocol in the runtime plane. A representation that escapes
 its adapter turns the platform's own model into a thin wrapper over somebody
 else's.
 
-Both are handed a **credential**, never a credential's location: `client_secret_ref`
-and `token_ref` name a secret, and the host resolves it. This application
-defines the configuration contract; `saas-fabric-platform` decides how the value
-arrives (§20).
+They no longer get their authority the same way, and the difference is the
+point.
 
-Both credentials are redacting newtypes with no `Display` and a fixed `Debug`.
+`fabric-client-git` is handed a **credential the platform owns** — a GitHub
+application it created for itself, whose private key lives in its own secret
+partition (ADR 0011). It can act at any time because the authority is the
+platform's.
+
+`fabric-keycloak` is handed **an operator's bearer**, per request. There is no
+credential in its configuration, nothing for a deployment to deliver, and
+nothing to rotate. Permission to create a realm belongs to a person in the
+master realm, and the platform borrows it (ADR 0012).
+
+That asymmetry is deliberate rather than an inconsistency. Git holds *desired
+state*, which the platform must be able to read to know what it should be
+doing. Keycloak is *changed*, and changing an organisation's identity provider
+is an act that ought to trace to somebody who chose it.
+
+Every credential either of them handles is a redacting newtype with no
+`Display` and a fixed `Debug`.
 
 ## Runtime publication boundary
 

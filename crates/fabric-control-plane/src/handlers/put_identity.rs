@@ -16,11 +16,16 @@ use crate::{preconditions, ControlPlaneError, Operator};
 ///
 /// # What this endpoint does not do
 ///
-/// It does not call Keycloak. It writes a document to the desired-state
-/// repository and records that reconciliation is pending. The response says
-/// `pending` for exactly that reason: at the moment it is written, the
-/// identity provider provably has not been changed, and reporting `applied`
-/// would be a claim the platform cannot support (ADR 0008).
+/// It does not call Keycloak *before answering*. It writes a document to the
+/// desired-state repository and records that reconciliation is pending. The
+/// response says `pending` for exactly that reason: at the moment it is
+/// written, the identity provider provably has not been changed, and reporting
+/// `applied` would be a claim the platform cannot support (ADR 0008).
+///
+/// Convergence is then attempted in the background **with this operator's
+/// authority**, because the platform has none of its own (ADR 0012). Under a
+/// posture that cannot lend one, nothing is attempted and the client stays
+/// `pending` — which is true.
 ///
 /// # `200`, not `202`
 ///
@@ -42,6 +47,11 @@ pub(crate) async fn put_identity(
         .service
         .set_identity(&operator, &client_id, identity, &expected)
         .await?;
+
+    // After the write, and after the response is decided: convergence is a
+    // separate event that fails independently, and this one borrows an
+    // authority that belongs to the person who just made the request.
+    crate::converge::in_background(&state, &operator);
 
     let reconciliation = state.service.reconciliation(&stored);
     let body = IdentityResponse::new(

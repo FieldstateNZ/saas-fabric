@@ -6,7 +6,6 @@ use fabric_client_model::{ClientId, ClientRevision, IdentityConfiguration, Realm
 use fabric_reconciliation::{ReconciliationStatus, ReconciliationStatusStore};
 
 use crate::fixtures::{repository_with_acme, FixedClock};
-use crate::reconcile::ReconciliationTrigger;
 use crate::repository::InMemoryClientRepository;
 use crate::{ClientService, ControlPlaneError, Operator};
 
@@ -14,13 +13,15 @@ fn service(repository: Arc<InMemoryClientRepository>) -> ClientService {
     ClientService::new(
         crate::DesiredStateBinding::to(repository),
         Arc::new(ReconciliationStatusStore::new()),
-        Arc::new(ReconciliationTrigger::new()),
         Arc::new(FixedClock),
     )
 }
 
 fn operator() -> Operator {
-    Operator::new("brett@example.com")
+    Operator::new(
+        "brett@example.com",
+        crate::OperatorToken::new("an-operators-bearer"),
+    )
 }
 
 fn client() -> ClientId {

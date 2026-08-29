@@ -48,16 +48,9 @@ async fn run(config_path: &str) -> Result<(), String> {
         .await
         .map_err(|error| format!("server error: {error}"));
 
-    // A panicked reconciliation task is worth recording and is not worth
-    // failing the shutdown over — the process is stopping either way, and the
-    // exit status should report what the server did.
-    if let Err(error) = application.reconciliation.shutdown().await {
-        tracing::error!(
-            event = "control_plane.reconciliation_task_failed",
-            reason = %error,
-            "the reconciliation loop did not stop cleanly"
-        );
-    }
+    // There is no reconciliation task to stop any more. Convergence happens
+    // inside an operator's request, or in a task spawned by one, so shutting
+    // the server down is the whole of shutting the process down (ADR 0012).
 
     result
 }

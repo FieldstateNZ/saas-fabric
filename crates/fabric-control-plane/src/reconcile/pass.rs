@@ -24,7 +24,7 @@ use crate::repository::ClientRepository;
 /// is exactly as it was and the next sweep starts from the same documents.
 ///
 /// Returns the number of clients reconciled.
-pub(super) async fn run(
+pub(crate) async fn run(
     repository: &dyn ClientRepository,
     reconciler: &IdentityReconciler,
     statuses: &ReconciliationStatusStore,

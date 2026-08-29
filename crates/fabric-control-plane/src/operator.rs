@@ -13,35 +13,31 @@
 //! realm — is not an operator here and cannot become one. ADR 0009 records
 //! why that seam is worth a separate mechanism rather than a shared one.
 //!
-//! # The postures
+//! # One posture, and only one
 //!
 //! [`OidcOperators`] verifies a token the platform's own identity provider
-//! issued and takes authority from a realm role. It is the production posture,
-//! and the one that means the control plane does not depend on being
-//! unreachable in order to be safe.
+//! issued and takes authority from a realm role. There is no alternative, and
+//! deliberately no development shortcut beside it.
 //!
-//! [`TrustedHeaderOperators`] consumes an identity that the **operator network
-//! boundary** has already established: the control plane is reachable only
-//! from the operator plane (Tailscale today), and the proxy in front of it
-//! authenticates the human and states who they are in a header.
+//! A trusted-header posture used to sit here, consuming an identity the
+//! operator-plane proxy asserted. It was removed rather than kept for local
+//! use, for two reasons that turn out to be the same reason. It was safe only
+//! because of *where the service sat* — nothing in the application enforced
+//! that, so the same container on another network authenticated anybody. And
+//! it asserted a name while lending nothing: the platform now acts on the
+//! identity provider with an operator's own bearer (ADR 0012), and a posture
+//! that cannot supply one leaves half the control plane unable to work.
 //!
-//! That is the same posture ADR 0002 chose for the runtime, and it carries the
-//! same obligation: the header is trustworthy *because of where the service
-//! sits*, and exposing this API anywhere else makes it trivially forgeable.
-//! The configuration says `mode = "trusted_header"` explicitly for that reason
-//! — a deployment has to state its posture rather than inherit one.
+//! A development posture that cannot do what production does is a development
+//! posture that hides exactly the failures worth finding early.
 
 mod authenticator;
 mod errors;
 mod extractor;
 mod identity;
 mod oidc;
-mod trusted_header;
-#[cfg(test)]
-mod trusted_header_tests;
 
 pub use authenticator::OperatorAuthenticator;
 pub use errors::OperatorAuthError;
-pub use identity::Operator;
+pub use identity::{Operator, OperatorToken};
 pub use oidc::{KeyHolder, OidcOperators, VerificationKeys};
-pub use trusted_header::TrustedHeaderOperators;

@@ -3,11 +3,10 @@
 use std::sync::Arc;
 
 use fabric_client_git::{GitAuthConfig, GitClientRepository, GitCredential};
+use fabric_control_plane::IdentityProviderFactory;
 use fabric_control_plane::{DesiredStateBinding, InMemoryClientRepository};
 use fabric_core::Clock;
-use fabric_keycloak::{AdminCredential, KeycloakIdentityProvider};
-use fabric_reconciliation::testing::FakeIdentityProvider;
-use fabric_reconciliation::IdentityProvider;
+use fabric_keycloak::KeycloakProviderFactory;
 
 use crate::config::{DesiredStateConfig, IdentityProviderConfig};
 use crate::secrets;
@@ -81,33 +80,33 @@ pub(super) async fn desired_state(
     }
 }
 
-/// Builds the identity provider this deployment is configured for.
+/// Builds the factory that lends each operator's authority to a provider.
+///
+/// Returns `None` for the development provider, which converges nothing and so
+/// needs no authority at all.
 ///
 /// # Errors
 ///
-/// Returns a message if the provider cannot be built — invalid configuration,
-/// or a missing credential.
+/// Returns a message if the provider is misconfigured — a bad base URL, say.
+/// **Not** if a credential is missing: there is no longer one to miss. The
+/// platform holds no authority over the identity provider, and every call it
+/// makes borrows an operator's (ADR 0012).
 pub(super) fn identity_provider(
     config: &IdentityProviderConfig,
-    clock: Arc<dyn Clock>,
-) -> Result<Arc<dyn IdentityProvider>, String> {
+) -> Result<Option<Arc<dyn IdentityProviderFactory>>, String> {
     match config {
         IdentityProviderConfig::Keycloak(keycloak) => {
-            let credential = AdminCredential::new(secrets::resolve(&keycloak.client_secret_ref)?);
-
-            Ok(Arc::new(KeycloakIdentityProvider::new(
-                keycloak, credential, clock,
-            )?))
+            Ok(Some(Arc::new(KeycloakProviderFactory::new(keycloak)?)))
         }
 
         IdentityProviderConfig::InMemory => {
             tracing::warn!(
                 event = "control_plane.development_identity_provider",
-                "using a development identity provider; reconciliation will report clients as \
-                 converged without any identity provider being changed"
+                "no identity provider is configured; nothing will be converged and every client \
+                 will report as pending"
             );
 
-            Ok(Arc::new(FakeIdentityProvider::new()))
+            Ok(None)
         }
     }
 }

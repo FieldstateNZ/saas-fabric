@@ -44,7 +44,8 @@ config struct away from putting the platform's Keycloak administrative secret
 into a log aggregator, and the code that leaks it looks exactly like the code
 that does not.
 
-`KeycloakConfig::client_secret_ref` names the secret; it never carries one. This
+There is no credential in the configuration at all. A provider is built per
+operator from the bearer they presented, so the authority is theirs and this
 application defines a configuration *contract* — "there is a value called this,
 and I need it" — and how it arrives is `saas-fabric-platform`'s decision (§20).
 

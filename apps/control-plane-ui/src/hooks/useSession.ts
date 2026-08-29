@@ -1,14 +1,10 @@
 /**
- * Whether this operator is signed in, and whether they need to be.
+ * Whether this operator is signed in.
  *
- * # Both postures, decided by the API rather than by a build flag
- *
- * A deployment either signs operators in against the platform's identity
- * provider or consumes an identity its operator-plane proxy established. The
- * console does not need to be built differently for the two: the sign-in
- * routes exist only in the first, so a `404` from `/api/session` *is* the
- * answer, and it comes from the deployment rather than from an environment
- * variable somebody has to keep in step.
+ * Signing in is not optional any more. There used to be a second posture, where
+ * a proxy asserted an identity and the console had to discover which
+ * deployment it was talking to; that posture is gone, so this asks one
+ * question rather than two.
  */
 import { useCallback, useEffect, useState } from 'react'
 
@@ -17,8 +13,6 @@ import { beginSignIn, completeSignIn, currentToken } from '../session/session'
 /** Where the operator stands with respect to signing in. */
 export type SessionState =
   | { status: 'checking' }
-  /** This deployment authenticates at the network boundary; nothing to do. */
-  | { status: 'not-required' }
   | { status: 'signed-out'; error: string | null }
   | { status: 'signed-in' }
 
@@ -72,14 +66,6 @@ async function establish(): Promise<SessionState> {
   // completed sign-in never depends on a second request succeeding.
   if (await completeSignIn()) {
     return { status: 'signed-in' }
-  }
-
-  const response = await fetch('/api/session')
-
-  // Not mounted: this deployment has no sign-in, so the operator is already
-  // whoever the operator-plane proxy says they are.
-  if (response.status === 404) {
-    return { status: 'not-required' }
   }
 
   return { status: 'signed-out', error: null }

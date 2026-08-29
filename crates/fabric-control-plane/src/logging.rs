@@ -36,26 +36,6 @@ pub(crate) fn control_plane_ready(repository: &str, operators: &str) {
     );
 }
 
-/// The reconciliation loop started.
-pub(crate) fn reconciliation_started(repository: &str, interval_seconds: u64) {
-    tracing::info!(
-        event = "control_plane.reconciliation_started",
-        event_id = event_id(DOMAIN_ID, EventType::Success, 3),
-        repository,
-        interval_seconds,
-        "reconciliation loop started"
-    );
-}
-
-/// The reconciliation loop stopped.
-pub(crate) fn reconciliation_stopped() {
-    tracing::info!(
-        event = "control_plane.reconciliation_stopped",
-        event_id = event_id(DOMAIN_ID, EventType::Success, 4),
-        "reconciliation loop stopped"
-    );
-}
-
 /// One client was reconciled.
 ///
 /// Debug for the ordinary case, but drift and failure are worth seeing, so the

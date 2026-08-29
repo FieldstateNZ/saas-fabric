@@ -194,7 +194,10 @@ fn harness(repositories: &[(&str, &str)]) -> Harness {
 }
 
 fn operator() -> Operator {
-    Operator::new("brett@example.com")
+    Operator::new(
+        "brett@example.com",
+        crate::OperatorToken::new("an-operators-bearer"),
+    )
 }
 
 /// Pulls the correlation token out of whatever the fake put it in.

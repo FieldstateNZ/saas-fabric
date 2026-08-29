@@ -9,11 +9,13 @@ use crate::operator::{Operator, OperatorAuthError};
 /// # Why a trait for one implementation
 ///
 /// Because the implementation is expected to change and the rest of the crate
-/// must not. Today the platform's operator boundary is a network one, so
-/// [`TrustedHeaderOperators`](super::TrustedHeaderOperators) consumes what the
-/// proxy established. When the platform can issue operator credentials of its
-/// own — through Keycloak, or something else — that is a second implementation
-/// of this trait and no handler changes.
+/// must not. It already has: a posture that consumed a proxy's header was
+/// replaced by one that verifies a token the platform's own realm issued, and
+/// no handler moved. A third would be the same again.
+///
+/// It also gives tests a seam that does not require minting signed tokens —
+/// see [`testing`](crate::testing), which is the only thing outside this
+/// module that may construct an [`Operator`].
 ///
 /// The seam also states the rule structurally: this takes a
 /// [`HeaderMap`] and returns an [`Operator`], so there is

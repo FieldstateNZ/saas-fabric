@@ -16,8 +16,9 @@ use std::time::Instant;
 use axum::body::Body;
 use axum::Router;
 use fabric_client_model::{ClientDocument, ClientRevision};
+use fabric_control_plane::testing::AcceptingOperator;
 use fabric_control_plane::{
-    build_control_plane, ControlPlaneConfig, DesiredStateBinding, InMemoryClientRepository,
+    build_control_plane, ControlPlaneConfig, ControlPlaneDeps, DesiredStateBinding, InMemoryClientRepository,
 };
 use fabric_core::Clock;
 use fabric_reconciliation::ReconciliationStatusStore;
@@ -27,8 +28,14 @@ use tower::ServiceExt as _;
 /// The operator every test authenticates as.
 pub const OPERATOR: &str = "brett@example.com";
 
-/// The header the configured posture reads.
-pub const OPERATOR_HEADER: &str = "Tailscale-User-Login";
+/// A header these tests still set, so that "authenticated" is visible in each
+/// request rather than implied by the harness.
+///
+/// The authenticator ignores it — see [`AcceptingOperator`]. What it preserves
+/// is the shape of a test: a request that omits it is written as an anonymous
+/// one, and the tests that assert `401` say so by building the request without
+/// this rather than by reaching into the harness.
+pub const OPERATOR_HEADER: &str = fabric_control_plane::testing::TEST_OPERATOR_HEADER;
 
 /// A client document with a section the control plane does not model.
 pub const ACME: &str = r"
@@ -100,9 +107,9 @@ pub fn control_plane() -> TestControlPlane {
 
     let config: ControlPlaneConfig = serde_json::from_value(serde_json::json!({
         "operator": {
-            "mode": "trusted_header",
-            "header": OPERATOR_HEADER,
-            "allowlist": [OPERATOR],
+            "mode": "oidc",
+            "issuer": "https://auth.example.test/realms/master",
+            "redirect_uri": "https://fabric.example.test/",
         }
     }))
     .expect("the fixture configuration must load");
@@ -111,11 +118,19 @@ pub fn control_plane() -> TestControlPlane {
 
     let services = build_control_plane(
         &config,
-        &binding,
-        Arc::new(FixedClock),
-        fabric_control_plane::KeyHolder::empty(),
-        None,
-        None,
+        ControlPlaneDeps {
+            desired_state: Arc::clone(&binding),
+            clock: Arc::new(FixedClock),
+            keys: fabric_control_plane::KeyHolder::empty(),
+            identity_provider: None,
+            sign_in: None,
+            git_integration: None,
+
+            // The posture is verified by its own tests. These drive everything
+            // above it, and minting signed tokens here would make every one of
+            // them a test about authentication.
+            operators: Some(AcceptingOperator::accepting(OPERATOR)),
+        },
     )
     .expect("the control plane must build");
 

@@ -76,6 +76,17 @@ export async function chooseRepository(owner: string, name: string): Promise<voi
   })
 }
 
+/**
+ * Converges every client onto desired state, with this operator's authority.
+ *
+ * There is no background sweep: the platform holds no credential for the
+ * identity provider and acts as whoever asked, so "check and converge" is an
+ * action rather than a schedule.
+ */
+export async function converge(): Promise<{ clients: number }> {
+  return request('/api/reconciliation', { method: 'POST' })
+}
+
 /** Forgets the integration this platform holds. */
 export async function disconnectIntegration(): Promise<void> {
   await request('/api/integrations/git', { method: 'DELETE' })

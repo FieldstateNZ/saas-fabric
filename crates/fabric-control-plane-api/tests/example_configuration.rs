@@ -34,20 +34,26 @@ fn the_example_configuration_loads() {
 }
 
 #[test]
-fn the_example_states_the_development_posture_with_a_non_empty_allowlist() {
-    // The example must be runnable without a cluster (§22), and the OIDC
-    // posture cannot be: it needs a realm to verify against. So the example
-    // demonstrates the trusted-header posture deliberately, and this test
-    // pins that choice rather than accepting whichever posture it drifts to.
-    //
-    // An empty allowlist would authorise every identity the operator network
-    // can authenticate, so the example must not demonstrate one either.
-    let OperatorConfig::TrustedHeader { header, allowlist } = example().control_plane.operator else {
-        panic!("the example must demonstrate the trusted-header posture; see above");
-    };
+fn the_example_states_the_only_posture_completely() {
+    // There is one posture and no development shortcut beside it. What this
+    // pins is that the example states every field it needs — a blank issuer
+    // matches a token from anywhere, and a blank role is held by everybody.
+    let OperatorConfig::Oidc {
+        issuer,
+        client_id,
+        required_role,
+        redirect_uri,
+        ..
+    } = example().control_plane.operator;
 
-    assert!(!header.is_empty());
-    assert!(!allowlist.is_empty());
+    for (name, value) in [
+        ("issuer", &issuer),
+        ("client_id", &client_id),
+        ("required_role", &required_role),
+        ("redirect_uri", &redirect_uri),
+    ] {
+        assert!(!value.trim().is_empty(), "the example must state {name}");
+    }
 }
 
 #[test]

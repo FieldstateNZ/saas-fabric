@@ -87,7 +87,6 @@ impl ClientService {
 
         self.reconciliation
             .mark_pending(client, revision.clone(), self.clock.now_unix_seconds());
-        self.trigger.request_pass();
 
         audit::identity_updated(operator, client, &revision);
 

@@ -2,6 +2,7 @@ import { useState } from 'react'
 
 import { ClientDetail } from './components/ClientDetail'
 import { ClientList } from './components/ClientList'
+import { ConvergeButton } from './components/ConvergeButton'
 import { IntegrationNotice } from './components/IntegrationNotice'
 import { SignIn } from './components/SignIn'
 import { useClients } from './hooks/useClients'
@@ -73,6 +74,8 @@ function Console() {
         {clients.value !== null && (
           <ClientList clients={clients.value} selected={selected} onSelect={setSelected} />
         )}
+
+        {!unreachable && <ConvergeButton />}
       </nav>
 
       <main className="main">

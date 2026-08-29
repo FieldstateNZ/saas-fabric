@@ -11,7 +11,7 @@ use axum::body::Body;
 use fabric_client_model::ClientId;
 use fabric_control_plane::ClientRepository as _;
 use http::{header, StatusCode};
-use support::{as_operator, control_plane, entity_tag, json, send, OPERATOR_HEADER};
+use support::{as_operator, control_plane, entity_tag, json, send};
 
 /// The identity an operator would submit after adding a role.
 fn identity_with_extra_role() -> Body {
@@ -349,7 +349,15 @@ async fn an_unauthenticated_request_reaches_no_handler() {
 }
 
 #[tokio::test]
-async fn an_identity_outside_the_allowlist_is_refused() {
+async fn a_request_carrying_no_operator_identity_is_refused() {
+    // This used to assert that a name outside the allowlist was refused, which
+    // was a property of the trusted-header posture. That posture is gone: who
+    // counts as an operator is now a realm role, checked against a verified
+    // token by `OidcOperators`' own tests.
+    //
+    // What still belongs here is the property this *router* has to have —
+    // every path under `/api/clients` refuses a request that established no
+    // operator at all, which is the extractor doing its job.
     let plane = control_plane();
 
     let response = send(
@@ -357,7 +365,6 @@ async fn an_identity_outside_the_allowlist_is_refused() {
         http::Request::builder()
             .method("GET")
             .uri("/api/clients")
-            .header(OPERATOR_HEADER, "someone@example.com")
             .body(Body::empty())
             .unwrap(),
     )

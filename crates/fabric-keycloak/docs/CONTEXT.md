@@ -13,7 +13,7 @@ Three items, deliberately:
 
 - `KeycloakIdentityProvider::new(&KeycloakConfig, AdminCredential, Arc<dyn Clock>)
   -> Result<Self, String>`. Implements `fabric_reconciliation::IdentityProvider`.
-- `KeycloakConfig { base_url, admin_realm, client_id, client_secret_ref, http_timeout_seconds }`
+- `KeycloakConfig { base_url, admin_realm, client_id, http_timeout_seconds }` — no credential; a provider is built per operator from the bearer they presented
   + `validate()`. All non-secret; belongs in a `ConfigMap`.
 - `AdminCredential::new(impl Into<String>)`. No `Display`; `Debug` prints
   `AdminCredential(redacted)`. `expose()` is `pub(crate)` and named to be

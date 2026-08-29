@@ -2,48 +2,27 @@
 
 use std::sync::Arc;
 
-use crate::operator::{KeyHolder, OidcOperators, OperatorAuthenticator, TrustedHeaderOperators};
+use crate::operator::{KeyHolder, OidcOperators, OperatorAuthenticator};
 
 /// How this deployment establishes who an operator is.
 ///
-/// # A tagged enum, so the posture is stated rather than assembled
+/// # One variant, and the tag stays anyway
 ///
-/// A flat struct with an optional header and an optional allowlist would let a
-/// deployment end up in a state nobody chose — a header configured and an
-/// allowlist forgotten, say. Naming the mode makes the posture one decision,
-/// visible in a diff, and makes adding a second one an additive change rather
-/// than a reinterpretation of the fields already there.
+/// There is exactly one posture, so this could be a plain struct. It keeps the
+/// `mode` tag because a deployment stating its authentication posture out loud
+/// is worth more than the line it costs, and because the last time this had
+/// two variants one of them was safe only by accident of where it ran. If a
+/// second is ever added it will be an additive change rather than a
+/// reinterpretation of fields already here.
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(tag = "mode", rename_all = "snake_case", deny_unknown_fields)]
 pub enum OperatorConfig {
-    /// Consume an identity established by the operator-plane proxy.
-    ///
-    /// The only posture this increment implements. See
-    /// [`TrustedHeaderOperators`] for what makes it safe and what makes it
-    /// unsafe.
-    TrustedHeader {
-        /// The header the proxy states the operator's identity in.
-        ///
-        /// Defaults to Tailscale's, because that is the operator plane this
-        /// platform runs today — but it is configurable, because the header is
-        /// a property of whatever proxy is actually in front of the service,
-        /// and hard-coding it would silently authenticate nobody behind a
-        /// different one.
-        #[serde(default = "default_header")]
-        header: String,
-
-        /// The operators permitted to administer this platform.
-        ///
-        /// May not be empty. See
-        /// [`TrustedHeaderOperators`](crate::TrustedHeaderOperators).
-        allowlist: Vec<String>,
-    },
-
     /// Verify a token the platform's own identity provider issued.
     ///
-    /// The production posture. Authority is a realm role rather than a list of
-    /// names here, so adding an operator is done where joiners and leavers are
-    /// already handled instead of in a deployment change.
+    /// The only posture. Authority is a realm role rather than a list of names
+    /// here, so adding an operator is done where joiners and leavers are
+    /// already handled instead of in a deployment change — and the bearer the
+    /// operator presents is what the platform then acts with (ADR 0012).
     Oidc {
         /// The issuer every accepted token must name, matched exactly.
         ///
@@ -106,19 +85,13 @@ fn default_leeway() -> u64 {
     60
 }
 
-/// Tailscale's identity header.
-fn default_header() -> String {
-    "Tailscale-User-Login".to_owned()
-}
-
 impl OperatorConfig {
     /// Builds the authenticator this posture describes.
     ///
     /// # Errors
     ///
-    /// Returns a message if the posture is not usable as configured — an
-    /// invalid header name, an empty allowlist, or a blank issuer, client or
-    /// role.
+    /// Returns a message if the posture is not usable as configured — a blank
+    /// issuer, client or role.
     ///
     /// `keys` is the key set the OIDC posture verifies against, which the
     /// composition root owns because it also owns refreshing it. The
@@ -127,10 +100,6 @@ impl OperatorConfig {
     /// reachable from one match a reader can enumerate.
     pub fn build(&self, keys: Arc<KeyHolder>) -> Result<Box<dyn OperatorAuthenticator>, String> {
         match self {
-            Self::TrustedHeader { header, allowlist } => {
-                Ok(Box::new(TrustedHeaderOperators::new(header, allowlist)?))
-            }
-
             Self::Oidc {
                 issuer,
                 client_id,

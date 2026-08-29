@@ -29,6 +29,7 @@ pub const API_PREFIX: &str = "/api";
 /// ```text
 /// GET /api/session                       where to sign in   (no operator)
 /// POST /api/session                      redeem a code      (no operator)
+/// POST   /api/reconciliation                converge every client, as you
 /// GET    /api/integrations/git               can desired state be read?
 /// POST   /api/integrations/git/connect       describe the app to create
 /// GET    /api/integrations/git/created       host callback   (no operator)
@@ -76,6 +77,7 @@ pub(crate) fn control_plane_routes(state: ControlPlaneState) -> Router {
         .route("/integrations/git/installed", get(handlers::installed));
 
     let clients = Router::new()
+        .route("/reconciliation", post(handlers::converge))
         .route("/clients", get(handlers::list_clients))
         .route("/clients/{client_id}", get(handlers::get_client))
         .route(

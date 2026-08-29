@@ -17,7 +17,9 @@ impl ControlPlaneError {
             // not exist, and for this deployment the connection surface does
             // not exist. Neither is a permission problem, which is why neither
             // is a 403 sending an operator to look for a grant.
-            Self::UnknownClient(_) | Self::IntegrationNotManaged => StatusCode::NOT_FOUND,
+            Self::UnknownClient(_) | Self::IntegrationNotManaged | Self::ConvergenceUnavailable => {
+                StatusCode::NOT_FOUND
+            }
             // `InvalidFlow` joins these at 400 rather than 401, and that is
             // the interesting one: its caller is a browser the Git host
             // redirected here, holding no identity to be wrong about. What is
@@ -82,6 +84,7 @@ impl ControlPlaneError {
             Self::RealmImmutable { .. } => "realm_immutable",
             Self::RepositoryUnavailable => "repository_unavailable",
             Self::InvalidFlow => "invalid_flow",
+            Self::ConvergenceUnavailable => "convergence_unavailable",
             Self::IntegrationNotManaged => "integration_not_managed",
             Self::GitHostRefused => "git_host_refused",
             Self::IntegrationRefused(_) => "integration_refused",

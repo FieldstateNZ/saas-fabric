@@ -49,12 +49,14 @@
 
 mod audit;
 mod config;
+mod converge;
 mod errors;
 mod extraction;
 #[cfg(test)]
 mod fixtures;
 mod git_integration;
 mod handlers;
+mod identity_authority;
 mod integration;
 mod logging;
 mod models;
@@ -67,6 +69,7 @@ mod routes;
 mod service;
 mod sign_in;
 mod state;
+pub mod testing;
 
 pub use config::{ControlPlaneConfig, OperatorConfig, ReconciliationConfig};
 pub use errors::ControlPlaneError;
@@ -76,13 +79,13 @@ pub use git_integration::{
     InstallationDetail, IntegrationError, IntegrationStore, IntegrationStoreError, PendingFlows,
     ProvisioningError, SecretName, SecretStore, SecretStoreError, SecretValue, SelectedRepository,
 };
+pub use identity_authority::IdentityProviderFactory;
 pub use integration::{IntegrationHealth, IntegrationStatus, Observation};
 pub use operator::{
-    KeyHolder, OidcOperators, Operator, OperatorAuthError, OperatorAuthenticator, TrustedHeaderOperators,
+    KeyHolder, OidcOperators, Operator, OperatorAuthError, OperatorAuthenticator, OperatorToken,
     VerificationKeys,
 };
-pub use reconcile::{ReconciliationLoop, ReconciliationLoopHandle, ReconciliationTrigger};
-pub use registration::{build_control_plane, ControlPlaneServices};
+pub use registration::{build_control_plane, ControlPlaneDeps, ControlPlaneServices};
 pub use repository::{
     ChangeContext, ClientRepository, DesiredStateBinding, InMemoryClientRepository, RepositoryError,
     StoredClient,

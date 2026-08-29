@@ -8,26 +8,11 @@
 mod support;
 
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
 
 use fabric_client_model::{ClientProtocol, OidcClient, OidcClientId, RealmName, RedirectUri, RoleName};
-use fabric_core::Clock;
-use fabric_keycloak::{AdminCredential, KeycloakConfig, KeycloakIdentityProvider};
+use fabric_keycloak::{KeycloakConfig, KeycloakIdentityProvider};
 use fabric_reconciliation::{IdentityProvider, ProviderError};
 use support::{FakeKeycloak, RecordedRequest};
-
-/// A clock the token cache can measure against.
-struct TestClock;
-
-impl Clock for TestClock {
-    fn now(&self) -> Instant {
-        Instant::now()
-    }
-
-    fn now_unix_seconds(&self) -> u64 {
-        1_700_000_000
-    }
-}
 
 fn realm() -> RealmName {
     RealmName::try_new("acme").unwrap()
@@ -48,8 +33,7 @@ fn provider(keycloak: &FakeKeycloak) -> KeycloakIdentityProvider {
         ..KeycloakConfig::default()
     };
 
-    KeycloakIdentityProvider::new(&config, AdminCredential::new("test-secret"), Arc::new(TestClock))
-        .expect("the provider must build")
+    KeycloakIdentityProvider::new(&config, "an-operators-token").expect("the provider must build")
 }
 
 /// A Keycloak holding one realm with two roles and one application client.
@@ -100,21 +84,27 @@ async fn an_existing_realm_is_read_with_its_roles_and_clients() {
 }
 
 #[tokio::test]
-async fn every_admin_request_carries_a_bearer_token() {
-    // The token exchange is not optional and not cached across processes; an
-    // adapter that skipped it would 401 on the first real Keycloak.
+async fn every_admin_request_carries_the_operators_own_bearer() {
+    // The platform holds no credential for Keycloak. What goes out is the
+    // token the operator presented, unchanged — an adapter that substituted
+    // anything of its own would be the standing authority ADR 0012 removed.
     let keycloak = populated().await;
     provider(&keycloak).observe_realm(&realm()).await.unwrap();
 
-    assert!(keycloak.count("POST", "/realms/master/protocol/openid-connect/token") >= 1);
+    let requests = keycloak.admin_requests();
+    assert!(!requests.is_empty(), "no admin request was made");
     assert!(
-        keycloak.admin_requests().iter().all(|request| request.authorised),
-        "an admin request went out unauthenticated"
+        requests
+            .iter()
+            .all(|request| request.bearer.as_deref() == Some("an-operators-token")),
+        "an admin request went out with something other than the operator's bearer"
     );
 }
 
 #[tokio::test]
-async fn the_token_is_reused_across_calls_in_one_sweep() {
+async fn no_credential_is_ever_exchanged_for_a_token() {
+    // There is nothing to exchange. A token endpoint call here would mean the
+    // adapter had acquired an authority of its own.
     let keycloak = populated().await;
     let provider = provider(&keycloak);
 
@@ -123,8 +113,8 @@ async fn the_token_is_reused_across_calls_in_one_sweep() {
 
     assert_eq!(
         keycloak.count("POST", "/realms/master/protocol/openid-connect/token"),
-        1,
-        "the credential was exchanged more than once for a token that is still good"
+        0,
+        "the adapter tried to mint a token of its own"
     );
 }
 
@@ -234,41 +224,17 @@ async fn a_client_that_vanished_between_observation_and_update_is_created() {
 }
 
 #[tokio::test]
-async fn a_token_refused_after_the_platform_changed_its_own_grants_is_replaced() {
-    // Found against real Keycloak, not reasoned about. Creating a realm causes
-    // Keycloak to grant the creator that realm's administrative roles — into
-    // tokens minted *afterwards*. So the first pass over a new client creates
-    // the realm with the token it holds, and is then refused for everything
-    // inside it, with a token that is valid and simply too old.
+async fn a_refusal_is_reported_rather_than_retried() {
+    // There used to be a retry here, for a real reason found against real
+    // Keycloak: creating a realm grants the creator that realm's admin roles,
+    // into tokens minted *afterwards*, so the pass that created a realm was
+    // then refused inside it with a token that was valid and simply too old.
+    // A service account could mint a fresh one and carry on.
     //
-    // Here: every admin call bearing the first minted token is refused, and
-    // anything bearing a later one succeeds.
-    let keycloak = FakeKeycloak::start(Arc::new(|request: &RecordedRequest| {
-        if request.bearer.as_deref() == Some("test-token-1") {
-            (403, "{}".to_owned())
-        } else {
-            (201, String::new())
-        }
-    }))
-    .await;
-
-    let outcome = provider(&keycloak)
-        .create_realm_role(&realm(), &RoleName::try_new("Client Realm User").unwrap())
-        .await;
-
-    assert_eq!(outcome, Ok(()), "a stale grant set must not fail the operation");
-    assert_eq!(
-        keycloak.count("POST", "/realms/master/protocol/openid-connect/token"),
-        2,
-        "the refused token must be replaced rather than waited out"
-    );
-}
-
-#[tokio::test]
-async fn a_genuine_permissions_failure_is_not_retried_forever() {
-    // The retry must be once. A provider that refuses every token is a
-    // misconfigured credential, and hammering it would turn one bad secret
-    // into a request storm.
+    // A borrowed token cannot be re-minted, so the retry is gone and a refusal
+    // is reported. The consequence moved onto the operator instead: their
+    // authority has to already cover realms that do not exist yet, which
+    // master-realm `admin` does and `create-realm` alone does not (ADR 0012).
     let keycloak = FakeKeycloak::start(Arc::new(|_: &RecordedRequest| (403, "{}".to_owned()))).await;
 
     let outcome = provider(&keycloak)
@@ -278,8 +244,8 @@ async fn a_genuine_permissions_failure_is_not_retried_forever() {
     assert_eq!(outcome, Err(ProviderError::NotPermitted));
     assert_eq!(
         keycloak.admin_requests().len(),
-        2,
-        "exactly one retry: the first attempt and one more with a fresh token"
+        1,
+        "one attempt: there is no second authority to try"
     );
 }
 
@@ -321,8 +287,7 @@ async fn an_unreachable_keycloak_is_reported_as_unavailable_and_transient() {
         base_url: "http://127.0.0.1:1".to_owned(),
         ..KeycloakConfig::default()
     };
-    let provider =
-        KeycloakIdentityProvider::new(&config, AdminCredential::new("s"), Arc::new(TestClock)).unwrap();
+    let provider = KeycloakIdentityProvider::new(&config, "an-operators-token").unwrap();
 
     let error = provider.observe_realm(&realm()).await.unwrap_err();
 

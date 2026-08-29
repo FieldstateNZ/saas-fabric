@@ -61,6 +61,12 @@ pub(crate) struct ControlPlaneState {
     /// undo the deployment.
     pub(crate) git_integration: Option<Arc<GitIntegrationService>>,
 
+    /// Builds a provider carrying an operator's authority, when this
+    /// deployment converges an identity provider at all.
+    ///
+    /// `None` for the development provider, which converges nothing.
+    pub(crate) identity_provider: Option<Arc<dyn crate::IdentityProviderFactory>>,
+
     /// Where this control plane is reachable from a browser.
     pub(crate) public_base_url: String,
 }

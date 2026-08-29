@@ -4,7 +4,7 @@ What was measured, what it showed, and where the numbers came from. Every
 command below is reproducible from the repository root; nothing here is
 asserted without one.
 
-Last run: 2026-08-29, against `claude/github-app-manifest-flow`,
+Last run: 2026-08-29, against `claude/operator-authorised-keycloak`,
 covering both planes, on **Rust 1.98.0** — pinned in
 [`rust-toolchain.toml`](../rust-toolchain.toml).
 
@@ -33,7 +33,7 @@ is at the end, under "The control plane, end to end".
 | --- | --- | --- |
 | Formatting | `cargo fmt --all --check` | clean |
 | Lints | `cargo clippy --workspace --all-targets -- -D warnings` | 0 findings |
-| Tests | `cargo test --workspace` | 1262 passing, 0 failing, 0 ignored |
+| Tests | `cargo test --workspace` | 1252 passing, 0 failing, 0 ignored |
 | Docs | `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps` | 0 warnings |
 | Dependencies | `cargo deny check` | advisories, bans, licences, sources — all ok |
 | File sizes | `python3 scripts/check_file_sizes.py` | 0 over the 150-line limit |
@@ -49,6 +49,35 @@ parallel jobs, the four console checks as steps of one job because `npm ci`
 dominates each of them.
 
 Nothing is ignored.
+
+## Acting on Keycloak as the operator
+
+The count went **down**, from 1262 to 1252, and that is the change reporting
+itself honestly. What went is a service account's credential and everything
+that existed to manage it: the token cache, the `client_credentials` exchange,
+and the invalidate-and-retry that a real Keycloak once forced. Tests for a
+mechanism that no longer exists are not coverage.
+
+Four tests were rewritten rather than deleted, because the property they
+protected still matters under the new mechanism:
+
+- every admin request carries **the operator's own bearer**, unchanged — an
+  adapter substituting anything of its own would be the standing authority this
+  removed;
+- **no credential is ever exchanged for a token**, asserted by counting calls
+  to the token endpoint and expecting zero;
+- a refusal is **reported rather than retried**, in exactly one attempt,
+  because there is no second authority to try;
+- a request establishing no operator is refused, which is the router's property
+  rather than any posture's.
+
+**Not proven here, and it is the thing most likely to bite.** No test exercises
+an operator whose Keycloak authority is `create-realm` alone. That case fails
+on the *second* call against a real Keycloak — create the realm, then be
+refused inside it by a token minted before the grant existed — and no fake
+reproduces it, because the fake has no notion of grants landing in later
+tokens. ADR 0012 records the requirement (master-realm `admin`); confirming it
+needs LucentRoot.
 
 ## Connecting the integration: what these tests do and do not prove
 

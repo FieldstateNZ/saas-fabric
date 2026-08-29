@@ -14,7 +14,6 @@ use fabric_core::Clock;
 use fabric_reconciliation::ReconciliationStatusStore;
 
 use crate::models::ReconciliationResponse;
-use crate::reconcile::ReconciliationTrigger;
 use crate::repository::{DesiredStateBinding, StoredClient};
 use crate::ControlPlaneError;
 
@@ -47,26 +46,37 @@ pub struct ClientService {
     /// What is known about whether desired state has taken effect.
     reconciliation: Arc<ReconciliationStatusStore>,
 
-    /// Asks the reconciliation loop to run a pass now.
-    trigger: Arc<ReconciliationTrigger>,
-
     /// Stamps audit and reconciliation records.
     clock: Arc<dyn Clock>,
 }
 
 impl ClientService {
+    /// What is known about whether desired state has taken effect.
+    ///
+    /// Exposed for the convergence pass, which records into the same store the
+    /// read paths report from — two stores would be two answers to one
+    /// question.
+    #[must_use]
+    pub(crate) fn statuses(&self) -> &ReconciliationStatusStore {
+        &self.reconciliation
+    }
+
+    /// The clock, so a pass stamps outcomes the same way a write does.
+    #[must_use]
+    pub(crate) fn clock(&self) -> &dyn Clock {
+        self.clock.as_ref()
+    }
+
     /// Assembles the service.
     #[must_use]
     pub fn new(
         repository: Arc<DesiredStateBinding>,
         reconciliation: Arc<ReconciliationStatusStore>,
-        trigger: Arc<ReconciliationTrigger>,
         clock: Arc<dyn Clock>,
     ) -> Self {
         Self {
             repository,
             reconciliation,
-            trigger,
             clock,
         }
     }

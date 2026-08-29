@@ -125,6 +125,10 @@ pub enum ControlPlaneError {
     #[error("this deployment states its desired-state repository; it is not managed here")]
     IntegrationNotManaged,
 
+    /// This deployment converges no identity provider.
+    #[error("this platform converges no identity provider")]
+    ConvergenceUnavailable,
+
     /// The Git host refused something the connection flow asked of it.
     #[error("the Git host refused the request")]
     GitHostRefused,

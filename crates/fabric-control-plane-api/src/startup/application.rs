@@ -3,9 +3,8 @@
 use std::sync::Arc;
 
 use axum::Router;
-use fabric_control_plane::{build_control_plane, ReconciliationLoop, ReconciliationLoopHandle};
+use fabric_control_plane::{build_control_plane, ControlPlaneDeps};
 use fabric_core::SystemClock;
-use fabric_reconciliation::IdentityReconciler;
 
 use crate::config::ControlPlaneAppConfig;
 use crate::startup::{adapters, integration, operator_keys, serving};
@@ -17,10 +16,6 @@ pub struct Application {
 
     /// The address to bind.
     pub listen: String,
-
-    /// The background reconciliation loop. Held so it can be stopped on
-    /// shutdown; dropping it orphans the task.
-    pub reconciliation: ReconciliationLoopHandle,
 }
 
 /// Wires every part of the control plane. **The whole graph is this function.**
@@ -39,7 +34,11 @@ pub struct Application {
 ///    could reach Keycloak, which is the structural form of ADR 0008.
 /// 5. The Git connection flow, which is given the binding so that an
 ///    operator connecting a repository takes effect without a restart.
-/// 6. The reconciliation loop, which is the only thing holding both.
+///
+/// There is no sixth step any more. A reconciliation loop used to be spawned
+/// here, holding a service account's credential; ADR 0012 removed that
+/// credential, so convergence happens when an operator asks and carries their
+/// authority rather than the platform's.
 ///
 /// # Errors
 ///
@@ -59,34 +58,28 @@ pub async fn build(config: &ControlPlaneAppConfig) -> Result<Application, String
     let clock = SystemClock::shared();
 
     let repository = adapters::desired_state(&config.desired_state, Arc::clone(&clock)).await?;
-    let provider = adapters::identity_provider(&config.identity_provider, Arc::clone(&clock))?;
-    let reconciler = Arc::new(IdentityReconciler::new(provider));
+    let identity_provider = adapters::identity_provider(&config.identity_provider)?;
 
     let (keys, sign_in) = operator_keys::establish(&config.control_plane.operator)?;
     let git_integration = integration::establish(config, &repository, &clock).await?;
 
     let services = build_control_plane(
         &config.control_plane,
-        &repository,
-        Arc::clone(&clock),
-        keys,
-        sign_in,
-        git_integration,
-    )?;
+        ControlPlaneDeps {
+            desired_state: Arc::clone(&repository),
+            clock: Arc::clone(&clock),
+            keys,
+            identity_provider,
+            sign_in,
+            git_integration,
 
-    let reconciliation = ReconciliationLoop::spawn(
-        repository,
-        reconciler,
-        Arc::clone(&services.statuses),
-        Arc::clone(&services.health),
-        Arc::clone(&services.trigger),
-        clock,
-        &config.control_plane.reconciliation,
-    );
+            // Always the configured posture. The override exists for tests.
+            operators: None,
+        },
+    )?;
 
     Ok(Application {
         router: serving::compose(services.router, config),
         listen: config.listen.clone(),
-        reconciliation,
     })
 }

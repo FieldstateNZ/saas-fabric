@@ -115,7 +115,13 @@ impl OperatorAuthenticator for OidcOperators {
             return Err(OperatorAuthError::NotAnOperator);
         }
 
-        Ok(Operator::new(claims.subject()))
+        // The bearer travels with the identity, because the platform acts on
+        // the identity provider as this operator rather than as a service
+        // account of its own (ADR 0012).
+        Ok(Operator::new(
+            claims.subject(),
+            crate::operator::OperatorToken::new(token),
+        ))
     }
 
     fn describe(&self) -> String {

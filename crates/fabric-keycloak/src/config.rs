@@ -3,7 +3,8 @@
 /// How to reach Keycloak, and as whom.
 ///
 /// Every field here is non-secret and belongs in a `ConfigMap`. The secret
-/// itself is named, never carried — see [`Self::client_secret_ref`].
+/// itself is not here at all: the platform acts with an operator's bearer
+/// rather than a credential of its own (ADR 0012).
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct KeycloakConfig {
@@ -25,26 +26,12 @@ pub struct KeycloakConfig {
     /// The `client_id` of SaaS Fabric's machine identity.
     pub client_id: String,
 
-    /// **The name of the secret**, not the secret.
-    ///
-    /// This application defines a configuration *contract* and nothing more:
-    /// it says "there is a value called this, and I need it". How that value
-    /// arrives — External Secrets projecting an OpenBao path into the pod's
-    /// environment, a mounted file, something else entirely — is
-    /// `saas-fabric-platform`'s decision (§20, §21), and encoding an opinion
-    /// about it here would put a deployment mechanism in an application
-    /// repository.
-    ///
-    /// The host resolves this reference and constructs an
-    /// [`AdminCredential`](crate::AdminCredential); this crate never reads an
-    /// environment variable or a file itself.
-    pub client_secret_ref: String,
-
     /// How long a single admin API call may take, in seconds.
     ///
-    /// Bounds the reconciliation sweep: a Keycloak that has stopped answering
-    /// must fail the pass rather than hold it open, because a wedged sweep
-    /// leaves every client's status frozen at whatever it last was.
+    /// Bounds a convergence pass: a Keycloak that has stopped answering must
+    /// fail the pass rather than hold it open, because a wedged pass leaves
+    /// every client's status frozen at whatever it last was — and now also
+    /// holds an operator's request open while it does.
     pub http_timeout_seconds: u64,
 }
 
@@ -54,7 +41,6 @@ impl Default for KeycloakConfig {
             base_url: "http://keycloak-http.identity.svc.cluster.local".to_owned(),
             admin_realm: "master".to_owned(),
             client_id: "saas-fabric".to_owned(),
-            client_secret_ref: "keycloak/saas-fabric".to_owned(),
             http_timeout_seconds: 10,
         }
     }
@@ -77,11 +63,7 @@ impl KeycloakConfig {
             ));
         }
 
-        for (name, value) in [
-            ("admin_realm", &self.admin_realm),
-            ("client_id", &self.client_id),
-            ("client_secret_ref", &self.client_secret_ref),
-        ] {
+        for (name, value) in [("admin_realm", &self.admin_realm), ("client_id", &self.client_id)] {
             if value.trim().is_empty() {
                 return Err(format!("keycloak: {name} must not be empty"));
             }

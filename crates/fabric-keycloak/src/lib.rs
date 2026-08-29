@@ -25,10 +25,10 @@
 //!
 //! - **Whether to change anything.** It performs the actions the reconciler
 //!   planned. It does not diff, and it holds no opinion about drift.
-//! - **Where its credential comes from.** It is handed an
-//!   [`AdminCredential`]; how the platform delivered it — External Secrets,
-//!   OpenBao, a mounted file — is a deployment concern that belongs to
-//!   `saas-fabric-platform` (§20).
+//! - **Whose authority it uses.** It is handed a bearer and presents it. That
+//!   bearer belongs to the operator who asked for the change, because this
+//!   platform holds no credential of its own for Keycloak (ADR 0012) — so
+//!   there is nothing here for a deployment to deliver, and nothing to rotate.
 //! - **What a realm should contain beyond the client contract.** It reconciles
 //!   the realm, the required realm roles, and the declared application
 //!   clients. Token lifespans, brute-force policy, themes and federation are
@@ -42,14 +42,15 @@
 
 mod admin;
 mod config;
-mod credential;
+mod factory;
 mod logging;
 mod operator;
 mod provider;
+mod unavailable;
 mod wire;
 
 pub use config::KeycloakConfig;
-pub use credential::AdminCredential;
+pub use factory::KeycloakProviderFactory;
 pub use operator::RealmSignIn;
 pub use provider::KeycloakIdentityProvider;
 

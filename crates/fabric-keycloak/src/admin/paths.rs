@@ -30,11 +30,6 @@ impl Paths {
         format!("keycloak at {}", self.base)
     }
 
-    /// The token endpoint for the realm the platform authenticates against.
-    pub(crate) fn token(&self, admin_realm: &str) -> String {
-        format!("{}/realms/{admin_realm}/protocol/openid-connect/token", self.base)
-    }
-
     /// The collection every realm is created in.
     pub(crate) fn realms(&self) -> String {
         format!("{}/admin/realms", self.base)

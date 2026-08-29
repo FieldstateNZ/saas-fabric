@@ -3,15 +3,12 @@
 mod mutate;
 mod observe;
 
-use std::sync::Arc;
-
 use async_trait::async_trait;
 use fabric_client_model::{OidcClient, RealmName, RoleName};
-use fabric_core::Clock;
 use fabric_reconciliation::{IdentityProvider, ObservedRealm, ProviderError};
 
 use crate::admin::KeycloakAdmin;
-use crate::{AdminCredential, KeycloakConfig};
+use crate::KeycloakConfig;
 
 /// Reconciles client identity into Keycloak.
 ///
@@ -27,21 +24,15 @@ pub struct KeycloakIdentityProvider {
 }
 
 impl KeycloakIdentityProvider {
-    /// Builds a provider from configuration and a resolved credential.
+    /// Builds a provider that acts with one operator's authority.
     ///
     /// # Errors
     ///
     /// Returns a message if the configuration is invalid or the HTTP client
-    /// cannot be built. Both are startup failures: a control plane whose
-    /// identity provider is misconfigured should say so before it begins
-    /// sweeping clients.
-    pub fn new(
-        config: &KeycloakConfig,
-        credential: AdminCredential,
-        clock: Arc<dyn Clock>,
-    ) -> Result<Self, String> {
+    /// cannot be built.
+    pub fn new(config: &KeycloakConfig, authority: &str) -> Result<Self, String> {
         Ok(Self {
-            admin: KeycloakAdmin::new(config, credential, clock)?,
+            admin: KeycloakAdmin::new(config, authority)?,
         })
     }
 }

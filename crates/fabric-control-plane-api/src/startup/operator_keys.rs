@@ -33,16 +33,16 @@ pub(super) fn establish(
 ) -> Result<(Arc<KeyHolder>, Option<Arc<SignInSurface>>), String> {
     let keys = KeyHolder::empty();
 
+    // Irrefutable: there is one posture. Left as a destructure rather than
+    // collapsed into field access so that adding a second is a compile error
+    // here, where the decision about what it can supply has to be made.
     let OperatorConfig::Oidc {
         issuer,
         client_id,
         redirect_uri,
         jwks_refresh_seconds,
         ..
-    } = config
-    else {
-        return Ok((keys, None));
-    };
+    } = config;
 
     let realm = Arc::new(RealmSignIn::new(issuer, client_id, redirect_uri, FETCH_TIMEOUT)?);
 

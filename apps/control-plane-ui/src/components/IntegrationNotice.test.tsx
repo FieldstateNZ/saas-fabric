@@ -12,7 +12,14 @@ import type { Integration } from '../api/types'
 import { IntegrationNotice } from './IntegrationNotice'
 
 function integration(overrides: Partial<Integration>): Integration {
-  return { status: 'connected', connection: null, last_success_at: null, ...overrides }
+  return {
+    status: 'connected',
+    connection: null,
+    last_success_at: null,
+    managed: true,
+    application: null,
+    ...overrides,
+  }
 }
 
 describe('the integration notice', () => {

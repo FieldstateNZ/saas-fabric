@@ -2,7 +2,7 @@
 
 use fabric_control_plane::ControlPlaneConfig;
 
-use crate::config::{DesiredStateConfig, IdentityProviderConfig};
+use crate::config::{DesiredStateConfig, GitHostConfig, IdentityProviderConfig, SecretStoreConfig};
 
 /// The process's configuration, in one struct.
 ///
@@ -37,6 +37,18 @@ pub struct ControlPlaneAppConfig {
 
     /// Which identity provider reconciliation converges.
     pub identity_provider: IdentityProviderConfig,
+
+    /// Where this instance keeps its own durable state.
+    ///
+    /// Defaulted, unlike the three above, because a deployment that does not
+    /// connect its own integration never touches it — and the default is the
+    /// development one, which says so loudly at startup.
+    #[serde(default)]
+    pub secret_store: SecretStoreConfig,
+
+    /// The Git host the platform creates its application on.
+    #[serde(default)]
+    pub git_host: GitHostConfig,
 
     /// The overall budget for one control-plane request, in seconds.
     ///

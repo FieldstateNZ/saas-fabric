@@ -115,6 +115,7 @@ pub fn control_plane() -> TestControlPlane {
         Arc::new(FixedClock),
         fabric_control_plane::KeyHolder::empty(),
         None,
+        None,
     )
     .expect("the control plane must build");
 

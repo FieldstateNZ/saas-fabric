@@ -22,6 +22,11 @@ export function useIntegration(): Loadable<Integration> {
   useEffect(() => {
     let current = true
 
+    // The Git host returns the browser here with an outcome in the query
+    // string. It is read once and removed, so a reload does not re-announce a
+    // connection that happened minutes ago.
+    clearCallbackQuery()
+
     getIntegration()
       .then((integration) => {
         if (current) {
@@ -40,4 +45,15 @@ export function useIntegration(): Loadable<Integration> {
   }, [])
 
   return state
+}
+
+/** Removes the Git host's outcome from the address bar. */
+function clearCallbackQuery(): void {
+  const query = new URLSearchParams(window.location.search)
+
+  if (!query.has('git') && !query.has('git_error')) {
+    return
+  }
+
+  window.history.replaceState({}, '', window.location.pathname)
 }

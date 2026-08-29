@@ -14,6 +14,10 @@
 //! Audit records — what a human changed — are deliberately not here. See
 //! [`audit`](crate::audit).
 
+mod integration;
+
+pub(crate) use integration::*;
+
 use fabric_client_model::ClientId;
 use fabric_core::{event_id, EventType};
 use fabric_reconciliation::ReconciliationStatus;

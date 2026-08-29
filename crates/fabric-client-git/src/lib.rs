@@ -40,12 +40,16 @@
 
 mod config;
 mod credential;
+mod factory;
 mod github;
 mod logging;
+mod provisioning;
 mod repository;
 
 pub use config::{GitAuthConfig, GitRepositoryConfig};
 pub use credential::GitCredential;
+pub use factory::GitRepositoryFactory;
+pub use provisioning::GitHubAppProvisioning;
 pub use repository::GitClientRepository;
 
 /// The event-ID domain number for this crate. See `fabric_core::event_id`.

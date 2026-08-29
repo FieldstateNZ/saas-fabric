@@ -1,6 +1,6 @@
 //! The control-plane API's HTTP surface.
 
-use axum::routing::get;
+use axum::routing::{get, post, put};
 use axum::Router;
 
 use crate::handlers;
@@ -29,7 +29,14 @@ pub const API_PREFIX: &str = "/api";
 /// ```text
 /// GET /api/session                       where to sign in   (no operator)
 /// POST /api/session                      redeem a code      (no operator)
-/// GET /api/integrations/git              can the platform read desired state?
+/// GET    /api/integrations/git               can desired state be read?
+/// POST   /api/integrations/git/connect       describe the app to create
+/// GET    /api/integrations/git/created       host callback   (no operator)
+/// GET    /api/integrations/git/install       where to install it
+/// GET    /api/integrations/git/installed     host callback   (no operator)
+/// GET    /api/integrations/git/repositories  what the install reaches
+/// PUT    /api/integrations/git/repository    choose one
+/// DELETE /api/integrations/git               forget the integration
 /// GET /api/clients                       list clients
 /// GET /api/clients/{clientId}            one client's overview
 /// GET /api/clients/{clientId}/identity   its identity, and reconciliation state
@@ -53,7 +60,20 @@ pub(crate) fn control_plane_routes(state: ControlPlaneState) -> Router {
         Router::new()
     };
 
-    let integrations = Router::new().route("/integrations/git", get(handlers::get_integration));
+    let integrations = Router::new()
+        .route(
+            "/integrations/git",
+            get(handlers::get_integration).delete(handlers::disconnect),
+        )
+        .route("/integrations/git/connect", post(handlers::begin_connection))
+        .route("/integrations/git/install", get(handlers::begin_install))
+        .route("/integrations/git/repositories", get(handlers::list_repositories))
+        .route("/integrations/git/repository", put(handlers::choose_repository))
+        // The two the Git host redirects a browser to. They take no operator
+        // — a redirect carries no bearer — and are correlated by a single-use
+        // token instead.
+        .route("/integrations/git/created", get(handlers::created))
+        .route("/integrations/git/installed", get(handlers::installed));
 
     let clients = Router::new()
         .route("/clients", get(handlers::list_clients))

@@ -3,6 +3,7 @@
 mod adapters;
 mod application;
 mod health;
+mod integration;
 mod local_documents;
 mod operator_keys;
 mod serving;

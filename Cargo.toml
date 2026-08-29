@@ -13,6 +13,10 @@ arc-swap = "1"
 async-trait = "0.1"
 axum = "0.8"
 base64 = "0.22"
+# Already in the resolved graph via the TLS stack; naming it directly adds no
+# crate to the supply chain and keeps the one security-sensitive use of
+# randomness in this workspace from being hand-rolled.
+getrandom = "0.4"
 figment = { version = "0.10", features = ["env", "toml"] }
 http = "1"
 jsonwebtoken = "9"
@@ -54,6 +58,7 @@ fabric-client-git = { path = "crates/fabric-client-git" }
 fabric-client-model = { path = "crates/fabric-client-model" }
 fabric-control-plane = { path = "crates/fabric-control-plane" }
 fabric-keycloak = { path = "crates/fabric-keycloak" }
+fabric-openbao = { path = "crates/fabric-openbao" }
 fabric-reconciliation = { path = "crates/fabric-reconciliation" }
 
 [workspace.lints.rust]

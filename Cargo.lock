@@ -309,9 +309,11 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "axum",
+ "base64",
  "fabric-client-model",
  "fabric-core",
  "fabric-reconciliation",
+ "getrandom 0.4.3",
  "http",
  "jsonwebtoken",
  "serde",
@@ -332,6 +334,7 @@ dependencies = [
  "fabric-control-plane",
  "fabric-core",
  "fabric-keycloak",
+ "fabric-openbao",
  "fabric-reconciliation",
  "figment",
  "http",
@@ -397,6 +400,20 @@ dependencies = [
  "fabric-control-plane",
  "fabric-core",
  "fabric-reconciliation",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "fabric-openbao"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "fabric-control-plane",
+ "fabric-core",
  "reqwest",
  "serde",
  "serde_json",

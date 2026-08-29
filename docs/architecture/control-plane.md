@@ -246,7 +246,17 @@ issuer = "https://auth.example.test/realms/master"
 client_id = "saas-fabric-console"
 required_role = "fabric-operator"
 redirect_uri = "https://fabric.example.test/"
+
+# Only when the address the browser uses is not one this pod can resolve.
+# reachable_at = "http://keycloak-http.identity.svc.cluster.local/realms/master"
 ```
+
+**`issuer` and `reachable_at` are two different questions**, and on a cluster
+they usually have two different answers. The issuer is what appears in a token
+and where a *browser* is sent; `reachable_at` is where this process fetches the
+signing keys and redeems the code. Collapsing them fails in a way that reads as
+something else — every operator refused, and a log saying either that no key
+set arrived or that the token is not from this realm.
 
 **There is no second posture, and no development shortcut.** A trusted-header
 one used to sit beside this. It was safe only because of *where the service

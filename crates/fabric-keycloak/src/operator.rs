@@ -10,18 +10,25 @@
 //!
 //! The realm this authenticates against is the platform's own, not a client's.
 //! No tenant identity can be minted here and none is read.
+//!
+//! A realm has **two** addresses on a cluster — the issuer a browser uses and
+//! the service address this pod uses. The `endpoints` module is where that is
+//! reasoned about.
+
+mod endpoints;
+#[cfg(test)]
+mod operator_tests;
+mod signing_keys;
 
 use async_trait::async_trait;
 use fabric_control_plane::{IssuedToken, OperatorSignIn, SignInError};
 
 use crate::wire::TokenResponse;
 
-/// The endpoints a realm publishes, derived from its issuer.
+/// Signs operators in against one realm.
 ///
-/// Derived rather than configured, because a deployment that states four URLs
-/// can state four URLs that disagree — and the failure of an issuer that does
-/// not match the endpoint that issued the token is a signature error nobody
-/// can read.
+/// Holds three derived endpoints and an HTTP client. No credential: the
+/// console is a public client and PKCE replaces one.
 pub struct RealmSignIn {
     /// Where the browser authenticates.
     authorization_endpoint: String,
@@ -49,18 +56,29 @@ impl RealmSignIn {
     /// # Errors
     ///
     /// Returns a message if the HTTP client cannot be built.
+    /// Builds a sign-in against one realm.
+    ///
+    /// `issuer` is what appears in a token and where a **browser** is sent.
+    /// `reachable_at` is where **this process** reaches the same realm. Those
+    /// are two questions on a cluster, and the module that derives the
+    /// endpoints explains why.
+    ///
+    /// # Errors
+    ///
+    /// Returns a message if the HTTP client cannot be built.
     pub fn new(
         issuer: &str,
+        reachable_at: &str,
         client_id: &str,
         redirect_uri: &str,
         timeout: std::time::Duration,
     ) -> Result<Self, String> {
-        let issuer = issuer.trim().trim_end_matches('/');
+        let endpoints = endpoints::derive(issuer, reachable_at);
 
         Ok(Self {
-            authorization_endpoint: format!("{issuer}/protocol/openid-connect/auth"),
-            token_endpoint: format!("{issuer}/protocol/openid-connect/token"),
-            jwks_endpoint: format!("{issuer}/protocol/openid-connect/certs"),
+            authorization_endpoint: endpoints.authorization,
+            token_endpoint: endpoints.token,
+            jwks_endpoint: endpoints.jwks,
             client_id: client_id.to_owned(),
             redirect_uri: redirect_uri.to_owned(),
             http: reqwest::Client::builder()
@@ -68,35 +86,6 @@ impl RealmSignIn {
                 .build()
                 .map_err(|error| format!("operator sign-in: {error}"))?,
         })
-    }
-
-    /// Reads the document in which this realm publishes its signing keys.
-    ///
-    /// Returns the document as it was served. Parsing it is a JOSE concern
-    /// rather than a Keycloak one, and belongs to whoever verifies with the
-    /// keys — which keeps this crate's promise that no caller needs to know
-    /// where a realm keeps anything.
-    ///
-    /// # Errors
-    ///
-    /// Returns a message if the endpoint could not be reached or did not
-    /// answer successfully.
-    pub async fn signing_keys(&self) -> Result<String, String> {
-        let response = self
-            .http
-            .get(&self.jwks_endpoint)
-            .send()
-            .await
-            .map_err(|error| format!("the signing keys could not be fetched: {error}"))?;
-
-        if !response.status().is_success() {
-            return Err(format!("the signing key request answered {}", response.status()));
-        }
-
-        response
-            .text()
-            .await
-            .map_err(|error| format!("the signing keys could not be read: {error}"))
     }
 }
 

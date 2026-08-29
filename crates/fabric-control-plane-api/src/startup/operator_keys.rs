@@ -38,13 +38,28 @@ pub(super) fn establish(
     // here, where the decision about what it can supply has to be made.
     let OperatorConfig::Oidc {
         issuer,
+        reachable_at,
         client_id,
         redirect_uri,
         jwks_refresh_seconds,
         ..
     } = config;
 
-    let realm = Arc::new(RealmSignIn::new(issuer, client_id, redirect_uri, FETCH_TIMEOUT)?);
+    // One URL unless a deployment states two, which it does when the address
+    // the browser uses is not one this pod can resolve.
+    let reachable_at = if reachable_at.trim().is_empty() {
+        issuer
+    } else {
+        reachable_at
+    };
+
+    let realm = Arc::new(RealmSignIn::new(
+        issuer,
+        reachable_at,
+        client_id,
+        redirect_uri,
+        FETCH_TIMEOUT,
+    )?);
 
     let surface = Arc::new(SignInSurface {
         provider: Arc::clone(&realm) as Arc<dyn fabric_control_plane::OperatorSignIn>,

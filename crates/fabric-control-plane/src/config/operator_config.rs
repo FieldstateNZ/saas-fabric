@@ -31,6 +31,21 @@ pub enum OperatorConfig {
         /// once rather than stating a set of URLs that could disagree.
         issuer: String,
 
+        /// Where **this process** reaches the same realm.
+        ///
+        /// Defaults to the issuer, which is right whenever one URL serves
+        /// both. On a cluster it often does not: the issuer is a public
+        /// hostname that only resolves outside, and the pod has a service
+        /// address that only resolves inside. The signing keys and the token
+        /// endpoint are fetched from here; the browser is still sent to the
+        /// issuer.
+        ///
+        /// Getting this wrong fails in a way that reads as something else —
+        /// every operator refused, and a log saying either that no key set
+        /// arrived or that the token is not from this realm.
+        #[serde(default)]
+        reachable_at: String,
+
         /// The client the console signs in as, and which an accepted token
         /// must have been issued to.
         #[serde(default = "default_client_id")]

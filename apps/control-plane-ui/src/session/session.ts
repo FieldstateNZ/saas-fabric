@@ -12,9 +12,13 @@
  *
  * # The token lives in memory only
  *
- * Not `localStorage`, not a cookie. A reload signs in again, which costs one
- * redirect that the provider's own session makes invisible. The alternative is
- * a token that outlives the tab in a place every script on the page can read.
+ * Not `localStorage`, not a cookie. The alternative is a token that outlives
+ * the tab in a place every script on the page can read.
+ *
+ * The cost is that every page load starts signed out, and `silent.ts` is what
+ * makes that invisible: it signs in again against the session the provider
+ * already holds. That was always this file's claim — it just used to be a
+ * claim about a redirect the console never made.
  */
 import { generate, randomState } from './pkce'
 
@@ -46,9 +50,11 @@ export function forgetToken(): void {
 /**
  * Sends the browser to the identity provider.
  *
- * Does not return: the page navigates away.
+ * Does not return: the page navigates away. `silent` asks the provider to
+ * answer without prompting, which is what makes a reload cost nothing an
+ * operator has to do.
  */
-export async function beginSignIn(): Promise<void> {
+export async function beginSignIn(options: { silent?: boolean } = {}): Promise<void> {
   const response = await fetch('/api/session')
   if (!response.ok) {
     throw new Error('The control plane could not say where to sign in.')
@@ -70,6 +76,12 @@ export async function beginSignIn(): Promise<void> {
     code_challenge: challenge,
     code_challenge_method: 'S256',
   })
+
+  // `none` is the whole of the silent attempt: answer from the session you
+  // have, and return an error rather than a login page if you cannot.
+  if (options.silent === true) {
+    query.set('prompt', 'none')
+  }
 
   window.location.assign(`${config.authorization_endpoint}?${query.toString()}`)
 }
@@ -118,7 +130,18 @@ export async function completeSignIn(): Promise<boolean> {
   return true
 }
 
+/**
+ * Drops the PKCE pair this tab stored for a sign-in that will not complete.
+ *
+ * Left behind, it would be offered to the *next* callback, which is exactly
+ * the confusion the state check exists to catch.
+ */
+export function discardPending(): void {
+  sessionStorage.removeItem(STATE)
+  sessionStorage.removeItem(VERIFIER)
+}
+
 /** Removes the authorization code from the address bar. */
-function clearQuery(): void {
+export function clearQuery(): void {
   window.history.replaceState({}, '', window.location.pathname)
 }

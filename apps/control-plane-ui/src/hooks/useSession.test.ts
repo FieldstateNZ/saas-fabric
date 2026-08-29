@@ -21,7 +21,17 @@ function arriveAt(query: string): void {
 /** Captures where the console tried to send the browser. */
 function watchNavigation(): { to: () => string | null } {
   let destination: string | null = null
-  vi.stubGlobal('location', { ...window.location, assign: (url: string) => { destination = url } })
+
+  // Listed field by field rather than spread from the real `location`: that is
+  // a class instance, so a copy of it is a copy without its prototype. jsdom
+  // also makes `assign` non-configurable, which rules out spying on it.
+  vi.stubGlobal('location', {
+    search: window.location.search,
+    pathname: window.location.pathname,
+    assign: (url: string) => {
+      destination = url
+    },
+  })
 
   return { to: () => destination }
 }
@@ -51,6 +61,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals()
+  vi.restoreAllMocks()
 })
 
 describe('a signed-out page load', () => {

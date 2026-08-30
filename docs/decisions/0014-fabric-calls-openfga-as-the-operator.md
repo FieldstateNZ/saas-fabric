@@ -1,6 +1,6 @@
 # ADR 0014 — Fabric calls OpenFGA as the operator, in the control plane only
 
-- **Status:** Accepted for the control plane. The runtime's credential is deliberately **not** decided here.
+- **Status:** Accepted **for the control plane only**. The runtime's credential is **superseded by [ADR 0016](0016-fabric-owns-the-authorization-front-door.md)** — nothing below is normative for the runtime plane.
 - **Date:** 2026-08-30
 - **Applies to:** `fabric-control-plane`, the OpenFGA adapter when it is built, and the platform's Keycloak configuration
 - **Related:** [ADR 0012](0012-the-platform-acts-on-keycloak-as-the-operator.md); [ADR 0013](0013-authorization-is-declared-in-the-platforms-words.md); [ADR 0009](0009-operator-identity-is-not-tenant-identity.md)
@@ -75,12 +75,53 @@ so the runtime authenticates **as itself** and names the client's user in the
 request. Isolation between clients comes from a store per client, not from
 which realm signed the caller's token.
 
+### Superseded: everything below about the runtime
+
+> **[ADR 0016](0016-fabric-owns-the-authorization-front-door.md) supersedes this
+> section.** The runtime does not obtain a credential of its own at all: the
+> user's own token is carried to the Fabric boundary and verified there. The
+> measurements are kept because they are why that route was chosen, not because
+> any option below is still recommended. **Nothing in this section is normative.**
+
 That leaves the runtime's own credential genuinely undecided, and it is a
 different problem rather than the same one: a tenant request arrives with no
 operator present, at any hour, so there is no delegated authority to borrow.
-Whatever answers it will be standing by necessity. Recording that plainly is
-the point — it must be chosen deliberately, not arrived at by assuming the
-control plane's answer generalises.
+
+It does **not** follow that the answer is a stored secret. Two later
+measurements narrow it, and both are recorded here because they change what is
+possible rather than merely what is convenient.
+
+**The one-issuer limit is per deployment, not per datastore.** Two OpenFGA
+deployments sharing one Postgres hold the same stores, models and tuples while
+authenticating their callers completely independently — a store created through
+one is readable through the other, and the first's credential is refused at the
+second's door. So the control plane can keep presenting operator tokens against
+the platform realm while the runtime authenticates by some entirely different
+means, over the same data. The choice is not either/or.
+
+**Kubernetes is itself an OIDC issuer, and its workload tokens are secretless.**
+A projected service-account token carries `iss:
+https://kubernetes.default.svc.cluster.local`, an audience bound to whatever is
+asked for (`aud: ["openfga"]`), a durable subject
+(`system:serviceaccount:<namespace>:<name>`), and a short expiry the kubelet
+rotates. Every claim OpenFGA validates is present, and nothing is stored
+anywhere.
+
+Two obstacles were measured, one solved and one not. OpenFGA does not trust the
+cluster CA by default and panics with `x509: certificate signed by unknown
+authority`; pointing `SSL_CERT_FILE` at the service-account CA fixes it. It
+then fails with `401`, because this cluster binds
+`system:service-account-issuer-discovery` to the `system:serviceaccounts` group
+and OpenFGA fetches discovery unauthenticated. Making that path work needs a
+deliberate cluster change — binding discovery for unauthenticated callers, or
+serving the document to OpenFGA some other way. The material there is public
+key material, but the change widens an anonymous surface and belongs to
+whoever runs the cluster, not to this ADR.
+
+Recording all of this plainly was the point at the time. What it established —
+that the caller and the subject are independent, and that one deployment cannot
+span issuers — is what led to ADR 0016 choosing a different shape entirely
+rather than picking one of these options.
 
 ## Consequences
 

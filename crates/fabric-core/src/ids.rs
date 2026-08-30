@@ -12,11 +12,15 @@ mod logical_resource_name;
 pub(crate) mod slug;
 #[cfg(test)]
 mod slug_tests;
+mod subject_id;
+#[cfg(test)]
+mod subject_id_tests;
 
 pub use binding_revision::BindingRevision;
 pub use data_source_id::DataSourceId;
 pub use logical_data_source_name::LogicalDataSourceName;
 pub use logical_resource_name::LogicalResourceName;
+pub use subject_id::SubjectId;
 
 mod tenant_id;
 pub use tenant_id::TenantId;

@@ -51,5 +51,8 @@ pub(crate) fn acme() -> Client {
         // fixture states it is absent rather than pretending it is a concern
         // here.
         authorization: AuthorizationConfiguration::default(),
+        // This crate reconciles identity. A client's secret boundary is
+        // resolved by the control plane and converged by nobody yet.
+        secrets: None,
     }
 }

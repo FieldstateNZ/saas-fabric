@@ -48,6 +48,7 @@
 //!   clients. It never exposes a file path, a line number, or YAML.
 
 mod audit;
+mod client_secrets;
 mod config;
 mod converge;
 mod errors;
@@ -71,6 +72,7 @@ mod sign_in;
 mod state;
 pub mod testing;
 
+pub use client_secrets::{ClientSecrets, SecretMetadata, SecretPath, SecretValues, SecretsError};
 pub use config::{ControlPlaneConfig, OperatorConfig, ReconciliationConfig};
 pub use errors::ControlPlaneError;
 pub use git_integration::{

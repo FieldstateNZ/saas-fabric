@@ -1,6 +1,6 @@
 //! What a SaaS Fabric client is.
 
-use crate::{AuthorizationConfiguration, ClientId, Host, IdentityConfiguration};
+use crate::{AuthorizationConfiguration, ClientId, Host, IdentityConfiguration, SecretsConfiguration};
 
 /// A client's desired state, as far as this increment models it.
 ///
@@ -46,4 +46,12 @@ pub struct Client {
     /// reads as "not managed here" rather than "nobody may do anything" — see
     /// [`AuthorizationConfiguration`]. Reconciled by nothing yet (ADR 0013).
     pub authorization: AuthorizationConfiguration,
+
+    /// Where this client's secrets live.
+    ///
+    /// Absent for a client whose secret boundary has not been provisioned. The
+    /// control plane refuses secret operations for such a client rather than
+    /// guessing a boundary, because a guessed boundary is another client's
+    /// boundary sooner or later.
+    pub secrets: Option<SecretsConfiguration>,
 }

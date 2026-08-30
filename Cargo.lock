@@ -384,6 +384,7 @@ dependencies = [
  "base64",
  "fabric-core",
  "jsonwebtoken",
+ "reqwest",
  "serde",
  "serde_json",
  "thiserror",

@@ -28,8 +28,20 @@ fabric-data-api        → fabric-core
                        → fabric-tenant-runtime
                        → fabric-connector
 
+fabric-fga-auth        → fabric-core
+
 fabric-api             → all of the above (composition root)
 ```
+
+**`fabric-fga-auth` depends on `fabric-core` and nothing else in the platform.**
+It answers one question — given a token, who is this and which store answers
+for them — and it is deliberately reachable from nothing above it yet. It has
+no edge to `fabric-identity` even though both read bearer tokens: that one
+derives a *tenant* for the Data API from a token the ingress already
+established, while this one is the trust boundary itself, verifying signatures
+against a registry of issuers. Sharing code between them would mean the thing
+that establishes trust and the thing that consumes it could not be reasoned
+about separately (ADR 0016).
 
 ## The control plane
 

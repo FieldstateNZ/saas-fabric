@@ -64,6 +64,7 @@ RUNTIME_PLANE = frozenset(
         "fabric-connector-ndc",
         "fabric-data-api",
         "fabric-api",
+        "fabric-fga-auth",
     }
 )
 
@@ -506,6 +507,14 @@ def check_dependency_direction(graph: Graph) -> list[Failure]:
         "fabric-openbao": {
             "fabric-core",
             "fabric-control-plane",
+        },
+        # The trust boundary itself: it verifies a tenant user's token against a
+        # registry of issuers and produces the identity a decision is made
+        # about. No edge to `fabric-identity` on purpose -- that derives a
+        # tenant from a token the ingress already established, this establishes
+        # trust in the first place (ADR 0016).
+        "fabric-fga-auth": {
+            "fabric-core",
         },
         "fabric-control-plane-api": {
             "fabric-core",

@@ -1,6 +1,6 @@
 # ADR 0014 — Fabric calls OpenFGA as the operator, in the control plane only
 
-- **Status:** Accepted for the control plane. The runtime's credential is deliberately **not** decided here.
+- **Status:** Accepted **for the control plane only**. The runtime's credential is **superseded by [ADR 0016](0016-fabric-owns-the-authorization-front-door.md)** — nothing below is normative for the runtime plane.
 - **Date:** 2026-08-30
 - **Applies to:** `fabric-control-plane`, the OpenFGA adapter when it is built, and the platform's Keycloak configuration
 - **Related:** [ADR 0012](0012-the-platform-acts-on-keycloak-as-the-operator.md); [ADR 0013](0013-authorization-is-declared-in-the-platforms-words.md); [ADR 0009](0009-operator-identity-is-not-tenant-identity.md)
@@ -75,6 +75,14 @@ so the runtime authenticates **as itself** and names the client's user in the
 request. Isolation between clients comes from a store per client, not from
 which realm signed the caller's token.
 
+### Superseded: everything below about the runtime
+
+> **[ADR 0016](0016-fabric-owns-the-authorization-front-door.md) supersedes this
+> section.** The runtime does not obtain a credential of its own at all: the
+> user's own token is carried to the Fabric boundary and verified there. The
+> measurements are kept because they are why that route was chosen, not because
+> any option below is still recommended. **Nothing in this section is normative.**
+
 That leaves the runtime's own credential genuinely undecided, and it is a
 different problem rather than the same one: a tenant request arrives with no
 operator present, at any hour, so there is no delegated authority to borrow.
@@ -110,9 +118,10 @@ serving the document to OpenFGA some other way. The material there is public
 key material, but the change widens an anonymous surface and belongs to
 whoever runs the cluster, not to this ADR.
 
-Recording all of this plainly is the point: the runtime's credential must be
-chosen deliberately, and "standing secret" is now demonstrably not the only
-option on the table.
+Recording all of this plainly was the point at the time. What it established —
+that the caller and the subject are independent, and that one deployment cannot
+span issuers — is what led to ADR 0016 choosing a different shape entirely
+rather than picking one of these options.
 
 ## Consequences
 

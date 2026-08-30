@@ -51,6 +51,31 @@ It is also simply true: a provider's subject is unique within its realm and
 nowhere else. Reading one outside that namespace is a category error even when
 the string happens to be unique in practice.
 
+### Where the realm must come from
+
+The realm is **not** parsed out of the token's issuer URL, taken from a claim,
+or accepted from a request. It is the canonical tenant identity that the
+trusted issuer registry returns when looked up by the *verified* `iss`:
+
+```text
+verified JWT → iss → trusted issuer registry → canonical realm
+                                              +
+                                        verified sub
+                                              ↓
+                                          SubjectId
+```
+
+This is the invariant the whole qualification depends on. A subject qualified
+by a realm the caller influenced is worse than an unqualified one: it looks
+like a tenant boundary and is not. Deriving the realm from the issuer *string*
+would have the same defect — an issuer URL is a claim until it has been matched
+against the registry and its signature checked.
+
+The constructor is named `from_verified` rather than the crate's usual
+`try_new` to put that precondition at every call site. The type cannot enforce
+it while the registry is a `&str`; when the registry lands, the signature takes
+the identity the registry issues and the comment becomes a type.
+
 ### Why `/` and not something else
 
 Measured, not chosen by taste. OpenFGA accepts `/`, `|` and `.` in an

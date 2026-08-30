@@ -53,16 +53,36 @@ pub struct SubjectId {
 }
 
 impl SubjectId {
-    /// Names a subject within a realm.
+    /// Names a subject, from a **verified** token and a **trusted** realm.
     ///
-    /// The realm takes the same DNS-label rule a realm name takes everywhere
-    /// else in the platform, so one spelling is valid in one place only.
+    /// Named `from_verified` rather than `try_new` — which is the convention
+    /// every other identifier in this crate follows — because the convention
+    /// hides the precondition that matters, and this is the one type where
+    /// getting the precondition wrong is a security failure rather than a
+    /// malformed string.
+    ///
+    /// # Provenance, which the type cannot check
+    ///
+    /// - `realm` comes from the **trusted issuer registry**, looked up by the
+    ///   verified `iss`. It is never parsed out of an issuer URL, never taken
+    ///   from a claim, and never accepted from a request. An attacker who can
+    ///   choose the realm can name a subject in somebody else's tenant, which
+    ///   is precisely the qualification this type exists to make meaningful.
+    /// - `subject` is the `sub` of a token **whose signature has already been
+    ///   verified** against that issuer's keys.
+    ///
+    /// A caller holding an unverified token has nothing this constructor
+    /// should be given.
+    ///
+    /// The registry does not exist yet. When it does, this signature tightens
+    /// to take the tenant identity the registry issues rather than a `&str`,
+    /// so the precondition stops being a comment.
     ///
     /// # Errors
     ///
     /// Returns [`IdentifierError`] describing the first rule broken — by the
     /// realm or by the subject.
-    pub fn try_new(realm: &str, subject: &str) -> Result<Self, IdentifierError> {
+    pub fn from_verified(realm: &str, subject: &str) -> Result<Self, IdentifierError> {
         let realm = slug::parse_dns_label("realm", realm)?;
 
         if subject.is_empty() {

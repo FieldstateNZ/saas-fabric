@@ -211,6 +211,13 @@ component's own tests must hold:
 - the caller cannot override the tenant or store
 - OpenFGA listens on `127.0.0.1` only (`--http-addr`, `--grpc-addr`)
 - OpenFGA therefore runs `--authn-method=none` and is never network-reachable
+- **all** access to the embedded OpenFGA — runtime authorization and
+  control-plane administration alike — traverses an explicitly supported
+  Fabric operation; OpenFGA is never independently addressable outside the
+  container boundary
+- runtime and control-plane operations are **distinct surfaces** with
+  independent authentication and authorization contracts, and neither offers
+  generic passthrough to the OpenFGA API
 - the user's own JWT remains the credential at the Fabric boundary
 - **no workload identity exists anywhere in the authorization path**
 
@@ -232,9 +239,51 @@ Check, a top-level `user` for ListObjects, and one per tuple for Write. A
 generic pass-through cannot bind identity correctly for all three, and the one
 it gets wrong is the one that matters.
 
-**Store administration stays on the control-plane path.** Creating stores and
-writing authorization models is ADR 0014's flow, where an operator is present.
-This front is the tenant data path.
+**Administration goes through Fabric too, on a second surface.** An earlier
+draft said store administration stayed on ADR 0014's path while OpenFGA bound
+loopback — which cannot both be true, because a control plane in another pod
+cannot reach a loopback listener. The answer is not an administrative listener
+on OpenFGA: that would trade away the invariant this design just established.
+OpenFGA keeps exactly **one** door, and the front exposes **two surfaces**
+behind it.
+
+```text
+                    fabric-openfga image
+┌──────────────────────────────────────────────────┐
+│                                                  │
+│  Runtime surface           Control-plane surface │
+│  :8080                     :8081                 │
+│  client-realm user JWT     operator identity     │
+│  Check, ListObjects, …     stores, models, …     │
+│         └──────── explicit operations ────────┐  │
+│                                               ▼  │
+│                                         OpenFGA  │
+│                                     127.0.0.1    │
+│                                     authn=none   │
+└──────────────────────────────────────────────────┘
+```
+
+Separate **listeners**, not `/runtime/*` and `/admin/*` on one port, so
+Kubernetes can enforce the distinction as well: the runtime Service publishes
+`:8080`, while `:8081` is internal and can be restricted by NetworkPolicy to
+the controller that needs it. That is defence in depth and nothing more —
+**network isolation is not the authorization mechanism**, and both surfaces
+authenticate unconditionally.
+
+The two contracts are deliberately different:
+
+| | runtime surface | control-plane surface |
+|---|---|---|
+| authenticates | a client-realm user's own JWT, via the issuer registry | the operator model of ADR 0014 |
+| tenant and store | from the verified issuer's registration | named by the administrative operation |
+| the subject | **is** the authenticated principal | defined per operation, and need not be the caller |
+| operations | `Check`, `ListObjects`, … | create store, write model, bootstrap relationships |
+
+The runtime surface never substitutes a workload or service identity for the
+user's. The control-plane surface is not constrained by "request subject =
+authenticated principal", because an operator administering access is
+legitimately acting about somebody else — which is the distinction the
+Alice-grants-Bob case above exists to make.
 
 **It is a Fabric primitive, not an authorization system.** Parse `iss`
 untrusted, look it up in a trusted registry, verify with that issuer's keys,

@@ -46,6 +46,14 @@ SCAN_ROOT = REPO_ROOT / "crates"
 # splitting would fragment one concept across files for no readability gain.
 # Do NOT add an entry just because a file is inconvenient to shrink.
 EXEMPTIONS: dict[str, str] = {
+    "crates/fabric-fga-auth/src/cache.rs":
+        "one security-critical decision -- which key may verify a token, and "
+        "when trust must be refreshed -- whose branches only make sense read "
+        "together. It was split once to satisfy the arithmetic, and the "
+        "result was a per-issuer lock map in a file of its own, away from the "
+        "rule it exists to protect. The two windows it turns on are genuinely "
+        "separate policy and did move out, to windows.rs; what remains is one "
+        "thing.",
     # "crates/fabric-connector-ndc/src/wire/query_request.rs":
     #     "one cohesive NDC wire-format type plus its (de)serialisation impls; "
     #     "splitting fragments a single wire shape across files",
@@ -132,7 +140,11 @@ def main() -> int:
             print(f"  {count:5d}  {rel}")
         return 1
 
-    print(f"\nOK: no production files exceed {FAIL_THRESHOLD} lines.")
+    # Says what is actually true. "No file exceeds the limit" would be a lie
+    # the moment anything is exempted, and a success line nobody trusts is a
+    # success line nobody reads.
+    noted = f" ({len(EXEMPTIONS)} exempted, with reasons)" if EXEMPTIONS else ""
+    print(f"\nOK: no unexplained production file exceeds {FAIL_THRESHOLD} lines{noted}.")
     return 0
 
 

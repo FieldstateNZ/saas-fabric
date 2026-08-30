@@ -12,52 +12,28 @@
 
 use fabric_identity::TenantIdentity;
 
-/// The kind of operation being attempted.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum OperationKind {
-    /// Fetch one row by key.
-    Read,
-    /// Fetch many rows.
-    List,
-    /// Insert rows.
-    Create,
-    /// Modify rows.
-    Update,
-    /// Remove rows.
-    Delete,
-}
+/// The operation vocabulary, which now lives in the crate both planes share.
+///
+/// Re-exported rather than redefined: a client's desired state declares which
+/// relations permit which operations, so the control plane names these too,
+/// and two definitions of "read" would drift without ever failing a build.
+pub use fabric_core::OperationKind;
 
-impl OperationKind {
-    /// A stable name for telemetry (§29).
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Read => "read",
-            Self::List => "list",
-            Self::Create => "create",
-            Self::Update => "update",
-            Self::Delete => "delete",
-        }
-    }
+/// The scope conventionally required for an operation on a resource.
+///
+/// `data:customers:read`, `data:customers:write`. Reads and writes share two
+/// scopes rather than five so that tokens stay small and policies stay
+/// legible; finer control belongs in the catalogue's `operations` list.
+///
+/// A free function rather than a method, because [`OperationKind`] belongs to
+/// `fabric-core` now and this convention does not: a scope name is this API's
+/// way of asking a token a question, and the shared vocabulary should not
+/// carry it.
+#[must_use]
+pub fn required_scope(operation: OperationKind, resource: &str) -> String {
+    let action = if operation.is_write() { "write" } else { "read" };
 
-    /// Whether the operation modifies data.
-    #[must_use]
-    pub const fn is_write(self) -> bool {
-        matches!(self, Self::Create | Self::Update | Self::Delete)
-    }
-
-    /// The scope conventionally required for this operation on a resource.
-    ///
-    /// `data:customers:read`, `data:customers:write`. Reads and writes share
-    /// two scopes rather than five so that tokens stay small and policies stay
-    /// legible; finer control belongs in the catalogue's `operations` list.
-    #[must_use]
-    pub fn required_scope(self, resource: &str) -> String {
-        let action = if self.is_write() { "write" } else { "read" };
-
-        format!("data:{resource}:{action}")
-    }
+    format!("data:{resource}:{action}")
 }
 
 /// How a deployment decides who may do what.
@@ -104,7 +80,7 @@ impl ResourcePermissions {
             return true;
         }
 
-        identity.has_scope(&operation.required_scope(resource))
+        identity.has_scope(&required_scope(operation, resource))
     }
 }
 
@@ -212,11 +188,11 @@ mod tests {
     #[test]
     fn write_operations_share_a_scope() {
         assert_eq!(
-            OperationKind::Create.required_scope("customers"),
+            required_scope(OperationKind::Create, "customers"),
             "data:customers:write"
         );
         assert_eq!(
-            OperationKind::Update.required_scope("customers"),
+            required_scope(OperationKind::Update, "customers"),
             "data:customers:write"
         );
     }

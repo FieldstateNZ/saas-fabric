@@ -15,6 +15,7 @@ mod client_revision;
 mod host;
 mod oidc_client_id;
 mod realm_name;
+mod relation_name;
 mod role_name;
 #[cfg(test)]
 mod role_name_tests;
@@ -24,4 +25,5 @@ pub use client_revision::ClientRevision;
 pub use host::Host;
 pub use oidc_client_id::OidcClientId;
 pub use realm_name::RealmName;
+pub use relation_name::RelationName;
 pub use role_name::RoleName;

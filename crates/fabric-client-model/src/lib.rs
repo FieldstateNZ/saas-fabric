@@ -45,14 +45,16 @@
 //! through a struct that would silently drop every section it has no field
 //! for. Editing a client's roles must not delete its feature flags.
 
+mod authorization;
 mod client;
 mod document;
 mod errors;
 mod identity;
 mod ids;
 
+pub use authorization::{AuthorizationConfiguration, Relation, ResourceAuthorization};
 pub use client::Client;
 pub use document::{ClientDocument, API_VERSION, KIND};
 pub use errors::DesiredStateError;
 pub use identity::{required_roles, ClientProtocol, IdentityConfiguration, OidcClient, RedirectUri};
-pub use ids::{ClientId, ClientRevision, Host, OidcClientId, RealmName, RoleName};
+pub use ids::{ClientId, ClientRevision, Host, OidcClientId, RealmName, RelationName, RoleName};

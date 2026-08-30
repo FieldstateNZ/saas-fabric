@@ -27,12 +27,14 @@ pub(super) fn parse(text: &str) -> Result<ClientDocument, DesiredStateError> {
 
     let display_name = check_display_name(shape.spec.display_name)?;
     shape.spec.identity.validate()?;
+    shape.spec.authorization.validate()?;
 
     let client = Client {
         id: shape.metadata.name,
         display_name,
         hosts: shape.spec.hosts,
         identity: shape.spec.identity,
+        authorization: shape.spec.authorization,
     };
 
     Ok(ClientDocument::from_parts(raw, client))

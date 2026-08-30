@@ -6,8 +6,8 @@
 //! against a client nobody else uses.
 
 use fabric_client_model::{
-    Client, ClientId, ClientProtocol, ClientRevision, IdentityConfiguration, OidcClient, OidcClientId,
-    RealmName, RedirectUri, RoleName,
+    AuthorizationConfiguration, Client, ClientId, ClientProtocol, ClientRevision, IdentityConfiguration,
+    OidcClient, OidcClientId, RealmName, RedirectUri, RoleName,
 };
 
 /// The role names every fixture client declares.
@@ -46,5 +46,10 @@ pub(crate) fn acme() -> Client {
             roles: ROLES.into_iter().map(role).collect(),
             clients: vec![web_client()],
         },
+        // This crate reconciles identity. Authorization is declared in the
+        // same document and converged by nothing yet (ADR 0013), so the
+        // fixture states it is absent rather than pretending it is a concern
+        // here.
+        authorization: AuthorizationConfiguration::default(),
     }
 }

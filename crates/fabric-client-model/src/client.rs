@@ -1,6 +1,6 @@
 //! What a SaaS Fabric client is.
 
-use crate::{ClientId, Host, IdentityConfiguration};
+use crate::{AuthorizationConfiguration, ClientId, Host, IdentityConfiguration};
 
 /// A client's desired state, as far as this increment models it.
 ///
@@ -39,4 +39,11 @@ pub struct Client {
 
     /// The client's identity configuration.
     pub identity: IdentityConfiguration,
+
+    /// The client's authorization configuration.
+    ///
+    /// Empty for every document written before this section existed, and that
+    /// reads as "not managed here" rather than "nobody may do anything" — see
+    /// [`AuthorizationConfiguration`]. Reconciled by nothing yet (ADR 0013).
+    pub authorization: AuthorizationConfiguration,
 }

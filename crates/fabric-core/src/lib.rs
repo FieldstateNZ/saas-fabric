@@ -38,6 +38,7 @@ mod clock;
 mod identifier_error;
 mod ids;
 mod logging;
+mod operation;
 
 /// The character-set rules behind the identifier newtypes.
 ///
@@ -53,3 +54,4 @@ pub use clock::{Clock, SystemClock};
 pub use identifier_error::IdentifierError;
 pub use ids::{BindingRevision, DataSourceId, LogicalDataSourceName, LogicalResourceName, TenantId};
 pub use logging::{event_id, EventType};
+pub use operation::OperationKind;

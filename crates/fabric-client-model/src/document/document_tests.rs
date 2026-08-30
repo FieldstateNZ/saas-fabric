@@ -257,3 +257,59 @@ fn an_edited_document_reads_back_as_what_was_written() {
 
     assert_eq!(reread.client().identity, identity);
 }
+
+/// A document that declares authorization, so the new section can be read
+/// end to end rather than only unit-tested on its own type.
+const WITH_AUTHORIZATION: &str = r"
+apiVersion: fabric.fieldstate.nz/v1
+kind: Client
+metadata:
+  name: acme
+spec:
+  displayName: Acme
+  identity:
+    realm: acme
+    roles:
+      - Client Realm Administrator
+      - Client Realm User
+    clients: []
+  authorization:
+    resources:
+      - resource: customers
+        relations:
+          - name: viewer
+            permits: [read, list]
+          - name: owner
+            permits: [read, list, create, update, delete]
+";
+
+#[test]
+fn reads_a_declared_authorization_section() {
+    let client = ClientDocument::parse(WITH_AUTHORIZATION).unwrap().into_client();
+
+    let customers = &client.authorization.resources[0];
+    assert_eq!(customers.resource.as_str(), "customers");
+    assert_eq!(customers.relations.len(), 2);
+    assert!(customers.relations[0].permits(fabric_core::OperationKind::List));
+    assert!(!customers.relations[0].permits(fabric_core::OperationKind::Delete));
+    assert!(customers.relations[1].permits(fabric_core::OperationKind::Delete));
+}
+
+#[test]
+fn a_document_with_no_authorization_section_still_reads() {
+    // Every document written before the section existed. Absent must mean
+    // "not managed here", not "unreadable".
+    let client = acme().into_client();
+
+    assert!(client.authorization.is_empty());
+}
+
+#[test]
+fn refuses_a_document_whose_authorization_is_invalid() {
+    let broken = WITH_AUTHORIZATION.replace("permits: [read, list]", "permits: []");
+
+    assert!(matches!(
+        ClientDocument::parse(&broken),
+        Err(DesiredStateError::InvalidField { .. })
+    ));
+}

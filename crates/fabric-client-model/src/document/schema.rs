@@ -69,6 +69,14 @@ pub(super) struct SpecShape {
 
     /// The client's identity configuration.
     pub(super) identity: crate::IdentityConfiguration,
+
+    /// The client's authorization configuration.
+    ///
+    /// Defaulted, because every document already in a repository predates it.
+    /// A required field here would make this model unable to read the very
+    /// documents it wrote last week.
+    #[serde(default)]
+    pub(super) authorization: crate::AuthorizationConfiguration,
 }
 
 #[cfg(test)]

@@ -72,9 +72,13 @@ mod sign_in;
 mod state;
 pub mod testing;
 
+// Re-exported so an adapter implementing `ClientSecrets` needs this crate and
+// not also the model crate. The type is the model's, and its meaning is the
+// model's; this is the port's vocabulary made reachable from one place.
 pub use client_secrets::{ClientSecrets, SecretMetadata, SecretPath, SecretValues, SecretsError};
 pub use config::{ControlPlaneConfig, OperatorConfig, ReconciliationConfig};
 pub use errors::ControlPlaneError;
+pub use fabric_client_model::SecretNamespace;
 pub use git_integration::{
     AccessibleRepository, AppCreationRequest, CreatedApp, DesiredStateFactory, GitAppProvisioning,
     GitIntegration, GitIntegrationService, InMemoryIntegrationStore, InMemorySecretStore, Installation,

@@ -21,12 +21,14 @@
 
 mod auth;
 mod client;
+mod client_secrets;
 mod config;
 mod integration_store;
 mod kv;
 mod secret_store;
 
 pub use client::OpenBao;
+pub use client_secrets::OpenBaoClientSecrets;
 pub use config::OpenBaoConfig;
 pub use integration_store::OpenBaoIntegrationStore;
 pub use secret_store::OpenBaoSecretStore;

@@ -8,6 +8,8 @@ use fabric_core::Clock;
 use crate::auth::TokenCache;
 use crate::OpenBaoConfig;
 
+mod requests;
+
 /// A client for one instance's partition of one store.
 pub struct OpenBao {
     /// The API address, without a trailing slash.
@@ -76,46 +78,13 @@ impl OpenBao {
         )
     }
 
-    /// Sends a request, logging in again once if the token was refused.
-    ///
-    /// The retry is not politeness. A store token can be revoked before its
-    /// lease expires, and the platform learns that as a `403` on an ordinary
-    /// call — the same shape of failure the Keycloak adapter handles the same
-    /// way, and for the same reason.
-    pub(crate) async fn send(
-        &self,
-        method: reqwest::Method,
-        url: &str,
-        body: Option<serde_json::Value>,
-    ) -> Result<reqwest::Response, String> {
-        let first = self.attempt(method.clone(), url, body.clone()).await?;
-
-        if first.status() != reqwest::StatusCode::FORBIDDEN {
-            return Ok(first);
-        }
-
-        self.tokens.invalidate().await;
-        self.attempt(method, url, body).await
+    /// The API address, for building a client namespace's URLs.
+    pub(crate) fn address(&self) -> &str {
+        &self.address
     }
 
-    /// One attempt, carrying whatever token is current.
-    async fn attempt(
-        &self,
-        method: reqwest::Method,
-        url: &str,
-        body: Option<serde_json::Value>,
-    ) -> Result<reqwest::Response, String> {
-        let token = self.tokens.token(&self.http).await?;
-
-        let mut request = self.http.request(method, url).header("X-Vault-Token", token);
-
-        if let Some(body) = body {
-            request = request.json(&body);
-        }
-
-        request
-            .send()
-            .await
-            .map_err(|_| "the secret store could not be reached".to_owned())
+    /// The key-value mount, which is the same name inside a client namespace.
+    pub(crate) fn mount(&self) -> &str {
+        &self.mount
     }
 }

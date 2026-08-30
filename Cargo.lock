@@ -381,6 +381,7 @@ name = "fabric-fga-auth"
 version = "0.2.2"
 dependencies = [
  "async-trait",
+ "axum",
  "base64",
  "fabric-core",
  "jsonwebtoken",
@@ -389,6 +390,7 @@ dependencies = [
  "serde_json",
  "thiserror",
  "tokio",
+ "tower",
 ]
 
 [[package]]

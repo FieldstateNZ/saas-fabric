@@ -64,6 +64,10 @@ impl Decisions for Recording {
 
         self.answer
     }
+
+    async fn reachable(&self) -> bool {
+        true
+    }
 }
 
 /// An identity as the verifier would have produced it.

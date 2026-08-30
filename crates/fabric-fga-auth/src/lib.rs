@@ -40,6 +40,7 @@
 mod cache;
 mod check;
 mod errors;
+mod http_keys;
 mod identity;
 mod keys;
 mod object;
@@ -47,10 +48,12 @@ mod openfga;
 mod registry;
 mod runtime;
 mod verifier;
+mod windows;
 
 pub use cache::KeyCache;
 pub use check::{Check, CheckRequest, DecisionError, DecisionFailure, Decisions};
 pub use errors::{ConfigurationError, RefusalReason, UnavailableReason, VerificationError};
+pub use http_keys::HttpKeySource;
 pub use identity::VerifiedIdentity;
 pub use keys::{KeySet, KeySource};
 pub use object::ObjectRef;
@@ -58,3 +61,4 @@ pub use openfga::OpenFgaDecisions;
 pub use registry::{IssuerRegistration, Registry};
 pub use runtime::RuntimeSurface;
 pub use verifier::Verifier;
+pub use windows::{REFRESH_MIN_INTERVAL_SECONDS, UNKNOWN_KID_FRESHNESS_SECONDS};

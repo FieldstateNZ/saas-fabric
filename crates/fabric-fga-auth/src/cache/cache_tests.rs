@@ -1,10 +1,18 @@
-//! The rotation rules, driven deterministically.
+//! The rule these tests exist to hold, whatever the timing knobs become:
 //!
-//! A refresh that fails is an availability problem. Every test here exists to
-//! pin the line between that and a refused credential, because the tempting
-//! simplification — treat a fetch failure as "no key, so 401" — is exactly the
-//! bug: it tells a legitimate user their credentials are wrong while the
-//! identity provider is down.
+//! > An unknown `kid` is refused **only** when a sufficiently fresh,
+//! > successfully fetched snapshot positively establishes that the key is
+//! > absent. If the verifier cannot obtain trust material fresh enough to make
+//! > that claim, the answer is that it does not know.
+//!
+//! Two windows serve two different jobs and are deliberately not one number.
+//! The tests below move the clock by the constants rather than by literals, so
+//! that changing either window cannot quietly turn a security property into a
+//! passing assertion about arithmetic.
+//!
+//! The corollary worth stating: a **failed** attempt is silent. It bounds the
+//! next call and says nothing about what the issuer publishes, so it can never
+//! age into evidence that a key is absent.
 
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -13,6 +21,8 @@ use std::time::Instant;
 use async_trait::async_trait;
 use fabric_core::Clock;
 use jsonwebtoken::{Algorithm, DecodingKey};
+
+use crate::{REFRESH_MIN_INTERVAL_SECONDS, UNKNOWN_KID_FRESHNESS_SECONDS};
 
 use crate::{
     IssuerRegistration, KeyCache, KeySet, KeySource, RefusalReason, UnavailableReason, VerificationError,
@@ -23,6 +33,13 @@ const MAX_KEY_AGE: u64 = 43_200;
 
 /// A clock the test moves by hand.
 struct MovableClock(AtomicU64);
+
+impl MovableClock {
+    /// Moves time forward by `seconds`.
+    fn advance(&self, seconds: u64) {
+        self.0.fetch_add(seconds, Ordering::SeqCst);
+    }
+}
 
 impl Clock for MovableClock {
     fn now(&self) -> Instant {
@@ -109,7 +126,7 @@ fn cache_over(source: &Arc<Scripted>, clock: &Arc<MovableClock>) -> KeyCache {
 }
 
 #[tokio::test]
-async fn a_cached_key_keeps_working_while_the_provider_is_down() {
+async fn a_usable_cached_key_keeps_working_while_the_provider_is_down() {
     let source = Scripted::publishing(&["kid-1"]);
     let clock = Arc::new(MovableClock(AtomicU64::new(1_000)));
     let cache = cache_over(&source, &clock);
@@ -117,52 +134,148 @@ async fn a_cached_key_keeps_working_while_the_provider_is_down() {
     ask(&cache, "kid-1").await.expect("first ask populates the cache");
     source.goes_down();
 
-    // The whole point of caching: a provider blip must not become an outage.
+    // The point of caching: a provider blip must not become an outage.
     ask(&cache, "kid-1").await.expect("a cached key still serves");
-    assert_eq!(source.calls(), 1, "no second fetch was needed");
+    assert_eq!(source.calls(), 1, "no second call was needed");
 }
 
 #[tokio::test]
-async fn an_unfamiliar_key_provokes_one_refresh_and_then_serves() {
+async fn refusing_a_key_requires_fresh_positive_evidence_that_it_is_absent() {
     let source = Scripted::publishing(&["kid-1"]);
     let clock = Arc::new(MovableClock(AtomicU64::new(1_000)));
     let cache = cache_over(&source, &clock);
 
-    ask(&cache, "kid-1").await.expect("populates");
-    source.now_publishes(&["kid-1", "kid-2"]);
-    clock.0.store(1_100, Ordering::SeqCst);
-
-    ask(&cache, "kid-2").await.expect("the rotated key is picked up");
-    assert_eq!(source.calls(), 2, "exactly one refresh");
+    // A successful snapshot exists and does not publish the id. That is
+    // evidence, and refusing is a statement of it.
+    assert_eq!(
+        ask(&cache, "kid-absent").await.expect_err("must refuse"),
+        VerificationError::Refused(RefusalReason::UnknownKey)
+    );
 }
 
 #[tokio::test]
-async fn a_key_the_issuer_genuinely_does_not_publish_is_refused() {
+async fn evidence_expires_and_the_answer_follows_it_rather_than_the_token() {
     let source = Scripted::publishing(&["kid-1"]);
     let clock = Arc::new(MovableClock(AtomicU64::new(1_000)));
     let cache = cache_over(&source, &clock);
 
-    let error = ask(&cache, "kid-absent").await.expect_err("must refuse");
+    ask(&cache, "kid-1").await.expect("populates a snapshot");
 
-    // A key set known to be current does not publish it. That is the caller's
-    // problem, and the only branch here that is a 401.
-    assert_eq!(error, VerificationError::Refused(RefusalReason::UnknownKey));
+    // While the snapshot proves absence, the same id is refused.
+    assert!(matches!(
+        ask(&cache, "kid-absent").await,
+        Err(VerificationError::Refused(_))
+    ));
+
+    // Once it no longer proves absence, and the issuer cannot be reached to
+    // renew that claim, the honest answer becomes "I do not know". Same id,
+    // same token, different evidence.
+    source.goes_down();
+    clock.advance(UNKNOWN_KID_FRESHNESS_SECONDS + 1);
+
+    assert!(matches!(
+        ask(&cache, "kid-absent").await,
+        Err(VerificationError::Unavailable(_))
+    ));
 }
 
 #[tokio::test]
-async fn an_unreachable_provider_is_never_reported_as_a_bad_credential() {
+async fn a_failed_attempt_never_becomes_evidence_about_a_key() {
+    let source = Scripted::publishing(&["kid-1"]);
+    let clock = Arc::new(MovableClock(AtomicU64::new(1_000)));
+    let cache = cache_over(&source, &clock);
+
+    ask(&cache, "kid-1").await.expect("populates a snapshot");
+    source.goes_down();
+
+    // Age the snapshot past proving absence, then fail a refresh.
+    clock.advance(UNKNOWN_KID_FRESHNESS_SECONDS + 1);
+    assert!(matches!(
+        ask(&cache, "kid-absent").await,
+        Err(VerificationError::Unavailable(_))
+    ));
+
+    // The failure must not have refreshed anything. Asking again inside the
+    // cooldown still cannot refuse: a call we did not make, and a call that
+    // failed, are both silent about what the issuer publishes.
+    assert!(
+        matches!(
+            ask(&cache, "kid-absent").await,
+            Err(VerificationError::Unavailable(_))
+        ),
+        "a failed attempt must not age into negative evidence"
+    );
+}
+
+#[tokio::test]
+async fn a_fresh_snapshot_absorbs_a_flood_without_calling_the_issuer_again() {
+    let source = Scripted::publishing(&["kid-1"]);
+    let clock = Arc::new(MovableClock(AtomicU64::new(1_000)));
+    let cache = cache_over(&source, &clock);
+
+    for attempt in 0..500 {
+        let error = ask(&cache, &format!("made-up-{attempt}"))
+            .await
+            .expect_err("an invented id is not published");
+
+        assert_eq!(
+            error,
+            VerificationError::Refused(RefusalReason::UnknownKey),
+            "each is answered from the same fresh snapshot"
+        );
+    }
+
+    assert_eq!(
+        source.calls(),
+        1,
+        "the first miss fetches; the rest are answered from that generation"
+    );
+}
+
+#[tokio::test]
+async fn an_outage_bounds_calls_too_rather_than_retrying_every_request() {
     let source = Scripted::publishing(&["kid-1"]);
     source.goes_down();
     let clock = Arc::new(MovableClock(AtomicU64::new(1_000)));
     let cache = cache_over(&source, &clock);
 
-    let error = ask(&cache, "kid-1").await.expect_err("cannot establish trust");
+    // No snapshot at all and the issuer unreachable. Every one of these must
+    // answer unavailable, and they must not each call a provider that is
+    // already unwell.
+    for attempt in 0..500 {
+        assert!(
+            matches!(
+                ask(&cache, &format!("made-up-{attempt}")).await,
+                Err(VerificationError::Unavailable(_))
+            ),
+            "nothing is known, so nothing may be refused"
+        );
+    }
 
-    assert_eq!(
-        error,
-        VerificationError::Unavailable(UnavailableReason::KeysUnreachable),
-        "a provider outage must never tell a legitimate user their token is bad"
-    );
+    assert_eq!(source.calls(), 1, "the cooldown bounds failing calls as well");
+
+    // Once the cooldown elapses exactly one more attempt is permitted.
+    clock.advance(REFRESH_MIN_INTERVAL_SECONDS);
+    let _ = ask(&cache, "made-up-again").await;
+    assert_eq!(source.calls(), 2);
+}
+
+#[tokio::test]
+async fn a_recovered_provider_is_believed_again() {
+    let source = Scripted::publishing(&["kid-1"]);
+    source.goes_down();
+    let clock = Arc::new(MovableClock(AtomicU64::new(1_000)));
+    let cache = cache_over(&source, &clock);
+
+    assert!(matches!(
+        ask(&cache, "kid-1").await,
+        Err(VerificationError::Unavailable(_))
+    ));
+
+    source.now_publishes(&["kid-1", "kid-2"]);
+    clock.advance(REFRESH_MIN_INTERVAL_SECONDS);
+
+    ask(&cache, "kid-2").await.expect("a rotated key is picked up");
 }
 
 #[tokio::test]
@@ -173,50 +286,12 @@ async fn keys_older_than_the_bound_stop_being_trusted() {
 
     ask(&cache, "kid-1").await.expect("populates");
     source.goes_down();
-    clock.0.store(1_000 + MAX_KEY_AGE + 1, Ordering::SeqCst);
-
-    let error = ask(&cache, "kid-1").await.expect_err("too old to trust");
+    clock.advance(MAX_KEY_AGE + 1);
 
     // The case where continuing to serve is the wrong instinct: a key removed
     // during a long outage would otherwise stay usable indefinitely.
     assert_eq!(
-        error,
+        ask(&cache, "kid-1").await.expect_err("too old to trust"),
         VerificationError::Unavailable(UnavailableReason::KeysTooOld)
     );
-}
-
-#[tokio::test]
-async fn a_flood_of_unfamiliar_key_ids_does_not_become_a_flood_of_fetches() {
-    let source = Scripted::publishing(&["kid-1"]);
-    let clock = Arc::new(MovableClock(AtomicU64::new(1_000)));
-    let cache = cache_over(&source, &clock);
-
-    for attempt in 0..500 {
-        let _ = ask(&cache, &format!("made-up-{attempt}")).await;
-    }
-
-    // Without the minimum refresh interval this is 500 fetches aimed at the
-    // identity provider, one per attacker-chosen `kid`.
-    assert_eq!(
-        source.calls(),
-        1,
-        "the first miss refreshes; the rest are refused from a set known to be current"
-    );
-}
-
-#[tokio::test]
-async fn a_failed_refresh_never_produces_a_key() {
-    let source = Scripted::publishing(&["kid-1"]);
-    let clock = Arc::new(MovableClock(AtomicU64::new(1_000)));
-    let cache = cache_over(&source, &clock);
-
-    ask(&cache, "kid-1").await.expect("populates");
-    source.goes_down();
-    clock.0.store(1_100, Ordering::SeqCst);
-
-    // An id the cache has never seen, with the provider down. There is nothing
-    // to fall back to, and falling back to something else would be the bug.
-    let error = ask(&cache, "kid-2").await.expect_err("nothing to serve");
-
-    assert!(matches!(error, VerificationError::Unavailable(_)));
 }

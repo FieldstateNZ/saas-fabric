@@ -182,18 +182,41 @@ alone.
 
 ### JWKS rotation, specified rather than left to a library
 
+> **An unknown `kid` is `401` only when a sufficiently fresh, successfully
+> fetched snapshot positively establishes that the key is absent. If the
+> verifier cannot obtain trust material fresh enough to make that claim, the
+> result is `503`.**
+
 ```text
-known kid
+known kid, snapshot usable
   → verify locally with the cached key
-      valid   → authenticated
-      invalid → 401
 
 unknown kid
-  → one coalesced refresh for that issuer
-      key found          → verify normally
-      key still absent   → 401
-      refresh unavailable → 503
+  ├─ fresh successful snapshot, key absent        → 401
+  └─ no snapshot fresh enough
+       ├─ a call is permitted
+       │    ├─ success, key present               → verify
+       │    ├─ success, key absent                → 401
+       │    └─ failure                            → 503
+       └─ a call is suppressed by the cooldown    → 503
 ```
+
+**Two windows, not one.** Conflating them is the mistake: the timer that
+protects the issuer must not decide an authentication result.
+
+| window | job |
+|---|---|
+| refresh cooldown | *amplification protection* — how often the issuer may be called, whatever the outcome |
+| absence freshness | *security semantics* — how long a successful snapshot proves an unfamiliar key does not exist |
+
+A **failed** attempt updates the cooldown and never the snapshot. A failure
+cannot create negative evidence about a key, so it can never age into grounds
+for a refusal.
+
+The same token may move from `401` to `503` as evidence ages, and that is
+correct rather than inconsistent: at the first moment we knew enough to reject
+it, and at the second we no longer did. The response follows the verifier's
+evidence state, not the token alone.
 
 A cached key keeps working while JWKS is unreachable — that is the point of
 caching, and it is what stops a provider blip becoming an outage. A refresh
@@ -207,11 +230,12 @@ revoked key is the case where "keep serving" is the wrong instinct. Past the
 bound, verification answers `503` until trust can be refreshed, rather than
 continuing on keys nobody has confirmed.
 
-**Refreshes are coalesced per issuer.** An unknown `kid` triggers at most one
-in-flight refresh for that issuer; concurrent requests wait on it rather than
-each starting their own. Without that, an attacker sends a few thousand random
-`kid` values and the verifier becomes a JWKS-fetch amplifier pointed at
-Keycloak — the authorization front DoSing the identity provider it depends on.
+**Refreshes are coalesced and rate-limited per issuer.** A per-issuer lock
+serialises calls; the cooldown *bounds* them. The lock alone is not enough — it
+makes a few thousand invented `kid` values into a few thousand sequential
+fetches rather than concurrent ones, which is no help to a provider that is
+already unwell. The bound applies during an outage too, which is exactly when
+it matters most.
 
 ## Invariants
 

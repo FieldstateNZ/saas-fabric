@@ -126,6 +126,13 @@ fn check(registration: &IssuerRegistration) -> Result<(), ConfigurationError> {
         return Err(invalid("store must not be empty"));
     }
 
+    if registration.authorization_model_id.trim().is_empty() {
+        return Err(invalid(
+            "authorization_model_id must not be empty; without it the service falls back to its \
+             latest model, and writing a model would silently deploy it",
+        ));
+    }
+
     if registration.max_key_age_seconds == 0 {
         return Err(invalid("max_key_age_seconds must not be zero"));
     }

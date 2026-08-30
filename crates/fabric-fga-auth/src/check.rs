@@ -67,13 +67,26 @@ pub enum DecisionError {
 /// adapter behind it.
 #[async_trait]
 pub trait Decisions: Send + Sync {
-    /// Asks whether `user` holds `relation` on `object` in `store`.
+    /// Asks whether `user` holds `relation` on `object`, in `store`, against
+    /// exactly `model`.
+    ///
+    /// `model` is a parameter rather than something an implementation may look
+    /// up for itself. The authorization service falls back to its most recent
+    /// model when none is named, which would make writing a model deploy it; a
+    /// port that cannot omit it is a port no adapter can get wrong.
     ///
     /// # Errors
     ///
     /// Returns a message when no decision could be obtained. Every failure
     /// here is an availability failure; this port cannot refuse a credential.
-    async fn check(&self, store: &str, user: &str, relation: &str, object: &str) -> Result<bool, String>;
+    async fn check(
+        &self,
+        store: &str,
+        model: &str,
+        user: &str,
+        relation: &str,
+        object: &str,
+    ) -> Result<bool, String>;
 }
 
 /// The runtime surface's `Check` operation.
@@ -113,6 +126,7 @@ impl Check {
         self.decisions
             .check(
                 identity.store(),
+                identity.model(),
                 &user,
                 request.relation.as_str(),
                 &request.object.to_string(),

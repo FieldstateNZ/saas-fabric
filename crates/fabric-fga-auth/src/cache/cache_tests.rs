@@ -91,6 +91,7 @@ fn registration() -> IssuerRegistration {
         jwks_uri: "https://keycloak.internal/certs".to_owned(),
         algorithms: vec![Algorithm::HS256],
         store: "01ACMESTORE".to_owned(),
+        authorization_model_id: "01ACMEMODEL".to_owned(),
         max_key_age_seconds: MAX_KEY_AGE,
     }
 }

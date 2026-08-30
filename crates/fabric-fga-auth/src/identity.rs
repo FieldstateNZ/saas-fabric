@@ -36,6 +36,9 @@ pub struct VerifiedIdentity {
 
     /// The authorization store that answers for this tenant.
     store: String,
+
+    /// The exact authorization model decisions are made against.
+    model: String,
 }
 
 impl VerifiedIdentity {
@@ -44,12 +47,19 @@ impl VerifiedIdentity {
     /// Deliberately crate-private: outside this crate there is no way to make
     /// one, so holding a `VerifiedIdentity` is evidence that a token was
     /// verified rather than a claim that it was.
-    pub(crate) const fn new(tenant: String, subject: String, principal: SubjectId, store: String) -> Self {
+    pub(crate) const fn new(
+        tenant: String,
+        subject: String,
+        principal: SubjectId,
+        store: String,
+        model: String,
+    ) -> Self {
         Self {
             tenant,
             subject,
             principal,
             store,
+            model,
         }
     }
 
@@ -76,8 +86,22 @@ impl VerifiedIdentity {
     }
 
     /// The authorization store that answers for this tenant.
+    ///
+    /// This and [`model`](Self::model) are authorization *routing* rather than
+    /// identity, and they are carried here because they are selected by the
+    /// same trusted lookup that produced the principal — one registration, one
+    /// answer to "who is this and where is it decided". If the routing grows,
+    /// it deserves its own type rather than more fields on this one.
     #[must_use]
     pub fn store(&self) -> &str {
         &self.store
+    }
+
+    /// The exact authorization model decisions are made against.
+    ///
+    /// Pinned by the registration, never discovered and never "latest".
+    #[must_use]
+    pub fn model(&self) -> &str {
+        &self.model
     }
 }

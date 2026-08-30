@@ -15,6 +15,7 @@ use crate::{Check, CheckRequest, DecisionError, Decisions, ObjectRef, VerifiedId
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Asked {
     store: String,
+    model: String,
     user: String,
     relation: String,
     object: String,
@@ -45,9 +46,17 @@ impl Recording {
 
 #[async_trait]
 impl Decisions for Recording {
-    async fn check(&self, store: &str, user: &str, relation: &str, object: &str) -> Result<bool, String> {
+    async fn check(
+        &self,
+        store: &str,
+        model: &str,
+        user: &str,
+        relation: &str,
+        object: &str,
+    ) -> Result<bool, String> {
         *self.asked.lock().expect("not poisoned") = Some(Asked {
             store: store.to_owned(),
+            model: model.to_owned(),
             user: user.to_owned(),
             relation: relation.to_owned(),
             object: object.to_owned(),
@@ -66,6 +75,7 @@ fn alice() -> VerifiedIdentity {
         "alice-sub".to_owned(),
         principal,
         "01ACMESTORE".to_owned(),
+        "01ACMEMODEL".to_owned(),
     )
 }
 
@@ -92,6 +102,7 @@ async fn the_subject_asked_about_is_the_authenticated_caller() {
         Asked {
             // From the verified identity, which came from the registry.
             store: "01ACMESTORE".to_owned(),
+            model: "01ACMEMODEL".to_owned(),
             user: "user:acme/alice-sub".to_owned(),
             // From the request, which is all the caller controls.
             relation: "viewer".to_owned(),

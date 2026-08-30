@@ -24,6 +24,7 @@
 
 #[cfg(test)]
 mod check_tests;
+mod errors;
 
 use std::sync::Arc;
 
@@ -32,6 +33,8 @@ use fabric_core::RelationName;
 use serde::Deserialize;
 
 use crate::{ObjectRef, VerifiedIdentity};
+
+pub use errors::{DecisionError, DecisionFailure};
 
 /// The type every principal is written under in the authorization model.
 const USER_TYPE: &str = "user";
@@ -45,19 +48,6 @@ pub struct CheckRequest {
 
     /// The object in question.
     pub object: ObjectRef,
-}
-
-/// Why a decision could not be reached.
-///
-/// One variant, deliberately: reaching the authorization service is the only
-/// thing that can go wrong here that is not already a refused credential or a
-/// malformed request. It answers `503`, never `401` — the caller's token was
-/// fine.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum DecisionError {
-    /// The authorization service could not be reached or did not answer.
-    #[error("the authorization service is unavailable")]
-    Unavailable,
 }
 
 /// The embedded authorization service, as this crate uses it.
@@ -77,8 +67,9 @@ pub trait Decisions: Send + Sync {
     ///
     /// # Errors
     ///
-    /// Returns a message when no decision could be obtained. Every failure
-    /// here is an availability failure; this port cannot refuse a credential.
+    /// Returns a [`DecisionFailure`] when no decision could be obtained.
+    /// Neither variant is a refusal: this port cannot decide that a caller
+    /// lacks permission, only that it could not find out.
     async fn check(
         &self,
         store: &str,
@@ -86,7 +77,7 @@ pub trait Decisions: Send + Sync {
         user: &str,
         relation: &str,
         object: &str,
-    ) -> Result<bool, String>;
+    ) -> Result<bool, DecisionFailure>;
 }
 
 /// The runtime surface's `Check` operation.
@@ -132,6 +123,9 @@ impl Check {
                 &request.object.to_string(),
             )
             .await
-            .map_err(|_| DecisionError::Unavailable)
+            .map_err(|failure| match failure {
+                DecisionFailure::Unavailable => DecisionError::Unavailable,
+                DecisionFailure::Internal => DecisionError::Internal,
+            })
     }
 }

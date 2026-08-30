@@ -43,14 +43,16 @@ mod errors;
 mod identity;
 mod keys;
 mod object;
+mod openfga;
 mod registry;
 mod verifier;
 
 pub use cache::KeyCache;
-pub use check::{Check, CheckRequest, DecisionError, Decisions};
+pub use check::{Check, CheckRequest, DecisionError, DecisionFailure, Decisions};
 pub use errors::{ConfigurationError, RefusalReason, UnavailableReason, VerificationError};
 pub use identity::VerifiedIdentity;
 pub use keys::{KeySet, KeySource};
 pub use object::ObjectRef;
+pub use openfga::OpenFgaDecisions;
 pub use registry::{IssuerRegistration, Registry};
 pub use verifier::Verifier;

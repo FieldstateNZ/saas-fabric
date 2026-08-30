@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use fabric_core::{RelationName, SubjectId};
 
-use crate::{Check, CheckRequest, DecisionError, Decisions, ObjectRef, VerifiedIdentity};
+use crate::{Check, CheckRequest, DecisionError, DecisionFailure, Decisions, ObjectRef, VerifiedIdentity};
 
 /// What the operation asked the authorization service.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -23,12 +23,12 @@ struct Asked {
 
 /// Records the question and answers however the test says.
 struct Recording {
-    answer: Result<bool, String>,
+    answer: Result<bool, DecisionFailure>,
     asked: Mutex<Option<Asked>>,
 }
 
 impl Recording {
-    fn answering(answer: Result<bool, String>) -> Arc<Self> {
+    fn answering(answer: Result<bool, DecisionFailure>) -> Arc<Self> {
         Arc::new(Self {
             answer,
             asked: Mutex::new(None),
@@ -53,7 +53,7 @@ impl Decisions for Recording {
         user: &str,
         relation: &str,
         object: &str,
-    ) -> Result<bool, String> {
+    ) -> Result<bool, DecisionFailure> {
         *self.asked.lock().expect("not poisoned") = Some(Asked {
             store: store.to_owned(),
             model: model.to_owned(),
@@ -62,7 +62,7 @@ impl Decisions for Recording {
             object: object.to_owned(),
         });
 
-        self.answer.clone()
+        self.answer
     }
 }
 
@@ -154,7 +154,7 @@ async fn a_refusal_is_an_answer_and_an_outage_is_not() {
 
     assert!(!allowed, "a denial is Ok(false), not an error");
 
-    let broken = Recording::answering(Err("connection refused".to_owned()));
+    let broken = Recording::answering(Err(DecisionFailure::Unavailable));
     let error = Check::new(broken as Arc<dyn Decisions>)
         .run(&alice(), &request("viewer", "document:123"))
         .await

@@ -78,9 +78,41 @@ which realm signed the caller's token.
 That leaves the runtime's own credential genuinely undecided, and it is a
 different problem rather than the same one: a tenant request arrives with no
 operator present, at any hour, so there is no delegated authority to borrow.
-Whatever answers it will be standing by necessity. Recording that plainly is
-the point — it must be chosen deliberately, not arrived at by assuming the
-control plane's answer generalises.
+
+It does **not** follow that the answer is a stored secret. Two later
+measurements narrow it, and both are recorded here because they change what is
+possible rather than merely what is convenient.
+
+**The one-issuer limit is per deployment, not per datastore.** Two OpenFGA
+deployments sharing one Postgres hold the same stores, models and tuples while
+authenticating their callers completely independently — a store created through
+one is readable through the other, and the first's credential is refused at the
+second's door. So the control plane can keep presenting operator tokens against
+the platform realm while the runtime authenticates by some entirely different
+means, over the same data. The choice is not either/or.
+
+**Kubernetes is itself an OIDC issuer, and its workload tokens are secretless.**
+A projected service-account token carries `iss:
+https://kubernetes.default.svc.cluster.local`, an audience bound to whatever is
+asked for (`aud: ["openfga"]`), a durable subject
+(`system:serviceaccount:<namespace>:<name>`), and a short expiry the kubelet
+rotates. Every claim OpenFGA validates is present, and nothing is stored
+anywhere.
+
+Two obstacles were measured, one solved and one not. OpenFGA does not trust the
+cluster CA by default and panics with `x509: certificate signed by unknown
+authority`; pointing `SSL_CERT_FILE` at the service-account CA fixes it. It
+then fails with `401`, because this cluster binds
+`system:service-account-issuer-discovery` to the `system:serviceaccounts` group
+and OpenFGA fetches discovery unauthenticated. Making that path work needs a
+deliberate cluster change — binding discovery for unauthenticated callers, or
+serving the document to OpenFGA some other way. The material there is public
+key material, but the change widens an anonymous surface and belongs to
+whoever runs the cluster, not to this ADR.
+
+Recording all of this plainly is the point: the runtime's credential must be
+chosen deliberately, and "standing secret" is now demonstrably not the only
+option on the table.
 
 ## Consequences
 

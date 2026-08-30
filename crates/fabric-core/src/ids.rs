@@ -9,6 +9,7 @@ mod binding_revision;
 mod data_source_id;
 mod logical_data_source_name;
 mod logical_resource_name;
+mod relation_name;
 pub(crate) mod slug;
 #[cfg(test)]
 mod slug_tests;
@@ -20,6 +21,7 @@ pub use binding_revision::BindingRevision;
 pub use data_source_id::DataSourceId;
 pub use logical_data_source_name::LogicalDataSourceName;
 pub use logical_resource_name::LogicalResourceName;
+pub use relation_name::RelationName;
 pub use subject_id::SubjectId;
 
 mod tenant_id;

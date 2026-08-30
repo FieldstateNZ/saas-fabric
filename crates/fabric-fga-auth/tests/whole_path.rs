@@ -625,32 +625,34 @@ async fn an_identity_provider_outage_does_not_stop_a_known_key_working() {
     );
     assert_eq!(body, r#"{"allowed":true}"#);
 
-    // An unfamiliar `kid`, with the provider down. The answer depends on
-    // whether the cache was confirmed recently enough to speak for itself,
-    // and both answers are truthful at the moment they are given.
+    // An unfamiliar `kid`, with the provider down. The answer follows the
+    // verifier's evidence rather than the token: a key is refused only when a
+    // fresh successful snapshot positively says the issuer does not publish
+    // it, and otherwise the honest answer is that we cannot tell.
     let unknown_kid = token_with_unknown_kid(&token);
 
-    // Inside the minimum refresh interval the key set was confirmed seconds
-    // ago and genuinely does not publish this id, so refusing is a statement
-    // of current knowledge rather than a guess. This is also the branch that
-    // stops a flood of invented `kid` values becoming a flood of fetches.
+    // The snapshot fetched moments ago still proves absence, so refusing is a
+    // statement of what the issuer publishes rather than a guess.
     let (status, _) = path.check(&unknown_kid, "viewer", "document:granted").await;
     assert_eq!(
         status,
         StatusCode::UNAUTHORIZED,
-        "within the refresh interval the cache speaks from confirmed knowledge"
+        "a fresh successful snapshot is evidence, and absence from it is a refusal"
     );
 
-    // Once that interval has passed the cache can no longer speak for itself:
-    // it must re-confirm, it cannot, and the honest answer becomes "I do not
-    // know" rather than "you are not authorized".
-    tokio::time::sleep(std::time::Duration::from_secs(11)).await;
+    // Once that evidence has aged out and the provider cannot renew it, the
+    // same token gets a different answer — correctly, because we no longer
+    // know enough to make the claim we made a moment ago.
+    tokio::time::sleep(std::time::Duration::from_secs(
+        fabric_fga_auth::UNKNOWN_KID_FRESHNESS_SECONDS + 1,
+    ))
+    .await;
 
     let (status, _) = path.check(&unknown_kid, "viewer", "document:granted").await;
     assert_eq!(
         status,
         StatusCode::SERVICE_UNAVAILABLE,
-        "past the refresh interval an unconfirmable key is unavailable, never unauthorized"
+        "without fresh evidence a missing key is unavailable, never unauthorized"
     );
 
     // And the known key still works throughout, which is the property that

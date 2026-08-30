@@ -1,12 +1,28 @@
 //! Which key a token may be verified against, and when trust must be refreshed.
 //!
-//! # The rule a library default gets wrong
+//! # The rule every branch here serves
 //!
-//! A refresh that fails is an **availability** problem. It must never become
-//! permission to try another key, skip a check, or serve on keys nobody has
-//! confirmed. Every branch below produces a key that is genuinely current,
-//! refuses the credential, or reports that trust could not be established —
-//! and never anything else (ADR 0016).
+//! **An unknown `kid` is a refusal only when a sufficiently fresh, successfully
+//! fetched snapshot positively establishes that the key is absent.** If the
+//! verifier cannot obtain trust material fresh enough to make that claim, the
+//! answer is that it does not know — never that the caller is unauthenticated.
+//!
+//! A failed refresh is an availability problem. It must never become permission
+//! to try another key, skip a check, or serve as evidence about one.
+//!
+//! ```text
+//! unknown kid
+//!   ├─ fresh successful snapshot, key absent      → refused
+//!   └─ no snapshot fresh enough
+//!        ├─ a call is permitted
+//!        │    ├─ success, key present             → verify
+//!        │    ├─ success, key absent              → refused
+//!        │    └─ failure                          → unavailable
+//!        └─ a call is suppressed by the cooldown  → unavailable
+//! ```
+//!
+//! The same token can move from refused to unavailable as evidence ages, and
+//! that is correct: the answer follows the verifier's evidence, not the token.
 
 #[cfg(test)]
 mod cache_tests;
@@ -19,23 +35,22 @@ use fabric_core::Clock;
 use jsonwebtoken::DecodingKey;
 use tokio::sync::Mutex;
 
-use crate::{IssuerRegistration, KeySource, RefusalReason, UnavailableReason, VerificationError};
+use crate::{IssuerRegistration, KeySource, RefusalReason, VerificationError};
 
-use held::Cached;
+use held::{Entry, Snapshot};
+
+pub use held::{REFRESH_MIN_INTERVAL_SECONDS, UNKNOWN_KID_FRESHNESS_SECONDS};
 
 /// The keys this verifier is currently willing to trust, per issuer.
 pub struct KeyCache {
     /// Where key sets are read from.
     source: Arc<dyn KeySource>,
 
-    /// The clock staleness is measured against.
+    /// The clock every window is measured against.
     clock: Arc<dyn Clock>,
 
-    /// One lock per issuer, which is what coalesces refreshes: a second
-    /// request for the same issuer waits on the first rather than starting its
-    /// own fetch. Without it, a few thousand random `kid` values turn this
-    /// process into a fetch amplifier pointed at the identity provider.
-    entries: Mutex<HashMap<String, Arc<Mutex<Option<Cached>>>>>,
+    /// One lock per issuer, which serialises refreshes for it.
+    entries: Mutex<HashMap<String, Arc<Mutex<Entry>>>>,
 }
 
 impl KeyCache {
@@ -51,63 +66,66 @@ impl KeyCache {
 
     /// Runs `use_key` against the key this issuer currently publishes as `kid`.
     ///
-    /// The key is never handed out, because handing it out would mean holding
-    /// it after the lock that decided it was current had been released.
+    /// The key is never handed out: doing so would mean holding it after the
+    /// lock that decided it was current had been released.
     ///
     /// # Errors
     ///
-    /// [`VerificationError::Refused`] when the issuer genuinely does not
-    /// publish the id, and [`VerificationError::Unavailable`] when that could
-    /// not be established.
+    /// [`VerificationError::Refused`] only when a fresh successful snapshot
+    /// says the issuer does not publish the id, and
+    /// [`VerificationError::Unavailable`] whenever that could not be
+    /// established.
     pub async fn with_key<R>(
         &self,
         registration: &IssuerRegistration,
         key_id: &str,
         use_key: impl FnOnce(&DecodingKey) -> R,
     ) -> Result<R, VerificationError> {
-        let entry = self.entry_for(&registration.issuer).await;
-        let mut cached = entry.lock().await;
-
+        let handle = self.entry_for(&registration.issuer).await;
+        let mut entry = handle.lock().await;
         let now = self.clock.now_unix_seconds();
-        let mut stale = false;
 
-        if let Some(held) = cached.as_ref() {
-            stale = held.is_stale(registration, now);
-
-            if !stale {
-                // Cached and current: served without any fetch, which is what
+        if let Some(snapshot) = entry.snapshot.as_ref() {
+            if !snapshot.is_stale(registration, now) {
+                // Cached and usable: served without any call, which is what
                 // lets an ordinary provider blip pass unnoticed.
-                if let Some(key) = held.keys.get(key_id) {
+                if let Some(key) = snapshot.keys.get(key_id) {
                     return Ok(use_key(key));
                 }
 
-                // Unfamiliar id, but this key set was confirmed moments ago
-                // and does not publish it. Refuse rather than re-fetch: this
-                // is the branch that bounds amplification.
-                if held.refreshed_recently(now) {
+                // Absent from a snapshot recent enough to prove it. This is
+                // the only branch that refuses a credential over a key, and it
+                // is also what stops a flood of invented ids becoming a flood
+                // of calls: every one of them lands here.
+                if snapshot.proves_absence(now) {
                     return Err(VerificationError::Refused(RefusalReason::UnknownKey));
                 }
             }
         }
 
-        // Nothing cached, cached-but-too-old, or an id worth one more look:
-        // one refresh, holding this issuer's lock so concurrent callers wait
-        // on it rather than piling on.
+        // Nothing usable, or nothing recent enough to speak for itself.
+        if !entry.may_refresh(now) {
+            // Suppressed by the cooldown. Whatever is cached could not answer
+            // above, and a call we are not making cannot produce evidence.
+            return Err(VerificationError::Unavailable(
+                entry.unavailability(registration, now),
+            ));
+        }
+
+        entry.last_attempt_at = Some(now);
+
         match self.source.fetch(&registration.jwks_uri).await {
             Ok(keys) => {
-                // Decided against the set just fetched, then cached. Deciding
+                // Decided against the set just fetched, then stored. Deciding
                 // after storing would mean reading back through an `Option`
-                // that cannot be empty, and writing a branch for a state that
-                // cannot happen is how a real one gets missed later.
+                // that cannot be empty, and writing a branch for an impossible
+                // state is how a real one gets missed later.
                 let outcome = keys.get(key_id).map_or_else(
-                    // A key set known to be current does not publish this id,
-                    // so the token was not signed by this issuer. The caller's
-                    // problem, not the platform's.
                     || Err(VerificationError::Refused(RefusalReason::UnknownKey)),
                     |key| Ok(use_key(key)),
                 );
 
-                *cached = Some(Cached {
+                entry.snapshot = Some(Snapshot {
                     keys,
                     fetched_at: now,
                 });
@@ -115,25 +133,22 @@ impl KeyCache {
                 outcome
             }
 
-            // The refresh failed. Whatever is cached cannot answer for this id
-            // — if it could, the branch above would have served it — so there
-            // is nothing to fall back to and nothing to weaken.
-            Err(_) => Err(VerificationError::Unavailable(if stale {
-                UnavailableReason::KeysTooOld
-            } else {
-                UnavailableReason::KeysUnreachable
-            })),
+            // The call failed, so nothing was learned. The snapshot is left
+            // exactly as it was: a failure must never age into evidence.
+            Err(_) => Err(VerificationError::Unavailable(
+                entry.unavailability(registration, now),
+            )),
         }
     }
 
     /// The lock for one issuer, created on first use.
-    async fn entry_for(&self, issuer: &str) -> Arc<Mutex<Option<Cached>>> {
+    async fn entry_for(&self, issuer: &str) -> Arc<Mutex<Entry>> {
         let mut entries = self.entries.lock().await;
 
         Arc::clone(
             entries
                 .entry(issuer.to_owned())
-                .or_insert_with(|| Arc::new(Mutex::new(None))),
+                .or_insert_with(|| Arc::new(Mutex::new(Entry::default()))),
         )
     }
 }

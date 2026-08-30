@@ -49,7 +49,7 @@ mod registry;
 mod runtime;
 mod verifier;
 
-pub use cache::KeyCache;
+pub use cache::{KeyCache, REFRESH_MIN_INTERVAL_SECONDS, UNKNOWN_KID_FRESHNESS_SECONDS};
 pub use check::{Check, CheckRequest, DecisionError, DecisionFailure, Decisions};
 pub use errors::{ConfigurationError, RefusalReason, UnavailableReason, VerificationError};
 pub use http_keys::HttpKeySource;

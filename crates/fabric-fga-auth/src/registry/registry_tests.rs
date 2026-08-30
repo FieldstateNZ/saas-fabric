@@ -18,6 +18,7 @@ fn acme() -> IssuerRegistration {
         jwks_uri: "https://keycloak.identity.svc.cluster.local/realms/acme/certs".to_owned(),
         algorithms: vec![Algorithm::RS256],
         store: "01ABC".to_owned(),
+        authorization_model_id: "01ACMEMODEL".to_owned(),
         max_key_age_seconds: 43_200,
     }
 }
@@ -73,13 +74,17 @@ fn a_tenant_that_is_not_a_realm_identity_is_refused() {
 fn every_field_a_registration_cannot_do_without_is_checked() {
     type Break = fn(&mut IssuerRegistration);
 
-    let cases: [(&str, Break); 6] = [
+    let cases: [(&str, Break); 7] = [
         ("empty issuer", |r| r.issuer = String::new()),
         ("empty audience", |r| r.audience = String::new()),
         ("empty jwks_uri", |r| r.jwks_uri = String::new()),
         ("no algorithms", |r| r.algorithms = Vec::new()),
         ("empty store", |r| r.store = String::new()),
         ("zero max key age", |r| r.max_key_age_seconds = 0),
+        // Without a pinned model the service uses its most recent one, so
+        // writing a model would deploy it. Refused at startup rather than
+        // discovered when a decision quietly changes.
+        ("no pinned model", |r| r.authorization_model_id = String::new()),
     ];
 
     for (described, break_it) in cases {

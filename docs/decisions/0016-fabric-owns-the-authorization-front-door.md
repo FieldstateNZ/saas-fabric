@@ -121,7 +121,24 @@ issuers:
     jwks_uri: https://keycloak.identity.svc.cluster.local/…    # trusted, may be private
     algorithms: [RS256]                                        # pinned; see below
     openfga_store: 01ABC…
+    authorization_model_id: 01DEF…                             # pinned; never "latest"
 ```
+
+**The authorization model is pinned too, for the same class of reason.** The
+authorization service uses its *most recent* model when a request names none,
+which would mean writing a model deploys it — a new one would change runtime
+decisions before Fabric had intentionally switched. Models are immutable
+versions, so naming one makes deployment a deliberate step:
+
+```text
+write the new immutable model → validate it → change the configured model id
+                                            → the runtime begins using it
+```
+
+The store and the model are both authorization *routing* rather than identity,
+and both come from the registration the verified issuer selected. Neither is
+ever caller-supplied, and the port an adapter implements cannot omit the model,
+so no implementation can quietly fall back to "latest".
 
 **Algorithms are pinned per issuer.** The JWT header does not get to say what
 cryptography we are willing to trust. Rejecting `alg: none` is not sufficient:
@@ -205,6 +222,8 @@ component's own tests must hold:
 - unknown issuer → `401`; invalid signature, audience, expiry, not-before or algorithm → `401`
 - JWKS unreachable with no usable cached key → `503`, never `401`
 - algorithms are pinned per issuer; anything outside the configured set is refused
+- the authorization model is pinned per issuer; a registration without one is
+  refused at startup, and no adapter may resolve "latest"
 - the issuer determines the tenant and the OpenFGA store
 - verified `iss` + `sub` determine the principal
 - the caller cannot override the principal

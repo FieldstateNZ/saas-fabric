@@ -1,17 +1,37 @@
-//! The logical resource name an application addresses, such as `customers`.
+//! The name the platform gives a resource, such as `customers`.
 
 use std::fmt;
 
 use crate::ids::slug::parse_identifier;
 use crate::IdentifierError;
 
-/// The name of a logical data resource — `customers`, `orders`, `auditEvents`.
+/// The name of a logical resource — `customers`, `orders`, `auditEvents`.
 ///
-/// Applications address these names and nothing else. A logical resource is
-/// resolved by the Data API's catalogue into a logical data source, and only
-/// then into a physical table on a physical server. Because the name arrives in
-/// the request path (`POST /data/customers`), it is validated on the way in so
-/// that no caller-supplied string ever reaches a SQL identifier position.
+/// # The platform's resource vocabulary, not one subsystem's
+///
+/// This is what a resource is *called* everywhere in SaaS Fabric, and it has
+/// three consumers rather than an owner and some borrowers:
+///
+/// - a client's **desired state** declares which relations exist on it
+///   (ADR 0013)
+/// - the **Data API** resolves it through its catalogue into a logical data
+///   source and then a physical table
+/// - **authorization** names it as the type half of an object a decision is
+///   about (ADR 0016)
+///
+/// It lived here from the start because the Data API needed it first, and its
+/// documentation used to describe only that use — which would have made
+/// authorization read as subordinate to the Data API for no better reason than
+/// the order the two were built in. Nothing about the name is Data-API
+/// specific: a resource is a platform concept, and the catalogue is one thing
+/// that resolves it.
+///
+/// # Why it is validated
+///
+/// The name reaches a SQL identifier position in one consumer and an
+/// authorization object in another, and it arrives from a request path
+/// (`POST /data/customers`) in the first. It is checked once, on the way in,
+/// so that no consumer has to check it again.
 ///
 /// # Examples
 ///

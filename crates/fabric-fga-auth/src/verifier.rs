@@ -105,6 +105,7 @@ impl Verifier {
             subject,
             principal,
             registration.store.clone(),
+            registration.authorization_model_id.clone(),
         ))
     }
 }

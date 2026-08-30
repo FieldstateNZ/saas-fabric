@@ -59,6 +59,16 @@ pub struct IssuerRegistration {
     /// The authorization store that answers for this tenant.
     pub store: String,
 
+    /// The exact authorization model decisions are made against.
+    ///
+    /// **Required, and never "latest".** The authorization service will use
+    /// its most recent model when none is named, which means writing a model
+    /// deploys it — a new one would change runtime decisions before Fabric had
+    /// intentionally switched to it. Models are immutable versions, so naming
+    /// one turns deployment into a deliberate act: write the model, validate
+    /// it, then change this value.
+    pub authorization_model_id: String,
+
     /// How stale this issuer's cached keys may become.
     #[serde(default = "default_max_key_age")]
     pub max_key_age_seconds: u64,

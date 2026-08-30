@@ -43,6 +43,7 @@ uuid = { version = "1", features = ["v4", "serde"] }
 
 # Internal crates -- shared kernel
 fabric-core = { path = "crates/fabric-core" }
+fabric-fga-auth = { path = "crates/fabric-fga-auth" }
 
 # Internal crates -- runtime plane
 fabric-connector = { path = "crates/fabric-connector" }

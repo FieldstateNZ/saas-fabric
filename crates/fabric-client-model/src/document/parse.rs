@@ -35,6 +35,7 @@ pub(super) fn parse(text: &str) -> Result<ClientDocument, DesiredStateError> {
         hosts: shape.spec.hosts,
         identity: shape.spec.identity,
         authorization: shape.spec.authorization,
+        secrets: shape.spec.secrets,
     };
 
     Ok(ClientDocument::from_parts(raw, client))

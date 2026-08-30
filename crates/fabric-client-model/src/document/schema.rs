@@ -77,6 +77,10 @@ pub(super) struct SpecShape {
     /// documents it wrote last week.
     #[serde(default)]
     pub(super) authorization: crate::AuthorizationConfiguration,
+
+    /// Where this client's secrets live, once a boundary exists.
+    #[serde(default)]
+    pub(super) secrets: Option<crate::SecretsConfiguration>,
 }
 
 #[cfg(test)]

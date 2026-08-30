@@ -51,6 +51,7 @@ mod document;
 mod errors;
 mod identity;
 mod ids;
+mod secrets;
 
 pub use authorization::{AuthorizationConfiguration, Relation, ResourceAuthorization};
 pub use client::Client;
@@ -58,3 +59,4 @@ pub use document::{ClientDocument, API_VERSION, KIND};
 pub use errors::DesiredStateError;
 pub use identity::{required_roles, ClientProtocol, IdentityConfiguration, OidcClient, RedirectUri};
 pub use ids::{ClientId, ClientRevision, Host, OidcClientId, RealmName, RelationName, RoleName};
+pub use secrets::{SecretNamespace, SecretsConfiguration};

@@ -1,0 +1,46 @@
+# The Fabric authorization front, and the OpenFGA it fronts.
+#
+# One image, two processes, one published port. The authorization service runs
+# with no authentication of its own, which is safe for exactly as long as
+# nothing outside the container can address it — so the front owns it, binds it
+# to loopback, and exits if it dies (ADR 0016).
+
+listen = "0.0.0.0:8080"
+
+[embedded]
+# Always 127.0.0.1. A port rather than an address, because nothing should be
+# able to move it.
+port = 8088
+binary = "/usr/local/bin/openfga"
+start_timeout_seconds = 30
+
+# Absent means in memory, and in memory means every store, model and tuple is
+# lost on restart. Fine for a development run, never for a deployment — the
+# host warns loudly when this section is missing.
+#
+# The URI carries a credential, so the platform delivers it as a secret and it
+# never appears in a rendered manifest.
+#
+#   [embedded.datastore]
+#   engine = "postgres"
+#   uri = "postgres://fabric@openfga-db.secrets.svc.cluster.local/openfga"
+
+# One entry per client realm. The registry is the only thing that decides which
+# tenant a verified token belongs to, and a front with none refuses to start.
+#
+# `issuer` is what a token says and what a browser was sent to. `jwks_uri` is
+# where *this process* reads keys, which on a cluster is an address only it can
+# reach. Splitting them is the whole point: it lets a public issuer be served
+# from inside a cluster without hairpinning through the public route, and the
+# URL comes from this file rather than from any claim.
+[[issuers]]
+tenant = "acme"
+issuer = "https://identity.fabric.example/realms/acme"
+audience = "openfga"
+jwks_uri = "http://keycloak-http.identity.svc.cluster.local/realms/acme/protocol/openid-connect/certs"
+algorithms = ["RS256"]
+store = "01ABCDEFGHIJKLMNOPQRSTUVWX"
+
+# Pinned, never "latest". The service uses its most recent model when a request
+# names none, which would make writing a model deploy it.
+authorization_model_id = "01ZYXWVUTSRQPONMLKJIHGFEDC"

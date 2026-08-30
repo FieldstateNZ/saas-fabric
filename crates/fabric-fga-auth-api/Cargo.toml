@@ -1,0 +1,22 @@
+[package]
+name = "fabric-fga-auth-api"
+description = "Hosts the Fabric authorization front beside an OpenFGA it alone can reach."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+fabric-core.workspace = true
+fabric-fga-auth.workspace = true
+
+axum.workspace = true
+figment.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+tokio = { workspace = true, features = ["macros", "process", "rt-multi-thread", "signal", "time"] }
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[lints]
+workspace = true

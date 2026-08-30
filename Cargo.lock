@@ -394,6 +394,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "fabric-fga-auth-api"
+version = "0.2.2"
+dependencies = [
+ "axum",
+ "fabric-core",
+ "fabric-fga-auth",
+ "figment",
+ "reqwest",
+ "serde",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "fabric-identity"
 version = "0.2.2"
 dependencies = [

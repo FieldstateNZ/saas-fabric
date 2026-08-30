@@ -38,15 +38,19 @@
 //! credential from trust that could not be established.
 
 mod cache;
+mod check;
 mod errors;
 mod identity;
 mod keys;
+mod object;
 mod registry;
 mod verifier;
 
 pub use cache::KeyCache;
+pub use check::{Check, CheckRequest, DecisionError, Decisions};
 pub use errors::{ConfigurationError, RefusalReason, UnavailableReason, VerificationError};
 pub use identity::VerifiedIdentity;
 pub use keys::{KeySet, KeySource};
+pub use object::ObjectRef;
 pub use registry::{IssuerRegistration, Registry};
 pub use verifier::Verifier;

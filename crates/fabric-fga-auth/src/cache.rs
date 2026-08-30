@@ -28,7 +28,6 @@
 #[cfg(test)]
 mod cache_tests;
 mod held;
-mod locks;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -141,5 +140,16 @@ impl KeyCache {
                 entry.unavailability(registration, now),
             )),
         }
+    }
+
+    /// The lock for one issuer, created on first use.
+    async fn entry_for(&self, issuer: &str) -> Arc<Mutex<Entry>> {
+        let mut entries = self.entries.lock().await;
+
+        Arc::clone(
+            entries
+                .entry(issuer.to_owned())
+                .or_insert_with(|| Arc::new(Mutex::new(Entry::default()))),
+        )
     }
 }

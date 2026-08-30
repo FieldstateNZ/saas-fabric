@@ -65,6 +65,7 @@ RUNTIME_PLANE = frozenset(
         "fabric-data-api",
         "fabric-api",
         "fabric-fga-auth",
+        "fabric-fga-auth-api",
     }
 )
 
@@ -515,6 +516,13 @@ def check_dependency_direction(graph: Graph) -> list[Failure]:
         # trust in the first place (ADR 0016).
         "fabric-fga-auth": {
             "fabric-core",
+        },
+        # The host: it owns the process tree, not the decision. It composes the
+        # front and starts the authorization service on loopback, and knows
+        # nothing about verification that the library does not.
+        "fabric-fga-auth-api": {
+            "fabric-core",
+            "fabric-fga-auth",
         },
         "fabric-control-plane-api": {
             "fabric-core",

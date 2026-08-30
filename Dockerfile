@@ -45,9 +45,11 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     cargo build --release --locked \
         --bin fabric-api \
         --bin fabric-control-plane-api \
+        --bin fabric-fga-auth-api \
     && mkdir -p /out \
     && cp target/release/fabric-api /out/ \
-    && cp target/release/fabric-control-plane-api /out/
+    && cp target/release/fabric-control-plane-api /out/ \
+    && cp target/release/fabric-fga-auth-api /out/
 
 # ---------------------------------------------------------------------------
 # The runtime plane
@@ -86,3 +88,38 @@ ENV FABRIC_CP_CONFIG=/etc/fabric/control-plane.toml
 EXPOSE 8081
 USER nonroot:nonroot
 ENTRYPOINT ["/usr/local/bin/fabric-control-plane-api"]
+
+# ---------------------------------------------------------------------------
+# The authorization front, and the service it fronts
+# ---------------------------------------------------------------------------
+#
+# Two processes, one image, and that is the point rather than a compromise.
+# The authorization service runs with no authentication of its own, which is
+# safe for exactly as long as nothing outside this container can address it —
+# so the two are shipped as one unit and the only published port is the
+# front's (ADR 0016).
+#
+# `fabric-fga-auth-api` is PID 1 and owns the child. If the service exits, the
+# front exits too: a shell that started both and waited would leave the common
+# failure looking healthy — a container whose liveness probe passes while every
+# decision answers 503.
+#
+# Distroless like the other two, and the upstream authorization service is
+# distributed that way as well — it ships one binary at `/openfga` on a base
+# with no shell, which is why lifting it into this stage costs nothing. There
+# is still nothing in the image to exec into.
+FROM openfga/openfga:v1.19.0 AS authorization-source
+
+FROM gcr.io/distroless/cc-debian12:nonroot@sha256:9dac0a79194e45a7da0158a9c6da57b217585af0786db3845d1f0ec1a0dd182f AS authorization-front
+
+COPY --from=builder /out/fabric-fga-auth-api /usr/local/bin/fabric-fga-auth-api
+COPY --from=authorization-source /openfga /usr/local/bin/openfga
+
+ENV FABRIC_FGA_CONFIG=/etc/fabric/authorization.toml
+
+# The front's port, and the only one. The authorization service's is bound to
+# 127.0.0.1 by the host process and is deliberately not declared here: an
+# EXPOSE for it would document an address nothing should ever connect to.
+EXPOSE 8080
+USER nonroot:nonroot
+ENTRYPOINT ["/usr/local/bin/fabric-fga-auth-api"]

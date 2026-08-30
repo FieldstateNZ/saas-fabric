@@ -30,6 +30,9 @@ fabric-data-api        → fabric-core
 
 fabric-fga-auth        → fabric-core
 
+fabric-fga-auth-api    → fabric-core
+                       → fabric-fga-auth   (composition root, own image)
+
 fabric-api             → all of the above (composition root)
 ```
 

@@ -95,11 +95,14 @@ same order identity was built in, and it is deliberate: the vocabulary is the
 part that is expensive to change once documents in Git use it, so it is settled
 before anything depends on it.
 
-Two questions are explicitly left open. **How subjects are named** — the
-relation between an OpenFGA user and a Keycloak subject — is not decided here,
-because it belongs with the enforcement half. And **how the platform
-authenticates to OpenFGA** is not decided here either; the intent is OIDC
-against the platform realm, presenting the operator's own token in the manner
-of [ADR 0012](0012-the-platform-acts-on-keycloak-as-the-operator.md), but that
-depends on what OpenFGA's OIDC mode will accept and is not settled by writing a
-document schema.
+**How the platform authenticates to OpenFGA** was left open here and is now
+settled for the control plane by
+[ADR 0014](0014-fabric-calls-openfga-as-the-operator.md), which also records
+the measured constraint that stops the same answer being reused by the runtime.
+
+**How subjects are named** — the relation between an OpenFGA user and a
+Keycloak subject — remains open, and belongs with the enforcement half. ADR
+0014 establishes the one thing that had to be true for the question to be
+answerable at all: the identity that *calls* OpenFGA and the identity a check
+is *about* are independent, so naming a subject is a decision this platform
+gets to make rather than one OpenFGA's authentication forces.

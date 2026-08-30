@@ -45,6 +45,7 @@ mod keys;
 mod object;
 mod openfga;
 mod registry;
+mod runtime;
 mod verifier;
 
 pub use cache::KeyCache;
@@ -55,4 +56,5 @@ pub use keys::{KeySet, KeySource};
 pub use object::ObjectRef;
 pub use openfga::OpenFgaDecisions;
 pub use registry::{IssuerRegistration, Registry};
+pub use runtime::RuntimeSurface;
 pub use verifier::Verifier;

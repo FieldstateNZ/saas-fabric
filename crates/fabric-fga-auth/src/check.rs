@@ -78,6 +78,16 @@ pub trait Decisions: Send + Sync {
         relation: &str,
         object: &str,
     ) -> Result<bool, DecisionFailure>;
+
+    /// Whether the service is reachable and able to answer.
+    ///
+    /// On this port rather than a separate one because the thing readiness is
+    /// about *is* the ability to make decisions: a front that cannot reach the
+    /// service should not be sent runtime traffic. It says nothing about the
+    /// identity provider — the verifier deliberately keeps working through an
+    /// outage there on cached keys, so requiring a fresh fetch here would take
+    /// the front out of rotation for a condition it was built to survive.
+    async fn reachable(&self) -> bool;
 }
 
 /// The runtime surface's `Check` operation.

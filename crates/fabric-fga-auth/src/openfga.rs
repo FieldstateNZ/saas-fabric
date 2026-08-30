@@ -97,6 +97,21 @@ impl Decisions for OpenFgaDecisions {
             .map(|decision| decision.allowed)
             .map_err(|_| DecisionFailure::Internal)
     }
+
+    async fn reachable(&self) -> bool {
+        self.healthy().await
+    }
+}
+
+impl OpenFgaDecisions {
+    /// Asks the service's own health endpoint.
+    async fn healthy(&self) -> bool {
+        self.http
+            .get(format!("{}/healthz", self.base))
+            .send()
+            .await
+            .is_ok_and(|response| response.status().is_success())
+    }
 }
 
 /// The only part of the answer this crate reads.

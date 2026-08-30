@@ -22,7 +22,7 @@ use async_trait::async_trait;
 use fabric_core::Clock;
 use jsonwebtoken::{Algorithm, DecodingKey};
 
-use super::held::{REFRESH_MIN_INTERVAL_SECONDS, UNKNOWN_KID_FRESHNESS_SECONDS};
+use crate::{REFRESH_MIN_INTERVAL_SECONDS, UNKNOWN_KID_FRESHNESS_SECONDS};
 
 use crate::{
     IssuerRegistration, KeyCache, KeySet, KeySource, RefusalReason, UnavailableReason, VerificationError,

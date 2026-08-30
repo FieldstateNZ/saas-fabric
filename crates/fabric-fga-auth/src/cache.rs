@@ -7,8 +7,9 @@
 //! verifier cannot obtain trust material fresh enough to make that claim, the
 //! answer is that it does not know — never that the caller is unauthenticated.
 //!
-//! A failed refresh is an availability problem. It must never become permission
-//! to try another key, skip a check, or serve as evidence about one.
+//! A failed refresh is an availability problem: it must never become
+//! permission to try another key, skip a check, or serve as evidence about
+//! one. The two windows below live in [`crate::windows`].
 //!
 //! ```text
 //! unknown kid
@@ -21,12 +22,13 @@
 //!        └─ a call is suppressed by the cooldown  → unavailable
 //! ```
 //!
-//! The same token can move from refused to unavailable as evidence ages, and
-//! that is correct: the answer follows the verifier's evidence, not the token.
+//! A token can move from refused to unavailable as evidence ages: the answer
+//! follows the verifier's evidence, not the token.
 
 #[cfg(test)]
 mod cache_tests;
 mod held;
+mod locks;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -38,8 +40,6 @@ use tokio::sync::Mutex;
 use crate::{IssuerRegistration, KeySource, RefusalReason, VerificationError};
 
 use held::{Entry, Snapshot};
-
-pub use held::{REFRESH_MIN_INTERVAL_SECONDS, UNKNOWN_KID_FRESHNESS_SECONDS};
 
 /// The keys this verifier is currently willing to trust, per issuer.
 pub struct KeyCache {
@@ -85,21 +85,23 @@ impl KeyCache {
         let mut entry = handle.lock().await;
         let now = self.clock.now_unix_seconds();
 
-        if let Some(snapshot) = entry.snapshot.as_ref() {
-            if !snapshot.is_stale(registration, now) {
-                // Cached and usable: served without any call, which is what
-                // lets an ordinary provider blip pass unnoticed.
-                if let Some(key) = snapshot.keys.get(key_id) {
-                    return Ok(use_key(key));
-                }
+        let usable = entry
+            .snapshot
+            .as_ref()
+            .filter(|held| !held.is_stale(registration, now));
 
-                // Absent from a snapshot recent enough to prove it. This is
-                // the only branch that refuses a credential over a key, and it
-                // is also what stops a flood of invented ids becoming a flood
-                // of calls: every one of them lands here.
-                if snapshot.proves_absence(now) {
-                    return Err(VerificationError::Refused(RefusalReason::UnknownKey));
-                }
+        if let Some(snapshot) = usable {
+            // Cached and usable: served without any call, which is what lets
+            // an ordinary provider blip pass unnoticed.
+            if let Some(key) = snapshot.keys.get(key_id) {
+                return Ok(use_key(key));
+            }
+
+            // Absent from a snapshot recent enough to prove it. The only
+            // branch that refuses a credential over a key, and what stops a
+            // flood of invented ids becoming a flood of calls.
+            if snapshot.proves_absence(now) {
+                return Err(VerificationError::Refused(RefusalReason::UnknownKey));
             }
         }
 
@@ -139,16 +141,5 @@ impl KeyCache {
                 entry.unavailability(registration, now),
             )),
         }
-    }
-
-    /// The lock for one issuer, created on first use.
-    async fn entry_for(&self, issuer: &str) -> Arc<Mutex<Entry>> {
-        let mut entries = self.entries.lock().await;
-
-        Arc::clone(
-            entries
-                .entry(issuer.to_owned())
-                .or_insert_with(|| Arc::new(Mutex::new(Entry::default()))),
-        )
     }
 }

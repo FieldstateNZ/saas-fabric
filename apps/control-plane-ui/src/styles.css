@@ -441,3 +441,54 @@ button:disabled {
   font-size: 0.875rem;
   opacity: 0.8;
 }
+
+/* Client detail tabs.
+ *
+ * Deliberately plain. The console's job in this increment is to make the
+ * platform legible, and anything spent on appearance here is spent before
+ * anybody has looked at the information architecture it is decorating. */
+.tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  border-bottom: 1px solid #d0d7de;
+  margin: 1rem 0;
+}
+
+.tabs__tab {
+  background: none;
+  border: 1px solid transparent;
+  border-bottom: none;
+  padding: 0.4rem 0.8rem;
+  font: inherit;
+  cursor: pointer;
+  color: #57606a;
+}
+
+.tabs__tab--current {
+  border-color: #d0d7de;
+  background: #fff;
+  color: #1f2328;
+  font-weight: 600;
+  margin-bottom: -1px;
+}
+
+/* A field, or a whole tab, with no API behind it yet. Muted rather than
+ * alarming: an unbuilt capability is not an error, and colouring it like one
+ * would train operators to ignore real failures. */
+.overview__missing,
+.not-exposed__needs {
+  color: #57606a;
+}
+
+.overview__muted {
+  color: #8c959f;
+}
+
+.not-exposed {
+  padding: 0.5rem 0;
+}
+
+.not-exposed__shows {
+  margin-bottom: 0.25rem;
+}

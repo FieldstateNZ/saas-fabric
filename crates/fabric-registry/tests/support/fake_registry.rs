@@ -171,6 +171,26 @@ impl FakeRegistry {
         );
     }
 
+    /// Publishes an index carrying nothing deployable at all.
+    ///
+    /// One attestation and no runtime image, which is what an interrupted or
+    /// misconfigured push can leave behind.
+    pub fn publish_index_with_no_image(&self, repository: &str, tag: &str) {
+        let attestation = digest_of(&format!("{repository}{tag}attestation"));
+
+        self.insert(
+            repository,
+            tag,
+            Tagged {
+                digest: digest_of(&format!("{repository}{tag}index")),
+                manifest: format!(
+                    r#"{{"mediaType":"application/vnd.oci.image.index.v1+json","manifests":[{{"digest":"{attestation}","platform":{{"os":"unknown","architecture":"unknown"}}}}]}}"#
+                ),
+                blobs: BTreeMap::new(),
+            },
+        );
+    }
+
     /// The digest the fake actually stored for a tag.
     ///
     /// Read back from its state rather than recomputed. A test comparing the

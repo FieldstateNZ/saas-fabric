@@ -18,10 +18,19 @@ impl OciRegistry {
     /// label proves that platform's provenance, not the artifact's, and "the
     /// architecture we happen to run today" is not a fact about the image.
     ///
-    /// A child is supported when it declares a real platform. Build systems
-    /// put attestation manifests in the same index under
-    /// `unknown/unknown` — they carry no revision, and inspecting them would
+    /// Only **deployable** children participate. A deployable child declares a
+    /// concrete runtime platform; an index member that does not is not a
+    /// workload image, and its provenance is not this artifact's.
+    ///
+    /// That is the rule stated in terms of what matters — *could this
+    /// descriptor be a workload* — rather than as a fact about any one build
+    /// system. It happens to exclude the attestation manifests Buildx writes
+    /// under `unknown/unknown`, which carry no revision and would otherwise
     /// make every multi-architecture image look unprovenanced.
+    ///
+    /// An index with no deployable child at all is [`Absent`](Provenance::Absent)
+    /// and not `Agreed`: zero children cannot agree with each other, and there
+    /// is no artifact here whose provenance there would be to prove.
     pub(super) async fn provenance_of(
         &self,
         repository: &str,

@@ -109,6 +109,19 @@ async fn an_attestation_manifest_is_not_mistaken_for_an_image() {
 }
 
 #[tokio::test]
+async fn an_index_with_nothing_deployable_in_it_proves_nothing() {
+    // Zero deployable children must not agree with themselves. There is no
+    // artifact here to prove the provenance *of*, so this is Absent -- the
+    // answer that means "not yet", not the one that means "built twice".
+    let fake = FakeRegistry::start().await;
+    fake.publish_index_with_no_image(RUNTIME, "0.4.0");
+
+    let resolved = registry(&fake).resolve(RUNTIME, "0.4.0").await.unwrap().unwrap();
+
+    assert_eq!(resolved.provenance, Provenance::Absent);
+}
+
+#[tokio::test]
 async fn an_image_with_no_labels_reports_no_revision() {
     let fake = FakeRegistry::start().await;
     fake.publish_unlabelled(RUNTIME, "0.3.0-preview.9");

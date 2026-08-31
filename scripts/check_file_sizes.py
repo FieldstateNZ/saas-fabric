@@ -54,6 +54,13 @@ EXEMPTIONS: dict[str, str] = {
         "rule it exists to protect. The two windows it turns on are genuinely "
         "separate policy and did move out, to windows.rs; what remains is one "
         "thing.",
+    "crates/fabric-control-plane/src/errors.rs":
+        "one enum: every way a control-plane request can fail, with the "
+        "reasoning for each variant's status beside it. Splitting it puts "
+        "some failures in one file and some in another, and the next person "
+        "adding a variant has to guess which -- while the exhaustive match "
+        "in errors/status_mapping.rs already forces every one to be "
+        "considered.",
     # "crates/fabric-connector-ndc/src/wire/query_request.rs":
     #     "one cohesive NDC wire-format type plus its (de)serialisation impls; "
     #     "splitting fragments a single wire shape across files",

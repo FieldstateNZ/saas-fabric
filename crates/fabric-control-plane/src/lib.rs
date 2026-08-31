@@ -67,6 +67,7 @@ mod reconcile;
 mod registration;
 mod repository;
 mod routes;
+mod secrets_service;
 mod service;
 mod sign_in;
 mod state;
@@ -97,6 +98,7 @@ pub use repository::{
     StoredClient,
 };
 pub use routes::API_PREFIX;
+pub use secrets_service::SecretsService;
 pub use service::ClientService;
 pub use sign_in::{IssuedToken, OperatorSignIn, SignInError, SignInSurface};
 

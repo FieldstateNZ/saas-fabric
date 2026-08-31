@@ -119,6 +119,7 @@ pub fn control_plane() -> TestControlPlane {
     let services = build_control_plane(
         &config,
         ControlPlaneDeps {
+            client_secrets: None,
             desired_state: Arc::clone(&binding),
             clock: Arc::new(FixedClock),
             keys: fabric_control_plane::KeyHolder::empty(),

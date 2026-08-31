@@ -59,6 +59,19 @@ impl ControlPlaneError {
                 StatusCode::SERVICE_UNAVAILABLE
             }
 
+            // Five failures, four statuses, and the console branches on the
+            // machine code below rather than on any of them. A stale write and
+            // a client with no boundary are both 409 and are resolved very
+            // differently: one reloads, the other provisions.
+            Self::Secrets(secrets) => match secrets {
+                crate::SecretsError::NotFound => StatusCode::NOT_FOUND,
+                crate::SecretsError::Conflict | crate::SecretsError::NoBoundary => StatusCode::CONFLICT,
+                // The store refused *this platform's* credential, so it is a
+                // misconfiguration here and not something the operator did.
+                crate::SecretsError::Refused => StatusCode::BAD_GATEWAY,
+                crate::SecretsError::Unavailable => StatusCode::SERVICE_UNAVAILABLE,
+            },
+
             // 502, not 503, for all three. A refused credential, a refused
             // request and a Git host that said no are misconfigurations of
             // this platform that will still be refused in five seconds, and
@@ -89,6 +102,17 @@ impl ControlPlaneError {
             Self::GitHostRefused => "git_host_refused",
             Self::IntegrationRefused(_) => "integration_refused",
             Self::IntegrationNotConfigured => "integration_not_configured",
+
+            // Distinct codes for statuses that collide. A console that could
+            // only see `409` would have to guess whether to offer "reload" or
+            // "this client has no secret boundary yet".
+            Self::Secrets(secrets) => match secrets {
+                crate::SecretsError::NoBoundary => "secret_no_boundary",
+                crate::SecretsError::NotFound => "secret_not_found",
+                crate::SecretsError::Conflict => "secret_stale_version",
+                crate::SecretsError::Refused => "secret_store_refused",
+                crate::SecretsError::Unavailable => "secret_store_unavailable",
+            },
             Self::SignInRefused => "sign_in_refused",
             Self::SignInUnavailable => "sign_in_unavailable",
             Self::RepositoryDenied => "repository_denied",

@@ -58,6 +58,14 @@ pub struct ControlPlaneDeps {
     /// The Git connection flow, when this deployment manages its own.
     pub git_integration: Option<Arc<crate::GitIntegrationService>>,
 
+    /// Where clients' secrets live, when a deployment has a store for them.
+    ///
+    /// `None` leaves the secrets routes mounted and answering "this client has
+    /// no secret boundary" — the same answer a client without one gets, and
+    /// for the same reason: the console can tell an operator what is missing
+    /// rather than meeting a route that does not exist.
+    pub client_secrets: Option<Arc<dyn crate::ClientSecrets>>,
+
     /// Establishes who an operator is, when something other than the
     /// configured posture should decide.
     ///
@@ -87,6 +95,7 @@ pub fn build_control_plane(
         identity_provider,
         sign_in,
         git_integration,
+        client_secrets: secret_store,
         operators,
     } = deps;
 
@@ -105,10 +114,14 @@ pub fn build_control_plane(
         clock,
     ));
 
+    let client_secrets =
+        secret_store.map(|store| Arc::new(crate::SecretsService::new(Arc::clone(&service), store)));
+
     logging::control_plane_ready(&described, &operators.describe());
 
     let router = control_plane_routes(ControlPlaneState {
         service,
+        client_secrets,
         operators,
         sign_in,
         git_integration,

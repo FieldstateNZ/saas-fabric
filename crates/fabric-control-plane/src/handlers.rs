@@ -20,6 +20,8 @@ mod get_identity;
 mod integration;
 mod list_clients;
 mod put_identity;
+mod secrets;
+mod secrets_path;
 mod session;
 
 pub(crate) use converge::converge;
@@ -31,4 +33,5 @@ pub(crate) use integration::{
 };
 pub(crate) use list_clients::list_clients;
 pub(crate) use put_identity::put_identity;
+pub(crate) use secrets::{delete_secret, list_secrets, reveal_secret, secret_metadata, write_secret};
 pub(crate) use session::{redeem_session, session_config};

@@ -62,6 +62,7 @@ fabric-control-plane = { path = "crates/fabric-control-plane" }
 fabric-git-host = { path = "crates/fabric-git-host" }
 fabric-platform-git = { path = "crates/fabric-platform-git" }
 fabric-platform-management = { path = "crates/fabric-platform-management" }
+fabric-registry = { path = "crates/fabric-registry" }
 fabric-keycloak = { path = "crates/fabric-keycloak" }
 fabric-openbao = { path = "crates/fabric-openbao" }
 fabric-reconciliation = { path = "crates/fabric-reconciliation" }

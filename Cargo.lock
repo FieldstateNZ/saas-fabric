@@ -507,6 +507,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "fabric-registry"
+version = "0.2.2"
+dependencies = [
+ "async-trait",
+ "fabric-platform-management",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "fabric-tenant-runtime"
 version = "0.2.2"
 dependencies = [

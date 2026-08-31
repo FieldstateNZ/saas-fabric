@@ -72,6 +72,8 @@ fabric-platform-git    → fabric-core
 
 fabric-platform-management → fabric-core            (the rules; no transport)
 
+fabric-registry        → fabric-platform-management  (implements Registry)
+
 fabric-client-git      → fabric-core
                        → fabric-client-model
                        → fabric-git-host            (the App credential)
@@ -114,6 +116,11 @@ defines the `Registry` port and is handed an implementation, because *which*
 registry and *how it authenticates* is a separate integration from the platform
 repository's credential and the two must stay separable — the GitHub App that
 writes desired state is not, and must never become, the registry credential.
+
+`fabric-registry` implements that port and holds no credential at all: the
+packages are public, so it exchanges an anonymous pull token and reads. A
+credential that does not exist cannot be conflated with the GitHub App that
+writes desired state, which is the boundary that matters here.
 
 It has no edge to `fabric-platform-git` either. Deciding which version an
 environment should run and writing that decision down are two jobs, and the

@@ -22,18 +22,46 @@ pub enum RegistryError {
     },
 }
 
+/// What an artifact says about where it came from.
+///
+/// # Why absence and disagreement are not the same answer
+///
+/// An artifact carrying no revision may simply still be publishing — a push
+/// in flight looks identical to a label that was never set, and waiting is the
+/// cheaper mistake. An artifact whose parts *disagree* about their source
+/// commit is one version built twice, and no amount of waiting resolves it.
+///
+/// Collapsing them would either retry a broken build forever or refuse a
+/// perfectly ordinary publishing window.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Provenance {
+    /// Everything inspected agrees it came from this commit.
+    Agreed(String),
+
+    /// Something inspected carries no revision at all.
+    Absent,
+
+    /// The parts inspected name different commits.
+    Disagreed,
+}
+
 /// What a registry knows about one tag of one repository.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Resolved {
     /// The manifest digest, which is what a deployment pins.
+    ///
+    /// For a multi-architecture image this is the **index**, so a node still
+    /// selects its own architecture. Pinning one platform's manifest would
+    /// hand every node the same one.
     pub digest: String,
 
-    /// `org.opencontainers.image.revision` — the commit it was built from.
+    /// Where it says it came from.
     ///
-    /// Optional because an image may carry no such label, and an image whose
-    /// provenance cannot be read is one this crate will not promote. That is a
-    /// refusal, not a crash.
-    pub revision: Option<String>,
+    /// An adapter reporting this for an index must satisfy itself that *every*
+    /// manifest it inspected agrees. Reading one platform's label proves that
+    /// platform's provenance and not the artifact's, and "the architecture we
+    /// happen to run today" is not a fact about the image.
+    pub provenance: Provenance,
 }
 
 /// Somewhere published artifacts can be looked up.

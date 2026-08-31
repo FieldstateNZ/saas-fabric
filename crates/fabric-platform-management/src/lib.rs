@@ -24,7 +24,7 @@ mod registry;
 mod version;
 
 pub use discovery::{Discovery, ReleaseUnit, ResolvedImage};
-pub use registry::{Registry, RegistryError, Resolved};
+pub use registry::{Provenance, Registry, RegistryError, Resolved};
 pub use version::{Channel, Version};
 
 /// Finds the newest release unit an environment is allowed to move to.

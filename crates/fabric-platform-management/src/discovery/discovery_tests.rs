@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use std::sync::Mutex;
 
 use super::discover;
-use crate::{Channel, Registry, RegistryError, Resolved, Version};
+use crate::{Channel, Provenance, Registry, RegistryError, Resolved, Version};
 
 const RUNTIME: &str = "ghcr.io/fieldstatenz/saas-fabric";
 const CONTROL_PLANE: &str = "ghcr.io/fieldstatenz/saas-fabric-control-plane";
@@ -30,7 +30,7 @@ impl FakeRegistry {
                         "sha256:{}",
                         format!("{repository}{tag}").len().to_string().repeat(8)
                     ),
-                    revision: Some(revision.to_owned()),
+                    provenance: Provenance::Agreed(revision.to_owned()),
                 },
             );
     }
@@ -183,7 +183,7 @@ async fn an_image_with_no_provenance_is_not_promoted() {
             (CONSOLE.to_owned(), "0.3.0-preview.3".to_owned()),
             Resolved {
                 digest: "sha256:unlabelled".to_owned(),
-                revision: None,
+                provenance: Provenance::Absent,
             },
         );
 
@@ -192,6 +192,36 @@ async fn an_image_with_no_provenance_is_not_promoted() {
     // Incomplete rather than incoherent: a missing label is indistinguishable
     // from a push still in flight, and waiting is the cheaper mistake.
     assert_eq!(found.not_yet, vec![version("0.3.0-preview.3")]);
+    assert_eq!(
+        found.available.map(|unit| unit.version.as_str().to_owned()),
+        Some("0.3.0-preview.2".to_owned())
+    );
+}
+
+#[tokio::test]
+async fn an_artifact_whose_own_parts_disagree_is_incoherent_not_pending() {
+    // A multi-architecture image whose children name different commits. It
+    // will never become coherent by waiting, so reporting it as still
+    // publishing would retry a broken build forever.
+    let registry = FakeRegistry::default();
+    registry.publish_all("0.3.0-preview.2", "aaaa");
+    registry.publish_all("0.3.0-preview.3", "bbbb");
+    registry
+        .published
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .insert(
+            (RUNTIME.to_owned(), "0.3.0-preview.3".to_owned()),
+            Resolved {
+                digest: "sha256:mixed".to_owned(),
+                provenance: Provenance::Disagreed,
+            },
+        );
+
+    let found = pass(&registry, "0.3.0-preview.1").await;
+
+    assert_eq!(found.incoherent, vec![version("0.3.0-preview.3")]);
+    assert!(found.not_yet.is_empty(), "waiting will not fix this");
     assert_eq!(
         found.available.map(|unit| unit.version.as_str().to_owned()),
         Some("0.3.0-preview.2".to_owned())

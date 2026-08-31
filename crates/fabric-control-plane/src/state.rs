@@ -69,10 +69,20 @@ pub(crate) struct ControlPlaneState {
 
     /// Where this control plane is reachable from a browser.
     pub(crate) public_base_url: String,
+
+    /// One client's secrets, when a deployment has a store for them.
+    pub(crate) client_secrets: Option<Arc<crate::SecretsService>>,
 }
 
 impl ControlPlaneState {
     /// The connection flow, or a refusal naming why there is none.
+    /// The secrets service, or a refusal naming why there is none.
+    pub(crate) fn secrets(&self) -> Result<&Arc<crate::SecretsService>, crate::ControlPlaneError> {
+        self.client_secrets
+            .as_ref()
+            .ok_or(crate::ControlPlaneError::Secrets(crate::SecretsError::NoBoundary))
+    }
+
     pub(crate) fn git_integration(&self) -> Result<&Arc<GitIntegrationService>, crate::ControlPlaneError> {
         self.git_integration
             .as_ref()

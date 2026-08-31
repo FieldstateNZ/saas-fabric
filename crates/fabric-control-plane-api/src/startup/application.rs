@@ -62,6 +62,7 @@ pub async fn build(config: &ControlPlaneAppConfig) -> Result<Application, String
 
     let (keys, sign_in) = operator_keys::establish(&config.control_plane.operator)?;
     let git_integration = integration::establish(config, &repository, &clock).await?;
+    let client_secrets = integration::client_secrets(config, &clock)?;
 
     let services = build_control_plane(
         &config.control_plane,
@@ -72,6 +73,7 @@ pub async fn build(config: &ControlPlaneAppConfig) -> Result<Application, String
             identity_provider,
             sign_in,
             git_integration,
+            client_secrets,
 
             // Always the configured posture. The override exists for tests.
             operators: None,

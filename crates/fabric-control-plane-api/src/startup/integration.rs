@@ -9,7 +9,7 @@ use fabric_control_plane::{
     IntegrationStore, SecretStore,
 };
 use fabric_core::Clock;
-use fabric_openbao::{OpenBao, OpenBaoIntegrationStore, OpenBaoSecretStore};
+use fabric_openbao::{OpenBao, OpenBaoClientSecrets, OpenBaoIntegrationStore, OpenBaoSecretStore};
 
 use crate::config::{ControlPlaneAppConfig, DesiredStateConfig, SecretStoreConfig};
 
@@ -41,7 +41,7 @@ pub(super) async fn establish(
         );
     }
 
-    let (secrets, store) = stores(config, clock)?;
+    let (secrets, store, _) = stores(config, clock)?;
     let host = &config.git_host;
 
     let provisioning = Arc::new(GitHubAppProvisioning::new(
@@ -81,9 +81,29 @@ pub(super) async fn establish(
 /// Named because they are always built together and always from the same
 /// client: the secrets and the record share a login, and separating them into
 /// two constructions would mean two logins for one process.
-type InstanceStores = (Arc<dyn SecretStore>, Arc<dyn IntegrationStore>);
+type InstanceStores = (
+    Arc<dyn SecretStore>,
+    Arc<dyn IntegrationStore>,
+    Option<Arc<dyn fabric_control_plane::ClientSecrets>>,
+);
 
-/// Builds the two stores this instance keeps its own state in.
+/// Where clients' secrets are read and written, if this deployment has a store.
+///
+/// Separate from [`establish`] rather than returned beside it, because the two
+/// are independent: a deployment that states its own repository has opted out
+/// of the managed Git integration and still keeps its clients' secrets. The
+/// cost is a second login at startup, which is the right trade against tying
+/// one capability's availability to another's.
+pub(super) fn client_secrets(
+    config: &ControlPlaneAppConfig,
+    clock: &Arc<dyn Clock>,
+) -> Result<Option<Arc<dyn fabric_control_plane::ClientSecrets>>, String> {
+    let (_, _, secrets) = stores(config, clock)?;
+
+    Ok(secrets)
+}
+
+/// Builds the stores: this instance's own two, and clients' secrets.
 fn stores(config: &ControlPlaneAppConfig, clock: &Arc<dyn Clock>) -> Result<InstanceStores, String> {
     match &config.secret_store {
         SecretStoreConfig::OpenBao(openbao) => {
@@ -99,7 +119,10 @@ fn stores(config: &ControlPlaneAppConfig, clock: &Arc<dyn Clock>) -> Result<Inst
 
             Ok((
                 Arc::new(OpenBaoSecretStore::new(Arc::clone(&client))),
-                Arc::new(OpenBaoIntegrationStore::new(client)),
+                Arc::new(OpenBaoIntegrationStore::new(Arc::clone(&client))),
+                // The same client again, so one login serves clients' secrets
+                // as well as this instance's own state.
+                Some(Arc::new(OpenBaoClientSecrets::new(client))),
             ))
         }
 
@@ -113,6 +136,11 @@ fn stores(config: &ControlPlaneAppConfig, clock: &Arc<dyn Clock>) -> Result<Inst
             Ok((
                 Arc::new(InMemorySecretStore::new()),
                 Arc::new(InMemoryIntegrationStore::new()),
+                // No in-memory stand-in on purpose. A development store for
+                // clients' secrets would let the console demonstrate managing
+                // something that is not kept anywhere, which is a worse lie
+                // than the tab saying it is not configured.
+                None,
             ))
         }
     }

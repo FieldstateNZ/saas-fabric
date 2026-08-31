@@ -18,6 +18,9 @@ import type {
   Identity,
   IdentityRequest,
   Integration,
+  RevealedSecret,
+  SecretEntry,
+  SecretMetadata,
 } from './types'
 
 /** Every client the platform manages. */
@@ -187,4 +190,63 @@ async function refusal(response: Response): Promise<ControlPlaneError> {
     'unexpected_response',
     `The control plane answered ${String(response.status)}.`,
   )
+}
+
+/**
+ * Where a secret's path goes in a URL.
+ *
+ * Encoded per segment, so a path keeps its structure while anything unusual
+ * inside a segment is escaped. The control plane validates it again on
+ * arrival; this is about building a correct URL, not about trust.
+ */
+function entry(client: string, path: string): string {
+  const encoded = path.split('/').map(encodeURIComponent).join('/')
+
+  return `/api/clients/${encodeURIComponent(client)}/secrets/entry/${encoded}`
+}
+
+/** Every secret this client has. */
+export async function listSecrets(client: string): Promise<readonly SecretEntry[]> {
+  return request<SecretEntry[]>(`/api/clients/${encodeURIComponent(client)}/secrets`)
+}
+
+/** What is known about one secret, without revealing it. */
+export async function secretMetadata(client: string, path: string): Promise<SecretMetadata> {
+  return request<SecretMetadata>(entry(client, path))
+}
+
+/**
+ * Fetches a secret's values, because the operator asked.
+ *
+ * A `POST` with the path in the body rather than a `GET`: revealing is an act,
+ * and a URL would carry it into history, referrers and proxy logs.
+ */
+export async function revealSecret(client: string, path: string): Promise<RevealedSecret> {
+  return request<RevealedSecret>(`/api/clients/${encodeURIComponent(client)}/secrets/reveal`, {
+    method: 'POST',
+    body: JSON.stringify({ path }),
+  })
+}
+
+/**
+ * Writes a secret against the version the operator was looking at.
+ *
+ * `expectedVersion` absent means "I believe this does not exist yet". There is
+ * no way to spell "overwrite whatever is there", deliberately.
+ */
+export async function writeSecret(
+  client: string,
+  path: string,
+  values: Record<string, string>,
+  expectedVersion: number | null,
+): Promise<{ version: number }> {
+  return request<{ version: number }>(entry(client, path), {
+    method: 'PUT',
+    body: JSON.stringify({ values, expectedVersion }),
+  })
+}
+
+/** Removes a secret and every version of it. */
+export async function deleteSecret(client: string, path: string): Promise<void> {
+  await request<undefined>(entry(client, path), { method: 'DELETE' })
 }

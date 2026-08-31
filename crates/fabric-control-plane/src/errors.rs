@@ -43,6 +43,11 @@ pub enum ControlPlaneError {
     #[error(transparent)]
     Unauthenticated(#[from] OperatorAuthError),
 
+    /// A secret operation failed. Carried rather than flattened: a stale
+    /// write, an outage and a client with no boundary differ to an operator.
+    #[error(transparent)]
+    Secrets(#[from] crate::SecretsError),
+
     /// No such client.
     #[error("no client named {0}")]
     UnknownClient(ClientId),

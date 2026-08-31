@@ -55,11 +55,11 @@ describe('the client detail view', () => {
   it('says what an unbuilt tab will show and what it needs', async () => {
     render(<ClientDetail client={ACME} />)
 
-    await userEvent.click(screen.getByRole('button', { name: 'Secrets' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Modules' }))
 
-    expect(screen.getByText(/paths, keys, and values revealed one at a time/)).toBeDefined()
+    expect(screen.getByText(/which platform modules are enabled/)).toBeDefined()
     // The requirement, stated on the screen rather than guessed at in a backlog.
-    expect(screen.getByText(/No per-client secret API exists/)).toBeDefined()
+    expect(screen.getByText(/No module enablement model exists/)).toBeDefined()
   })
 
   it('keeps the tabs usable by naming the current one', async () => {

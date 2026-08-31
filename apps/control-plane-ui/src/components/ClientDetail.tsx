@@ -4,6 +4,7 @@ import type { Client } from '../api/types'
 import { IdentityPanel } from './IdentityPanel'
 import { NotExposed } from './tabs/NotExposed'
 import { Overview } from './tabs/Overview'
+import { Secrets } from './tabs/Secrets'
 import { CLIENT_TABS, type ClientTab } from './tabs/tabs'
 
 /**
@@ -58,12 +59,7 @@ function Panel({ tab, client }: { tab: ClientTab; client: Client }) {
       return <IdentityPanel client={client} />
 
     case 'Secrets':
-      return (
-        <NotExposed
-          shows="this client's secrets: paths, keys, and values revealed one at a time"
-          needs="No per-client secret API exists. fabric-openbao reads the platform's own partition, not a client's."
-        />
-      )
+      return <Secrets client={client} />
 
     case 'Authorization':
       return (

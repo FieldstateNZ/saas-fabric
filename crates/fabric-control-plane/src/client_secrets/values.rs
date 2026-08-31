@@ -4,16 +4,18 @@ use std::collections::BTreeMap;
 
 /// What is known about a secret without reading it.
 ///
-/// Key **names**, never values. A console lists secrets constantly and reveals
-/// one rarely, so the operation it performs constantly is the one that cannot
-/// leak.
+/// # Why there are no key names here
+///
+/// The store's metadata does not carry them, so including them would mean
+/// *reading the secret to draw a list* — fetching every value and discarding
+/// it, on the operation a console performs most often. The cheap, frequent
+/// operation must be the one that cannot leak, so key names arrive with
+/// [`SecretValues`] when somebody deliberately reveals.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SecretMetadata {
     /// The version currently stored.
     pub version: u64,
-
-    /// The names of the keys it holds.
-    pub keys: Vec<String>,
 
     /// When it was last written, as the store reported it.
     pub updated_at: Option<String>,

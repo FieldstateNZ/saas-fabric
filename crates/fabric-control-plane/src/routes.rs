@@ -83,6 +83,29 @@ pub(crate) fn control_plane_routes(state: ControlPlaneState) -> Router {
         .route(
             "/clients/{client_id}/identity",
             get(handlers::get_identity).put(handlers::put_identity),
+        )
+        // A wildcard tail, so `database/primary` arrives whole rather than as
+        // a segment that cannot contain a separator. The router does not
+        // validate it; `SecretPathTail` does, before anything downstream sees
+        // it.
+        //
+        // Every path-bearing route sits under `entry/` because a catch-all
+        // must be the last thing in a route — so `secrets/{*path}` alongside
+        // `secrets/metadata/{*path}` would make a secret genuinely named
+        // `metadata/db` indistinguishable from an operation.
+        .route("/clients/{client_id}/secrets", get(handlers::list_secrets))
+        .route(
+            "/clients/{client_id}/secrets/entry/{*secret_path}",
+            get(handlers::secret_metadata)
+                .put(handlers::write_secret)
+                .delete(handlers::delete_secret),
+        )
+        // The path travels in the body rather than the URL. Revealing is an
+        // act, and a POST is what keeps it out of history, referrers and proxy
+        // logs — the same reasoning that sets `no-store` on its response.
+        .route(
+            "/clients/{client_id}/secrets/reveal",
+            post(handlers::reveal_secret),
         );
 
     Router::new()

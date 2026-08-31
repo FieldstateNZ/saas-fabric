@@ -34,6 +34,19 @@ concurrency:
 env:
   REGISTRY: ghcr.io
 
+# The floor for every job, so a new one starts with the least privilege rather
+# than the repository default.
+#
+# Without this, a job that declares no `permissions` inherits whatever the
+# repository grants the workflow token — often far more than reading a
+# checkout. `verify` needed nothing but the source and had no block of its own,
+# which is exactly the shape that goes unnoticed: it works, so nobody looks.
+#
+# `build` keeps its own block and still states `packages: write`, because a job
+# that publishes should say so where somebody reading it will see it.
+permissions:
+  contents: read
+
 jobs:
   # ---------------------------------------------------------------------------
   # Nothing is published from a commit that does not pass its own gates

@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::discovery::{ReleaseUnit, ResolvedImage};
-use crate::{Channel, Registry, RegistryError, Version};
+use crate::{Channel, Provenance, Registry, RegistryError, Version};
 
 /// What a version turned out to be.
 pub(super) enum Assembly {
@@ -73,15 +73,18 @@ pub(super) async fn assemble(
             return Ok(Assembly::Incomplete);
         };
 
-        // An image whose provenance cannot be read cannot be checked against
-        // the others, so it cannot be promoted. Treated as incomplete rather
-        // than incoherent: a missing label is indistinguishable from a push
-        // still in flight, and waiting is the cheaper mistake.
-        let Some(revision) = resolved.revision else {
-            return Ok(Assembly::Incomplete);
-        };
+        match resolved.provenance {
+            // Indistinguishable from a push still in flight, and waiting is
+            // the cheaper mistake.
+            Provenance::Absent => return Ok(Assembly::Incomplete),
 
-        revisions.insert(revision);
+            // The artifact's own parts disagree about where they came from.
+            // That is one version built twice, one level below the check
+            // across repositories below, and no waiting fixes it.
+            Provenance::Disagreed => return Ok(Assembly::Incoherent),
+
+            Provenance::Agreed(revision) => revisions.insert(revision),
+        };
         images.insert(
             role.clone(),
             ResolvedImage {

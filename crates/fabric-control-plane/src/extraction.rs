@@ -35,14 +35,25 @@ impl<S: Send + Sync> FromRequestParts<S> for ClientPath {
     type Rejection = ControlPlaneError;
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
-        let axum::extract::Path(client) = axum::extract::Path::<String>::from_request_parts(parts, state)
+        // By name out of a map, not positionally. A route with a second
+        // parameter — a secret's path, say — makes a single-value extractor
+        // fail with "names no client", which is a confusing way to be told
+        // that a route grew.
+        let axum::extract::Path(params) =
+            axum::extract::Path::<std::collections::HashMap<String, String>>::from_request_parts(
+                parts, state,
+            )
             .await
             .map_err(|_| invalid("clientId", "the request path names no client".to_owned()))?;
+
+        let client = params
+            .get("client_id")
+            .ok_or_else(|| invalid("clientId", "the request path names no client".to_owned()))?;
 
         // The message names the rule, not the value: a client id reaches here
         // from a URL, so echoing it back would reflect caller-controlled text
         // into a response body.
-        ClientId::try_new(&client)
+        ClientId::try_new(client)
             .map(Self)
             .map_err(|error| invalid("clientId", error.to_string()))
     }

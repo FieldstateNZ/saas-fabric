@@ -47,6 +47,8 @@ spec:
   displayName: Acme
   hosts:
     - www.example.com
+  secrets:
+    namespace: acme
   identity:
     realm: acme
     roles:
@@ -98,6 +100,76 @@ pub struct TestControlPlane {
     pub binding: Arc<DesiredStateBinding>,
 }
 
+/// A stand-in for a client's secret store.
+///
+/// Holds one secret so that a test can exercise the routes without a store,
+/// and — more to the point — so a test can assert what the *response* carries
+/// rather than what the adapter did.
+pub struct FakeClientSecrets;
+
+#[async_trait::async_trait]
+impl fabric_control_plane::ClientSecrets for FakeClientSecrets {
+    async fn list(
+        &self,
+        _namespace: &fabric_control_plane::SecretNamespace,
+    ) -> Result<Vec<fabric_control_plane::SecretPath>, fabric_control_plane::SecretsError> {
+        Ok(vec![
+            fabric_control_plane::SecretPath::parse("database/primary").expect("valid")
+        ])
+    }
+
+    async fn metadata(
+        &self,
+        _namespace: &fabric_control_plane::SecretNamespace,
+        _path: &fabric_control_plane::SecretPath,
+    ) -> Result<fabric_control_plane::SecretMetadata, fabric_control_plane::SecretsError> {
+        Ok(fabric_control_plane::SecretMetadata {
+            version: 7,
+            updated_at: Some("2026-08-30T00:00:00Z".to_owned()),
+        })
+    }
+
+    async fn reveal(
+        &self,
+        _namespace: &fabric_control_plane::SecretNamespace,
+        _path: &fabric_control_plane::SecretPath,
+    ) -> Result<fabric_control_plane::SecretValues, fabric_control_plane::SecretsError> {
+        Ok(fabric_control_plane::SecretValues::new(
+            [("password".to_owned(), SECRET_VALUE.to_owned())]
+                .into_iter()
+                .collect(),
+        ))
+    }
+
+    async fn write(
+        &self,
+        _namespace: &fabric_control_plane::SecretNamespace,
+        _path: &fabric_control_plane::SecretPath,
+        _values: &fabric_control_plane::SecretValues,
+        expected: Option<u64>,
+    ) -> Result<u64, fabric_control_plane::SecretsError> {
+        // Anything but the current version is somebody else having written
+        // first, which is the case worth being able to reach from a test.
+        if expected == Some(7) {
+            Ok(8)
+        } else {
+            Err(fabric_control_plane::SecretsError::Conflict)
+        }
+    }
+
+    async fn delete(
+        &self,
+        _namespace: &fabric_control_plane::SecretNamespace,
+        _path: &fabric_control_plane::SecretPath,
+    ) -> Result<(), fabric_control_plane::SecretsError> {
+        Ok(())
+    }
+}
+
+/// The value the fake holds, so a test can assert where it does and does not
+/// appear.
+pub const SECRET_VALUE: &str = "a-value-that-must-not-leak";
+
 /// Builds a control plane holding one client.
 pub fn control_plane() -> TestControlPlane {
     let repository = Arc::new(InMemoryClientRepository::new());
@@ -119,7 +191,7 @@ pub fn control_plane() -> TestControlPlane {
     let services = build_control_plane(
         &config,
         ControlPlaneDeps {
-            client_secrets: None,
+            client_secrets: Some(Arc::new(FakeClientSecrets)),
             desired_state: Arc::clone(&binding),
             clock: Arc::new(FixedClock),
             keys: fabric_control_plane::KeyHolder::empty(),

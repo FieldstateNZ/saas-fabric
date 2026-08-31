@@ -514,6 +514,11 @@ def check_dependency_direction(graph: Graph) -> list[Failure]:
         # is a separate integration from the platform repository's credential
         # and must stay separable.
         "fabric-platform-management": {"fabric-core"},
+        # The registry adapter. It implements the port the rules define, and
+        # holds no credential at all: the packages are public, and the App that
+        # writes platform desired state must never become the registry's
+        # credential.
+        "fabric-registry": {"fabric-core", "fabric-platform-management"},
         "fabric-client-git": {
             "fabric-core",
             "fabric-client-model",

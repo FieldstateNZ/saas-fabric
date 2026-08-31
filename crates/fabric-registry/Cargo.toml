@@ -1,0 +1,23 @@
+[package]
+name = "fabric-registry"
+description = "Reading published artifacts from an OCI registry. Anonymous, read-only, and nowhere near the platform's Git credential."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+fabric-platform-management.workspace = true
+
+async-trait.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt-multi-thread"] }
+
+[lints]
+workspace = true

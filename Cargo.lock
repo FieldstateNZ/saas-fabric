@@ -483,6 +483,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "fabric-platform-management"
+version = "0.2.2"
+dependencies = [
+ "async-trait",
+ "fabric-core",
+ "thiserror",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "fabric-reconciliation"
 version = "0.2.2"
 dependencies = [

@@ -70,6 +70,8 @@ fabric-git-host        → fabric-core
 fabric-platform-git    → fabric-core
                        → fabric-git-host            (the App credential)
 
+fabric-platform-management → fabric-core            (the rules; no transport)
+
 fabric-client-git      → fabric-core
                        → fabric-client-model
                        → fabric-git-host            (the App credential)
@@ -106,6 +108,16 @@ which repository it is authenticating to or what is stored there. It reports
 its own `TokenError`; each adapter maps that into its own vocabulary, because
 "the credential was refused" leads somewhere different for a client repository
 than for a platform one.
+
+`fabric-platform-management` holds the rules and no transport at all. It
+defines the `Registry` port and is handed an implementation, because *which*
+registry and *how it authenticates* is a separate integration from the platform
+repository's credential and the two must stay separable — the GitHub App that
+writes desired state is not, and must never become, the registry credential.
+
+It has no edge to `fabric-platform-git` either. Deciding which version an
+environment should run and writing that decision down are two jobs, and the
+composition root is what will put them together.
 
 `fabric-platform-git` is the other side of that: the adapter for the *platform*
 repository, with no edge to `fabric-client-git` and none back. Two Apps, two

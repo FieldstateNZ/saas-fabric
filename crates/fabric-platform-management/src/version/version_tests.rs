@@ -1,0 +1,82 @@
+//! Precedence is the reason this type exists, so it is what these test.
+
+use crate::{Channel, Version};
+
+/// Pairs in ascending precedence. Half are from the `SemVer` specification's own
+/// example; the rest are what this repository will actually publish.
+const ASCENDING: [(&str, &str); 12] = [
+    ("1.0.0-alpha", "1.0.0-alpha.1"),
+    ("1.0.0-alpha.1", "1.0.0-alpha.beta"),
+    ("1.0.0-alpha.beta", "1.0.0-beta"),
+    ("1.0.0-beta", "1.0.0-beta.2"),
+    ("1.0.0-beta.2", "1.0.0-beta.11"),
+    ("1.0.0-beta.11", "1.0.0-rc.1"),
+    ("1.0.0-rc.1", "1.0.0"),
+    ("0.3.0-preview.9", "0.3.0-preview.10"),
+    ("0.3.0-preview.20260831.9", "0.3.0-preview.20260831.42"),
+    ("0.2.2", "0.3.0-preview.1"),
+    ("0.3.0-preview.1", "0.3.0"),
+    ("0.9.0", "0.10.0"),
+];
+
+fn version(text: &str) -> Version {
+    Version::parse(text).unwrap_or_else(|| panic!("{text} should parse"))
+}
+
+#[test]
+fn precedence_is_semver_and_not_string_order() {
+    for (lower, higher) in ASCENDING {
+        assert!(
+            version(lower) < version(higher),
+            "{lower} should precede {higher}"
+        );
+        assert!(version(higher) > version(lower), "{higher} should follow {lower}");
+    }
+}
+
+#[test]
+fn these_cases_would_be_wrong_under_string_order() {
+    // Without this, the table above could be satisfied by comparing strings,
+    // and a regression to `<` on `&str` would pass every test in this file.
+    let disagreements = ASCENDING.iter().filter(|(lower, higher)| lower >= higher).count();
+
+    assert!(
+        disagreements >= 5,
+        "only {disagreements} cases distinguish precedence from string order"
+    );
+}
+
+#[test]
+fn what_is_not_a_version_is_refused() {
+    for text in [
+        "latest",
+        "1.0",
+        "v1.0.0",
+        "1.0.0+build",
+        "01.0.0",
+        "1.0.0-",
+        "1.0.0.0",
+        "",
+        "1.0.0-pre..1",
+        "1.0.0-pre_1",
+    ] {
+        assert!(Version::parse(text).is_none(), "{text} was accepted");
+    }
+}
+
+#[test]
+fn a_prerelease_part_is_what_makes_a_preview() {
+    assert_eq!(version("0.3.0").channel(), Channel::Stable);
+    assert_eq!(version("0.3.0-preview.1").channel(), Channel::Preview);
+    assert_eq!(version("0.3.0-rc.1").channel(), Channel::Preview);
+}
+
+#[test]
+fn a_series_is_the_version_core() {
+    let series = version("0.3.0");
+
+    assert!(version("0.3.0-preview.7").is_series(&series));
+    assert!(version("0.3.0").is_series(&series));
+    assert!(!version("0.3.1-preview.1").is_series(&series));
+    assert!(!version("0.4.0").is_series(&series));
+}

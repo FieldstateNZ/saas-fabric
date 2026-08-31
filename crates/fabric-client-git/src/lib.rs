@@ -39,7 +39,6 @@
 //! happened.
 
 mod config;
-mod credential;
 mod factory;
 mod github;
 mod logging;
@@ -47,7 +46,10 @@ mod provisioning;
 mod repository;
 
 pub use config::{GitAuthConfig, GitRepositoryConfig};
-pub use credential::GitCredential;
+// Re-exported rather than re-declared: the credential is the same type the
+// platform integration uses, and a composition root should not have to know
+// which crate it came from to wire this one.
+pub use fabric_git_host::GitCredential;
 pub use factory::GitRepositoryFactory;
 pub use provisioning::GitHubAppProvisioning;
 pub use repository::GitClientRepository;

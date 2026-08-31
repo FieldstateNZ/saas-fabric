@@ -257,11 +257,10 @@ dependencies = [
  "fabric-client-model",
  "fabric-control-plane",
  "fabric-core",
- "jsonwebtoken",
+ "fabric-git-host",
  "reqwest",
  "serde",
  "serde_json",
- "time",
  "tokio",
  "tracing",
 ]
@@ -406,6 +405,20 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "fabric-git-host"
+version = "0.2.2"
+dependencies = [
+ "fabric-core",
+ "jsonwebtoken",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "time",
+ "tokio",
 ]
 
 [[package]]

@@ -5,9 +5,9 @@ mod sending;
 use fabric_control_plane::{AccessibleRepository, InstallationDetail, ProvisioningError, SecretValue};
 use serde::Deserialize;
 
-use crate::github::tokens::assertion;
 use crate::provisioning::installation::sending::{get, post};
 use crate::provisioning::urlencode_path;
+use fabric_git_host::sign_app_assertion;
 
 /// The account an application is installed on.
 #[derive(Deserialize)]
@@ -74,7 +74,8 @@ pub(super) async fn inspect(
         .map_err(|_| ProvisioningError::Unavailable)?
         .as_secs();
 
-    let jwt = assertion::build(app_id, private_key.expose(), now).map_err(|_| ProvisioningError::Refused)?;
+    let jwt =
+        sign_app_assertion(app_id, private_key.expose(), now).map_err(|_| ProvisioningError::Refused)?;
 
     let id = urlencode_path(installation_id);
 

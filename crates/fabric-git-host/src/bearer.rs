@@ -1,18 +1,20 @@
-//! Obtaining the bearer the contents API is called with.
+//! Obtaining the bearer the host's API is called with.
 
 use std::sync::Arc;
 use std::time::Instant;
 
-use fabric_control_plane::RepositoryError;
 use fabric_core::Clock;
 use tokio::sync::Mutex;
 
-pub(crate) mod assertion;
+mod assertion;
 mod lifetime;
+mod wire;
 
-use crate::github::errors::{status_failure, transport_failure};
-use crate::github::wire::InstallationToken;
-use crate::GitCredential;
+pub use assertion::sign_app_assertion;
+
+use crate::errors::{status_failure, transport_failure};
+use crate::{GitCredential, TokenError};
+use wire::InstallationToken;
 
 /// A minted token, and when it stops being used.
 struct Cached {
@@ -24,7 +26,7 @@ struct Cached {
 }
 
 /// Supplies the bearer for each request, minting one when the posture needs it.
-pub(crate) struct BearerSource {
+pub struct BearerSource {
     /// What the platform was given.
     credential: GitCredential,
 
@@ -40,7 +42,8 @@ pub(crate) struct BearerSource {
 
 impl BearerSource {
     /// Builds a source over a credential.
-    pub(crate) fn new(credential: GitCredential, api_base_url: String, clock: Arc<dyn Clock>) -> Self {
+    #[must_use]
+    pub fn new(credential: GitCredential, api_base_url: String, clock: Arc<dyn Clock>) -> Self {
         Self {
             credential,
             cached: Mutex::new(None),
@@ -53,9 +56,9 @@ impl BearerSource {
     ///
     /// # Errors
     ///
-    /// Returns [`RepositoryError`] if an installation token could not be
-    /// minted — the key was refused, or the token endpoint was unreachable.
-    pub(crate) async fn bearer(&self, http: &reqwest::Client) -> Result<String, RepositoryError> {
+    /// Returns [`TokenError`] if an installation token could not be minted —
+    /// the key was refused, or the token endpoint was unreachable.
+    pub async fn bearer(&self, http: &reqwest::Client) -> Result<String, TokenError> {
         let (app_id, installation_id, private_key) = match &self.credential {
             GitCredential::Token(value) => return Ok(value.clone()),
             GitCredential::App {
@@ -76,7 +79,7 @@ impl BearerSource {
             }
         }
 
-        let assertion = assertion::build(app_id, private_key, self.clock.now_unix_seconds())?;
+        let assertion = sign_app_assertion(app_id, private_key, self.clock.now_unix_seconds())?;
         let minted = self.mint(http, installation_id, &assertion).await?;
 
         // The host's stated expiry, measured monotonically — see
@@ -102,9 +105,9 @@ impl BearerSource {
     /// believes it may use for another forty minutes.
     ///
     /// Without this, a token that stopped working would be presented on every
-    /// request until the local deadline passed, and every sweep in between
-    /// would fail identically. `operations` calls it on a `401`.
-    pub(crate) async fn invalidate(&self) {
+    /// request until the local deadline passed, and every call in between
+    /// would fail identically. Callers invalidate on a `401`.
+    pub async fn invalidate(&self) {
         *self.cached.lock().await = None;
     }
 
@@ -114,7 +117,7 @@ impl BearerSource {
         http: &reqwest::Client,
         installation_id: &str,
         assertion: &str,
-    ) -> Result<InstallationToken, RepositoryError> {
+    ) -> Result<InstallationToken, TokenError> {
         let url = format!(
             "{}/app/installations/{installation_id}/access_tokens",
             self.api_base_url.trim_end_matches('/')
@@ -127,20 +130,12 @@ impl BearerSource {
             .bearer_auth(assertion)
             .send()
             .await
-            .map_err(|error| transport_failure("minting an installation token", &error))?;
+            .map_err(|error| transport_failure(&error))?;
 
         if !response.status().is_success() {
-            return Err(status_failure(
-                "minting an installation token",
-                response.status(),
-                response.headers(),
-                None,
-            ));
+            return Err(status_failure(response.status(), response.headers()));
         }
 
-        response
-            .json()
-            .await
-            .map_err(|error| transport_failure("minting an installation token", &error))
+        response.json().await.map_err(|error| transport_failure(&error))
     }
 }

@@ -2,6 +2,7 @@
 
 use fabric_client_model::ClientId;
 use fabric_control_plane::RepositoryError;
+use fabric_git_host::TokenError;
 use reqwest::header::HeaderMap;
 use reqwest::StatusCode;
 
@@ -97,4 +98,21 @@ fn quota_exhausted(headers: &HeaderMap) -> bool {
         .get(RATE_LIMIT_REMAINING)
         .and_then(|value| value.to_str().ok())
         .is_some_and(|value| value.trim() == "0")
+}
+
+/// Translates a credential failure into this adapter's vocabulary.
+///
+/// A free function rather than a `From` impl because both types are foreign to
+/// this crate. That is not only an orphan-rule technicality: the mapping is a
+/// *decision this adapter makes*, and the platform integration is entitled to
+/// map the same failure somewhere else.
+///
+/// The three variants survive the translation intact, because each leads
+/// somewhere different — look at the App, wait and retry, or fix the request.
+pub(super) fn token_failure(error: TokenError) -> RepositoryError {
+    match error {
+        TokenError::NotPermitted => RepositoryError::NotPermitted,
+        TokenError::Unavailable { detail } => RepositoryError::Unavailable { detail },
+        TokenError::Rejected { detail } => RepositoryError::Rejected { detail },
+    }
 }

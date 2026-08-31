@@ -5,8 +5,9 @@ use std::sync::Arc;
 use fabric_client_model::ClientId;
 use fabric_core::Clock;
 
-use crate::github::tokens::BearerSource;
-use crate::{GitCredential, GitRepositoryConfig};
+use fabric_git_host::{BearerSource, GitCredential};
+
+use crate::GitRepositoryConfig;
 
 /// The API version this adapter is written against.
 ///

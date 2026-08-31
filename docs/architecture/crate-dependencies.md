@@ -65,8 +65,11 @@ fabric-keycloak        → fabric-core
                        → fabric-reconciliation      (implements IdentityProvider)
                        → fabric-control-plane       (implements OperatorSignIn)
 
+fabric-git-host        → fabric-core
+
 fabric-client-git      → fabric-core
                        → fabric-client-model
+                       → fabric-git-host            (the App credential)
                        → fabric-control-plane       (implements ClientRepository,
                                                      GitAppProvisioning,
                                                      DesiredStateFactory)
@@ -79,6 +82,32 @@ fabric-control-plane-api → all of the above (composition root)
 ```
 
 Both verified as of the current tree; they match exactly.
+
+### `fabric-git-host` is shared because the credential is, and the integration is not
+
+SaaS Fabric connects to a Git host for two independent reasons — client desired
+state, and platform desired state — and they must be **separate GitHub Apps,
+independently installable, configurable and removable**. Two integrations, two
+Apps, two repositories, two credentials, and no edge between the adapters.
+
+What is not two things is *how a private key becomes a bearer*: one exchange
+with one endpoint, behind a cache whose correctness is subtle enough to have
+been got wrong once already — a stated expiry that must be read rather than
+assumed, a wall-clock remaining lifetime measured against a monotonic deadline,
+and an invalidation path for a token that stops working inside its stated life.
+Two copies of that would be two copies of the platform's credential-minting
+code, and a fix to one would silently miss the other.
+
+So it depends on `fabric-core` and nothing else, and it knows nothing about
+which repository it is authenticating to or what is stored there. It reports
+its own `TokenError`; each adapter maps that into its own vocabulary, because
+"the credential was refused" leads somewhere different for a client repository
+than for a platform one.
+
+Note where it sits relative to the table below: `GitCredential` is listed there
+as deliberately *not* shared with the runtime plane's `ResolvedSecret`, and that
+stays true. This crate is shared **within** the control plane, between two
+adapters on the same side of the boundary.
 
 ## The planes do not meet
 

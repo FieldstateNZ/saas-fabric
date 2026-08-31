@@ -1,11 +1,11 @@
-//! The platform's machine credential for the desired-state repository.
+//! The platform's machine credential for a Git host.
 
 /// How SaaS Fabric authenticates to the Git host.
 ///
 /// # Two shapes, and only one of them is the production posture
 ///
 /// [`App`](Self::App) is what a deployment uses: a GitHub App installed on the
-/// desired-state repository and nothing else. The platform holds a private key
+/// repositories the operator selected and nothing else. The platform holds a private key
 /// and mints a short-lived installation token per hour, so the durable secret
 /// is never a bearer token and the token that *is* a bearer expires on its own.
 ///
@@ -19,7 +19,7 @@
 ///
 /// No [`Display`](std::fmt::Display), and a [`Debug`] that prints a fixed
 /// string. A `String` here is one `{:?}` on a config struct away from putting
-/// write access to every client's desired state into a log aggregator, and the
+/// write access to the platform's desired state into a log aggregator, and the
 /// code that leaks it looks exactly like the code that does not.
 #[derive(Clone)]
 pub enum GitCredential {
@@ -31,11 +31,11 @@ pub enum GitCredential {
         /// The App's identifier, which becomes the JWT's issuer.
         app_id: String,
 
-        /// The installation on the desired-state repository.
+        /// The installation this integration uses.
         ///
         /// An App can be installed on several accounts; a token is minted per
         /// *installation*, and this names the one that has access to the one
-        /// repository SaaS Fabric writes to.
+        /// repository this integration writes to.
         installation_id: String,
 
         /// The App's RSA private key, in PEM form.

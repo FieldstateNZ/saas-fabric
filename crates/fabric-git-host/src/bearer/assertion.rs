@@ -3,8 +3,9 @@
 //! Shared with provisioning, which mints a token to *prove* an installation
 //! works before recording it. One signer, so the two cannot drift.
 
-use fabric_control_plane::RepositoryError;
 use jsonwebtoken::{Algorithm, EncodingKey, Header};
+
+use crate::TokenError;
 
 /// How long the App JWT presented to the token endpoint is valid.
 ///
@@ -23,11 +24,11 @@ const JWT_BACKDATE_SECONDS: u64 = 60;
 ///
 /// # Errors
 ///
-/// Returns [`RepositoryError::NotPermitted`] if the key is not a private key
-/// this can sign with. The underlying error is deliberately dropped:
+/// Returns [`TokenError::NotPermitted`] if the key is not a private key this
+/// can sign with. The underlying error is deliberately dropped:
 /// `jsonwebtoken` includes the offending input in some of its messages, and
 /// the offending input here is the private key.
-pub(crate) fn build(app_id: &str, private_key: &str, now_unix: u64) -> Result<String, RepositoryError> {
+pub fn sign_app_assertion(app_id: &str, private_key: &str, now_unix: u64) -> Result<String, TokenError> {
     let issued_at = now_unix.saturating_sub(JWT_BACKDATE_SECONDS);
 
     let claims = serde_json::json!({
@@ -36,8 +37,7 @@ pub(crate) fn build(app_id: &str, private_key: &str, now_unix: u64) -> Result<St
         "iss": app_id,
     });
 
-    let key = EncodingKey::from_rsa_pem(private_key.as_bytes()).map_err(|_| RepositoryError::NotPermitted)?;
+    let key = EncodingKey::from_rsa_pem(private_key.as_bytes()).map_err(|_| TokenError::NotPermitted)?;
 
-    jsonwebtoken::encode(&Header::new(Algorithm::RS256), &claims, &key)
-        .map_err(|_| RepositoryError::NotPermitted)
+    jsonwebtoken::encode(&Header::new(Algorithm::RS256), &claims, &key).map_err(|_| TokenError::NotPermitted)
 }

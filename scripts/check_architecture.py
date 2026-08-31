@@ -497,10 +497,19 @@ def check_dependency_direction(graph: Graph) -> list[Failure]:
             "fabric-reconciliation",
             "fabric-control-plane",
         },
+        # Shared between the two Git integrations, and nothing else. SaaS
+        # Fabric connects to a Git host for two independent reasons -- client
+        # desired state and platform desired state -- which must be separate
+        # Apps, independently installable. The *integrations* are separate; the
+        # exchange that turns a private key into a bearer is one thing, and two
+        # copies of it would be two copies of the platform's credential-minting
+        # code.
+        "fabric-git-host": {"fabric-core"},
         "fabric-client-git": {
             "fabric-core",
             "fabric-client-model",
             "fabric-control-plane",
+            "fabric-git-host",
         },
         # The third adapter, and the first that is not about a client at all:
         # it implements the ports through which the platform keeps its *own*
@@ -531,6 +540,7 @@ def check_dependency_direction(graph: Graph) -> list[Failure]:
             "fabric-control-plane",
             "fabric-keycloak",
             "fabric-client-git",
+            "fabric-git-host",
             "fabric-openbao",
         },
     }

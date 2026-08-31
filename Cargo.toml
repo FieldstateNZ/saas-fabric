@@ -59,6 +59,7 @@ fabric-tenant-runtime = { path = "crates/fabric-tenant-runtime" }
 fabric-client-git = { path = "crates/fabric-client-git" }
 fabric-client-model = { path = "crates/fabric-client-model" }
 fabric-control-plane = { path = "crates/fabric-control-plane" }
+fabric-git-host = { path = "crates/fabric-git-host" }
 fabric-keycloak = { path = "crates/fabric-keycloak" }
 fabric-openbao = { path = "crates/fabric-openbao" }
 fabric-reconciliation = { path = "crates/fabric-reconciliation" }

@@ -8,7 +8,7 @@ use fabric_control_plane::RepositoryError;
 use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, USER_AGENT};
 use reqwest::StatusCode;
 
-use crate::github::errors::transport_failure;
+use crate::github::errors::{token_failure, transport_failure};
 use crate::github::http::{GitHost, API_VERSION, API_VERSION_HEADER};
 
 impl GitHost {
@@ -77,7 +77,7 @@ impl GitHost {
         // Required by the host, which refuses requests without one.
         headers.insert(USER_AGENT, HeaderValue::from_static("saas-fabric-control-plane"));
 
-        let bearer = self.bearers.bearer(&self.http).await?;
+        let bearer = self.bearers.bearer(&self.http).await.map_err(token_failure)?;
 
         builder
             .headers(headers)

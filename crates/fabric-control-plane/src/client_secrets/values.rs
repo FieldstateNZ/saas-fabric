@@ -12,6 +12,7 @@ use std::collections::BTreeMap;
 /// operation must be the one that cannot leak, so key names arrive with
 /// [`SecretValues`] when somebody deliberately reveals.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SecretMetadata {
     /// The version currently stored.
     pub version: u64,

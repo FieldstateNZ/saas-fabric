@@ -14,7 +14,7 @@ use super::super::secrets_path::SecretPathTail;
 
 /// What an operator submits.
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub(crate) struct WriteRequest {
     /// The values to store. A replacement, not a patch: a partial write would
     /// silently drop keys the operator could not see on the page.

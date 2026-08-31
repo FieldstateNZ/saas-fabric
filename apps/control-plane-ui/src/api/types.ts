@@ -90,3 +90,30 @@ export interface Candidate {
   readonly name: string
   readonly default_branch: string
 }
+
+/** One of a client's secrets, as a listing shows it. */
+export interface SecretEntry {
+  readonly path: string
+}
+
+/**
+ * What is known about a secret without revealing it.
+ *
+ * No key names. The store does not return them, so including them would mean
+ * reading the secret to draw a list — see the control plane's `SecretMetadata`.
+ */
+export interface SecretMetadata {
+  readonly version: number
+  readonly updatedAt: string | null
+}
+
+/**
+ * A secret's values, held only while the operator is looking at them.
+ *
+ * Never written to `localStorage` or `sessionStorage`, and never put in a URL.
+ * The response that carries these is `no-store`, and keeping a copy anywhere
+ * the browser persists would defeat that.
+ */
+export interface RevealedSecret {
+  readonly values: Readonly<Record<string, string>>
+}

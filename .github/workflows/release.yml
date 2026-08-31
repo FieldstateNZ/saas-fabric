@@ -153,8 +153,15 @@ jobs:
       - uses: actions/checkout@v4
 
       # The version comes from the tag, and its *version core* must agree with
-      # the workspace. A tag that disagreed would publish an image whose name
-      # says one thing and whose `--version` says another.
+      # the workspace. A tag that disagreed would publish an image claiming a
+      # version its source was never on.
+      #
+      # Not "an image whose name and `--version` disagree", which is what this
+      # comment used to say: there is no `--version`. Nothing in the workspace
+      # reads `CARGO_PKG_VERSION`, and no binary reports one. The artifact
+      # version is an *image* fact — it is the tag, and it is
+      # `org.opencontainers.image.version` below — which is where anything
+      # reporting "what is running" reads it from.
       #
       # "Core" rather than "the whole tag" is what admits a preview.
       # `v0.3.0-preview.42` is a prerelease of 0.3.0, so the workspace has to

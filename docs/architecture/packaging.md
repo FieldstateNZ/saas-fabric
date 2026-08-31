@@ -111,6 +111,30 @@ unchanged; there is simply more than one tag that can satisfy it.
 not when you cut it.** Every preview on the way to 0.3.0 is a prerelease of
 0.3.0, and the eventual `v0.3.0` matches with no second bump.
 
+Which is also to say: **cutting `preview.2` after `preview.1` touches no
+source.** The prerelease part is artifact metadata, not a property of the tree,
+so manufacturing another integration build costs a tag and nothing else. Only
+moving to a new stable line is a commit.
+
+### Where the artifact version lives
+
+Two versions, and they are deliberately not the same thing:
+
+| | Says | Read from |
+|---|---|---|
+| Source version | `0.3.0` | `workspace.package.version` |
+| Artifact version | `0.3.0-preview.7` | the image tag, and `org.opencontainers.image.version` |
+
+The binary carries neither. Nothing in the workspace reads `CARGO_PKG_VERSION`
+and no binary reports a version, so "what is running" is answered by the image
+a pod references — its tag and its digest — not by asking the process.
+
+That is a reasonable place for it to stay while the image reference is the
+authority. It stops being reasonable the moment Fabric is expected to report
+its own version, and at that point the artifact version has to reach the binary
+at build time rather than being inferred from the source version, which is a
+different number.
+
 Build metadata (`+something`) is rejected outright: `+` is not a legal character
 in an OCI tag, so such a version could never name its own image.
 

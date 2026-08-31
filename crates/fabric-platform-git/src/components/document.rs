@@ -1,5 +1,9 @@
 //! Reading and rewriting the manifest, keeping the words the repository wrote.
 
+#[cfg(test)]
+#[path = "document_tests.rs"]
+mod document_tests;
+
 use crate::components::{Manifest, SCHEMA_VERSION};
 use crate::PlatformGitError;
 

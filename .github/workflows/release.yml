@@ -10,6 +10,14 @@ on:
   push:
     tags:
       - 'v*'
+    # LucentRoot tracks `main`, not releases. Every merge publishes
+    # SHA-tagged images so the integration environment can be moved to the
+    # commit that was just merged — see docs/environments.md.
+    #
+    # A release is still a separate, deliberate act: this publishes a SHA and
+    # never a version.
+    branches:
+      - main
   # Packaging that only runs at release time is packaging that breaks at
   # release time. A pull request touching any of these builds all three images
   # — on the architecture the cluster runs, which a developer's machine is not
@@ -63,10 +71,14 @@ jobs:
   verify:
     name: gates
     runs-on: ubuntu-latest
-    # Only for a release. On a pull request `ci.yml` has already run every one
-    # of these against the same commit, and running them twice in parallel
-    # would double the queue to learn nothing.
-    if: github.ref_type == 'tag'
+    # For a release, and for a merge to `main`. Not for a pull request, where
+    # `ci.yml` has already run every one of these against the same commit and
+    # running them twice in parallel would double the queue to learn nothing.
+    #
+    # A merge is not that case. Squashing produces a **new commit**, so the
+    # gates that passed on the pull request passed on a commit that no longer
+    # exists — and this is the commit LucentRoot will run.
+    if: github.ref_type == 'tag' || github.ref_name == 'main'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -103,20 +115,21 @@ jobs:
     # "only when the gates passed" and is not: a `cancelled` gate — a killed
     # run, a lost runner — is not a failure, and would have published.
     #
-    #   ref      verify result   builds?  publishes?
-    #   ------------------------------------------------
-    #   tag      success         yes      yes
-    #   tag      failure         no       no
-    #   tag      cancelled       no       no
-    #   tag      skipped         no       no
-    #   branch   skipped         yes      no
+    #   ref          verify result   builds?  publishes?
+    #   ----------------------------------------------------
+    #   tag          success         yes      yes (version)
+    #   main         success         yes      yes (sha)
+    #   tag/main     failure         no       no
+    #   tag/main     cancelled       no       no
+    #   pull request skipped         yes      no
     #
     # So: a tag requires success outright, and only a non-tag may proceed on a
     # skip. Nothing is published from a commit whose gates did not pass.
     if: >-
       always() &&
       ( needs.verify.result == 'success' ||
-      (github.ref_type != 'tag' && needs.verify.result == 'skipped') )
+      (github.ref_type != 'tag' && github.ref_name != 'main' &&
+       needs.verify.result == 'skipped') )
     permissions:
       contents: read
       # The only elevated permission here, and it is the job's own token —
@@ -158,6 +171,15 @@ jobs:
             fi
             echo "version=$tagged" >> "$GITHUB_OUTPUT"
             echo "publish=true" >> "$GITHUB_OUTPUT"
+
+          elif [ "${GITHUB_REF_NAME}" = "main" ]; then
+            # A merge publishes the commit and never a version. Naming it
+            # `${workspace}` would let an unreleased image answer to a released
+            # name, which is how a cluster ends up running something nobody
+            # chose.
+            echo "version=sha-${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+
           else
             echo "version=${workspace}-dev" >> "$GITHUB_OUTPUT"
             echo "publish=false" >> "$GITHUB_OUTPUT"
@@ -214,5 +236,12 @@ jobs:
         run: |
           set -euo pipefail
           name="${REGISTRY}/${{ steps.repo.outputs.owner }}/${{ matrix.image }}"
-          docker push "${name}:${{ steps.version.outputs.version }}"
-          docker push "${name}:sha-${GITHUB_SHA}"
+          version="${{ steps.version.outputs.version }}"
+
+          docker push "${name}:${version}"
+
+          # On `main` the version *is* the commit tag, so pushing both would
+          # push the same thing twice.
+          if [ "$version" != "sha-${GITHUB_SHA}" ]; then
+            docker push "${name}:sha-${GITHUB_SHA}"
+          fi

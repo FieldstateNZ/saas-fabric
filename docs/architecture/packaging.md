@@ -85,9 +85,49 @@ the platform pins an explicit version (§25), and a floating tag is how a cluste
 ends up running something nobody chose. The commit tag answers "what is actually
 in this image" when the version does not.
 
-The tag must match `workspace.package.version`, and the release fails if it does
-not. A tag that disagrees would publish an image whose name says one thing and
-whose source says another.
+The tag's **version core** must match `workspace.package.version`, and the
+release fails if it does not. A tag that disagrees would publish an image whose
+name says one thing and whose source says another.
+
+## Previews
+
+A tag carrying a SemVer prerelease part is a **preview**:
+
+```text
+v0.3.0                     a stable release
+v0.3.0-preview.20260831.42 a preview of it
+```
+
+Both are built and published identically — same gates, same context, same
+labels. A preview is not a lower standard of artifact. It is the same artifact,
+minted more often, and stated not to be a release.
+
+"Core" rather than "the whole tag" is what admits one. `v0.3.0` and
+`v0.3.0-preview.42` share the core `0.3.0`, so both are publishable while the
+workspace is on `0.3.0`, and neither is while it is on `0.2.2`. The guarantee is
+unchanged; there is simply more than one tag that can satisfy it.
+
+**So you bump the workspace version when you start working towards a release,
+not when you cut it.** Every preview on the way to 0.3.0 is a prerelease of
+0.3.0, and the eventual `v0.3.0` matches with no second bump.
+
+Build metadata (`+something`) is rejected outright: `+` is not a legal character
+in an OCI tag, so such a version could never name its own image.
+
+### Publishing a preview is the whole of this repository's part in it
+
+Nothing here deploys a preview, and nothing here tells anything else that one
+exists. The platform's desired state names the version an environment runs, and
+whatever maintains that desired state discovers a new preview by looking at the
+registry.
+
+That is deliberate. This repository holds no credential for
+`saas-fabric-platform` and needs none: publishing to GHCR is the entire
+contract.
+
+The `org.opencontainers.image.revision` label matters more under that
+arrangement than it looks. It is what lets anything holding a digest prove which
+commit the artifact was built from, without asking this repository.
 
 ## The compiler is pinned, and the pin is checked
 

@@ -2,6 +2,17 @@ name: Release
 
 # A release is a tag, and a tag is the only thing that publishes.
 #
+# Two kinds of tag, and the difference is what the version says rather than
+# what this workflow does with it:
+#
+#   v0.3.0                  a stable release
+#   v0.3.0-preview.42       a preview — an integration candidate, published so
+#                           that current work is visible in an environment
+#
+# Both are built and published identically, from the same gates. Nothing here
+# deploys either: what consumes a preview is the platform's desired state, and
+# it discovers one by looking at the registry.
+#
 # `workflow_dispatch` builds the same three images and pushes nothing, so the
 # packaging can be exercised without minting a version. There is deliberately
 # no path that publishes from a branch: an image nobody can point at a tag is
@@ -141,9 +152,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # The version comes from the tag, and must agree with the workspace.
-      # A tag that disagrees would publish an image whose name says one thing
-      # and whose `--version` says another.
+      # The version comes from the tag, and its *version core* must agree with
+      # the workspace. A tag that disagreed would publish an image whose name
+      # says one thing and whose `--version` says another.
+      #
+      # "Core" rather than "the whole tag" is what admits a preview.
+      # `v0.3.0-preview.42` is a prerelease of 0.3.0, so the workspace has to
+      # already be on 0.3.0 for it to be minted — you bump
+      # `workspace.package.version` when you start working towards a release,
+      # and every preview along the way is a prerelease of that number. The
+      # eventual `v0.3.0` then matches exactly, with no second bump.
+      #
+      # So **you cannot cut a preview of a version the workspace is not on.**
+      # That is the guarantee, not a limitation of it.
       - name: Determine the version
         id: version
         run: |
@@ -152,10 +173,21 @@ jobs:
 
           if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
             tagged="${GITHUB_REF_NAME#v}"
-            if [ "$tagged" != "$workspace" ]; then
+
+            # SemVer, minus build metadata: `+` is not a legal character in an
+            # OCI tag, so a version carrying one could never name its own
+            # image. Rejecting it here beats discovering it at `docker push`.
+            if ! printf '%s' "$tagged" \
+              | grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$'; then
+              echo "::error::tag ${GITHUB_REF_NAME} is not a version this repository can publish"
+              exit 1
+            fi
+
+            if [ "${tagged%%-*}" != "$workspace" ]; then
               echo "::error::tag ${GITHUB_REF_NAME} does not match the workspace version ${workspace}"
               exit 1
             fi
+
             echo "version=$tagged" >> "$GITHUB_OUTPUT"
             echo "publish=true" >> "$GITHUB_OUTPUT"
           else

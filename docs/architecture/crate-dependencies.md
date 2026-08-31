@@ -67,6 +67,9 @@ fabric-keycloak        → fabric-core
 
 fabric-git-host        → fabric-core
 
+fabric-platform-git    → fabric-core
+                       → fabric-git-host            (the App credential)
+
 fabric-client-git      → fabric-core
                        → fabric-client-model
                        → fabric-git-host            (the App credential)
@@ -104,7 +107,17 @@ its own `TokenError`; each adapter maps that into its own vocabulary, because
 "the credential was refused" leads somewhere different for a client repository
 than for a platform one.
 
-Note where it sits relative to the table below: `GitCredential` is listed there
+`fabric-platform-git` is the other side of that: the adapter for the *platform*
+repository, with no edge to `fabric-client-git` and none back. Two Apps, two
+installations, two repositories, and the only thing in common is the exchange
+that turns a key into a bearer.
+
+It has no edge to `fabric-control-plane` yet either, because the port it will
+implement does not exist — the Platform Management domain has not been written.
+It stands alone until there is something to be the adapter *for*, which is
+better than inventing a port to satisfy a shape.
+
+Note where `fabric-git-host` sits relative to the table below: `GitCredential` is listed there
 as deliberately *not* shared with the runtime plane's `ResolvedSecret`, and that
 stays true. This crate is shared **within** the control plane, between two
 adapters on the same side of the boundary.

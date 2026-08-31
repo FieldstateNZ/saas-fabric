@@ -1,0 +1,28 @@
+[package]
+name = "fabric-platform-git"
+description = "Atomic multi-file desired-state mutation in the platform repository, over the Git Data API."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+fabric-core.workspace = true
+# The App credential, shared with the clients integration. Separate Apps,
+# separate installations, one exchange that turns a key into a bearer.
+fabric-git-host.workspace = true
+
+base64.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+base64.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt-multi-thread"] }
+
+[lints]
+workspace = true

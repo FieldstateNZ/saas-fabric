@@ -505,6 +505,10 @@ def check_dependency_direction(graph: Graph) -> list[Failure]:
         # copies of it would be two copies of the platform's credential-minting
         # code.
         "fabric-git-host": {"fabric-core"},
+        # The platform-repository adapter. Same direction as the others, and
+        # deliberately not reachable from the clients adapter: two Apps, two
+        # installations, two repositories, and no edge between them.
+        "fabric-platform-git": {"fabric-core", "fabric-git-host"},
         "fabric-client-git": {
             "fabric-core",
             "fabric-client-model",

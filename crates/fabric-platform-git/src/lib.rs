@@ -57,12 +57,16 @@
 //! nobody can see.
 
 mod atomic;
+mod components;
 mod config;
+mod desired;
 mod errors;
 mod host;
 mod model;
 
+pub use components::{Component, Desired, Hold, ImagePin, Manifest, UpdatePolicy, SCHEMA_VERSION};
 pub use config::PlatformRepositoryConfig;
+pub use desired::{ComponentVersion, ImageDigest};
 pub use errors::PlatformGitError;
 pub use host::PlatformGitRepository;
 pub use model::{CommitRevision, FileChange, FileRevision, StoredFile};

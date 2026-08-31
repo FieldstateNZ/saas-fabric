@@ -2,18 +2,15 @@
 
 use fabric_platform_management::{RegistryError, Resolved};
 
-use crate::client::wire::{Config, Manifest};
+use crate::client::wire::Manifest;
 use crate::client::OciRegistry;
 use crate::errors::{status_failure, transport_failure};
-
-/// The label a build stamps its source commit into.
-const REVISION: &str = "org.opencontainers.image.revision";
 
 /// The header a registry reports a manifest's digest in.
 const CONTENT_DIGEST: &str = "docker-content-digest";
 
 /// Both the OCI and the older Docker media types, image and index.
-const MANIFEST_TYPES: &str = "application/vnd.oci.image.manifest.v1+json, \
+pub(super) const MANIFEST_TYPES: &str = "application/vnd.oci.image.manifest.v1+json, \
      application/vnd.docker.distribution.manifest.v2+json, \
      application/vnd.oci.image.index.v1+json, \
      application/vnd.docker.distribution.manifest.list.v2+json";
@@ -69,74 +66,8 @@ impl OciRegistry {
             });
         };
 
-        let revision = self.revision_of(repository, &manifest).await?;
+        let provenance = self.provenance_of(repository, &manifest).await?;
 
-        Ok(Some(Resolved { digest, revision }))
-    }
-
-    /// The source commit an image was built from, if it says.
-    ///
-    /// For an index, the labels live on a per-architecture manifest, so one is
-    /// descended into. `linux/amd64` is what the platform runs; an index
-    /// carrying no such entry has nothing this could deploy, and reporting no
-    /// revision leaves discovery treating the version as still publishing
-    /// rather than promoting something unrunnable.
-    async fn revision_of(
-        &self,
-        repository: &str,
-        manifest: &Manifest,
-    ) -> Result<Option<String>, RegistryError> {
-        let config = match (&manifest.config, &manifest.manifests) {
-            (Some(config), _) => config.digest.clone(),
-            (None, Some(entries)) => {
-                let Some(entry) = entries.iter().find(|entry| {
-                    entry
-                        .platform
-                        .as_ref()
-                        .is_some_and(|platform| platform.os == "linux" && platform.architecture == "amd64")
-                }) else {
-                    return Ok(None);
-                };
-
-                let url = self.url(repository, &format!("manifests/{}", entry.digest));
-                let response = self
-                    .get("reading a manifest", repository, &url, MANIFEST_TYPES)
-                    .await?;
-
-                if !response.status().is_success() {
-                    return Ok(None);
-                }
-
-                let inner: Manifest = response
-                    .json()
-                    .await
-                    .map_err(|error| transport_failure("reading a manifest", &error))?;
-
-                match inner.config {
-                    Some(config) => config.digest,
-                    None => return Ok(None),
-                }
-            }
-            (None, None) => return Ok(None),
-        };
-
-        let url = self.url(repository, &format!("blobs/{config}"));
-        let response = self
-            .get("reading an image config", repository, &url, "*/*")
-            .await?;
-
-        if !response.status().is_success() {
-            return Ok(None);
-        }
-
-        let config: Config = response
-            .json()
-            .await
-            .map_err(|error| transport_failure("reading an image config", &error))?;
-
-        Ok(config
-            .config
-            .and_then(|labels| labels.labels)
-            .and_then(|labels| labels.get(REVISION).cloned()))
+        Ok(Some(Resolved { digest, provenance }))
     }
 }

@@ -110,12 +110,16 @@ impl FakeRegistry {
         );
     }
 
-    /// Publishes a multi-architecture index over per-platform manifests.
-    pub fn publish_index(&self, repository: &str, tag: &str, revision: &str, architectures: &[&str]) {
+    /// Publishes a multi-architecture index, one revision per architecture.
+    ///
+    /// Takes a revision per child rather than one for the index, so a test can
+    /// publish children that disagree -- which is the case the adapter has to
+    /// notice rather than believe the first one it reads.
+    pub fn publish_index(&self, repository: &str, tag: &str, children: &[(&str, &str)]) {
         let index_digest = digest_of(&format!("{repository}{tag}index"));
-        let entries: Vec<String> = architectures
+        let mut entries: Vec<String> = children
             .iter()
-            .map(|architecture| {
+            .map(|(architecture, _)| {
                 let child = digest_of(&format!("{repository}{tag}{architecture}"));
                 format!(
                     r#"{{"digest":"{child}","platform":{{"os":"linux","architecture":"{architecture}"}}}}"#
@@ -123,8 +127,16 @@ impl FakeRegistry {
             })
             .collect();
 
+        // What buildx puts in the same index for a provenance attestation. It
+        // carries no revision label, and an adapter that inspected it would
+        // report every multi-architecture image as unprovenanced.
+        entries.push(format!(
+            r#"{{"digest":"{}","platform":{{"os":"unknown","architecture":"unknown"}}}}"#,
+            digest_of(&format!("{repository}{tag}attestation"))
+        ));
+
         // Each per-platform manifest is addressable by its own digest.
-        for architecture in architectures {
+        for (architecture, revision) in children {
             let child = digest_of(&format!("{repository}{tag}{architecture}"));
             let config_digest = format!("sha256:config-{revision}-{architecture}");
             self.insert(

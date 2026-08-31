@@ -9,7 +9,7 @@
 
 use std::collections::BTreeMap;
 
-use fabric_platform_management::{discover, Channel, Registry, RegistryError, Version};
+use fabric_platform_management::{discover, Channel, Provenance, Registry, RegistryError, Version};
 use fabric_registry::OciRegistry;
 
 mod support;
@@ -36,7 +36,7 @@ async fn a_tag_resolves_to_its_digest_and_its_source_commit() {
         .expect("a published tag");
 
     assert_eq!(resolved.digest, fake.digest_for(RUNTIME, "0.3.0-preview.2"));
-    assert_eq!(resolved.revision.as_deref(), Some("5707f5e"));
+    assert_eq!(resolved.provenance, Provenance::Agreed("5707f5e".to_owned()));
 }
 
 #[tokio::test]
@@ -70,28 +70,42 @@ async fn a_repository_may_be_named_with_or_without_the_registry_host() {
 }
 
 #[tokio::test]
-async fn a_multi_architecture_image_pins_the_index_and_reads_the_amd64_labels() {
+async fn a_multi_architecture_image_pins_the_index_and_every_child_must_agree() {
     let fake = FakeRegistry::start().await;
-    fake.publish_index(RUNTIME, "0.4.0", "deadbee", &["amd64", "arm64"]);
+    fake.publish_index(RUNTIME, "0.4.0", &[("amd64", "deadbee"), ("arm64", "deadbee")]);
 
     let resolved = registry(&fake).resolve(RUNTIME, "0.4.0").await.unwrap().unwrap();
 
     // The index's digest, not a platform's: that is what a Deployment should
     // reference, so the node picks its own architecture.
     assert_eq!(resolved.digest, fake.digest_for(RUNTIME, "0.4.0"));
-    assert_eq!(resolved.revision.as_deref(), Some("deadbee"));
+    assert_eq!(resolved.provenance, Provenance::Agreed("deadbee".to_owned()));
 }
 
 #[tokio::test]
-async fn an_index_with_nothing_this_platform_runs_reports_no_revision() {
-    // Reported as "no provenance" rather than as an error, so discovery treats
-    // it as still publishing rather than promoting something unrunnable.
+async fn an_index_whose_children_disagree_is_not_a_release_artifact() {
+    // Reading amd64's label and stopping would call this provenanced, because
+    // amd64 is what LucentRoot happens to run. "The architecture we run today"
+    // is not a fact about the image.
     let fake = FakeRegistry::start().await;
-    fake.publish_index(RUNTIME, "0.4.0", "deadbee", &["arm64", "s390x"]);
+    fake.publish_index(RUNTIME, "0.4.0", &[("amd64", "deadbee"), ("arm64", "c0ffee")]);
 
     let resolved = registry(&fake).resolve(RUNTIME, "0.4.0").await.unwrap().unwrap();
 
-    assert!(resolved.revision.is_none());
+    assert_eq!(resolved.provenance, Provenance::Disagreed);
+}
+
+#[tokio::test]
+async fn an_attestation_manifest_is_not_mistaken_for_an_image() {
+    // Build systems put attestations in the same index under unknown/unknown.
+    // They carry no revision, and inspecting them would report every
+    // multi-architecture image as unprovenanced.
+    let fake = FakeRegistry::start().await;
+    fake.publish_index(RUNTIME, "0.4.0", &[("amd64", "deadbee")]);
+
+    let resolved = registry(&fake).resolve(RUNTIME, "0.4.0").await.unwrap().unwrap();
+
+    assert_eq!(resolved.provenance, Provenance::Agreed("deadbee".to_owned()));
 }
 
 #[tokio::test]
@@ -105,7 +119,7 @@ async fn an_image_with_no_labels_reports_no_revision() {
         .unwrap()
         .unwrap();
 
-    assert!(resolved.revision.is_none());
+    assert_eq!(resolved.provenance, Provenance::Absent);
 }
 
 #[tokio::test]

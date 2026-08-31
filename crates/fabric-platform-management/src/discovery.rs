@@ -66,7 +66,16 @@ pub struct Discovery {
 /// strictly after `floor` — which is what makes automatic selection unable to
 /// move an environment backwards, whatever a registry lists.
 ///
-/// They are considered newest first, and the first complete one wins.
+/// They are considered newest first, and the first complete one is the answer.
+///
+/// Every other candidate is still examined, and that is deliberate. A broken
+/// version *below* the one selected is what explains a gap: an environment
+/// moving from `preview.2` to `preview.4` should be able to say what happened
+/// to `preview.3` rather than silently skipping it. The cost is proportional
+/// to how far behind the environment is, which is the right shape — an
+/// environment advancing normally examines one or two, and one that has been
+/// held for a month examines a month's worth, which is exactly when the
+/// diagnostics are worth having.
 ///
 /// # Errors
 ///
@@ -85,15 +94,17 @@ pub async fn discover(
 
     for version in candidates {
         match unit::assemble(registry, roles, &version).await? {
-            unit::Assembly::Complete(release) => {
-                discovery.available = Some(release);
-                // Newest first, so the first complete one is the answer. The
-                // versions above it stay listed as what they are.
-                break;
+            // Newest first, so the first complete one is the highest.
+            unit::Assembly::Complete(release) => discovery.available.get_or_insert(release),
+            unit::Assembly::Incomplete => {
+                discovery.not_yet.push(version);
+                continue;
             }
-            unit::Assembly::Incomplete => discovery.not_yet.push(version),
-            unit::Assembly::Incoherent => discovery.incoherent.push(version),
-        }
+            unit::Assembly::Incoherent => {
+                discovery.incoherent.push(version);
+                continue;
+            }
+        };
     }
 
     Ok(discovery)

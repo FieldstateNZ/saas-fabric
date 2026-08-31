@@ -144,6 +144,32 @@ async fn every_image_must_come_from_the_same_commit() {
 }
 
 #[tokio::test]
+async fn a_broken_version_does_not_poison_the_channel_and_is_still_reported() {
+    // The gap an operator will ask about: the environment moves .2 -> .4, and
+    // wants to know what happened to .3. Selecting .4 is the important half;
+    // being able to say why .3 was skipped is what stops it looking arbitrary.
+    let registry = FakeRegistry::default();
+    registry.publish_all("0.3.0-preview.2", "aaaa");
+    registry.publish(RUNTIME, "0.3.0-preview.3", "bbbb");
+    registry.publish(CONTROL_PLANE, "0.3.0-preview.3", "bbbb");
+    registry.publish(CONSOLE, "0.3.0-preview.3", "cccc");
+    registry.publish_all("0.3.0-preview.4", "dddd");
+
+    let found = pass(&registry, "0.3.0-preview.2").await;
+
+    assert_eq!(
+        found.available.map(|unit| unit.version.as_str().to_owned()),
+        Some("0.3.0-preview.4".to_owned()),
+        "one bad build must not stop the channel"
+    );
+    assert_eq!(
+        found.incoherent,
+        vec![version("0.3.0-preview.3")],
+        "and the version that was skipped has to be visible"
+    );
+}
+
+#[tokio::test]
 async fn an_image_with_no_provenance_is_not_promoted() {
     let registry = FakeRegistry::default();
     registry.publish_all("0.3.0-preview.2", "aaaa");

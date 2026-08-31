@@ -286,6 +286,56 @@ async fn a_hold_is_carried_through_rather_than_cleared() {
 }
 
 #[tokio::test]
+async fn a_hold_created_after_the_decision_stops_the_write() {
+    // The race that matters once humans and automation both write this file.
+    // A selector reads `automatic, no hold, desired preview.1` and decides to
+    // advance; before it writes, an operator commits a hold. The write must
+    // not land on the strength of a policy view that is no longer true.
+    //
+    // Nothing here consults the policy. The manifest is one of the files being
+    // written, so its revision is part of the write's own precondition -- and
+    // a decision made against an older manifest cannot be applied to a newer
+    // one. That is the same mechanism that refuses a concurrent version edit,
+    // and it covers this without a second check to keep in step.
+    let host = host().await;
+    let repository = repository(&host);
+
+    let held = MANIFEST_TEXT.replace(
+        "    hold: null\n",
+        "    hold:\n      reason: rollback\n      since: 2026-09-01T09:00:00Z\n",
+    );
+    host.someone_else_commits(&[(MANIFEST, &held)]);
+
+    let failure = repository
+        .set_component_desired_state("lucentroot", "saas-fabric", &preview_two(), "Promote LucentRoot")
+        .await
+        .expect_err("a stale policy view must not carry across a concurrent change");
+
+    assert_eq!(
+        failure,
+        PlatformGitError::Conflict {
+            path: MANIFEST.to_owned()
+        }
+    );
+
+    // And the hold the operator wrote is still there, untouched.
+    let manifest = host.current(MANIFEST).unwrap();
+    assert!(manifest.contains("reason: rollback"), "{manifest}");
+    assert!(
+        manifest.contains("version: 0.3.0-preview.1"),
+        "desired state moved anyway"
+    );
+
+    // The overlays did not move either. A partial promotion would be worse
+    // than the refused one.
+    assert!(host.current(RUNTIME_OVERLAY).unwrap().contains("0.3.0-preview.1"));
+    assert!(host
+        .current(OPERATOR_OVERLAY)
+        .unwrap()
+        .contains("0.3.0-preview.1"));
+}
+
+#[tokio::test]
 async fn two_thirds_of_a_release_is_refused() {
     let host = host().await;
     let repository = repository(&host);

@@ -509,6 +509,11 @@ def check_dependency_direction(graph: Graph) -> list[Failure]:
         # deliberately not reachable from the clients adapter: two Apps, two
         # installations, two repositories, and no edge between them.
         "fabric-platform-git": {"fabric-core", "fabric-git-host"},
+        # The rules, with no transport: it defines the `Registry` port and is
+        # handed an implementation. Which registry, and how it authenticates,
+        # is a separate integration from the platform repository's credential
+        # and must stay separable.
+        "fabric-platform-management": {"fabric-core"},
         "fabric-client-git": {
             "fabric-core",
             "fabric-client-model",

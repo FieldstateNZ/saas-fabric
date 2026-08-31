@@ -1,0 +1,20 @@
+[package]
+name = "fabric-platform-management"
+description = "Which component version an environment should run: channels, release units, and the rules that decide."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+fabric-core.workspace = true
+
+async-trait.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt"] }
+
+[lints]
+workspace = true

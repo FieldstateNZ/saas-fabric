@@ -291,7 +291,11 @@ Three images, published to GHCR by a tag and by nothing else:
 
 Never `latest` — `saas-fabric-platform` pins an explicit version. The builder's
 compiler is checked against `rust-toolchain.toml`, so an image cannot be built
-by a compiler no gate ran. See
+by a compiler no gate ran.
+
+A tag carrying a prerelease part — `v0.3.0-preview.42` — publishes the same
+three images as a **preview**: an integration candidate, so current work is
+visible in an environment rather than only in a test run. See
 [`docs/architecture/packaging.md`](docs/architecture/packaging.md).
 
 ## Conventions

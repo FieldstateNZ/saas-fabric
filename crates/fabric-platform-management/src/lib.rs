@@ -19,16 +19,22 @@
 //! deliberately so — the registry credential and the platform repository
 //! credential are separate integrations and must stay separable.
 
+mod desired_state;
 mod discovery;
 mod policy;
 mod registry;
 mod selector;
+mod service;
+mod status;
 mod version;
 
+pub use desired_state::{ComponentDesired, DesiredState, DesiredStateError, Hold};
 pub use discovery::{Discovery, ReleaseUnit, ResolvedImage};
 pub use policy::UpdatePolicy;
 pub use registry::{Provenance, Registry, RegistryError, Resolved};
 pub use selector::{decide, Decision, Reason};
+pub use service::{PlatformError, PlatformManagement};
+pub use status::{ComponentStatus, DesiredStateStatus, Diagnostics, Running};
 pub use version::{Channel, Version};
 
 /// Finds the newest release unit an environment is allowed to move to.

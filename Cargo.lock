@@ -473,6 +473,7 @@ dependencies = [
  "base64",
  "fabric-core",
  "fabric-git-host",
+ "fabric-platform-management",
  "reqwest",
  "serde",
  "serde_json",
@@ -488,6 +489,7 @@ version = "0.3.0"
 dependencies = [
  "async-trait",
  "fabric-core",
+ "serde",
  "thiserror",
  "tokio",
  "tracing",

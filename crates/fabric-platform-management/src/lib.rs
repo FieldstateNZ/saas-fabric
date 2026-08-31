@@ -20,11 +20,15 @@
 //! credential are separate integrations and must stay separable.
 
 mod discovery;
+mod policy;
 mod registry;
+mod selector;
 mod version;
 
 pub use discovery::{Discovery, ReleaseUnit, ResolvedImage};
+pub use policy::UpdatePolicy;
 pub use registry::{Provenance, Registry, RegistryError, Resolved};
+pub use selector::{decide, Decision, Reason};
 pub use version::{Channel, Version};
 
 /// Finds the newest release unit an environment is allowed to move to.

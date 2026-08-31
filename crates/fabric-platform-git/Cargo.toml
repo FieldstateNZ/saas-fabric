@@ -11,6 +11,8 @@ fabric-core.workspace = true
 # The App credential, shared with the clients integration. Separate Apps,
 # separate installations, one exchange that turns a key into a bearer.
 fabric-git-host.workspace = true
+# The rules crate owns what an update policy *is*; this crate serialises it.
+fabric-platform-management.workspace = true
 
 base64.workspace = true
 reqwest.workspace = true

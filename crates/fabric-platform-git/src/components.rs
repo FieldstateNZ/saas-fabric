@@ -15,6 +15,8 @@
 
 use std::collections::BTreeMap;
 
+pub use fabric_platform_management::UpdatePolicy;
+
 mod document;
 mod overlay;
 mod pinning;
@@ -28,20 +30,6 @@ pub(crate) use pinning::check_writable;
 /// A manifest declaring anything else is refused rather than half-understood:
 /// a field that has moved is worse read optimistically than not at all.
 pub const SCHEMA_VERSION: u32 = 1;
-
-/// How a component's version is allowed to move.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum UpdatePolicy {
-    /// The newest eligible version in the channel is selected automatically.
-    Automatic,
-
-    /// An update is surfaced, and an operator chooses it.
-    Manual,
-
-    /// Nothing moves without a deliberate change to the constraint itself.
-    Locked,
-}
 
 /// An operator's "stay here until I say otherwise".
 ///

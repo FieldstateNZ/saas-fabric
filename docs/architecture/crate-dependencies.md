@@ -69,6 +69,7 @@ fabric-git-host        → fabric-core
 
 fabric-platform-git    → fabric-core
                        → fabric-git-host            (the App credential)
+                       → fabric-platform-management (the update policy)
 
 fabric-platform-management → fabric-core            (the rules; no transport)
 
@@ -122,9 +123,11 @@ packages are public, so it exchanges an anonymous pull token and reads. A
 credential that does not exist cannot be conflated with the GitHub App that
 writes desired state, which is the boundary that matters here.
 
-It has no edge to `fabric-platform-git` either. Deciding which version an
-environment should run and writing that decision down are two jobs, and the
-composition root is what will put them together.
+The edge from `fabric-platform-git` runs the other way and is one type deep:
+an update policy is a rule before it is a field in a file, so the rules crate
+owns what it *is* and the adapter serialises it. Deciding which version an
+environment should run and writing that decision down remain two jobs, and
+the composition root is what puts them together.
 
 `fabric-platform-git` is the other side of that: the adapter for the *platform*
 repository, with no edge to `fabric-client-git` and none back. Two Apps, two

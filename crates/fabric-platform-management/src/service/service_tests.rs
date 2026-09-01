@@ -166,7 +166,7 @@ async fn reading_a_component_never_writes() {
     let status = service.status("lucentroot", "saas-fabric").await.unwrap();
 
     assert_eq!(status.desired, version("0.3.0-preview.2"));
-    assert_eq!(status.available, Some(version("0.3.0-preview.3")));
+    assert_eq!(status.newer, Some(version("0.3.0-preview.3")));
     assert_eq!(status.desired_state, DesiredStateStatus::UpdateAvailable);
     assert!(
         desired_state.writes().is_empty(),
@@ -222,7 +222,7 @@ async fn reconciling_a_held_component_writes_nothing_and_still_reports_the_updat
         "a hold is not a policy change"
     );
     assert_eq!(
-        status.available,
+        status.newer,
         Some(version("0.3.0-preview.3")),
         "discovery keeps running while a hold stands"
     );
@@ -289,7 +289,7 @@ async fn a_component_with_nothing_newer_is_current() {
         .unwrap()
         .status;
 
-    assert_eq!(status.available, None);
+    assert_eq!(status.newer, None);
     assert_eq!(status.desired_state, DesiredStateStatus::Current);
     assert!(desired_state.writes().is_empty());
 }
@@ -338,6 +338,9 @@ async fn versions_that_were_not_selected_are_reported() {
     let status = service.status("lucentroot", "saas-fabric").await.unwrap();
 
     assert_eq!(status.diagnostics.not_yet, vec![version("0.3.0-preview.3")]);
-    assert_eq!(status.available, None, "an incomplete release is not available");
+    assert_eq!(
+        status.newer, None,
+        "an incomplete release is nothing to advance to"
+    );
     assert_eq!(status.desired_state, DesiredStateStatus::Current);
 }

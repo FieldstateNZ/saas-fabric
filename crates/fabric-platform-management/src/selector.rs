@@ -43,8 +43,8 @@ pub enum Decision {
 /// that could make it complicated has already been decided somewhere better:
 ///
 /// - **"newer than what we run"** is enforced by discovery, which only
-///   considers versions sorting strictly after the desired one. So an
-///   `available` at all *is* an available upgrade.
+///   considers versions sorting strictly after the desired one. So a `newer`
+///   at all *is* an upgrade.
 /// - **completeness and coherence** are enforced by discovery too. A version
 ///   still publishing, or built from two commits, never reaches here.
 /// - **concurrent changes** are enforced by the write, whose precondition
@@ -66,7 +66,7 @@ pub fn decide(policy: UpdatePolicy, held: bool, discovery: &Discovery) -> Decisi
         UpdatePolicy::Manual => Decision::Stay(Reason::Manual),
         UpdatePolicy::Locked => Decision::Stay(Reason::Locked),
         UpdatePolicy::Automatic if held => Decision::Stay(Reason::Held),
-        UpdatePolicy::Automatic => match &discovery.available {
+        UpdatePolicy::Automatic => match &discovery.newer {
             Some(unit) => Decision::Advance(unit.clone()),
             None => Decision::Stay(Reason::NothingNewer),
         },

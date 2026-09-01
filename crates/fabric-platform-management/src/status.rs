@@ -58,8 +58,13 @@ pub struct ComponentStatus {
     /// What the environment is asked to run.
     pub desired: Version,
 
-    /// The newest complete, coherent version it could run, if any is newer.
-    pub available: Option<Version>,
+    /// What Fabric would advance to, if anything.
+    ///
+    /// The newest eligible version *newer than* [`desired`](Self::desired), and
+    /// deliberately not "the available version": nothing here observes whether
+    /// the desired version is still published. `None` answers "there is nothing
+    /// to advance to", which is not the same claim as "nothing is available".
+    pub newer: Option<Version>,
 
     /// What is actually serving.
     pub running: Running,
@@ -90,19 +95,19 @@ impl ComponentStatus {
 
     /// Assembles what the console is told from desired state and a discovery.
     pub(crate) fn assemble(component: &str, desired: &ComponentDesired, discovery: &Discovery) -> Self {
-        let available = discovery.available.as_ref().map(|unit| unit.version.clone());
+        let newer = discovery.newer.as_ref().map(|unit| unit.version.clone());
 
         Self {
             component: component.to_owned(),
             desired: desired.version.clone(),
             // Discovery only considers versions above the desired one, so
             // anything it found at all is an upgrade.
-            desired_state: if available.is_some() {
+            desired_state: if newer.is_some() {
                 DesiredStateStatus::UpdateAvailable
             } else {
                 DesiredStateStatus::Current
             },
-            available,
+            newer,
             running: Running::Unknown,
             policy: desired.policy,
             hold: desired.hold.clone(),

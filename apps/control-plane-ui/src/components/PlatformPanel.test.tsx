@@ -9,7 +9,7 @@ function component(overrides: Partial<PlatformComponent> = {}): PlatformComponen
   return {
     component: 'saas-fabric',
     desired: 'v0.3.0-preview.2',
-    available: 'v0.3.0-preview.3',
+    newer: 'v0.3.0-preview.3',
     running: 'unknown',
     policy: 'automatic',
     paused: false,
@@ -31,7 +31,7 @@ function platform(overrides: Partial<Platform> = {}): Platform {
 }
 
 describe('the platform panel', () => {
-  it('shows what is desired, what is available, and that running is unknown', () => {
+  it('shows what is desired, what it would advance to, and that running is unknown', () => {
     render(<PlatformPanel platform={platform()} />)
 
     expect(screen.getByText('v0.3.0-preview.2')).toBeInTheDocument()
@@ -117,12 +117,27 @@ describe('the platform panel', () => {
   it('shows a dash rather than a version when nothing newer exists', () => {
     render(
       <PlatformPanel
-        platform={platform({ components: [component({ available: null, desiredState: 'current' })] })}
+        platform={platform({ components: [component({ newer: null, desiredState: 'current' })] })}
       />,
     )
 
     expect(screen.getByText('Current')).toBeInTheDocument()
     expect(screen.getByText('—')).toBeInTheDocument()
+  })
+
+  it('does not call the dash "Available", because the desired version is', () => {
+    // The wart this row was renamed for. An environment on the newest preview
+    // rendered `Available —`, which reads as "nothing is available" about a
+    // version that plainly is. The narrower fact gets the narrower label:
+    // there is nothing to advance *to*.
+    render(
+      <PlatformPanel
+        platform={platform({ components: [component({ newer: null, desiredState: 'current' })] })}
+      />,
+    )
+
+    expect(screen.getByText('Newer version')).toBeInTheDocument()
+    expect(screen.queryByText('Available')).not.toBeInTheDocument()
   })
 })
 

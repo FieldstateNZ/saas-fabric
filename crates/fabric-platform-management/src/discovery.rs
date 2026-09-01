@@ -41,7 +41,7 @@ pub struct ReleaseUnit {
 /// not the third is normally a window of a minute or two — and a discovery
 /// that recorded "0.3.0-preview.3 is not a thing" would still believe it an
 /// hour later. Every pass recomputes from the registry, and a version listed
-/// here is expected to move to `available` on a later one.
+/// here is expected to move to `newer` on a later one.
 ///
 /// `incoherent` is the opposite: images that all exist and disagree about
 /// which commit they came from. That is one version built twice, and no
@@ -49,7 +49,20 @@ pub struct ReleaseUnit {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Discovery {
     /// The newest complete, coherent version that sorts after the floor.
-    pub available: Option<ReleaseUnit>,
+    ///
+    /// # Not "the available version"
+    ///
+    /// It is the newest eligible version *newer than desired*, which is a
+    /// narrower fact and needs the narrower name. Nothing here observes
+    /// whether the desired version itself is still in the registry, so a
+    /// broader name would be a claim this type is not entitled to make — and
+    /// the console said exactly that for a while, rendering `Available —`
+    /// about an environment running the newest preview there was.
+    ///
+    /// A `Latest available` worth the name arrives with a versions view, where
+    /// Fabric enumerates what exists rather than inferring it from what it
+    /// declined to advance to.
+    pub newer: Option<ReleaseUnit>,
 
     /// Newer versions that are still publishing. Transient — retried, never
     /// remembered.
@@ -95,7 +108,7 @@ pub async fn discover(
     for version in candidates {
         match unit::assemble(registry, roles, &version).await? {
             // Newest first, so the first complete one is the highest.
-            unit::Assembly::Complete(release) => discovery.available.get_or_insert(release),
+            unit::Assembly::Complete(release) => discovery.newer.get_or_insert(release),
             unit::Assembly::Incomplete => {
                 discovery.not_yet.push(version);
                 continue;

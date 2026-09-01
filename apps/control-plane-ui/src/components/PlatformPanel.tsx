@@ -35,21 +35,38 @@ function ComponentRows({ component }: { component: PlatformComponent }) {
     <article className="platform__component">
       <h3 className="platform__component-name">{component.component}</h3>
 
+      {/* Two groups, because they answer different questions. The first is
+          the three-state model: what this environment is asked to run, what it
+          would move to, and what is actually serving. The second is about the
+          decision: whether it may move, whether it needs to, and when anything
+          last looked. */}
       <dl className="platform__rows">
         <dt>Desired</dt>
         <dd>{component.desired}</dd>
 
-        <dt>Available</dt>
-        {/* Not "none": there is no newer version, which is a different thing
-            from not having looked. `Last check` says whether anything looked. */}
-        <dd>{component.available ?? '—'}</dd>
+        {/* "Newer version", not "Available". This is the newest eligible
+            version *newer than desired* — nothing here observed whether the
+            desired version is still published, so calling it Available would
+            render `—` about an environment running the newest preview there
+            is, and say something false while doing it.
+
+            A `Latest available` worth the name arrives with a versions view,
+            where Fabric enumerates what exists rather than inferring it from
+            what it declined to advance to. */}
+        <dt>Newer version</dt>
+        <dd>{component.newer ?? '—'}</dd>
 
         <dt>Running</dt>
         <dd>Unknown</dd>
+      </dl>
 
+      <dl className="platform__rows platform__rows--decision">
         <dt>Policy</dt>
         <dd>{policy(component)}</dd>
 
+        {/* Some overlap with "Newer version", and it is the useful kind: that
+            row answers "what would Fabric advance to", this one answers "does
+            desired state need advancing". */}
         <dt>Desired state</dt>
         <dd>{component.desiredState === 'current' ? 'Current' : 'Update available'}</dd>
       </dl>

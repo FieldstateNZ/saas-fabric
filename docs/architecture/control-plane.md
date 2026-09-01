@@ -238,6 +238,39 @@ platform repository can be read — that is `GET /api/platform`'s answer, from t
 binding this integration connects, and two routes reporting one fact is one
 route away from them disagreeing.
 
+### What the platform panel reports
+
+The specification's model is **Desired / Available / Running**. Two of those
+are honest today and one was not, so the name changed rather than the meaning
+being stretched to fit it.
+
+| Row | What it is | What it is not |
+|---|---|---|
+| `Desired` | what the environment is asked to run | — |
+| `Newer version` | the newest eligible version **newer than desired**, i.e. what Fabric would advance to | not "the available version" |
+| `Running` | what is actually serving; `Unknown` until there is a reconciliation integration to ask | not inferred from Git having changed |
+
+`newer` is `None` whenever nothing sorts after `desired`. Under the label
+*Available* that rendered as `—` for an environment running the newest preview
+there was, which reads as "nothing is available" about a version that plainly
+is. **Nothing in discovery observes whether the desired version is still
+published**, so the broader word was a claim the platform could not support.
+
+The tempting fix — "desired exists, so it must still be available" — was
+rejected. It is sound right up until an artifact is deleted or a registry is
+unreachable, and then the console is confidently wrong about the one thing an
+operator is looking at it to learn.
+
+A `Latest available` worth the name arrives with a versions view, where Fabric
+enumerates what a registry holds. Widening discovery to compute it now would be
+a broader registry scan on every sweep for no new operator capability:
+candidates are deliberately only examined *above* the floor, which is what
+makes automatic selection unable to move an environment backwards.
+
+`Newer version` and `Desired state` overlap in the steady state, and that is
+accepted: one answers "what would Fabric advance to", the other "does desired
+state need advancing".
+
 ### Integration status
 
 `GET /api/integrations/git` answers whether the platform can read desired

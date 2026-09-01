@@ -28,7 +28,7 @@ fn unit(text: &str) -> ReleaseUnit {
 /// Something newer exists, and it is complete.
 fn something_newer() -> Discovery {
     Discovery {
-        available: Some(unit("0.3.0-preview.3")),
+        newer: Some(unit("0.3.0-preview.3")),
         ..Discovery::default()
     }
 }
@@ -36,7 +36,7 @@ fn something_newer() -> Discovery {
 /// Nothing newer, but a version that is still publishing.
 fn nothing_usable() -> Discovery {
     Discovery {
-        available: None,
+        newer: None,
         not_yet: vec![version("0.3.0-preview.3")],
         incoherent: Vec::new(),
     }
@@ -124,7 +124,7 @@ fn a_held_component_still_reports_what_it_is_holding_back_from() {
         Decision::Stay(Reason::Held)
     );
     assert_eq!(
-        found.available.map(|unit| unit.version.as_str().to_owned()),
+        found.newer.map(|unit| unit.version.as_str().to_owned()),
         Some("0.3.0-preview.3".to_owned()),
         "the decision must not consume or hide what was discovered"
     );

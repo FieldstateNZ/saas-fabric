@@ -154,7 +154,15 @@ export interface RevealedSecret {
 export interface PlatformComponent {
   readonly component: string
   readonly desired: string
-  readonly available: string | null
+  /**
+   * What Fabric would advance this component to, if anything.
+   *
+   * Not "the available version". Nothing observes whether `desired` is itself
+   * still published, so `null` says there is nothing to advance to — which is
+   * a narrower claim than "nothing is available", and the one the platform can
+   * actually support. Rendered as "Newer version".
+   */
+  readonly newer: string | null
   readonly running: 'unknown'
   readonly policy: 'automatic' | 'manual' | 'locked'
   /**

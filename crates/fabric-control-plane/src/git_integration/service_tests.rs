@@ -714,7 +714,7 @@ async fn a_correlation_token_from_one_flow_cannot_complete_the_other() {
 
     assert!(
         matches!(outcome, Err(IntegrationError::NotOurFlow)),
-        "a token issued by one flow must not create the other's application: {outcome:?}"
+        "a token issued by one flow must not create the other's application"
     );
 }
 
@@ -776,7 +776,7 @@ async fn the_platform_repository_must_be_one_that_installation_reaches() {
 
     assert!(
         matches!(outcome, Err(IntegrationError::Refused(_))),
-        "{outcome:?}"
+        "a repository the installation does not reach must not be accepted"
     );
     assert_eq!(
         target.bindings().last().map(String::as_str),

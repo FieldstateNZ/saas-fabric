@@ -1,17 +1,25 @@
 import { useEffect, useState } from 'react'
 
-import { chooseRepository, listRepositories } from '../api/client'
+import type { IntegrationEndpoints } from '../api/client'
 import type { Candidate } from '../api/types'
 import { describe } from '../hooks/useClients'
 
 /**
- * Choosing which repository holds client configuration.
+ * Choosing which repository this integration reads and writes.
  *
- * Only rendered when the installation reaches more than one. When it reaches
- * exactly one the platform adopts it without asking, because there is no
- * choice to make and confirming it would be ceremony.
+ * # The list is the only way to answer
+ *
+ * Every candidate comes from what *this* application's installation reaches,
+ * read from the Git host each time. There is no field to type an owner and a
+ * name into, so a repository nobody shared with this installation is not
+ * offered — and the control plane refuses one anyway, because a console is not
+ * where that rule belongs.
  */
-export function RepositoryPicker() {
+interface RepositoryPickerProps {
+  readonly endpoints: IntegrationEndpoints
+}
+
+export function RepositoryPicker({ endpoints }: RepositoryPickerProps) {
   const [candidates, setCandidates] = useState<readonly Candidate[]>([])
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -19,7 +27,7 @@ export function RepositoryPicker() {
   useEffect(() => {
     let current = true
 
-    listRepositories().then(
+    endpoints.listRepositories().then(
       (found) => {
         if (current) {
           setCandidates(found)
@@ -35,16 +43,16 @@ export function RepositoryPicker() {
     return () => {
       current = false
     }
-  }, [])
+  }, [endpoints])
 
   async function choose(candidate: Candidate): Promise<void> {
     setBusy(true)
     setError(null)
 
     try {
-      await chooseRepository(candidate.owner, candidate.name)
-      // The platform binds desired state as part of accepting this, so a
-      // reload is what shows the console the clients it can now read.
+      await endpoints.chooseRepository(candidate.owner, candidate.name)
+      // The platform binds as part of accepting this, so a reload is what
+      // shows the console what it can now read.
       window.location.reload()
     } catch (thrown: unknown) {
       setError(describe(thrown))

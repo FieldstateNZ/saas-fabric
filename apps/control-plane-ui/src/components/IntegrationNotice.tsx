@@ -1,5 +1,6 @@
+import { clientConfiguration } from '../api/client'
 import type { Integration } from '../api/types'
-import { GitIntegration } from './GitIntegration'
+import { ConnectApplication } from './ConnectApplication'
 import { RepositoryPicker } from './RepositoryPicker'
 
 /**
@@ -32,7 +33,7 @@ export function IntegrationNotice({ integration }: IntegrationNoticeProps) {
           The application can reach more than one repository. SaaS Fabric will not guess which one
           holds client configuration.
         </p>
-        <RepositoryPicker />
+        <RepositoryPicker endpoints={clientConfiguration} />
       </div>
     )
   }
@@ -45,7 +46,7 @@ export function IntegrationNotice({ integration }: IntegrationNoticeProps) {
           This platform is running, but it is not connected to where client configuration is
           kept &mdash; so there are no clients to show yet.
         </p>
-        <GitIntegration integration={integration} />
+        <ClientConnect integration={integration} />
       </div>
     )
   }
@@ -68,7 +69,27 @@ export function IntegrationNotice({ integration }: IntegrationNoticeProps) {
           Last read successfully {new Date(integration.last_success_at * 1000).toLocaleString()}.
         </p>
       )}
-      {needsReconnect && <GitIntegration integration={integration} />}
+      {needsReconnect && <ClientConnect integration={integration} />}
     </div>
+  )
+}
+
+/**
+ * The client application's connection steps, where this notice offers them.
+ *
+ * A deployment that states its repository has opted out. Offering a control
+ * that would overwrite that from a browser would be offering to undo it.
+ */
+function ClientConnect({ integration }: IntegrationNoticeProps) {
+  if (!integration.managed) {
+    return null
+  }
+
+  return (
+    <ConnectApplication
+      endpoints={clientConfiguration}
+      application={integration.application}
+      purpose="the clients this platform manages"
+    />
   )
 }

@@ -611,3 +611,112 @@ button:disabled {
 .platform__failure {
   color: #b91c1c;
 }
+
+/* Integrations -----------------------------------------------------------
+   Two cards, one per integration. Deliberately not a table: they are separate
+   product concepts, and a table would make them two rows of a third thing. */
+
+.integrations__heading {
+  font-size: 1.25rem;
+  font-weight: 600;
+  margin: 0 0 1rem;
+}
+
+.integration {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 1rem 1.25rem;
+  margin-bottom: 1rem;
+}
+
+.integration__name {
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 0;
+}
+
+.integration__state {
+  font-size: 0.875rem;
+  font-weight: 600;
+  margin: 0.25rem 0 0.75rem;
+}
+
+.integration__state--connected {
+  color: var(--applied);
+}
+
+/* Amber, not red. The integration exists and needs looking at; red is what
+   this console uses for a component that failed, and an operator reading it
+   here would go looking for something they broke. */
+.integration__state--unavailable {
+  color: var(--pending);
+}
+
+.integration__state--not-connected,
+.integration__state--not-managed {
+  color: var(--muted);
+}
+
+.integration__rows {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.25rem 1rem;
+  margin: 0 0 0.75rem;
+  font-size: 0.875rem;
+}
+
+.integration__rows dt {
+  color: var(--muted);
+}
+
+.integration__rows dd {
+  margin: 0;
+}
+
+.integration__detail,
+.integration__diagnostic {
+  font-size: 0.875rem;
+  color: var(--muted);
+  margin: 0 0 0.75rem;
+}
+
+.integration__diagnostic {
+  color: var(--pending);
+}
+
+.integration__actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.integration__action {
+  font: inherit;
+  font-size: 0.875rem;
+  padding: 0.4rem 0.9rem;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.integration__action--quiet {
+  color: var(--muted);
+}
+
+.integration__action:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.sidebar__settings {
+  font: inherit;
+  font-size: 0.875rem;
+  margin-top: 1rem;
+  padding: 0.4rem 0;
+  border: none;
+  background: none;
+  color: var(--muted);
+  text-align: left;
+  cursor: pointer;
+}

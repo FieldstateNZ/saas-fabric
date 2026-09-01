@@ -84,6 +84,31 @@ export interface Application {
   readonly repository: string | null
 }
 
+/**
+ * What the platform reports about the Platform Management integration.
+ *
+ * The application's lifecycle only: created, installed, repository chosen.
+ * Whether the platform repository can actually be *read* is `Platform`'s to
+ * say, from the binding this integration connects — two shapes reporting one
+ * fact is one change away from them disagreeing.
+ */
+export interface PlatformIntegration {
+  /** Whether this deployment does platform management at all. */
+  readonly managed: boolean
+  readonly application: Application | null
+}
+
+/**
+ * What an operator is being asked to do about a connection.
+ *
+ * Three words, three different actions — which is the whole reason the control
+ * plane tells them apart rather than reporting one "broken" flag. `unavailable`
+ * is the one worth naming: the integration exists and does not work, and an
+ * operator shown "not connected" would go and connect it a second time instead
+ * of finding out why the first one stopped.
+ */
+export type ConnectionState = 'connected' | 'unavailable' | 'not-connected' | 'not-managed'
+
 /** A repository the installation can reach. */
 export interface Candidate {
   readonly owner: string

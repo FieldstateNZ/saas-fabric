@@ -6,6 +6,7 @@ mod health;
 mod integration;
 mod local_documents;
 mod operator_keys;
+mod platform;
 mod serving;
 mod shutdown;
 

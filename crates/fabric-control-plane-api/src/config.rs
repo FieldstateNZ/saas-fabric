@@ -14,6 +14,7 @@ mod env_namespace;
 mod git_host;
 mod identity_provider;
 mod loading;
+mod platform_management;
 mod secret_store;
 
 pub use app_config::ControlPlaneAppConfig;
@@ -21,4 +22,5 @@ pub use desired_state::DesiredStateConfig;
 pub use env_namespace::CONFIG_PATH_VAR;
 pub use git_host::GitHostConfig;
 pub use identity_provider::IdentityProviderConfig;
+pub use platform_management::{PlatformManagementConfig, PlatformRepositoryBinding, RegistryBinding};
 pub use secret_store::SecretStoreConfig;

@@ -18,6 +18,12 @@ path = "src/main.rs"
 fabric-client-git.workspace = true
 fabric-client-model.workspace = true
 fabric-control-plane.workspace = true
+# Platform Management: the rules, the two adapters it is composed over,
+# and the App credential type they share.
+fabric-git-host.workspace = true
+fabric-platform-git.workspace = true
+fabric-platform-management.workspace = true
+fabric-registry.workspace = true
 fabric-core.workspace = true
 fabric-keycloak.workspace = true
 fabric-openbao.workspace = true

@@ -550,6 +550,8 @@ def check_dependency_direction(graph: Graph) -> list[Failure]:
         },
         "fabric-control-plane-api": {
             "fabric-core",
+            "fabric-git-host",
+            "fabric-platform-git",
             "fabric-platform-management",
             "fabric-registry",
             "fabric-client-model",

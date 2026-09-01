@@ -1,6 +1,6 @@
 //! Forgetting an integration.
 
-use crate::git_integration::service::{GitIntegrationService, IntegrationError, PRIVATE_KEY};
+use crate::git_integration::service::{GitIntegrationService, IntegrationError};
 use crate::git_integration::SecretName;
 use crate::logging;
 use crate::Operator;
@@ -29,8 +29,10 @@ impl GitIntegrationService {
     pub async fn disconnect(&self, operator: &Operator) -> Result<(), IntegrationError> {
         self.binding.unbind();
 
-        self.secrets.delete(&SecretName::new(PRIVATE_KEY)).await?;
-        self.store.clear().await?;
+        self.secrets
+            .delete(&SecretName::new(self.kind.private_key()))
+            .await?;
+        self.store.clear(self.kind).await?;
 
         logging::integration_disconnected(operator.subject());
 

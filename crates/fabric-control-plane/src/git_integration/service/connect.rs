@@ -1,6 +1,6 @@
 //! Starting a connection, and completing the application's creation.
 
-use crate::git_integration::service::{GitIntegrationService, IntegrationError, PRIVATE_KEY};
+use crate::git_integration::service::{GitIntegrationService, IntegrationError};
 use crate::git_integration::{AppCreationRequest, FlowStep, GitIntegration, SecretName};
 use crate::logging;
 use crate::Operator;
@@ -62,11 +62,14 @@ impl GitIntegrationService {
         let created = self.provisioning.redeem_creation(code).await?;
 
         self.secrets
-            .put(&SecretName::new(PRIVATE_KEY), &created.private_key)
+            .put(&SecretName::new(self.kind.private_key()), &created.private_key)
             .await?;
 
         self.store
-            .save(&GitIntegration::created(&created.app_id, &created.app_slug))
+            .save(
+                self.kind,
+                &GitIntegration::created(&created.app_id, &created.app_slug),
+            )
             .await?;
 
         logging::integration_app_created(&flow.operator, &created.app_slug);

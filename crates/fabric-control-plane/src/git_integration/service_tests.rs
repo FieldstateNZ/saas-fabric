@@ -172,6 +172,7 @@ fn harness_with(host: Arc<FakeHost>, secrets: Arc<dyn SecretStore>) -> Harness {
 
     Harness {
         service: GitIntegrationService::new(
+            IntegrationKind::ClientConfiguration,
             Arc::clone(&host) as Arc<dyn GitAppProvisioning>,
             Arc::clone(&secrets),
             Arc::clone(&store) as Arc<dyn IntegrationStore>,
@@ -244,7 +245,7 @@ async fn a_completed_flow_records_the_application_and_binds_desired_state() {
 
     let integration = harness
         .store
-        .load()
+        .load(IntegrationKind::ClientConfiguration)
         .await
         .expect("the store must be readable")
         .expect("an integration must have been recorded");
@@ -272,8 +273,15 @@ async fn the_private_key_is_stored_and_never_lands_in_the_record() {
 
     assert!(stored.is_some(), "the key arrives once and must be kept");
 
-    let record = serde_json::to_string(&harness.store.load().await.expect("readable").expect("recorded"))
-        .expect("the record must serialise");
+    let record = serde_json::to_string(
+        &harness
+            .store
+            .load(IntegrationKind::ClientConfiguration)
+            .await
+            .expect("readable")
+            .expect("recorded"),
+    )
+    .expect("the record must serialise");
 
     assert!(
         !record.contains("BEGIN RSA"),
@@ -292,7 +300,12 @@ async fn a_callback_with_a_token_this_platform_never_issued_establishes_nothing(
 
     assert_eq!(outcome, Err(IntegrationError::NotOurFlow));
     assert!(
-        harness.store.load().await.expect("readable").is_none(),
+        harness
+            .store
+            .load(IntegrationKind::ClientConfiguration)
+            .await
+            .expect("readable")
+            .is_none(),
         "an anonymous callback must not be able to establish an integration"
     );
 }
@@ -348,7 +361,7 @@ async fn an_installation_that_cannot_mint_a_token_is_not_recorded() {
 
     let integration = harness
         .store
-        .load()
+        .load(IntegrationKind::ClientConfiguration)
         .await
         .expect("readable")
         .expect("the application is still recorded");
@@ -382,7 +395,12 @@ async fn a_key_that_cannot_be_stored_leaves_no_half_made_integration() {
 
     assert_eq!(outcome, Err(IntegrationError::Unavailable));
     assert!(
-        harness.store.load().await.expect("readable").is_none(),
+        harness
+            .store
+            .load(IntegrationKind::ClientConfiguration)
+            .await
+            .expect("readable")
+            .is_none(),
         "nothing may be recorded when the key could not be kept"
     );
 }
@@ -404,14 +422,24 @@ async fn a_refused_redemption_records_nothing() {
             .await,
         Err(IntegrationError::HostRefused)
     );
-    assert!(harness.store.load().await.expect("readable").is_none());
+    assert!(harness
+        .store
+        .load(IntegrationKind::ClientConfiguration)
+        .await
+        .expect("readable")
+        .is_none());
 }
 
 #[tokio::test]
 async fn several_reachable_repositories_are_not_guessed_between() {
     let harness = connected(&[("FieldstateNZ", "clients"), ("FieldstateNZ", "something-else")]).await;
 
-    let integration = harness.store.load().await.expect("readable").expect("recorded");
+    let integration = harness
+        .store
+        .load(IntegrationKind::ClientConfiguration)
+        .await
+        .expect("readable")
+        .expect("recorded");
 
     assert!(integration.installation.is_some(), "the install is recorded");
     assert!(
@@ -437,7 +465,7 @@ async fn choosing_a_repository_settles_it_and_binds() {
     assert_eq!(
         harness
             .store
-            .load()
+            .load(IntegrationKind::ClientConfiguration)
             .await
             .expect("readable")
             .expect("recorded")
@@ -472,7 +500,12 @@ async fn disconnecting_forgets_the_key_the_record_and_the_binding() {
         .await
         .expect("disconnect must succeed");
 
-    assert!(harness.store.load().await.expect("readable").is_none());
+    assert!(harness
+        .store
+        .load(IntegrationKind::ClientConfiguration)
+        .await
+        .expect("readable")
+        .is_none());
     assert!(harness
         .secrets
         .get(&SecretName::new("git/app-private-key"))
@@ -488,6 +521,7 @@ async fn a_stored_integration_is_restored_at_startup() {
 
     // A fresh service over the same stores is what a restart looks like.
     let restarted = GitIntegrationService::new(
+        IntegrationKind::ClientConfiguration,
         Arc::clone(&harness.host) as Arc<dyn GitAppProvisioning>,
         Arc::clone(&harness.secrets),
         Arc::clone(&harness.store) as Arc<dyn IntegrationStore>,

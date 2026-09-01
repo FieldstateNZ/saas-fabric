@@ -1,6 +1,6 @@
 //! Pointing the platform at the repository an integration describes.
 
-use crate::git_integration::service::{GitIntegrationService, IntegrationError, PRIVATE_KEY};
+use crate::git_integration::service::{GitIntegrationService, IntegrationError};
 use crate::git_integration::{GitIntegration, SecretName, SecretValue};
 use crate::logging;
 
@@ -13,7 +13,7 @@ impl GitIntegrationService {
     /// or restart picks the integration back up. Refusing to start would take
     /// away the one tool for diagnosing why.
     pub async fn restore(&self) {
-        let integration = match self.store.load().await {
+        let integration = match self.store.load(self.kind).await {
             Ok(Some(integration)) => integration,
             Ok(None) => return,
             Err(error) => {
@@ -41,7 +41,7 @@ impl GitIntegrationService {
     /// [`IntegrationError::Unavailable`] when the store could not be read.
     pub(super) async fn private_key(&self) -> Result<SecretValue, IntegrationError> {
         self.secrets
-            .get(&SecretName::new(PRIVATE_KEY))
+            .get(&SecretName::new(self.kind.private_key()))
             .await?
             .ok_or(IntegrationError::NotConnected)
     }

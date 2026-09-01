@@ -6,7 +6,7 @@ use std::time::Duration;
 use fabric_client_git::{GitHubAppProvisioning, GitRepositoryFactory};
 use fabric_control_plane::{
     DesiredStateBinding, GitIntegrationService, InMemoryIntegrationStore, InMemorySecretStore,
-    IntegrationStore, SecretStore,
+    IntegrationKind, IntegrationStore, SecretStore,
 };
 use fabric_core::Clock;
 use fabric_openbao::{OpenBao, OpenBaoClientSecrets, OpenBaoIntegrationStore, OpenBaoSecretStore};
@@ -60,6 +60,7 @@ pub(super) async fn establish(
     ));
 
     let service = Arc::new(GitIntegrationService::new(
+        IntegrationKind::ClientConfiguration,
         provisioning,
         secrets,
         store,

@@ -83,8 +83,9 @@ pub use fabric_client_model::SecretNamespace;
 pub use git_integration::{
     AccessibleRepository, AppCreationRequest, CreatedApp, DesiredStateFactory, GitAppProvisioning,
     GitIntegration, GitIntegrationService, InMemoryIntegrationStore, InMemorySecretStore, Installation,
-    InstallationDetail, IntegrationError, IntegrationStore, IntegrationStoreError, PendingFlows,
-    ProvisioningError, SecretName, SecretStore, SecretStoreError, SecretValue, SelectedRepository,
+    InstallationDetail, IntegrationError, IntegrationKind, IntegrationStore, IntegrationStoreError,
+    PendingFlows, ProvisioningError, SecretName, SecretStore, SecretStoreError, SecretValue,
+    SelectedRepository,
 };
 pub use identity_authority::IdentityProviderFactory;
 pub use integration::{IntegrationHealth, IntegrationStatus, Observation};

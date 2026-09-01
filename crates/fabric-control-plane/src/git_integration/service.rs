@@ -27,9 +27,8 @@ use std::sync::Arc;
 use fabric_core::Clock;
 
 use crate::git_integration::{
-    DesiredStateFactory, GitAppProvisioning, IntegrationKind, IntegrationStore, PendingFlows, SecretStore,
+    GitAppProvisioning, IntegrationKind, IntegrationStore, IntegrationTarget, PendingFlows, SecretStore,
 };
-use crate::repository::DesiredStateBinding;
 
 pub use errors::IntegrationError;
 
@@ -55,11 +54,8 @@ pub struct GitIntegrationService {
     /// Flows started and not yet completed.
     flows: Arc<PendingFlows>,
 
-    /// Builds a repository once there is an integration to build one from.
-    factory: Arc<dyn DesiredStateFactory>,
-
-    /// What the rest of the control plane reads desired state through.
-    binding: Arc<DesiredStateBinding>,
+    /// What this integration points at once it is usable.
+    target: Arc<dyn IntegrationTarget>,
 
     /// Stamps flow expiry.
     clock: Arc<dyn Clock>,
@@ -73,8 +69,7 @@ impl GitIntegrationService {
         provisioning: Arc<dyn GitAppProvisioning>,
         secrets: Arc<dyn SecretStore>,
         store: Arc<dyn IntegrationStore>,
-        factory: Arc<dyn DesiredStateFactory>,
-        binding: Arc<DesiredStateBinding>,
+        target: Arc<dyn IntegrationTarget>,
         clock: Arc<dyn Clock>,
     ) -> Self {
         Self {
@@ -83,8 +78,7 @@ impl GitIntegrationService {
             secrets,
             store,
             flows: Arc::new(PendingFlows::new()),
-            factory,
-            binding,
+            target,
             clock,
         }
     }

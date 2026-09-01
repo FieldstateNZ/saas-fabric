@@ -176,8 +176,10 @@ fn harness_with(host: Arc<FakeHost>, secrets: Arc<dyn SecretStore>) -> Harness {
             Arc::clone(&host) as Arc<dyn GitAppProvisioning>,
             Arc::clone(&secrets),
             Arc::clone(&store) as Arc<dyn IntegrationStore>,
-            Arc::new(FakeFactory),
-            Arc::clone(&binding),
+            Arc::new(ClientConfigurationTarget::new(
+                Arc::new(FakeFactory),
+                Arc::clone(&binding),
+            )),
             Arc::new(FixedClock),
         ),
         host,
@@ -525,8 +527,10 @@ async fn a_stored_integration_is_restored_at_startup() {
         Arc::clone(&harness.host) as Arc<dyn GitAppProvisioning>,
         Arc::clone(&harness.secrets),
         Arc::clone(&harness.store) as Arc<dyn IntegrationStore>,
-        Arc::new(FakeFactory),
-        DesiredStateBinding::unconfigured(),
+        Arc::new(ClientConfigurationTarget::new(
+            Arc::new(FakeFactory),
+            DesiredStateBinding::unconfigured(),
+        )),
         Arc::new(FixedClock),
     );
 

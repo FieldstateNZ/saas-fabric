@@ -29,6 +29,7 @@ mod service;
 #[cfg(test)]
 mod service_tests;
 mod store;
+mod target;
 
 pub use flow::{FlowStep, PendingFlows};
 pub use in_memory::{InMemoryIntegrationStore, InMemorySecretStore};
@@ -41,3 +42,4 @@ pub use record::{GitIntegration, Installation, SelectedRepository};
 pub use secret_store::{SecretName, SecretStore, SecretStoreError, SecretValue};
 pub use service::{GitIntegrationService, IntegrationError};
 pub use store::{IntegrationStore, IntegrationStoreError};
+pub use target::{ClientConfigurationTarget, IntegrationTarget};

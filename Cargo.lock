@@ -470,6 +470,7 @@ dependencies = [
 name = "fabric-platform-git"
 version = "0.3.0"
 dependencies = [
+ "async-trait",
  "base64",
  "fabric-core",
  "fabric-git-host",

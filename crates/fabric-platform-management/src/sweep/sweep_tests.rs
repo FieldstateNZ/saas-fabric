@@ -4,8 +4,8 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use crate::{
-    Channel, ComponentDesired, DesiredState, DesiredStateError, PlatformManagement, Provenance, Registry,
-    RegistryError, ReleaseUnit, Resolved, SweepGuard, SweepResult, Swept, UpdatePolicy, Version,
+    Channel, CheckOutcome, ComponentDesired, DesiredState, DesiredStateError, PlatformManagement, Provenance,
+    Registry, RegistryError, ReleaseUnit, Resolved, SweepResult, SweepState, Swept, UpdatePolicy, Version,
 };
 
 const RUNTIME: &str = "ghcr.io/fieldstatenz/saas-fabric";
@@ -128,6 +128,7 @@ fn service(desired_state: &Arc<Several>) -> PlatformManagement {
     PlatformManagement::new(
         Arc::new(Registries) as Arc<dyn Registry>,
         Arc::clone(desired_state) as Arc<dyn DesiredState>,
+        Arc::new(fabric_core::SystemClock::new()) as Arc<dyn fabric_core::Clock>,
     )
 }
 
@@ -139,7 +140,7 @@ async fn one_component_failing_does_not_stop_the_others() {
     let desired_state = Arc::new(Several::new());
     let service = service(&desired_state);
 
-    let SweepResult::Ran(sweep) = service.sweep("lucentroot", &SweepGuard::default()).await.unwrap() else {
+    let SweepResult::Ran(sweep) = service.sweep("lucentroot", &SweepState::default()).await.unwrap() else {
         panic!("nothing else was running");
     };
 
@@ -154,7 +155,7 @@ async fn only_the_automatic_component_moves() {
     let desired_state = Arc::new(Several::new());
     let service = service(&desired_state);
 
-    let SweepResult::Ran(sweep) = service.sweep("lucentroot", &SweepGuard::default()).await.unwrap() else {
+    let SweepResult::Ran(sweep) = service.sweep("lucentroot", &SweepState::default()).await.unwrap() else {
         panic!("nothing else was running");
     };
 
@@ -177,7 +178,7 @@ async fn an_advance_says_where_it_came_from() {
     let desired_state = Arc::new(Several::new());
     let service = service(&desired_state);
 
-    let SweepResult::Ran(sweep) = service.sweep("lucentroot", &SweepGuard::default()).await.unwrap() else {
+    let SweepResult::Ran(sweep) = service.sweep("lucentroot", &SweepState::default()).await.unwrap() else {
         panic!("nothing else was running");
     };
 
@@ -195,7 +196,7 @@ async fn an_advance_says_where_it_came_from() {
 async fn a_second_sweep_finds_nothing_left_to_do() {
     let desired_state = Arc::new(Several::new());
     let service = service(&desired_state);
-    let guard = SweepGuard::default();
+    let guard = SweepState::default();
 
     service.sweep("lucentroot", &guard).await.unwrap();
     let SweepResult::Ran(second) = service.sweep("lucentroot", &guard).await.unwrap() else {
@@ -213,6 +214,55 @@ async fn a_second_sweep_finds_nothing_left_to_do() {
         desired_state.advanced().len(),
         1,
         "the same version was written twice"
+    );
+}
+
+#[tokio::test]
+async fn nothing_having_checked_yet_is_its_own_answer() {
+    // Three explanations for a version not appearing, and they lead three
+    // different places: nothing has checked, something checked and found
+    // nothing to do, or something checked and failed. `None` is the first.
+    let state = SweepState::default();
+
+    assert_eq!(state.last_check(), None);
+}
+
+#[tokio::test]
+async fn a_sweep_records_what_it_found() {
+    let desired_state = Arc::new(Several::new());
+    let service = service(&desired_state);
+    let state = SweepState::default();
+
+    service.sweep("lucentroot", &state).await.unwrap();
+
+    let check = state.last_check().expect("a sweep ran");
+    assert!(check.at_unix_seconds > 0);
+
+    // `a-broken` cannot be read, so the sweep did not wholly succeed -- and
+    // saying so is the difference between "found nothing" and "could not look".
+    let CheckOutcome::Failed { detail } = check.outcome else {
+        panic!("a sweep with a broken component reported success");
+    };
+    assert!(detail.starts_with("a-broken:"), "{detail}");
+}
+
+#[tokio::test]
+async fn a_sweep_with_nothing_wrong_records_success() {
+    let desired_state = Arc::new(Several::new());
+    desired_state
+        .components
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .remove("a-broken");
+
+    let service = service(&desired_state);
+    let state = SweepState::default();
+
+    service.sweep("lucentroot", &state).await.unwrap();
+
+    assert_eq!(
+        state.last_check().expect("a sweep ran").outcome,
+        CheckOutcome::Succeeded
     );
 }
 
@@ -274,8 +324,9 @@ async fn a_sweep_already_running_is_skipped_rather_than_queued() {
     let service = Arc::new(PlatformManagement::new(
         Arc::new(Registries) as Arc<dyn Registry>,
         Arc::clone(&desired_state) as Arc<dyn DesiredState>,
+        Arc::new(fabric_core::SystemClock::new()) as Arc<dyn fabric_core::Clock>,
     ));
-    let guard = Arc::new(SweepGuard::default());
+    let guard = Arc::new(SweepState::default());
 
     let running = tokio::spawn({
         let service = Arc::clone(&service);

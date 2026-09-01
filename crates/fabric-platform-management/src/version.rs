@@ -6,7 +6,8 @@ mod ordering;
 mod version_tests;
 
 /// Which release stream a version belongs to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Channel {
     /// Prereleases: integration candidates, and never a cloud environment's.
     Preview,

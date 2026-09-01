@@ -15,7 +15,7 @@
 
 use std::collections::BTreeMap;
 
-pub use fabric_platform_management::UpdatePolicy;
+pub use fabric_platform_management::{Channel, Hold, UpdatePolicy};
 
 mod document;
 mod overlay;
@@ -30,25 +30,6 @@ pub(crate) use pinning::check_writable;
 /// A manifest declaring anything else is refused rather than half-understood:
 /// a field that has moved is worse read optimistically than not at all.
 pub const SCHEMA_VERSION: u32 = 1;
-
-/// An operator's "stay here until I say otherwise".
-///
-/// Deliberately carries no version. `desired.version` already *is* the held
-/// version, so a break-glass edit that moves it by hand leaves the hold
-/// correctly in force rather than pointing at something nothing runs.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Hold {
-    /// Why advancement stopped.
-    pub reason: String,
-
-    /// When it stopped, as an RFC 3339 timestamp.
-    pub since: String,
-
-    /// What the operator wanted the next person to know.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub note: Option<String>,
-}
 
 /// One image of a component, and where its pin is written.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -86,7 +67,7 @@ pub struct Desired {
 #[serde(rename_all = "camelCase")]
 pub struct Component {
     /// Where to look for newer versions.
-    pub channel: String,
+    pub channel: Channel,
 
     /// Whether it advances on its own.
     pub update: UpdatePolicy,

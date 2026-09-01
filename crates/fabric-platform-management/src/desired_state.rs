@@ -9,7 +9,8 @@ use crate::{Channel, ReleaseUnit, UpdatePolicy, Version};
 /// Carries no version. The desired version already *is* the held one, so a
 /// break-glass edit that moves it by hand leaves the hold correctly in force
 /// rather than pointing at something nothing runs.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Hold {
     /// What the operator gave as the reason.
     pub reason: String,
@@ -18,6 +19,7 @@ pub struct Hold {
     pub since: String,
 
     /// What they wanted the next person to know.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
 }
 

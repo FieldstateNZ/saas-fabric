@@ -63,6 +63,7 @@ mod desired;
 mod errors;
 mod host;
 mod model;
+mod port;
 
 pub use components::{Component, Desired, Hold, ImagePin, Manifest, UpdatePolicy, SCHEMA_VERSION};
 pub use config::PlatformRepositoryConfig;

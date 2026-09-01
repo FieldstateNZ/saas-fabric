@@ -7,7 +7,7 @@ mod service_tests;
 
 use crate::{
     decide, discover, ComponentDesired, ComponentStatus, Decision, DesiredState, DesiredStateError,
-    DesiredStateStatus, Discovery, Registry, RegistryError,
+    DesiredStateStatus, Discovery, Reconciliation, Registry, RegistryError,
 };
 
 /// What can go wrong looking at, or moving, a component.
@@ -68,8 +68,10 @@ impl PlatformManagement {
     /// Acts on a component's situation, if its policy says to.
     ///
     /// Reads, discovers, decides, and writes only on
-    /// [`Decision::Advance`](crate::Decision::Advance). The returned status
-    /// describes the state after any write, so a caller sees what it caused.
+    /// [`Decision::Advance`](crate::Decision::Advance). The result describes
+    /// the state after any write *and* where it started, so a caller can tell
+    /// "advanced" from "was already there" — which produce the same status and
+    /// are not the same event.
     ///
     /// # Errors
     ///
@@ -81,11 +83,15 @@ impl PlatformManagement {
         &self,
         environment: &str,
         component: &str,
-    ) -> Result<ComponentStatus, PlatformError> {
+    ) -> Result<Reconciliation, PlatformError> {
         let (desired, discovery) = self.look(environment, component).await?;
+        let was = desired.version.clone();
 
         let Decision::Advance(unit) = decide(desired.policy, desired.hold.is_some(), &discovery) else {
-            return Ok(ComponentStatus::assemble(component, &desired, &discovery));
+            return Ok(Reconciliation {
+                was,
+                status: ComponentStatus::assemble(component, &desired, &discovery),
+            });
         };
 
         let message = format!(
@@ -103,11 +109,19 @@ impl PlatformManagement {
         let mut moved = desired.clone();
         moved.version = unit.version.clone();
 
-        Ok(ComponentStatus {
-            desired_state: DesiredStateStatus::Current,
-            available: Some(unit.version),
-            ..ComponentStatus::assemble(component, &moved, &discovery)
+        Ok(Reconciliation {
+            was,
+            status: ComponentStatus {
+                desired_state: DesiredStateStatus::Current,
+                available: Some(unit.version),
+                ..ComponentStatus::assemble(component, &moved, &discovery)
+            },
         })
+    }
+
+    /// The port desired state is read and written through.
+    pub(crate) fn desired_state(&self) -> &dyn DesiredState {
+        self.desired_state.as_ref()
     }
 
     /// Reads desired state and asks the registries what exists.

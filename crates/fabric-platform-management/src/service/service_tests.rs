@@ -99,6 +99,10 @@ impl Recorded {
 
 #[async_trait::async_trait]
 impl DesiredState for Recorded {
+    async fn components(&self, _: &str) -> Result<Vec<String>, DesiredStateError> {
+        Ok(vec!["saas-fabric".to_owned()])
+    }
+
     async fn component(&self, _: &str, _: &str) -> Result<ComponentDesired, DesiredStateError> {
         Ok(self
             .desired
@@ -175,7 +179,11 @@ async fn reconciling_an_automatic_component_advances_it_once() {
     let desired_state = Arc::new(Recorded::new(UpdatePolicy::Automatic, None));
     let service = service(&registries_with_three(), &desired_state);
 
-    let status = service.reconcile("lucentroot", "saas-fabric").await.unwrap();
+    let status = service
+        .reconcile("lucentroot", "saas-fabric")
+        .await
+        .unwrap()
+        .status;
 
     let writes = desired_state.writes();
     assert_eq!(writes.len(), 1);
@@ -189,7 +197,8 @@ async fn reconciling_an_automatic_component_advances_it_once() {
     assert_eq!(status.desired_state, DesiredStateStatus::Current);
 
     // And it settles: nothing newer, so a second pass writes nothing.
-    service.reconcile("lucentroot", "saas-fabric").await.unwrap();
+    let settled = service.reconcile("lucentroot", "saas-fabric").await.unwrap();
+    assert!(!settled.advanced(), "a settled component reported an advance");
     assert_eq!(desired_state.writes().len(), 1, "reconciling twice wrote twice");
 }
 
@@ -198,7 +207,11 @@ async fn reconciling_a_held_component_writes_nothing_and_still_reports_the_updat
     let desired_state = Arc::new(Recorded::new(UpdatePolicy::Automatic, Some(held())));
     let service = service(&registries_with_three(), &desired_state);
 
-    let status = service.reconcile("lucentroot", "saas-fabric").await.unwrap();
+    let status = service
+        .reconcile("lucentroot", "saas-fabric")
+        .await
+        .unwrap()
+        .status;
 
     assert!(desired_state.writes().is_empty());
     assert!(status.is_paused(), "Automatic + hold reads as paused");
@@ -220,7 +233,11 @@ async fn reconciling_a_manual_component_writes_nothing() {
     let desired_state = Arc::new(Recorded::new(UpdatePolicy::Manual, None));
     let service = service(&registries_with_three(), &desired_state);
 
-    let status = service.reconcile("lucentroot", "saas-fabric").await.unwrap();
+    let status = service
+        .reconcile("lucentroot", "saas-fabric")
+        .await
+        .unwrap()
+        .status;
 
     assert!(desired_state.writes().is_empty());
     assert!(!status.is_paused(), "manual is not paused, it is manual");
@@ -240,7 +257,11 @@ async fn automatic_advancement_stays_on_the_line_it_is_already_on() {
     let desired_state = Arc::new(Recorded::new(UpdatePolicy::Automatic, None));
     let service = service(&registries, &desired_state);
 
-    let status = service.reconcile("lucentroot", "saas-fabric").await.unwrap();
+    let status = service
+        .reconcile("lucentroot", "saas-fabric")
+        .await
+        .unwrap()
+        .status;
 
     assert_eq!(status.desired, version("0.3.0-preview.3"));
     assert_eq!(
@@ -261,7 +282,11 @@ async fn a_component_with_nothing_newer_is_current() {
     let desired_state = Arc::new(Recorded::new(UpdatePolicy::Automatic, None));
     let service = service(&registries, &desired_state);
 
-    let status = service.reconcile("lucentroot", "saas-fabric").await.unwrap();
+    let status = service
+        .reconcile("lucentroot", "saas-fabric")
+        .await
+        .unwrap()
+        .status;
 
     assert_eq!(status.available, None);
     assert_eq!(status.desired_state, DesiredStateStatus::Current);

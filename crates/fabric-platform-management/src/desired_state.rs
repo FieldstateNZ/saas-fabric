@@ -80,6 +80,18 @@ pub enum DesiredStateError {
 /// whole of what this crate does about it.
 #[async_trait::async_trait]
 pub trait DesiredState: Send + Sync {
+    /// Every component an environment describes.
+    ///
+    /// Read rather than configured, so adding a component to the platform
+    /// repository is enough to have it reconciled — a second list in Fabric's
+    /// configuration would be a second thing to keep in step, and the failure
+    /// when it drifted would be a component nothing was looking after.
+    ///
+    /// # Errors
+    ///
+    /// [`DesiredStateError`] if the environment cannot be read.
+    async fn components(&self, environment: &str) -> Result<Vec<String>, DesiredStateError>;
+
     /// What an environment is asked to run of a component.
     ///
     /// # Errors

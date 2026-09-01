@@ -79,7 +79,7 @@ pub(crate) struct ControlPlaneState {
     /// so, for the same reason the secrets routes are: a console can tell an
     /// operator what is missing, and cannot tell them anything about a route
     /// that does not exist.
-    pub(crate) platform: Option<Arc<fabric_platform_management::PlatformManagement>>,
+    pub(crate) platform: Option<crate::PlatformBinding>,
 
     /// What the last sweep found, and whether one is running.
     ///
@@ -90,9 +90,7 @@ pub(crate) struct ControlPlaneState {
 impl ControlPlaneState {
     /// The connection flow, or a refusal naming why there is none.
     /// Platform Management, or a refusal naming why there is none.
-    pub(crate) fn platform(
-        &self,
-    ) -> Result<&Arc<fabric_platform_management::PlatformManagement>, crate::ControlPlaneError> {
+    pub(crate) fn platform(&self) -> Result<&crate::PlatformBinding, crate::ControlPlaneError> {
         self.platform
             .as_ref()
             .ok_or(crate::ControlPlaneError::PlatformNotManaged)

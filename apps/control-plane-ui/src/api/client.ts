@@ -18,6 +18,7 @@ import type {
   Identity,
   IdentityRequest,
   Integration,
+  Platform,
   RevealedSecret,
   SecretEntry,
   SecretMetadata,
@@ -39,6 +40,22 @@ export async function listClients(): Promise<readonly Client[]> {
  */
 export async function getIntegration(): Promise<Integration> {
   return request<Integration>('/api/integrations/git')
+}
+
+/**
+ * What this deployment's environment is asked to run.
+ *
+ * Takes no environment name. A deployment manages the one it was deployed
+ * into; a name in the URL would reach the platform repository as a path
+ * segment, and the console has no business choosing one.
+ *
+ * Reading this cannot change anything. What advances an environment is the
+ * control plane's own sweep, on the cadence its deployment configures — so a
+ * refresh, a second operator, or a browser prefetching this page cannot move
+ * a version.
+ */
+export async function getPlatform(): Promise<Platform> {
+  return request<Platform>('/api/platform')
 }
 
 /**

@@ -4,9 +4,11 @@ import { ClientDetail } from './components/ClientDetail'
 import { ClientList } from './components/ClientList'
 import { ConvergeButton } from './components/ConvergeButton'
 import { IntegrationNotice } from './components/IntegrationNotice'
+import { PlatformNotManaged, PlatformPanel } from './components/PlatformPanel'
 import { SignIn } from './components/SignIn'
 import { useClients } from './hooks/useClients'
 import { useIntegration } from './hooks/useIntegration'
+import { usePlatform } from './hooks/usePlatform'
 import { useSession } from './hooks/useSession'
 
 /**
@@ -53,6 +55,7 @@ export function App() {
  */
 function Console() {
   const integration = useIntegration()
+  const platform = usePlatform()
   const clients = useClients()
   const [selected, setSelected] = useState<string | null>(null)
 
@@ -80,6 +83,13 @@ function Console() {
 
       <main className="main">
         {integration.value !== null && <IntegrationNotice integration={integration.value} />}
+
+        {/* Above the clients, because it is about this environment rather than
+            about one client in it -- and because an operator who has just
+            published something looks here first. */}
+        {platform.error !== null && <p className="error">{platform.error}</p>}
+        {platform.unmanaged && <PlatformNotManaged />}
+        {platform.value !== null && <PlatformPanel platform={platform.value} />}
 
         {!unreachable &&
           (current === null ? (

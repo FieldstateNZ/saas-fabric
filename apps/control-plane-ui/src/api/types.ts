@@ -117,3 +117,70 @@ export interface SecretMetadata {
 export interface RevealedSecret {
   readonly values: Readonly<Record<string, string>>
 }
+
+/**
+ * What an environment is asked to run of one component.
+ *
+ * `running` is always `unknown` today. There is no reconciliation integration,
+ * and the platform's desired state having changed is not the same as a
+ * rollout having happened — a console that said otherwise would be reporting
+ * success from a Git write.
+ */
+export interface PlatformComponent {
+  readonly component: string
+  readonly desired: string
+  readonly available: string | null
+  readonly running: 'unknown'
+  readonly policy: 'automatic' | 'manual' | 'locked'
+  /**
+   * Whether an operator has paused an otherwise automatic component.
+   *
+   * Beside `policy` rather than a value of it: they did not change what the
+   * environment should do in general, and the console must not say they did.
+   */
+  readonly paused: boolean
+  readonly desiredState: 'current' | 'update-available'
+  readonly hold: PlatformHold | null
+  readonly diagnostics: readonly PlatformDiagnostic[]
+}
+
+/** Why advancement is paused. */
+export interface PlatformHold {
+  readonly reason: string
+  readonly since: string
+  readonly note: string | null
+}
+
+/** A version that exists and was not selected. */
+export interface PlatformDiagnostic {
+  readonly version: string
+  /** `publishing` will resolve itself; `incoherent` will not. */
+  readonly state: 'publishing' | 'incoherent'
+}
+
+/**
+ * What the last reconciliation sweep found.
+ *
+ * The timestamp is unix seconds, formatted here. A server rendering a time for
+ * somebody whose timezone it does not know is a server guessing.
+ */
+export interface PlatformLastCheck {
+  readonly atUnixSeconds: number
+  readonly outcome: 'success' | 'failure'
+  readonly detail: string | null
+}
+
+/**
+ * An environment's composition.
+ *
+ * `lastCheck` is `null` when nothing has checked yet, and that is a real
+ * answer rather than a missing one. "Nothing has attempted this" and "this was
+ * attempted and found nothing to do" send an operator to different places, and
+ * a console that showed them identically would be the reason they could not
+ * tell why a published version had not appeared.
+ */
+export interface Platform {
+  readonly environment: string
+  readonly components: readonly PlatformComponent[]
+  readonly lastCheck: PlatformLastCheck | null
+}

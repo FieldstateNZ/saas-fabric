@@ -2,14 +2,21 @@
 
 mod body;
 
-use axum::extract::{Path, State};
+use axum::extract::State;
 use axum::Json;
 
 use crate::handlers::platform::body::PlatformBody;
 use crate::state::ControlPlaneState;
 use crate::{ControlPlaneError, Operator};
 
-/// `GET /api/platform/environments/{environment}`.
+/// `GET /api/platform`.
+///
+/// # It takes no environment
+///
+/// A deployment manages the environment it was deployed into, stated in its
+/// configuration. An environment name reaches the platform repository as a
+/// path segment, so a caller who could name one could name a path — and the
+/// cheapest way to satisfy section 31.7 is to give them nowhere to say it.
 ///
 /// # Reading this cannot change anything
 ///
@@ -28,15 +35,14 @@ use crate::{ControlPlaneError, Operator};
 pub(crate) async fn get_platform(
     State(state): State<ControlPlaneState>,
     _operator: Operator,
-    Path(environment): Path<String>,
 ) -> Result<Json<PlatformBody>, ControlPlaneError> {
     let platform = state.platform()?;
 
-    let components = platform.statuses(&environment).await?;
+    let components = platform.service.statuses(&platform.environment).await?;
 
     Ok(Json(PlatformBody::of(
-        &environment,
-        &components,
+        &platform.environment,
+        components.as_slice(),
         state.platform_sweeps.last_check().as_ref(),
     )))
 }

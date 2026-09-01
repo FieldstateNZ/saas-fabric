@@ -32,8 +32,11 @@ pub struct Application {
 /// 4. The API, which is given the repository and the reconciliation status —
 ///    and **not** the provider. There is no wiring here by which a handler
 ///    could reach Keycloak, which is the structural form of ADR 0008.
-/// 5. The Git connection flow, which is given the binding so that an
-///    operator connecting a repository takes effect without a restart.
+/// 5. The Git connection flows, each given the binding it drives so that an
+///    operator connecting a repository takes effect without a restart. There
+///    are two, and they are separate all the way down: two applications on
+///    the host, two records in the store, two things an operator may connect
+///    or forget without touching the other.
 ///
 /// There is no sixth step for *clients* any more. A reconciliation loop used to
 /// be spawned here, holding a service account's credential; ADR 0012 removed
@@ -72,9 +75,12 @@ pub async fn build(config: &ControlPlaneAppConfig) -> Result<Application, String
     let identity_provider = adapters::identity_provider(&config.identity_provider)?;
 
     let (keys, sign_in) = operator_keys::establish(&config.control_plane.operator)?;
-    let git_integration = integration::establish(config, &repository, &clock).await?;
-    let client_secrets = integration::client_secrets(config, &clock)?;
+
+    // Before the flows, because one of them connects it.
     let platform_management = platform::establish(config.platform_management.as_ref(), &clock)?;
+
+    let integrations =
+        integration::establish(config, &repository, platform_management.as_ref(), &clock).await?;
 
     let services = build_control_plane(
         &config.control_plane,
@@ -84,10 +90,11 @@ pub async fn build(config: &ControlPlaneAppConfig) -> Result<Application, String
             keys,
             identity_provider,
             sign_in,
-            git_integration,
-            client_secrets,
+            git_integration: integrations.clients,
+            client_secrets: integrations.client_secrets,
 
             platform: platform_management.clone(),
+            platform_integration: integrations.platform,
 
             // Always the configured posture. The override exists for tests.
             operators: None,

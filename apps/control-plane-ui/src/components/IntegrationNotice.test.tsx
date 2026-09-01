@@ -31,6 +31,21 @@ describe('the integration notice', () => {
     expect(container).toBeEmptyDOMElement()
   })
 
+  it('offers no connection control when the deployment states its own repository', () => {
+    // A deployment that names a repository has opted out. A control that would
+    // overwrite that from a browser would be offering to undo it.
+    render(
+      <IntegrationNotice
+        integration={integration({ status: 'not_configured', managed: false })}
+      />,
+    )
+
+    expect(screen.queryByLabelText(/organisation/i)).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: /create application/i }),
+    ).not.toBeInTheDocument()
+  })
+
   it('describes an unconnected platform without calling it an error', () => {
     render(<IntegrationNotice integration={integration({ status: 'not_configured' })} />)
 

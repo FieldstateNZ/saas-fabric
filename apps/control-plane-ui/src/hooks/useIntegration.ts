@@ -47,11 +47,18 @@ export function useIntegration(): Loadable<Integration> {
   return state
 }
 
-/** Removes the Git host's outcome from the address bar. */
+/**
+ * Removes the Git host's outcome from the address bar.
+ *
+ * Both flows land here, under their own key -- `git` for client configuration
+ * and `platform` for platform management -- so that a console showing both can
+ * tell which one just finished. See `Flow::OUTCOME_KEY` in the control plane.
+ */
 function clearCallbackQuery(): void {
   const query = new URLSearchParams(window.location.search)
+  const keys = ['git', 'git_error', 'platform', 'platform_error']
 
-  if (!query.has('git') && !query.has('git_error')) {
+  if (!keys.some((key) => query.has(key))) {
     return
   }
 

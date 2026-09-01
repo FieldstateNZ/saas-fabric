@@ -5,12 +5,22 @@
 //! an operator re-approving, and a manifest that asked for a webhook would
 //! have GitHub retrying deliveries at a host it can never reach.
 
-use super::manifest;
+use super::{manifest, AppPurpose};
 
 const CALLBACK: &str = "https://fabric-lucentroot.tailnet.ts.net";
 
+/// The purpose the first application was created with, which is now one of
+/// two. Its name and segment are asserted below rather than described,
+/// because deployments already have an application answering to both.
+fn client_configuration() -> AppPurpose {
+    AppPurpose {
+        name: "SaaS Fabric".to_owned(),
+        callback_segment: "git".to_owned(),
+    }
+}
+
 fn manifest_value() -> serde_json::Value {
-    manifest::build(CALLBACK)
+    manifest::build(CALLBACK, &client_configuration())
 }
 
 #[test]
@@ -63,6 +73,49 @@ fn carries_the_host_in_its_name_because_the_name_is_globally_unique() {
         !name.contains("https://"),
         "the scheme is not part of a name: {name}"
     );
+}
+
+#[test]
+fn the_client_configuration_application_is_named_and_routed_as_it_always_was() {
+    // Deployments have already created this application, under this name, with
+    // these two callbacks stored on the host. Purpose became an input so that a
+    // second application could exist; it must not have moved the first one.
+    let value = manifest_value();
+
+    assert_eq!(value["name"], "SaaS Fabric — fabric-lucentroot.tailnet.ts.net");
+    assert_eq!(
+        value["redirect_url"],
+        format!("{CALLBACK}/api/integrations/git/created")
+    );
+}
+
+#[test]
+fn a_second_purpose_asks_for_a_different_name_and_lands_somewhere_else() {
+    // The name, because GitHub rejects the second application otherwise. The
+    // callbacks, because a browser finishing one flow must not be handed to
+    // the other flow's routes, which would connect the wrong integration.
+    let platform = manifest::build(
+        CALLBACK,
+        &AppPurpose {
+            name: "SaaS Fabric Platform".to_owned(),
+            callback_segment: "platform".to_owned(),
+        },
+    );
+    let client = manifest_value();
+
+    assert_ne!(platform["name"], client["name"]);
+    assert_eq!(
+        platform["redirect_url"],
+        format!("{CALLBACK}/api/integrations/platform/created")
+    );
+    assert_eq!(
+        platform["setup_url"],
+        format!("{CALLBACK}/api/integrations/platform/installed")
+    );
+
+    // Both write files to a repository an operator chose. Neither has a
+    // narrower set of permissions to ask for than the other.
+    assert_eq!(platform["default_permissions"], client["default_permissions"]);
 }
 
 #[test]

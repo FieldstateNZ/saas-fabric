@@ -35,6 +35,7 @@ pub fn build_control_plane(
         client_secrets: secret_store,
         operators,
         platform,
+        platform_integration,
     } = deps;
 
     let repository = &repository;
@@ -69,6 +70,7 @@ pub fn build_control_plane(
         desired_state: Arc::clone(repository),
         health: Arc::clone(&health),
         platform,
+        platform_integration,
         platform_sweeps: Arc::clone(&platform_sweeps),
     });
 

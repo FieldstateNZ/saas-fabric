@@ -1,25 +1,26 @@
 /**
- * What the console offers, and what it refuses to offer.
+ * What the console offers at each step of creating an application.
  *
- * The case worth pinning is the deployment that states its own repository: it
- * must not be shown a control that would overwrite that from a browser.
+ * The component is now used by both integrations, so what these pin includes
+ * the part that must not be shared: it acts on the endpoints it was handed and
+ * has no way to reach the other set.
  */
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import type { Integration } from '../api/types'
-import { GitIntegration } from './GitIntegration'
+import { clientConfiguration, platformManagement } from '../api/client'
+import type { Application } from '../api/types'
+import { ConnectApplication } from './ConnectApplication'
 
-function integration(overrides: Partial<Integration>): Integration {
-  return {
-    status: 'not_configured',
-    connection: null,
-    last_success_at: null,
-    managed: true,
-    application: null,
-    ...overrides,
-  }
+function connect(application: Application | null = null) {
+  return (
+    <ConnectApplication
+      endpoints={clientConfiguration}
+      application={application}
+      purpose="the clients this platform manages"
+    />
+  )
 }
 
 afterEach(() => {
@@ -28,16 +29,8 @@ afterEach(() => {
 })
 
 describe('the connect panel', () => {
-  it('offers nothing when the deployment states its own repository', () => {
-    const { container } = render(
-      <GitIntegration integration={integration({ managed: false })} />,
-    )
-
-    expect(container).toBeEmptyDOMElement()
-  })
-
   it('asks for an organisation before it will create anything', async () => {
-    render(<GitIntegration integration={integration({})} />)
+    render(connect())
 
     const button = screen.getByRole('button', { name: /create application/i })
     expect(button).toBeDisabled()
@@ -58,7 +51,7 @@ describe('the connect panel', () => {
     )
     const submit = vi.spyOn(HTMLFormElement.prototype, 'submit').mockImplementation(() => undefined)
 
-    render(<GitIntegration integration={integration({})} />)
+    render(connect())
     await userEvent.type(screen.getByLabelText(/organisation/i), 'FieldstateNZ')
     await userEvent.click(screen.getByRole('button', { name: /create application/i }))
 
@@ -71,16 +64,37 @@ describe('the connect panel', () => {
   })
 
   it('offers the install step once an application exists', () => {
-    render(
-      <GitIntegration
-        integration={integration({
-          application: { slug: 'saas-fabric', account: null, installed: false, repository: null },
-        })}
-      />,
-    )
+    render(connect({ slug: 'saas-fabric', account: null, installed: false, repository: null }))
 
     expect(screen.getByRole('button', { name: /install on github/i })).toBeInTheDocument()
     expect(screen.queryByLabelText(/organisation/i)).not.toBeInTheDocument()
+  })
+
+  it('creates the application its endpoints name, and no other', async () => {
+    const fetched = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ post_url: 'https://host.test/new', manifest: {} }),
+    })
+    vi.stubGlobal('fetch', fetched)
+    vi.spyOn(HTMLFormElement.prototype, 'submit').mockImplementation(() => undefined)
+
+    render(
+      <ConnectApplication
+        endpoints={platformManagement}
+        application={null}
+        purpose="this platform's own composition"
+      />,
+    )
+    await userEvent.type(screen.getByLabelText(/organisation/i), 'FieldstateNZ')
+    await userEvent.click(screen.getByRole('button', { name: /create application/i }))
+
+    // The platform panel cannot create the client application, because it was
+    // never handed a way to ask for one.
+    expect(fetched).toHaveBeenCalledWith(
+      '/api/integrations/platform/connect',
+      expect.anything(),
+    )
   })
 
   it('shows what went wrong rather than navigating away', async () => {
@@ -94,7 +108,7 @@ describe('the connect panel', () => {
       }),
     )
 
-    render(<GitIntegration integration={integration({})} />)
+    render(connect())
     await userEvent.type(screen.getByLabelText(/organisation/i), 'FieldstateNZ')
     await userEvent.click(screen.getByRole('button', { name: /create application/i }))
 

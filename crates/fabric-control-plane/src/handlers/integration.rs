@@ -12,12 +12,17 @@
 //! See [`PendingFlows`](crate::git_integration::PendingFlows) for why that is
 //! held server-side rather than signed.
 
+mod application;
 mod callbacks;
 mod connect;
+mod flow;
+mod platform_status;
 mod repositories;
 mod status;
 
 pub(crate) use callbacks::{created, installed};
 pub(crate) use connect::{begin_connection, begin_install, disconnect};
+pub(crate) use flow::{ClientConfigurationFlow, PlatformManagementFlow};
+pub(crate) use platform_status::get_platform_integration;
 pub(crate) use repositories::{choose_repository, list_repositories};
 pub(crate) use status::get_integration;

@@ -1,11 +1,11 @@
-import { useState } from 'react'
+import { useId, useState } from 'react'
 
-import { beginConnection, beginInstall } from '../api/client'
-import type { Integration } from '../api/types'
+import type { IntegrationEndpoints } from '../api/client'
+import type { Application } from '../api/types'
 import { describe } from '../hooks/useClients'
 
 /**
- * Connecting this platform to where client configuration is kept.
+ * Creating and installing one of this platform's applications.
  *
  * # Two approvals, so two buttons
  *
@@ -13,28 +13,42 @@ import { describe } from '../hooks/useClients'
  * approvals there, and an operator can complete the first and abandon the
  * second. The console shows whichever step is outstanding rather than
  * pretending it is one action that sometimes half-works.
+ *
+ * # It is handed its endpoints, and cannot reach the others
+ *
+ * Which application this creates is decided by whoever renders it. There is no
+ * kind to pass and no default to fall back on, so there is no path by which
+ * the platform panel could create the client application or the reverse.
+ *
+ * The organisation field is the one free-text input in either flow, and it is
+ * not a repository: GitHub creates an application *in* an organisation, and
+ * that is the only thing it names. Repositories are never typed — they are
+ * picked from what the installation reaches.
  */
-interface GitIntegrationProps {
-  readonly integration: Integration
+interface ConnectApplicationProps {
+  readonly endpoints: IntegrationEndpoints
+
+  /** The application so far, or `null` when there is not one yet. */
+  readonly application: Application | null
+
+  /** What this application is for, in the operator's words. */
+  readonly purpose: string
 }
 
-export function GitIntegration({ integration }: GitIntegrationProps) {
+export function ConnectApplication({ endpoints, application, purpose }: ConnectApplicationProps) {
+  // Both panels can render this at once, so the label must point at *this*
+  // field rather than at whichever one the browser found first.
+  const field = useId()
   const [organisation, setOrganisation] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-
-  // A deployment that states its repository has opted out. Offering a control
-  // that would overwrite that from a browser would be offering to undo it.
-  if (!integration.managed) {
-    return null
-  }
 
   async function connect(): Promise<void> {
     setBusy(true)
     setError(null)
 
     try {
-      const { post_url, manifest } = await beginConnection(organisation.trim())
+      const { post_url, manifest } = await endpoints.beginConnection(organisation.trim())
       postManifest(post_url, manifest)
     } catch (thrown: unknown) {
       setError(describe(thrown))
@@ -48,7 +62,7 @@ export function GitIntegration({ integration }: GitIntegrationProps) {
     setError(null)
 
     try {
-      const { url } = await beginInstall()
+      const { url } = await endpoints.beginInstall()
       window.location.assign(url)
     } catch (thrown: unknown) {
       setError(describe(thrown))
@@ -56,7 +70,7 @@ export function GitIntegration({ integration }: GitIntegrationProps) {
     }
   }
 
-  const created = integration.application !== null
+  const created = application !== null
 
   return (
     <div className="connect">
@@ -65,8 +79,8 @@ export function GitIntegration({ integration }: GitIntegrationProps) {
       {created ? (
         <>
           <p className="connect__lead">
-            SaaS Fabric has an application on GitHub. Install it on the organisation whose client
-            configuration it should read.
+            SaaS Fabric has an application on GitHub. Install it on the organisation that holds{' '}
+            {purpose}.
           </p>
           <button type="button" className="signin__button" onClick={() => void install()} disabled={busy}>
             {busy ? 'Opening GitHub…' : 'Install on GitHub'}
@@ -75,14 +89,14 @@ export function GitIntegration({ integration }: GitIntegrationProps) {
       ) : (
         <>
           <p className="connect__lead">
-            SaaS Fabric will create its own GitHub application in your organisation. You approve it
-            on GitHub &mdash; there is no application to make by hand and no key to copy.
+            SaaS Fabric will create its own GitHub application for {purpose}. You approve it on
+            GitHub &mdash; there is no application to make by hand and no key to copy.
           </p>
-          <label className="connect__label" htmlFor="organisation">
+          <label className="connect__label" htmlFor={field}>
             GitHub organisation
           </label>
           <input
-            id="organisation"
+            id={field}
             className="connect__input"
             value={organisation}
             onChange={(event) => {

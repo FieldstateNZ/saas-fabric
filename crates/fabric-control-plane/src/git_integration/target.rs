@@ -36,6 +36,19 @@ pub trait IntegrationTarget: Send + Sync {
     /// an application can be installed and waiting for somebody to say where
     /// to look.
     fn unbind(&self);
+
+    /// Record that a stored integration could not be made to work.
+    ///
+    /// Called when a record exists — somebody connected this — and it could
+    /// not be bound. The distinction matters to whoever reads the console:
+    /// "nothing is connected" sends an operator to connect it again, and
+    /// "connected, and failing" sends them to find out why.
+    ///
+    /// Does nothing by default. Client configuration reports its own health
+    /// from what its sweep observes, which is a stronger signal than what was
+    /// true at startup, and a target with nowhere to put this should not be
+    /// made to invent somewhere.
+    fn unusable(&self, _detail: &str) {}
 }
 
 /// The target that client configuration binds.

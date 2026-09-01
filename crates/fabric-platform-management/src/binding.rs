@@ -6,7 +6,10 @@ mod binding_tests;
 
 use std::sync::{Arc, RwLock};
 
-use crate::{ComponentDesired, DesiredState, DesiredStateError, ReleaseUnit};
+use self::bound::Bound;
+use crate::{ComponentDesired, DesiredState, DesiredStateError, ReleaseUnit, SafeDiagnostic};
+
+mod bound;
 
 /// The platform repository this control plane is currently connected to.
 ///
@@ -26,9 +29,15 @@ use crate::{ComponentDesired, DesiredState, DesiredStateError, ReleaseUnit};
 /// while nothing is bound. The console renders that as "not connected"; a
 /// *connected* repository that cannot be read answers something else, and an
 /// operator is told which.
+///
+/// That distinction has a third case, and it is the one most easily got wrong.
+/// An operator who connected a repository last week, whose application key can
+/// no longer be read, must not be told "not connected" — they would go and
+/// connect it again instead of finding out why it stopped working. See
+/// [`unusable`](Self::unusable).
 pub struct PlatformDesiredState {
-    /// The live repository, behind a lock held only long enough to clone.
-    current: RwLock<Option<Arc<dyn DesiredState>>>,
+    /// What is bound, behind a lock held only long enough to clone.
+    current: RwLock<Bound>,
 }
 
 impl PlatformDesiredState {
@@ -36,13 +45,23 @@ impl PlatformDesiredState {
     #[must_use]
     pub fn unconnected() -> Arc<Self> {
         Arc::new(Self {
-            current: RwLock::new(None),
+            current: RwLock::new(Bound::Nothing),
         })
     }
 
     /// Points the platform at a repository, replacing whatever was there.
     pub fn connect(&self, repository: Arc<dyn DesiredState>) {
-        self.set(Some(repository));
+        self.set(Bound::Repository(repository));
+    }
+
+    /// Records that a connected integration could not be made to work.
+    ///
+    /// The text is sanitised here rather than by the caller, because here is
+    /// where it becomes something an operator reads. What arrives is whatever
+    /// the composition root observed trying to build a client; what leaves is
+    /// a [`SafeDiagnostic`].
+    pub fn unusable(&self, detail: &str) {
+        self.set(Bound::Unusable(SafeDiagnostic::sanitise(detail)));
     }
 
     /// Forgets the current repository.
@@ -52,29 +71,36 @@ impl PlatformDesiredState {
     /// itself unconnected rather than failing against something it can no
     /// longer reach.
     pub fn disconnect(&self) {
-        self.set(None);
+        self.set(Bound::Nothing);
     }
 
-    /// Whether anything is connected.
+    /// Whether a repository is live.
+    ///
+    /// `false` for a connected integration that could not be built: nothing can
+    /// be read through it. What separates the two is the *error* callers get,
+    /// not this.
     #[must_use]
     pub fn is_connected(&self) -> bool {
-        self.live().is_some()
-    }
-
-    /// The live repository, if there is one.
-    fn live(&self) -> Option<Arc<dyn DesiredState>> {
-        self.current.read().ok().and_then(|current| current.clone())
+        self.required().is_ok()
     }
 
     /// The live repository, or the refusal that says why there is none.
     fn required(&self) -> Result<Arc<dyn DesiredState>, DesiredStateError> {
-        self.live().ok_or(DesiredStateError::NotConnected)
+        match &*self.current.read().map_err(|_| DesiredStateError::Unavailable {
+            detail: "the platform binding is poisoned".to_owned(),
+        })? {
+            Bound::Nothing => Err(DesiredStateError::NotConnected),
+            Bound::Repository(repository) => Ok(Arc::clone(repository)),
+            Bound::Unusable(detail) => Err(DesiredStateError::Unavailable {
+                detail: detail.as_str().to_owned(),
+            }),
+        }
     }
 
     /// Replaces what is bound.
-    fn set(&self, repository: Option<Arc<dyn DesiredState>>) {
+    fn set(&self, bound: Bound) {
         if let Ok(mut current) = self.current.write() {
-            *current = repository;
+            *current = bound;
         }
     }
 }

@@ -103,3 +103,62 @@ async fn disconnecting_goes_back_to_not_connected() {
         DesiredStateError::NotConnected
     );
 }
+
+#[tokio::test]
+async fn an_integration_that_could_not_be_built_is_failing_rather_than_absent() {
+    // Somebody connected this. "Nothing is connected" would send them to
+    // connect it a second time instead of to the reason the first one stopped
+    // working — which is the failure this whole three-state binding exists to
+    // prevent.
+    let binding = PlatformDesiredState::unconnected();
+
+    binding.unusable("the application's key could not be read");
+
+    let failure = binding
+        .components("lucentroot")
+        .await
+        .expect_err("a repository that could not be built cannot be read");
+
+    assert_ne!(failure, DesiredStateError::NotConnected);
+    assert!(
+        matches!(failure, DesiredStateError::Unavailable { detail } if detail.contains("key")),
+        "an operator is told what went wrong, in words that are safe to show"
+    );
+}
+
+#[tokio::test]
+async fn connecting_after_a_failure_replaces_it() {
+    // The recovery path: the key comes back, the next restore binds, and
+    // nothing is left saying the integration is broken.
+    let binding = PlatformDesiredState::unconnected();
+
+    binding.unusable("the application's key could not be read");
+    binding.connect(Arc::new(Connected));
+
+    assert!(binding.is_connected());
+    assert_eq!(
+        binding
+            .components("lucentroot")
+            .await
+            .expect("the repository is connected again"),
+        vec!["saas-fabric".to_owned()]
+    );
+}
+
+#[tokio::test]
+async fn disconnecting_after_a_failure_goes_back_to_not_connected() {
+    // An operator who gives up and forgets the integration has genuinely not
+    // connected one, and should be told so rather than shown a stale failure.
+    let binding = PlatformDesiredState::unconnected();
+
+    binding.unusable("the application's key could not be read");
+    binding.disconnect();
+
+    assert_eq!(
+        binding
+            .components("lucentroot")
+            .await
+            .expect_err("nothing is connected"),
+        DesiredStateError::NotConnected
+    );
+}

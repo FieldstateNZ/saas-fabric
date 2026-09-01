@@ -1,10 +1,12 @@
 //! The control-plane API's HTTP surface.
 
-use axum::routing::{get, post, put};
+use axum::routing::{get, post};
 use axum::Router;
 
 use crate::handlers;
 use crate::state::ControlPlaneState;
+
+mod integrations;
 
 /// The path prefix every control-plane route is nested under.
 ///
@@ -38,6 +40,14 @@ pub const API_PREFIX: &str = "/api";
 /// GET    /api/integrations/git/repositories  what the install reaches
 /// PUT    /api/integrations/git/repository    choose one
 /// DELETE /api/integrations/git               forget the integration
+/// GET    /api/integrations/platform            has an application been made?
+/// POST   /api/integrations/platform/connect    describe the app to create
+/// GET    /api/integrations/platform/created    host callback   (no operator)
+/// GET    /api/integrations/platform/install    where to install it
+/// GET    /api/integrations/platform/installed  host callback   (no operator)
+/// GET    /api/integrations/platform/repositories  what the install reaches
+/// PUT    /api/integrations/platform/repository    choose one
+/// DELETE /api/integrations/platform            forget the integration
 /// GET    /api/platform                        what this environment runs
 /// GET /api/clients                       list clients
 /// GET /api/clients/{clientId}            one client's overview
@@ -61,21 +71,6 @@ pub(crate) fn control_plane_routes(state: ControlPlaneState) -> Router {
     } else {
         Router::new()
     };
-
-    let integrations = Router::new()
-        .route(
-            "/integrations/git",
-            get(handlers::get_integration).delete(handlers::disconnect),
-        )
-        .route("/integrations/git/connect", post(handlers::begin_connection))
-        .route("/integrations/git/install", get(handlers::begin_install))
-        .route("/integrations/git/repositories", get(handlers::list_repositories))
-        .route("/integrations/git/repository", put(handlers::choose_repository))
-        // The two the Git host redirects a browser to. They take no operator
-        // — a redirect carries no bearer — and are correlated by a single-use
-        // token instead.
-        .route("/integrations/git/created", get(handlers::created))
-        .route("/integrations/git/installed", get(handlers::installed));
 
     let clients = Router::new()
         .route("/reconciliation", post(handlers::converge))
@@ -111,6 +106,12 @@ pub(crate) fn control_plane_routes(state: ControlPlaneState) -> Router {
         );
 
     Router::new()
-        .nest(API_PREFIX, clients.merge(session).merge(integrations))
+        .nest(
+            API_PREFIX,
+            clients
+                .merge(session)
+                .merge(integrations::client_configuration())
+                .merge(integrations::platform_management()),
+        )
         .with_state(state)
 }

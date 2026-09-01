@@ -18,6 +18,7 @@ import type {
   Identity,
   IdentityRequest,
   Integration,
+  PlatformIntegration,
   Platform,
   RevealedSecret,
   SecretEntry,
@@ -59,41 +60,81 @@ export async function getPlatform(): Promise<Platform> {
 }
 
 /**
- * Describes the application to create, and where the browser must post it.
+ * The connection flow, for one of the two integrations.
  *
- * Creating one through a manifest needs an HTTP POST of a form field, which a
- * browser can only do by submitting a real form — so the control plane hands
- * back what to post rather than a URL to follow.
+ * # Why this is a factory and not a parameter on each call
+ *
+ * The console mirrors the control plane here. There, which integration a
+ * request acts on is decided by the route it was sent to, never by anything in
+ * the request; here, a component is handed the endpoints it may use and has no
+ * way to reach the other set. A `kind` argument threaded through every call
+ * would be one mistyped literal away from connecting the wrong application.
+ *
+ * The segment is a closed union for the same reason `IntegrationKind` is a
+ * closed enum: there are exactly two, they are known when this is compiled,
+ * and nothing an operator types reaches this.
  */
-export async function beginConnection(
-  organisation: string,
-): Promise<{ post_url: string; manifest: unknown }> {
-  return request('/api/integrations/git/connect', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ organisation }),
-  })
+export interface IntegrationEndpoints {
+  /** Describes the application to create, and where the browser must post it. */
+  beginConnection(organisation: string): Promise<{ post_url: string; manifest: unknown }>
+  /** Where the operator installs the application once it exists. */
+  beginInstall(): Promise<{ url: string }>
+  /** Every repository this installation can reach. */
+  listRepositories(): Promise<readonly Candidate[]>
+  /** Settles on one of them. */
+  chooseRepository(owner: string, name: string): Promise<void>
+  /** Forgets this integration, and only this one. */
+  disconnect(): Promise<void>
 }
 
-/** Where the operator installs the application once it exists. */
-export async function beginInstall(): Promise<{ url: string }> {
-  return request('/api/integrations/git/install')
+function endpoints(segment: 'git' | 'platform'): IntegrationEndpoints {
+  const base = `/api/integrations/${segment}`
+
+  return {
+    // A real form POST, not this call: creating an application through a
+    // manifest needs the browser to navigate to GitHub's approval screen, so
+    // the control plane hands back what to post rather than a URL to follow.
+    async beginConnection(organisation: string) {
+      return request(`${base}/connect`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ organisation }),
+      })
+    },
+
+    async beginInstall() {
+      return request(`${base}/install`)
+    },
+
+    async listRepositories() {
+      const body = await request<{ repositories: Candidate[] }>(`${base}/repositories`)
+
+      return body.repositories
+    },
+
+    async chooseRepository(owner: string, name: string) {
+      await request(`${base}/repository`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ owner, name }),
+      })
+    },
+
+    async disconnect() {
+      await request(base, { method: 'DELETE' })
+    },
+  }
 }
 
-/** Every repository the installation can reach. */
-export async function listRepositories(): Promise<readonly Candidate[]> {
-  const body = await request<{ repositories: Candidate[] }>('/api/integrations/git/repositories')
+/** Connecting where client configuration is kept. */
+export const clientConfiguration: IntegrationEndpoints = endpoints('git')
 
-  return body.repositories
-}
+/** Connecting where this platform's own composition is kept. */
+export const platformManagement: IntegrationEndpoints = endpoints('platform')
 
-/** Settles on the repository client configuration lives in. */
-export async function chooseRepository(owner: string, name: string): Promise<void> {
-  await request('/api/integrations/git/repository', {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ owner, name }),
-  })
+/** The Platform Management application's lifecycle. */
+export async function getPlatformIntegration(): Promise<PlatformIntegration> {
+  return request<PlatformIntegration>('/api/integrations/platform')
 }
 
 /**
@@ -105,11 +146,6 @@ export async function chooseRepository(owner: string, name: string): Promise<voi
  */
 export async function converge(): Promise<{ clients: number }> {
   return request('/api/reconciliation', { method: 'POST' })
-}
-
-/** Forgets the integration this platform holds. */
-export async function disconnectIntegration(): Promise<void> {
-  await request('/api/integrations/git', { method: 'DELETE' })
 }
 
 /** One client's identity configuration and reconciliation state. */

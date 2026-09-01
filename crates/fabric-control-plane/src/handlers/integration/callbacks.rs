@@ -17,6 +17,7 @@ use axum::extract::{Query, State};
 use axum::response::Redirect;
 use serde::Deserialize;
 
+use super::flow::Flow;
 use crate::state::ControlPlaneState;
 use crate::ControlPlaneError;
 
@@ -45,41 +46,46 @@ pub(crate) struct InstallationCallback {
 }
 
 /// Completes the application's creation.
-pub(crate) async fn created(
+pub(crate) async fn created<F: Flow>(
     State(state): State<ControlPlaneState>,
     Query(query): Query<Creation>,
 ) -> Result<Redirect, ControlPlaneError> {
-    let service = state.git_integration()?;
+    let service = F::service(&state)?;
 
     let outcome = service.complete_creation(&query.code, &query.state).await;
 
-    Ok(back_to_console(&state, "created", &outcome))
+    Ok(back_to_console::<F, _>(&state, "created", &outcome))
 }
 
 /// Completes the installation.
-pub(crate) async fn installed(
+pub(crate) async fn installed<F: Flow>(
     State(state): State<ControlPlaneState>,
     Query(query): Query<InstallationCallback>,
 ) -> Result<Redirect, ControlPlaneError> {
-    let service = state.git_integration()?;
+    let service = F::service(&state)?;
 
     let outcome = service
         .complete_install(&query.installation_id, &query.state)
         .await;
 
-    Ok(back_to_console(&state, "installed", &outcome))
+    Ok(back_to_console::<F, _>(&state, "installed", &outcome))
 }
 
-/// Sends the browser back to the console, saying what happened.
+/// Sends the browser back to the console, saying what happened and to which.
 ///
 /// The outcome is a short stable word, never the error's message: this lands
 /// in an address bar, and a message assembled from an upstream failure is not
 /// something to put there.
-fn back_to_console<E>(state: &ControlPlaneState, step: &str, outcome: &Result<(), E>) -> Redirect {
+///
+/// The key is the flow's, so a console showing both connections knows which
+/// one just finished. `git` for client configuration, unchanged, because the
+/// console already reads it.
+fn back_to_console<F: Flow, E>(state: &ControlPlaneState, step: &str, outcome: &Result<(), E>) -> Redirect {
     let base = state.public_base_url.trim_end_matches('/');
+    let key = F::OUTCOME_KEY;
 
     match outcome {
-        Ok(()) => Redirect::to(&format!("{base}/?git={step}")),
-        Err(_) => Redirect::to(&format!("{base}/?git_error={step}")),
+        Ok(()) => Redirect::to(&format!("{base}/?{key}={step}")),
+        Err(_) => Redirect::to(&format!("{base}/?{key}_error={step}")),
     }
 }

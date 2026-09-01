@@ -557,3 +557,272 @@ async fn an_organisation_name_that_could_steer_a_url_is_refused() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// Two flows over one store.
+//
+// The mechanism is shared; the integrations are not. What these pin is that
+// sharing the mechanism did not quietly share anything else — an operator who
+// connects client configuration has not connected platform management, and one
+// who forgets either still has the other.
+// ---------------------------------------------------------------------------
+
+/// A target that records what was done to it, and nothing else.
+#[derive(Default)]
+struct RecordingTarget {
+    /// Repositories it was pointed at.
+    bound: Mutex<Vec<String>>,
+
+    /// How many times it was told to forget.
+    unbound: Mutex<usize>,
+
+    /// Why it was told a connected integration does not work.
+    unusable: Mutex<Vec<String>>,
+}
+
+impl IntegrationTarget for RecordingTarget {
+    fn bind(&self, integration: &GitIntegration, _private_key: &SecretValue) -> Result<(), String> {
+        self.bound.lock().expect("the fake is not poisoned").push(
+            integration
+                .repository()
+                .map_or_else(|| "nothing".to_owned(), SelectedRepository::describe),
+        );
+
+        Ok(())
+    }
+
+    fn unbind(&self) {
+        *self.unbound.lock().expect("the fake is not poisoned") += 1;
+    }
+
+    fn unusable(&self, detail: &str) {
+        self.unusable
+            .lock()
+            .expect("the fake is not poisoned")
+            .push(detail.to_owned());
+    }
+}
+
+impl RecordingTarget {
+    fn bindings(&self) -> Vec<String> {
+        self.bound.lock().expect("the fake is not poisoned").clone()
+    }
+}
+
+/// A second flow over the store and secrets an existing harness already uses.
+///
+/// The same two stores, deliberately: this is the deployment's shape, and it
+/// is the shape in which a keying mistake shows up as one integration reading
+/// the other's record.
+fn platform_flow(harness: &Harness, target: &Arc<RecordingTarget>) -> GitIntegrationService {
+    GitIntegrationService::new(
+        IntegrationKind::PlatformManagement,
+        Arc::clone(&harness.host) as Arc<dyn GitAppProvisioning>,
+        Arc::clone(&harness.secrets),
+        Arc::clone(&harness.store) as Arc<dyn IntegrationStore>,
+        Arc::clone(target) as Arc<dyn IntegrationTarget>,
+        Arc::new(FixedClock),
+    )
+}
+
+/// Runs a flow to a chosen repository, as an operator would.
+async fn connect(service: &GitIntegrationService, owner: &str, name: &str) {
+    let request = service
+        .begin_connection(&operator(), owner)
+        .expect("the connection must start");
+
+    service
+        .complete_creation("the-code", &state_from(&request.post_url))
+        .await
+        .expect("creation must complete");
+
+    let install = service
+        .begin_install(&operator())
+        .await
+        .expect("the install must start");
+
+    service
+        .complete_install("42", &state_from(&install))
+        .await
+        .expect("the install must complete");
+
+    service
+        .choose_repository(&operator(), owner, name)
+        .await
+        .expect("the repository must be accepted");
+}
+
+#[tokio::test]
+async fn connecting_client_configuration_connects_nothing_else() {
+    let harness = connected(&[("FieldstateNZ", "saas-fabric-clients")]).await;
+    let target = Arc::new(RecordingTarget::default());
+    let platform = platform_flow(&harness, &target);
+
+    assert!(
+        platform
+            .current()
+            .await
+            .expect("the store must be readable")
+            .is_none(),
+        "a client connection must not leave a platform record behind"
+    );
+    assert!(
+        target.bindings().is_empty(),
+        "nor bind anything platform management would then read through"
+    );
+}
+
+#[tokio::test]
+async fn each_flow_keeps_its_key_where_only_it_looks() {
+    // The strongest form of "one application's authority is not the other's":
+    // there is no name under which platform management could find the key
+    // client configuration was given.
+    let harness = connected(&[("FieldstateNZ", "saas-fabric-clients")]).await;
+
+    assert!(
+        harness
+            .secrets
+            .get(&SecretName::new(
+                IntegrationKind::PlatformManagement.private_key()
+            ))
+            .await
+            .expect("the store must be readable")
+            .is_none(),
+        "connecting one application must not put a key where the other reads"
+    );
+
+    assert_ne!(
+        IntegrationKind::ClientConfiguration.private_key(),
+        IntegrationKind::PlatformManagement.private_key()
+    );
+}
+
+#[tokio::test]
+async fn a_correlation_token_from_one_flow_cannot_complete_the_other() {
+    let harness = harness(&[("FieldstateNZ", "saas-fabric-platform")]);
+    let target = Arc::new(RecordingTarget::default());
+    let platform = platform_flow(&harness, &target);
+
+    let request = harness
+        .service
+        .begin_connection(&operator(), "FieldstateNZ")
+        .expect("the connection must start");
+
+    let outcome = platform
+        .complete_creation("the-code", &state_from(&request.post_url))
+        .await;
+
+    assert!(
+        matches!(outcome, Err(IntegrationError::NotOurFlow)),
+        "a token issued by one flow must not create the other's application"
+    );
+}
+
+#[tokio::test]
+async fn disconnecting_platform_management_leaves_client_configuration_alone() {
+    let harness = connected(&[("FieldstateNZ", "saas-fabric-clients")]).await;
+    let target = Arc::new(RecordingTarget::default());
+    let platform = platform_flow(&harness, &target);
+
+    connect(&platform, "FieldstateNZ", "saas-fabric-clients").await;
+
+    platform
+        .disconnect(&operator())
+        .await
+        .expect("the disconnect must succeed");
+
+    assert!(
+        harness
+            .service
+            .current()
+            .await
+            .expect("the store must be readable")
+            .is_some(),
+        "forgetting one integration must leave the other's record"
+    );
+    assert!(
+        harness
+            .secrets
+            .get(&SecretName::new(
+                IntegrationKind::ClientConfiguration.private_key()
+            ))
+            .await
+            .expect("the store must be readable")
+            .is_some(),
+        "nor may it delete the other's key"
+    );
+    assert!(
+        harness.binding.is_configured(),
+        "nor unbind what the other connected"
+    );
+}
+
+#[tokio::test]
+async fn the_platform_repository_must_be_one_that_installation_reaches() {
+    // The candidate list comes from the installation this application has, and
+    // the choice is checked against it rather than trusted. There is no path
+    // by which an operator points platform management at a repository by
+    // typing an owner and a name — including one the *client* application can
+    // reach, which is a different installation entirely.
+    let harness = harness(&[("FieldstateNZ", "saas-fabric-platform")]);
+    let target = Arc::new(RecordingTarget::default());
+    let platform = platform_flow(&harness, &target);
+
+    connect(&platform, "FieldstateNZ", "saas-fabric-platform").await;
+
+    let outcome = platform
+        .choose_repository(&operator(), "SomebodyElse", "their-secrets")
+        .await;
+
+    assert!(
+        matches!(outcome, Err(IntegrationError::Refused(_))),
+        "a repository the installation does not reach must not be accepted"
+    );
+    assert_eq!(
+        target.bindings().last().map(String::as_str),
+        Some("FieldstateNZ/saas-fabric-platform"),
+        "and the refusal must leave what was already bound where it was"
+    );
+}
+
+#[tokio::test]
+async fn a_stored_integration_whose_key_is_gone_is_failing_rather_than_absent() {
+    // An operator connected this. Telling them "nothing is connected" would
+    // send them to connect it again instead of to the reason it stopped.
+    let harness = connected(&[("FieldstateNZ", "saas-fabric-clients")]).await;
+    let target = Arc::new(RecordingTarget::default());
+
+    let platform = GitIntegrationService::new(
+        IntegrationKind::PlatformManagement,
+        Arc::clone(&harness.host) as Arc<dyn GitAppProvisioning>,
+        // A store with no key in it, standing in for one that has lost it.
+        Arc::new(InMemorySecretStore::new()),
+        Arc::clone(&harness.store) as Arc<dyn IntegrationStore>,
+        Arc::clone(&target) as Arc<dyn IntegrationTarget>,
+        Arc::new(FixedClock),
+    );
+
+    // A record, put there without the key that belongs with it.
+    harness
+        .store
+        .save(
+            IntegrationKind::PlatformManagement,
+            &harness
+                .service
+                .current()
+                .await
+                .expect("readable")
+                .expect("recorded"),
+        )
+        .await
+        .expect("the store must accept the record");
+
+    platform.restore().await;
+
+    assert_eq!(
+        target.unusable.lock().expect("the fake is not poisoned").len(),
+        1,
+        "a record that cannot be bound must be reported as failing"
+    );
+    assert!(target.bindings().is_empty());
+}

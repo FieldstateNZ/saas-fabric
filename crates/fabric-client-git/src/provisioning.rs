@@ -27,6 +27,9 @@ mod installation;
 mod manifest;
 #[cfg(test)]
 mod manifest_tests;
+mod purpose;
+
+pub use purpose::AppPurpose;
 
 use async_trait::async_trait;
 use fabric_control_plane::{
@@ -44,6 +47,10 @@ pub struct GitHubAppProvisioning {
     /// The externally reachable base the host returns the browser to.
     callback_base_url: String,
 
+    /// What the application it creates is for, which decides the application's
+    /// name and where its callbacks land.
+    purpose: AppPurpose,
+
     /// The HTTP client.
     http: reqwest::Client,
 }
@@ -59,11 +66,13 @@ impl GitHubAppProvisioning {
         web_base_url: &str,
         callback_base_url: &str,
         timeout: std::time::Duration,
+        purpose: AppPurpose,
     ) -> Result<Self, String> {
         Ok(Self {
             api_base_url: api_base_url.trim_end_matches('/').to_owned(),
             web_base_url: web_base_url.trim_end_matches('/').to_owned(),
             callback_base_url: callback_base_url.trim_end_matches('/').to_owned(),
+            purpose,
             http: reqwest::Client::builder()
                 .timeout(timeout)
                 .user_agent("saas-fabric-control-plane")
@@ -96,7 +105,7 @@ impl GitAppProvisioning for GitHubAppProvisioning {
     fn creation_request(&self, organisation: &str, state: &str) -> AppCreationRequest {
         AppCreationRequest {
             post_url: manifest::creation_url(&self.web_base_url, organisation, state),
-            manifest: manifest::build(&self.callback_base_url),
+            manifest: manifest::build(&self.callback_base_url, &self.purpose),
         }
     }
 

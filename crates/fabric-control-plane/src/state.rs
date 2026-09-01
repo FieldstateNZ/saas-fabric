@@ -73,6 +73,15 @@ pub(crate) struct ControlPlaneState {
     /// One client's secrets, when a deployment has a store for them.
     pub(crate) client_secrets: Option<Arc<crate::SecretsService>>,
 
+    /// The flow that connects the platform repository, when this deployment
+    /// manages one.
+    ///
+    /// A second service over the same stores, not a second use of the first.
+    /// It holds its own application, its own installation and its own record,
+    /// and the two share nothing an operator could confuse: connecting one
+    /// does not connect the other, and forgetting one leaves the other alone.
+    pub(crate) platform_integration: Option<Arc<GitIntegrationService>>,
+
     /// Platform Management, when this deployment has a platform repository.
     ///
     /// `None` where nothing is connected. The route is still mounted and says
@@ -88,7 +97,6 @@ pub(crate) struct ControlPlaneState {
 }
 
 impl ControlPlaneState {
-    /// The connection flow, or a refusal naming why there is none.
     /// Platform Management, or a refusal naming why there is none.
     pub(crate) fn platform(&self) -> Result<&crate::PlatformBinding, crate::ControlPlaneError> {
         self.platform
@@ -101,12 +109,6 @@ impl ControlPlaneState {
         self.client_secrets
             .as_ref()
             .ok_or(crate::ControlPlaneError::Secrets(crate::SecretsError::NoBoundary))
-    }
-
-    pub(crate) fn git_integration(&self) -> Result<&Arc<GitIntegrationService>, crate::ControlPlaneError> {
-        self.git_integration
-            .as_ref()
-            .ok_or(crate::ControlPlaneError::IntegrationNotManaged)
     }
 }
 

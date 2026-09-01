@@ -16,14 +16,24 @@ impl GitIntegrationService {
         let integration = match self.store.load(self.kind).await {
             Ok(Some(integration)) => integration,
             Ok(None) => return,
+            // Not reported as unusable: an unreadable store says nothing
+            // about whether a record is in it, and claiming "connected, and
+            // failing" about a platform nobody ever connected is the same
+            // lie in the other direction.
             Err(error) => {
                 logging::integration_restore_failed(&error.to_string());
                 return;
             }
         };
 
+        // A record exists, so from here on a failure is a *connected*
+        // integration that does not work. Saying "nothing is connected" about
+        // one an operator connected last week sends them to connect it again
+        // instead of to the reason it stopped.
         let Ok(key) = self.private_key().await else {
-            logging::integration_restore_failed("the application's key could not be read");
+            let detail = "the application's key could not be read";
+            logging::integration_restore_failed(detail);
+            self.target.unusable(detail);
             return;
         };
 
@@ -58,6 +68,12 @@ impl GitIntegrationService {
             return Ok(());
         }
 
-        self.target.bind(integration, key)
+        // Recorded as well as returned. The caller is sometimes an operator
+        // mid-connection, who sees the error — and sometimes a restart, where
+        // nobody is watching and the console is the only thing that will say
+        // so.
+        self.target.bind(integration, key).inspect_err(|error| {
+            self.target.unusable(error);
+        })
     }
 }

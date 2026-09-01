@@ -3,12 +3,17 @@
 use serde_json::{json, Value};
 
 use crate::provisioning::urlencode_path as urlencode;
+use crate::provisioning::AppPurpose;
 
 /// The permissions the application asks for.
 ///
 /// Two, and the second is not optional in practice: GitHub requires
 /// `metadata: read` alongside almost anything else, so asking for it
 /// explicitly is honest rather than redundant.
+///
+/// The same two for every purpose. Both applications this platform creates
+/// write files to a repository an operator chose — one client configuration,
+/// one desired platform state — so neither has a narrower set to ask for.
 ///
 /// **Not `administration`.** Workspec's equivalent asks for it because it
 /// creates repositories; creating repositories is a stated non-goal here, and
@@ -22,19 +27,25 @@ fn permissions() -> Value {
 
 /// Builds the application manifest.
 ///
-/// Both callback URLs are derived from `callback_base` rather than passed in.
-/// The host returns the browser to the *stored* setup URL after an install, so
-/// the two have to agree, and deriving them together is what makes that true
-/// by construction rather than by two call sites matching.
-pub(super) fn build(callback_base: &str) -> Value {
+/// Both callback URLs are derived from `callback_base` and the purpose's one
+/// segment rather than passed in whole. The host returns the browser to the
+/// *stored* setup URL after an install, so the two have to agree, and deriving
+/// them together is what makes that true by construction rather than by two
+/// call sites matching.
+pub(super) fn build(callback_base: &str, purpose: &AppPurpose) -> Value {
+    // Encoded even though the callers pass constants. It is a path segment,
+    // and the cost of it never being able to escape one is nothing.
+    let segment = urlencode(&purpose.callback_segment);
+
     json!({
         // Globally unique across GitHub, so it carries the host this platform
-        // answers on. Two SaaS Fabric deployments must be able to create their
-        // own applications without one of them failing on a name clash.
-        "name": name_for(callback_base),
+        // answers on *and* what the application is for. Two SaaS Fabric
+        // deployments must be able to create their own applications without a
+        // name clash, and so must one deployment's two.
+        "name": name_for(&purpose.name, callback_base),
         "url": callback_base,
-        "redirect_url": format!("{callback_base}/api/integrations/git/created"),
-        "setup_url": format!("{callback_base}/api/integrations/git/installed"),
+        "redirect_url": format!("{callback_base}/api/integrations/{segment}/created"),
+        "setup_url": format!("{callback_base}/api/integrations/{segment}/installed"),
 
         // The host returns the browser here again on *re-installation*, so an
         // operator changing which repositories are shared lands back in the
@@ -42,7 +53,7 @@ pub(super) fn build(callback_base: &str) -> Value {
         "setup_on_update": true,
 
         // Nobody else may install this application: it exists to give one
-        // platform access to one organisation's client configuration.
+        // platform access to one organisation's repository.
         "public": false,
 
         "default_permissions": permissions(),
@@ -54,7 +65,7 @@ pub(super) fn build(callback_base: &str) -> Value {
 }
 
 /// The application name, which must be unique across the whole host.
-fn name_for(callback_base: &str) -> String {
+fn name_for(name: &str, callback_base: &str) -> String {
     let host = callback_base
         .rsplit("://")
         .next()
@@ -63,7 +74,7 @@ fn name_for(callback_base: &str) -> String {
         .next()
         .unwrap_or(callback_base);
 
-    format!("SaaS Fabric — {host}")
+    format!("{name} — {host}")
 }
 
 /// Where the operator's browser posts the manifest.

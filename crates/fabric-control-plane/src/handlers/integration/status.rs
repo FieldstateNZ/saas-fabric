@@ -4,6 +4,7 @@ use axum::extract::State;
 use axum::Json;
 use serde::Serialize;
 
+use super::application::{describe, Application};
 use crate::integration::IntegrationStatus;
 use crate::state::ControlPlaneState;
 use crate::Operator;
@@ -47,27 +48,6 @@ pub(crate) struct IntegrationReport {
     application: Option<Application>,
 }
 
-/// What an operator is told about the application itself.
-///
-/// Public identifiers only. The slug and the installation identifier are
-/// visible to anyone looking at the organisation's settings page; the private
-/// key is not here, is not referenced here, and is not obtainable through this
-/// API at all.
-#[derive(Serialize)]
-struct Application {
-    /// The application's slug on the host.
-    slug: String,
-
-    /// The account it is installed on, once it has been installed.
-    account: Option<String>,
-
-    /// Whether an installation exists.
-    installed: bool,
-
-    /// The repository client desired state lives in, once settled.
-    repository: Option<String>,
-}
-
 /// Reports the desired-state integration.
 ///
 /// Takes an [`Operator`] like every other client-facing handler. Integration
@@ -96,17 +76,4 @@ pub(crate) async fn get_integration(
         managed: state.git_integration.is_some(),
         application,
     })
-}
-
-/// The public half of a stored integration.
-fn describe(integration: &crate::GitIntegration) -> Application {
-    Application {
-        slug: integration.app_slug.clone(),
-        account: integration
-            .installation
-            .as_ref()
-            .map(|installation| installation.account.clone()),
-        installed: integration.installation.is_some(),
-        repository: integration.repository().map(crate::SelectedRepository::describe),
-    }
 }

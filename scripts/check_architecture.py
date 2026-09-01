@@ -478,6 +478,7 @@ def check_dependency_direction(graph: Graph) -> list[Failure]:
             "fabric-core",
             "fabric-client-model",
             "fabric-reconciliation",
+            "fabric-platform-management",
         },
         # The two adapters depend *inward* on the ports they implement, which
         # is why the arrows point this way and not the other. Nothing in the
@@ -549,6 +550,8 @@ def check_dependency_direction(graph: Graph) -> list[Failure]:
         },
         "fabric-control-plane-api": {
             "fabric-core",
+            "fabric-platform-management",
+            "fabric-registry",
             "fabric-client-model",
             "fabric-reconciliation",
             "fabric-control-plane",

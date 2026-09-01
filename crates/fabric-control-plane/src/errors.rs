@@ -130,6 +130,18 @@ pub enum ControlPlaneError {
     #[error("this deployment states its desired-state repository; it is not managed here")]
     IntegrationNotManaged,
 
+    /// This deployment has no platform repository connected.
+    ///
+    /// The route is mounted anyway, so a console can say what is missing. A
+    /// route that did not exist would leave it reporting a 404 as though the
+    /// operator had asked for the wrong thing.
+    #[error("this platform manages no environments")]
+    PlatformNotManaged,
+
+    /// Platform Management could not answer.
+    #[error(transparent)]
+    Platform(#[from] fabric_platform_management::PlatformError),
+
     /// This deployment converges no identity provider.
     #[error("this platform converges no identity provider")]
     ConvergenceUnavailable,

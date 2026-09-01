@@ -140,3 +140,37 @@ async fn a_write_against_an_unconfigured_platform_is_refused_before_anything_is_
         "integration_not_configured"
     );
 }
+
+#[tokio::test]
+async fn the_platform_route_says_nothing_is_managed_rather_than_not_existing() {
+    // A deployment with no platform repository still mounts the route, for the
+    // same reason the client routes stay mounted with no desired state: a
+    // console can render "nothing is connected" and cannot render a 404 whose
+    // meaning it would have to guess. The two are indistinguishable from the
+    // browser otherwise -- a missing route and a missing integration look the
+    // same, and only one of them is something an operator can fix.
+    let plane = control_plane();
+
+    let response = send(&plane.router, get("/api/platform/environments/lucentroot")).await;
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let body = json(response).await;
+    assert_eq!(body["error"]["code"], "platform_not_managed");
+}
+
+#[tokio::test]
+async fn reading_the_platform_requires_an_operator() {
+    // The composition of an environment is not public. An unauthenticated
+    // caller learns nothing about which components exist or what they run.
+    let plane = control_plane();
+
+    let anonymous = Request::builder()
+        .method("GET")
+        .uri("/api/platform/environments/lucentroot")
+        .body(Body::empty())
+        .expect("the request must build");
+
+    let response = send(&plane.router, anonymous).await;
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}

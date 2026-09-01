@@ -9,6 +9,9 @@ repository.workspace = true
 [dependencies]
 fabric-client-model.workspace = true
 fabric-core.workspace = true
+# The platform surface the operator console reads. Optional at runtime: a
+# deployment without it mounts the route and answers that it is not connected.
+fabric-platform-management.workspace = true
 fabric-reconciliation.workspace = true
 
 async-trait.workspace = true

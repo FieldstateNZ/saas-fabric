@@ -17,9 +17,10 @@ impl ControlPlaneError {
             // not exist, and for this deployment the connection surface does
             // not exist. Neither is a permission problem, which is why neither
             // is a 403 sending an operator to look for a grant.
-            Self::UnknownClient(_) | Self::IntegrationNotManaged | Self::ConvergenceUnavailable => {
-                StatusCode::NOT_FOUND
-            }
+            Self::UnknownClient(_)
+            | Self::IntegrationNotManaged
+            | Self::PlatformNotManaged
+            | Self::ConvergenceUnavailable => StatusCode::NOT_FOUND,
             // `InvalidFlow` joins these at 400 rather than 401, and that is
             // the interesting one: its caller is a browser the Git host
             // redirected here, holding no identity to be wrong about. What is
@@ -35,6 +36,12 @@ impl ControlPlaneError {
             // that says exactly that. A client seeing it knows to read the
             // resource and retry with its entity tag, where a 400 would only
             // tell it something was wrong.
+            // Platform Management reached a registry or the platform
+            // repository and could not get an answer. 503, not 500: nothing is
+            // wrong with the request, desired state is untouched, and the
+            // operator's next step is to look again shortly.
+            Self::Platform(_) => StatusCode::SERVICE_UNAVAILABLE,
+
             Self::RevisionRequired => StatusCode::PRECONDITION_REQUIRED,
 
             // 409, as ADR 0008 requires. Not 412: a failed `If-Match` on a
@@ -99,6 +106,8 @@ impl ControlPlaneError {
             Self::InvalidFlow => "invalid_flow",
             Self::ConvergenceUnavailable => "convergence_unavailable",
             Self::IntegrationNotManaged => "integration_not_managed",
+            Self::PlatformNotManaged => "platform_not_managed",
+            Self::Platform(_) => "platform_unavailable",
             Self::GitHostRefused => "git_host_refused",
             Self::IntegrationRefused(_) => "integration_refused",
             Self::IntegrationNotConfigured => "integration_not_configured",

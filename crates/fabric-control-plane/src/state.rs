@@ -72,10 +72,32 @@ pub(crate) struct ControlPlaneState {
 
     /// One client's secrets, when a deployment has a store for them.
     pub(crate) client_secrets: Option<Arc<crate::SecretsService>>,
+
+    /// Platform Management, when this deployment has a platform repository.
+    ///
+    /// `None` where nothing is connected. The route is still mounted and says
+    /// so, for the same reason the secrets routes are: a console can tell an
+    /// operator what is missing, and cannot tell them anything about a route
+    /// that does not exist.
+    pub(crate) platform: Option<Arc<fabric_platform_management::PlatformManagement>>,
+
+    /// What the last sweep found, and whether one is running.
+    ///
+    /// Shared with the loop the host starts. Read here, written there.
+    pub(crate) platform_sweeps: Arc<fabric_platform_management::SweepState>,
 }
 
 impl ControlPlaneState {
     /// The connection flow, or a refusal naming why there is none.
+    /// Platform Management, or a refusal naming why there is none.
+    pub(crate) fn platform(
+        &self,
+    ) -> Result<&Arc<fabric_platform_management::PlatformManagement>, crate::ControlPlaneError> {
+        self.platform
+            .as_ref()
+            .ok_or(crate::ControlPlaneError::PlatformNotManaged)
+    }
+
     /// The secrets service, or a refusal naming why there is none.
     pub(crate) fn secrets(&self) -> Result<&Arc<crate::SecretsService>, crate::ControlPlaneError> {
         self.client_secrets

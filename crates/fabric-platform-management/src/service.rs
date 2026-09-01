@@ -62,6 +62,29 @@ impl PlatformManagement {
         Ok(ComponentStatus::assemble(component, &desired, &discovery))
     }
 
+    /// Every component of an environment, changing nothing.
+    ///
+    /// The console's read. Like [`status`](Self::status) it cannot write, and
+    /// for the same reason: a page that moved an environment when it loaded
+    /// would be a page nobody could open twice.
+    ///
+    /// # Errors
+    ///
+    /// [`PlatformError`] if the environment cannot be read. A component that
+    /// cannot be read fails the whole call — unlike a sweep, which is looking
+    /// after components and must not abandon the rest, this is answering a
+    /// question and a partial answer would be read as a complete one.
+    pub async fn statuses(&self, environment: &str) -> Result<Vec<ComponentStatus>, PlatformError> {
+        let components = self.desired_state.components(environment).await?;
+        let mut statuses = Vec::with_capacity(components.len());
+
+        for component in components {
+            statuses.push(self.status(environment, &component).await?);
+        }
+
+        Ok(statuses)
+    }
+
     /// The clock records are stamped with.
     pub(crate) fn clock(&self) -> &dyn Clock {
         self.clock.as_ref()

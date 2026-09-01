@@ -191,6 +191,8 @@ pub fn control_plane() -> TestControlPlane {
     let services = build_control_plane(
         &config,
         ControlPlaneDeps {
+            // Nothing connected, which is what the platform route reports.
+            platform: None,
             client_secrets: Some(Arc::new(FakeClientSecrets)),
             desired_state: Arc::clone(&binding),
             clock: Arc::new(FixedClock),

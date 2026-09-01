@@ -311,6 +311,7 @@ dependencies = [
  "base64",
  "fabric-client-model",
  "fabric-core",
+ "fabric-platform-management",
  "fabric-reconciliation",
  "getrandom 0.4.3",
  "http",

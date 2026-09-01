@@ -591,6 +591,13 @@ button:disabled {
   color: #6b7280;
 }
 
+/* The decision rows sit apart from the three-state rows above them. Same
+   grid, so the two columns still line up; a gap, because they answer a
+   different question. */
+.platform__rows--decision {
+  margin-top: 0.75rem;
+}
+
 .platform__rows dd {
   margin: 0;
   font-variant-numeric: tabular-nums;

@@ -53,7 +53,11 @@ impl PlatformManagement {
             was,
             status: ComponentStatus {
                 desired_state: DesiredStateStatus::Current,
-                available: Some(unit.version),
+                // Nothing, having just taken it. `assemble` would report the
+                // version this pass advanced *to*, which under this field's
+                // meaning would claim there is something newer than the
+                // version it also reports as desired.
+                newer: None,
                 ..ComponentStatus::assemble(component, &moved, &discovery)
             },
         })

@@ -42,10 +42,7 @@ impl ComponentRow {
         Self {
             component: status.component.clone(),
             desired: status.desired.as_str().to_owned(),
-            available: status
-                .available
-                .as_ref()
-                .map(|version| version.as_str().to_owned()),
+            newer: status.newer.as_ref().map(|version| version.as_str().to_owned()),
             running: match status.running {
                 Running::Unknown => "unknown",
             },

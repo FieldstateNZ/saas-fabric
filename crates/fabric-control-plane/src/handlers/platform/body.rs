@@ -31,8 +31,13 @@ pub struct ComponentRow {
     /// What the environment is asked to run.
     pub desired: String,
 
-    /// The newest version it could run, if anything newer exists.
-    pub available: Option<String>,
+    /// What Fabric would advance this component to, if anything.
+    ///
+    /// Rendered as "Newer version", and not as "Available": nothing observes
+    /// whether the desired version is itself still published, so the broader
+    /// word would be a claim the platform cannot support. `null` says there is
+    /// nothing to advance to.
+    pub newer: Option<String>,
 
     /// What is actually running. Always `unknown` until there is a
     /// reconciliation integration to ask.

@@ -51,6 +51,14 @@ pub(super) const CREDENTIAL_PREFIXES: [&str; 8] = [
 /// is adapters that classify their own failures rather than forwarding
 /// somebody else's words. Anything genuinely secret should not have reached a
 /// message in the first place.
+///
+/// It is also **not a licence to log the unsanitised original**. This makes
+/// text safe to show an *operator*; it says nothing about what is safe to put
+/// in a trace, a log line, or an error report. Those go somewhere this type
+/// never sees, are kept far longer, and are forwarded to places nobody
+/// enumerated — so an upstream error chain carrying a credential is exactly as
+/// dangerous there as it would have been here, and the answer is still not to
+/// format one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SafeDiagnostic(String);
 

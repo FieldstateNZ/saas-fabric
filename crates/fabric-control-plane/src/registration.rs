@@ -2,15 +2,12 @@
 
 use std::sync::Arc;
 
-use axum::Router;
-use fabric_core::Clock;
 use fabric_reconciliation::ReconciliationStatusStore;
 
 mod contract;
 
 pub use contract::{ControlPlaneDeps, ControlPlaneServices};
 
-use crate::repository::DesiredStateBinding;
 use crate::routes::control_plane_routes;
 use crate::service::ClientService;
 use crate::state::ControlPlaneState;

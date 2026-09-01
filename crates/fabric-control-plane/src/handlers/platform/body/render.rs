@@ -23,7 +23,7 @@ impl PlatformBody {
 
 impl ComponentRow {
     /// Renders one component.
-    fn of(status: &ComponentStatus) -> Self {
+    pub(crate) fn of(status: &ComponentStatus) -> Self {
         let mut diagnostics: Vec<DiagnosticRow> = status
             .diagnostics
             .not_yet

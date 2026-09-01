@@ -4,7 +4,6 @@ use std::collections::BTreeMap;
 
 mod plan;
 
-use crate::components::Document;
 use crate::host::PlatformGitRepository;
 use crate::{CommitRevision, PlatformGitError};
 
@@ -41,15 +40,18 @@ pub struct ComponentVersion {
 impl PlatformGitRepository {
     /// Reads an environment's manifest as it stands on the branch.
     ///
+    /// Through the same reader the writes use, so a manifest that describes
+    /// some *other* environment is refused here too. It used to be accepted on
+    /// this path, which meant a console could report a different environment's
+    /// components under this one's name — a read, and still a lie.
+    ///
     /// # Errors
     ///
-    /// [`PlatformGitError`] if the branch or the manifest cannot be read, or
-    /// the manifest is not a shape this understands.
+    /// [`PlatformGitError`] if the branch or the manifest cannot be read, the
+    /// manifest is not a shape this understands, or it describes somewhere
+    /// else.
     pub async fn components_manifest(&self, environment: &str) -> Result<crate::Manifest, PlatformGitError> {
-        let head = self.head().await?;
-        let stored = self.read(&manifest_path(environment), &head).await?;
-
-        Ok(Document::parse(&stored.text)?.manifest)
+        Ok(self.read_manifest(environment).await?.document.manifest)
     }
 
     /// Points a component at a version, in one commit.
@@ -81,51 +83,30 @@ impl PlatformGitRepository {
         wanted: &ComponentVersion,
         message: &str,
     ) -> Result<CommitRevision, PlatformGitError> {
-        let head = self.head().await?;
-        let path = manifest_path(environment);
+        let mut read = self.read_manifest(environment).await?;
+        let path = read.stored.path.clone();
 
-        let stored = self.read(&path, &head).await?;
-        let mut document = Document::parse(&stored.text)?;
-
-        if document.manifest.environment != environment {
-            return Err(PlatformGitError::Rejected {
-                detail: format!(
-                    "{path} describes '{}', not '{environment}'",
-                    document.manifest.environment
-                ),
-            });
-        }
-
-        let roots = document.manifest.managed_roots.clone();
-        let entry =
-            document
-                .manifest
-                .components
-                .get_mut(component)
-                .ok_or_else(|| PlatformGitError::Rejected {
-                    detail: format!("{path} does not know the component '{component}'"),
-                })?;
+        let roots = read.document.manifest.managed_roots.clone();
+        let entry = read
+            .document
+            .manifest
+            .components
+            .get_mut(component)
+            .ok_or_else(|| PlatformGitError::Rejected {
+                detail: format!("{path} does not know the component '{component}'"),
+            })?;
 
         plan::check_release_unit(component, entry, wanted)?;
 
-        let mut changes = plan::rewrite_pins(self, &head, entry, wanted, &roots).await?;
+        let mut changes = plan::rewrite_pins(self, &read.head, entry, wanted, &roots).await?;
         plan::apply(entry, wanted);
 
         changes.push(crate::FileChange {
             path,
-            text: document.render()?,
-            expected: Some(stored.revision),
+            text: read.document.render()?,
+            expected: Some(read.stored.revision),
         });
 
-        self.update_files_atomically(&head, &changes, message).await
+        self.update_files_atomically(&read.head, &changes, message).await
     }
-}
-
-/// Where an environment's manifest lives.
-///
-/// The one place this is spelled out. A caller never supplies it: the
-/// specification is explicit that a request may not name a repository file,
-/// and an environment name is not a path.
-fn manifest_path(environment: &str) -> String {
-    format!("environments/{environment}/components.yaml")
 }

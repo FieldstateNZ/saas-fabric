@@ -1,6 +1,9 @@
 //! What an operator is told about an environment's composition.
 
 mod body;
+mod brake;
+
+pub(crate) use brake::{pause_component, resume_component};
 
 use axum::extract::State;
 use axum::Json;

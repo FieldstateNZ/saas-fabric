@@ -7,9 +7,10 @@ mod binding_tests;
 use std::sync::{Arc, RwLock};
 
 use self::bound::Bound;
-use crate::{ComponentDesired, DesiredState, DesiredStateError, ReleaseUnit, SafeDiagnostic};
+use crate::{DesiredState, DesiredStateError, SafeDiagnostic};
 
 mod bound;
+mod delegate;
 
 /// The platform repository this control plane is currently connected to.
 ///
@@ -102,32 +103,5 @@ impl PlatformDesiredState {
         if let Ok(mut current) = self.current.write() {
             *current = bound;
         }
-    }
-}
-
-#[async_trait::async_trait]
-impl DesiredState for PlatformDesiredState {
-    async fn components(&self, environment: &str) -> Result<Vec<String>, DesiredStateError> {
-        self.required()?.components(environment).await
-    }
-
-    async fn component(
-        &self,
-        environment: &str,
-        component: &str,
-    ) -> Result<ComponentDesired, DesiredStateError> {
-        self.required()?.component(environment, component).await
-    }
-
-    async fn advance(
-        &self,
-        environment: &str,
-        component: &str,
-        unit: &ReleaseUnit,
-        message: &str,
-    ) -> Result<(), DesiredStateError> {
-        self.required()?
-            .advance(environment, component, unit, message)
-            .await
     }
 }

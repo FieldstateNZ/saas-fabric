@@ -727,3 +727,44 @@ button:disabled {
   text-align: left;
   cursor: pointer;
 }
+
+/* The brake ---------------------------------------------------------------
+   Deliberately quiet. Pausing an environment is a considered act, not a
+   primary action, and a button styled to invite clicking would invite it. */
+
+.brake {
+  margin-top: 0.75rem;
+}
+
+.brake__label {
+  display: block;
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin-bottom: 0.2rem;
+}
+
+.brake__note {
+  font: inherit;
+  font-size: 0.875rem;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  width: min(28rem, 100%);
+  margin-bottom: 0.4rem;
+}
+
+.brake__action {
+  font: inherit;
+  font-size: 0.875rem;
+  padding: 0.35rem 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.brake__action:disabled {
+  cursor: default;
+  opacity: 0.6;
+}

@@ -1,6 +1,6 @@
 //! The control-plane API's HTTP surface.
 
-use axum::routing::{get, post};
+use axum::routing::{get, post, put};
 use axum::Router;
 
 use crate::handlers;
@@ -49,6 +49,8 @@ pub const API_PREFIX: &str = "/api";
 /// PUT    /api/integrations/platform/repository    choose one
 /// DELETE /api/integrations/platform            forget the integration
 /// GET    /api/platform                        what this environment runs
+/// PUT    /api/platform/components/{c}/hold    stop it advancing
+/// DELETE /api/platform/components/{c}/hold    let it advance again
 /// GET /api/clients                       list clients
 /// GET /api/clients/{clientId}            one client's overview
 /// GET /api/clients/{clientId}/identity   its identity, and reconciliation state
@@ -75,6 +77,15 @@ pub(crate) fn control_plane_routes(state: ControlPlaneState) -> Router {
     let clients = Router::new()
         .route("/reconciliation", post(handlers::converge))
         .route("/platform", get(handlers::get_platform))
+        // The component *is* named, and the environment still is not. A
+        // component name is a key looked up in a manifest this platform
+        // already read and trusts; it reaches no path, no registry and no
+        // other locator, which is what makes it unlike the environment
+        // parameter that used to be here.
+        .route(
+            "/platform/components/{component}/hold",
+            put(handlers::pause_component).delete(handlers::resume_component),
+        )
         .route("/clients", get(handlers::list_clients))
         .route("/clients/{client_id}", get(handlers::get_client))
         .route(

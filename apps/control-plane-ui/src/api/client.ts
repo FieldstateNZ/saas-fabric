@@ -18,8 +18,6 @@ import type {
   Identity,
   IdentityRequest,
   Integration,
-  PlatformIntegration,
-  Platform,
   RevealedSecret,
   SecretEntry,
   SecretMetadata,
@@ -41,22 +39,6 @@ export async function listClients(): Promise<readonly Client[]> {
  */
 export async function getIntegration(): Promise<Integration> {
   return request<Integration>('/api/integrations/git')
-}
-
-/**
- * What this deployment's environment is asked to run.
- *
- * Takes no environment name. A deployment manages the one it was deployed
- * into; a name in the URL would reach the platform repository as a path
- * segment, and the console has no business choosing one.
- *
- * Reading this cannot change anything. What advances an environment is the
- * control plane's own sweep, on the cadence its deployment configures — so a
- * refresh, a second operator, or a browser prefetching this page cannot move
- * a version.
- */
-export async function getPlatform(): Promise<Platform> {
-  return request<Platform>('/api/platform')
 }
 
 /**
@@ -132,11 +114,6 @@ export const clientConfiguration: IntegrationEndpoints = endpoints('git')
 /** Connecting where this platform's own composition is kept. */
 export const platformManagement: IntegrationEndpoints = endpoints('platform')
 
-/** The Platform Management application's lifecycle. */
-export async function getPlatformIntegration(): Promise<PlatformIntegration> {
-  return request<PlatformIntegration>('/api/integrations/platform')
-}
-
 /**
  * Converges every client onto desired state, with this operator's authority.
  *
@@ -181,7 +158,7 @@ export async function putIdentity(
 }
 
 /** Issues a request and turns a refusal into a {@link ControlPlaneError}. */
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   // A `Headers` rather than an object spread: `HeadersInit` is also allowed to
   // be an array of pairs or a `Headers`, and spreading either of those into an
   // object literal produces a header named `0`.

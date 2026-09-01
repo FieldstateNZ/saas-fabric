@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 
-import { getPlatform } from '../api/client'
+import { getPlatform } from '../api/platform'
 import { ControlPlaneError } from '../api/errors'
 import type { Platform } from '../api/types'
 import { describe, type Loadable } from './useClients'

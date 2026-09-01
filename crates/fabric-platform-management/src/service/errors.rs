@@ -15,4 +15,17 @@ pub enum PlatformError {
     /// state is untouched and availability is merely stale.
     #[error(transparent)]
     Registry(#[from] RegistryError),
+
+    /// The component is not one that advances, so pausing it means nothing.
+    ///
+    /// Separate from a transport failure because the request was understood
+    /// and the state does not permit it — and a component that is `Manual` or
+    /// `Locked` already does not advance. Recording a hold on one would put a
+    /// pause in the manifest that stops nothing, and show an operator
+    /// "Paused" about a component that was never moving.
+    #[error("{component} does not advance on its own, so there is nothing to pause")]
+    NotAdvancing {
+        /// Which component was asked.
+        component: String,
+    },
 }

@@ -238,6 +238,49 @@ platform repository can be read — that is `GET /api/platform`'s answer, from t
 binding this integration connects, and two routes reporting one fact is one
 route away from them disagreeing.
 
+### Stopping an environment, and letting it go again
+
+Automatic promotion without an in-product pause is an incomplete operator
+experience. Git remains the break-glass path and is expected to keep working;
+the console is the normal one.
+
+```text
+PUT    /api/platform/components/{component}/hold    stop it advancing
+DELETE /api/platform/components/{component}/hold    let it advance again
+```
+
+**Pause and rollback are different acts** even though both write a hold. Pause
+keeps the desired version and adds a hold; rollback changes the version *and*
+adds a hold, in one commit. Keeping them apart is what lets an operator stop
+advancement before testing a preview without also moving what runs.
+
+Neither is a policy change. `update` stays `automatic`, and the effective state
+reads `Automatic — Paused`: the operator said "not for now", not "not ever",
+and the manifest must not record the second.
+
+Resuming lifts the hold and **does not advance**. What happens next is the next
+sweep's to decide from what it observes then, so nothing here reports a version
+it has not moved to.
+
+#### The component may be named; the environment still may not
+
+The environment reaches the platform repository as a path segment, which is why
+`GET /api/platform` takes no name (§31.7). A **component** name does not:
+
+> A caller may select a component identifier that already exists in the
+> environment manifest. Fabric SHALL NOT use that value as a repository path, a
+> file path, a registry location, or any other desired-state locator.
+
+The rule is enforced by the read that precedes every write — the name is a key
+looked up in a manifest already trusted from Git, and one it does not carry
+selects nothing. A component that does not advance on its own cannot be paused
+at all: a hold on it would stop nothing and show `Paused` about something that
+was never moving.
+
+`advance` remains structurally unable to express a hold. That is what
+guarantees an automatic pass cannot clear one in order to succeed, and it is
+why these are separate operations rather than an argument to it.
+
 ### What the platform panel reports
 
 The specification's model is **Desired / Available / Running**. Two of those

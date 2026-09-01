@@ -1,4 +1,5 @@
 import type { Platform, PlatformComponent, PlatformLastCheck } from '../api/types'
+import { ComponentBrake } from './ComponentBrake'
 
 /**
  * What an environment is asked to run.
@@ -77,6 +78,8 @@ function ComponentRows({ component }: { component: PlatformComponent }) {
           {component.hold.note !== null && ` — ${component.hold.note}`}
         </p>
       )}
+
+      <ComponentBrake component={component} />
 
       {component.diagnostics.length > 0 && (
         <ul className="platform__diagnostics">

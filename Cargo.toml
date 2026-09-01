@@ -33,7 +33,11 @@ thiserror = "2"
 # resolved graph via `jsonwebtoken` -> `simple_asn1`, so the direct edge adds
 # no package and no licence surface; what it avoids is hand-rolled calendar
 # arithmetic, which is not the sort of thing to write twice.
-time = { version = "0.3", default-features = false, features = ["parsing"] }
+# `formatting` alongside `parsing`: a hold records when advancement stopped,
+# as RFC 3339, in a file a human reads and hand-edits under break-glass. The
+# alternative was civil-date arithmetic in the domain crate, which is a
+# well-known algorithm and still not one worth owning here.
+time = { version = "0.3", default-features = false, features = ["formatting", "parsing"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }
 tower = "0.5"
 tower-http = { version = "0.6", features = ["trace"] }

@@ -5,8 +5,8 @@ use std::time::Duration;
 
 use fabric_client_git::{GitHubAppProvisioning, GitRepositoryFactory};
 use fabric_control_plane::{
-    DesiredStateBinding, GitIntegrationService, InMemoryIntegrationStore, InMemorySecretStore,
-    IntegrationKind, IntegrationStore, SecretStore,
+    ClientConfigurationTarget, DesiredStateBinding, GitIntegrationService, InMemoryIntegrationStore,
+    InMemorySecretStore, IntegrationKind, IntegrationStore, SecretStore,
 };
 use fabric_core::Clock;
 use fabric_openbao::{OpenBao, OpenBaoClientSecrets, OpenBaoIntegrationStore, OpenBaoSecretStore};
@@ -64,8 +64,7 @@ pub(super) async fn establish(
         provisioning,
         secrets,
         store,
-        factory,
-        Arc::clone(binding),
+        Arc::new(ClientConfigurationTarget::new(factory, Arc::clone(binding))),
         Arc::clone(clock),
     ));
 

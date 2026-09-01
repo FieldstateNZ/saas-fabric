@@ -81,11 +81,11 @@ pub use config::{ControlPlaneConfig, OperatorConfig, ReconciliationConfig};
 pub use errors::ControlPlaneError;
 pub use fabric_client_model::SecretNamespace;
 pub use git_integration::{
-    AccessibleRepository, AppCreationRequest, CreatedApp, DesiredStateFactory, GitAppProvisioning,
-    GitIntegration, GitIntegrationService, InMemoryIntegrationStore, InMemorySecretStore, Installation,
-    InstallationDetail, IntegrationError, IntegrationKind, IntegrationStore, IntegrationStoreError,
-    PendingFlows, ProvisioningError, SecretName, SecretStore, SecretStoreError, SecretValue,
-    SelectedRepository,
+    AccessibleRepository, AppCreationRequest, ClientConfigurationTarget, CreatedApp, DesiredStateFactory,
+    GitAppProvisioning, GitIntegration, GitIntegrationService, InMemoryIntegrationStore, InMemorySecretStore,
+    Installation, InstallationDetail, IntegrationError, IntegrationKind, IntegrationStore,
+    IntegrationStoreError, IntegrationTarget, PendingFlows, ProvisioningError, SecretName, SecretStore,
+    SecretStoreError, SecretValue, SelectedRepository,
 };
 pub use identity_authority::IdentityProviderFactory;
 pub use integration::{IntegrationHealth, IntegrationStatus, Observation};

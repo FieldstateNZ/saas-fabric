@@ -27,7 +27,7 @@ impl GitIntegrationService {
     /// already released by then — a disconnect that half-failed leaves the
     /// platform not using the integration, which is the safe half to land on.
     pub async fn disconnect(&self, operator: &Operator) -> Result<(), IntegrationError> {
-        self.binding.unbind();
+        self.target.unbind();
 
         self.secrets
             .delete(&SecretName::new(self.kind.private_key()))

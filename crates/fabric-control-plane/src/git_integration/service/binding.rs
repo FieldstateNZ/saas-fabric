@@ -54,15 +54,10 @@ impl GitIntegrationService {
     /// until it knows.
     pub(super) fn rebind(&self, integration: &GitIntegration, key: &SecretValue) -> Result<(), String> {
         if !integration.is_usable() {
-            self.binding.unbind();
+            self.target.unbind();
             return Ok(());
         }
 
-        let repository = self.factory.build(integration, key)?;
-        let described = repository.describe();
-        self.binding.bind(repository);
-        logging::integration_bound(&described);
-
-        Ok(())
+        self.target.bind(integration, key)
     }
 }

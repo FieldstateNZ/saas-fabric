@@ -70,12 +70,16 @@ pub struct ControlPlaneDeps {
     /// rather than meeting a route that does not exist.
     pub client_secrets: Option<Arc<dyn crate::ClientSecrets>>,
 
-    /// Platform Management, when this deployment has a platform repository.
+    /// Platform Management, and the one environment it manages.
+    ///
+    /// One struct rather than two optional fields, because two that must agree
+    /// is a shape that can disagree. A control plane manages the environment
+    /// it was deployed into; there is no second one to name.
     ///
     /// `None` leaves the route mounted and answering that nothing is managed,
     /// so a console can say what is missing rather than meeting a 404 it would
     /// have to guess the meaning of.
-    pub platform: Option<Arc<fabric_platform_management::PlatformManagement>>,
+    pub platform: Option<PlatformBinding>,
 
     /// Establishes who an operator is, when something other than the
     /// configured posture should decide.
@@ -85,4 +89,23 @@ pub struct ControlPlaneDeps {
     /// otherwise have to mint tokens signed by a key they also had to publish
     /// — proving the extractor works, and nothing else, at considerable cost.
     pub operators: Option<Arc<dyn crate::OperatorAuthenticator>>,
+}
+
+/// Platform Management, and the environment it manages.
+///
+/// # Why the environment is not a request parameter
+///
+/// It reaches the platform repository as a path segment —
+/// `environments/<name>/components.yaml` — so a caller who could name it could
+/// name a path. Specification section 31.7 forbids exactly that, and the
+/// cheapest way to satisfy it is to have nowhere for a caller to say it: a
+/// deployment manages one environment, stated in its configuration, and the
+/// route takes no name at all.
+#[derive(Clone)]
+pub struct PlatformBinding {
+    /// The service.
+    pub service: Arc<fabric_platform_management::PlatformManagement>,
+
+    /// The environment it manages, from this deployment's configuration.
+    pub environment: String,
 }

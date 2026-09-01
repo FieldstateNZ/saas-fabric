@@ -143,6 +143,11 @@ async fn a_write_against_an_unconfigured_platform_is_refused_before_anything_is_
 
 #[tokio::test]
 async fn the_platform_route_says_nothing_is_managed_rather_than_not_existing() {
+    // The route takes no environment name. A deployment manages the one it was
+    // deployed into, and a name in the URL would reach the platform repository
+    // as a path segment -- which section 31.7 forbids and which is cheapest to
+    // satisfy by giving a caller nowhere to say it.
+    //
     // A deployment with no platform repository still mounts the route, for the
     // same reason the client routes stay mounted with no desired state: a
     // console can render "nothing is connected" and cannot render a 404 whose
@@ -151,7 +156,7 @@ async fn the_platform_route_says_nothing_is_managed_rather_than_not_existing() {
     // same, and only one of them is something an operator can fix.
     let plane = control_plane();
 
-    let response = send(&plane.router, get("/api/platform/environments/lucentroot")).await;
+    let response = send(&plane.router, get("/api/platform")).await;
 
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
     let body = json(response).await;
@@ -166,7 +171,7 @@ async fn reading_the_platform_requires_an_operator() {
 
     let anonymous = Request::builder()
         .method("GET")
-        .uri("/api/platform/environments/lucentroot")
+        .uri("/api/platform")
         .body(Body::empty())
         .expect("the request must build");
 

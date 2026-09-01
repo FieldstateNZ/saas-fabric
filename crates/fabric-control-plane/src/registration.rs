@@ -6,7 +6,7 @@ use fabric_reconciliation::ReconciliationStatusStore;
 
 mod contract;
 
-pub use contract::{ControlPlaneDeps, ControlPlaneServices};
+pub use contract::{ControlPlaneDeps, ControlPlaneServices, PlatformBinding};
 
 use crate::routes::control_plane_routes;
 use crate::service::ClientService;

@@ -3,6 +3,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use fabric_control_plane::PlatformBinding;
 use fabric_core::Clock;
 use fabric_git_host::GitCredential;
 use fabric_platform_git::{PlatformGitRepository, PlatformRepositoryConfig};
@@ -30,7 +31,7 @@ use crate::secrets;
 pub fn establish(
     config: Option<&PlatformManagementConfig>,
     clock: &Arc<dyn Clock>,
-) -> Result<Option<Arc<PlatformManagement>>, String> {
+) -> Result<Option<PlatformBinding>, String> {
     let Some(config) = config else {
         return Ok(None);
     };
@@ -55,11 +56,14 @@ pub fn establish(
         config.registry.http_timeout_seconds,
     )?;
 
-    Ok(Some(Arc::new(PlatformManagement::new(
-        Arc::new(registry) as Arc<dyn Registry>,
-        Arc::new(repository) as Arc<dyn DesiredState>,
-        Arc::clone(clock),
-    ))))
+    Ok(Some(PlatformBinding {
+        service: Arc::new(PlatformManagement::new(
+            Arc::new(registry) as Arc<dyn Registry>,
+            Arc::new(repository) as Arc<dyn DesiredState>,
+            Arc::clone(clock),
+        )),
+        environment: config.repository.environment.clone(),
+    }))
 }
 
 /// Starts the sweep, if this deployment has one to run.
@@ -76,7 +80,7 @@ pub fn establish(
 /// deployment observes an environment without advancing it.
 pub fn start_sweeping(
     config: Option<&PlatformManagementConfig>,
-    platform: Option<&Arc<PlatformManagement>>,
+    platform: Option<&PlatformBinding>,
     sweeps: &Arc<SweepState>,
 ) {
     let (Some(config), Some(platform)) = (config, platform) else {
@@ -91,9 +95,9 @@ pub fn start_sweeping(
         return;
     }
 
-    let environment = config.repository.environment.clone();
+    let environment = platform.environment.clone();
     let interval = Duration::from_secs(config.reconciliation_interval_seconds);
-    let platform = Arc::clone(platform);
+    let platform = Arc::clone(&platform.service);
     let sweeps = Arc::clone(sweeps);
 
     tracing::info!(

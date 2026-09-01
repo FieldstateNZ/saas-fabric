@@ -38,7 +38,7 @@ pub const API_PREFIX: &str = "/api";
 /// GET    /api/integrations/git/repositories  what the install reaches
 /// PUT    /api/integrations/git/repository    choose one
 /// DELETE /api/integrations/git               forget the integration
-/// GET    /api/platform/environments/{environment}   what an environment runs
+/// GET    /api/platform                        what this environment runs
 /// GET /api/clients                       list clients
 /// GET /api/clients/{clientId}            one client's overview
 /// GET /api/clients/{clientId}/identity   its identity, and reconciliation state
@@ -79,10 +79,7 @@ pub(crate) fn control_plane_routes(state: ControlPlaneState) -> Router {
 
     let clients = Router::new()
         .route("/reconciliation", post(handlers::converge))
-        .route(
-            "/platform/environments/{environment}",
-            get(handlers::get_platform),
-        )
+        .route("/platform", get(handlers::get_platform))
         .route("/clients", get(handlers::list_clients))
         .route("/clients/{client_id}", get(handlers::get_client))
         .route(

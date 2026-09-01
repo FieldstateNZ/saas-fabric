@@ -552,3 +552,62 @@ button:disabled {
 .secrets__new button {
   grid-column: 1 / -1;
 }
+
+/* ---------------------------------------------------------------------------
+ * Platform
+ *
+ * A definition list, because that is what it is: a label and the one value
+ * that answers it. Six of them, and nothing that would need a legend.
+ * ------------------------------------------------------------------------ */
+
+.platform {
+  margin-bottom: 2rem;
+}
+
+.platform__heading {
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 0 0 0.75rem;
+}
+
+.platform__component-name {
+  font-size: 0.9rem;
+  font-weight: 600;
+  margin: 0 0 0.4rem;
+}
+
+.platform__component {
+  margin-bottom: 1rem;
+}
+
+.platform__rows {
+  display: grid;
+  grid-template-columns: 9rem 1fr;
+  gap: 0.25rem 1rem;
+  margin: 0;
+}
+
+.platform__rows dt {
+  color: #6b7280;
+}
+
+.platform__rows dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+/* A hold is a state, not a fault: the operator put it there deliberately. */
+.platform__hold {
+  margin: 0.5rem 0 0;
+  color: #6b7280;
+}
+
+.platform__diagnostics {
+  margin: 0.5rem 0 0;
+  padding-left: 1.1rem;
+  color: #6b7280;
+}
+
+.platform__failure {
+  color: #b91c1c;
+}

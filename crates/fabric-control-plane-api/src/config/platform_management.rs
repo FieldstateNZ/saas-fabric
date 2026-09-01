@@ -8,8 +8,13 @@
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PlatformManagementConfig {
-    /// Which repository, and which environment within it.
-    pub repository: PlatformRepositoryBinding,
+    /// Which environment in the platform repository this deployment is.
+    ///
+    /// The one thing here a deployment genuinely knows. *Which* repository,
+    /// and the credential for it, are operator-managed integration state: an
+    /// operator installs the Platform Management GitHub App and picks a
+    /// repository, exactly as they do for client configuration.
+    pub environment: String,
 
     /// Where published artifacts are looked up.
     #[serde(default)]
@@ -26,49 +31,6 @@ pub struct PlatformManagementConfig {
     /// slower elsewhere is a change to a manifest, not to a release.
     #[serde(default = "default_interval")]
     pub reconciliation_interval_seconds: u64,
-
-    /// The secret holding the credential for the platform repository.
-    ///
-    /// # Interim
-    ///
-    /// The specification puts this credential behind a Platform Management
-    /// GitHub App an operator installs, separate from the Client Configuration
-    /// one. That flow does not exist yet, so the credential is stated by the
-    /// deployment for now — the same shape every other platform credential
-    /// has, resolved through the environment.
-    ///
-    /// When the App flow lands, this field is what it replaces.
-    pub credential: String,
-}
-
-/// Which repository, and which environment within it.
-#[derive(Debug, Clone, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct PlatformRepositoryBinding {
-    /// The account it belongs to.
-    pub owner: String,
-
-    /// Its name.
-    pub name: String,
-
-    /// The branch the environment follows.
-    #[serde(default = "default_branch")]
-    pub branch: String,
-
-    /// Which environment in that repository this deployment manages.
-    ///
-    /// One, deliberately. A control plane manages the environment it is
-    /// deployed into; managing somebody else's from here would mean a single
-    /// process advancing a cluster it cannot see.
-    pub environment: String,
-
-    /// Where the host's API lives.
-    #[serde(default = "default_api_base_url")]
-    pub api_base_url: String,
-
-    /// How long a call to it may take.
-    #[serde(default = "default_timeout")]
-    pub http_timeout_seconds: u64,
 }
 
 /// Where published artifacts are looked up.
@@ -103,16 +65,6 @@ impl Default for RegistryBinding {
 /// long enough that a registry is not being asked constantly.
 const fn default_interval() -> u64 {
     60
-}
-
-/// The branch every environment follows by default.
-fn default_branch() -> String {
-    "main".to_owned()
-}
-
-/// GitHub's API.
-fn default_api_base_url() -> String {
-    "https://api.github.com".to_owned()
 }
 
 /// Where SaaS Fabric's own images are published.

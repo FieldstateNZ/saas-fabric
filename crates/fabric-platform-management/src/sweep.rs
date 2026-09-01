@@ -7,67 +7,14 @@ use std::sync::atomic::Ordering;
 mod sweep_tests;
 
 mod record;
+mod types;
 
 pub use record::{CheckOutcome, LastCheck, SweepState};
+pub use types::{Sweep, SweepResult, Swept};
 
 use record::outcome_of;
 
-use crate::{PlatformError, PlatformManagement, Version};
-
-/// What one component did.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Swept {
-    /// Desired state moved.
-    Advanced {
-        /// What it was on.
-        from: Version,
-
-        /// What it is on now.
-        to: Version,
-    },
-
-    /// Nothing to do, or nothing permitted. The status says which.
-    Unchanged,
-
-    /// This component could not be reconciled.
-    ///
-    /// Carried rather than returned, because one component failing is not a
-    /// reason to stop looking after the others — and a sweep that aborted on
-    /// the first failure would leave every component after it in the list
-    /// permanently unreconciled, in an order nobody chose.
-    Failed(PlatformError),
-}
-
-/// What a sweep did.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct Sweep {
-    /// One entry per component, in the order they were read.
-    pub components: Vec<(String, Swept)>,
-}
-
-impl Sweep {
-    /// Whether anything failed.
-    #[must_use]
-    pub fn had_failures(&self) -> bool {
-        self.components
-            .iter()
-            .any(|(_, swept)| matches!(swept, Swept::Failed(_)))
-    }
-}
-
-/// Whether a sweep ran at all.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SweepResult {
-    /// It ran, and this is what it did.
-    Ran(Sweep),
-
-    /// Another sweep was still going, so this one did nothing.
-    ///
-    /// Skipped rather than queued. A sweep that overruns its interval means
-    /// registries or Git are slow, and the answer to that is not to start a
-    /// second one behind it.
-    AlreadyRunning,
-}
+use crate::{DesiredStateError, PlatformError, PlatformManagement};
 
 impl PlatformManagement {
     /// Reconciles every component of an environment.
@@ -97,6 +44,15 @@ impl PlatformManagement {
 
         let swept = self.sweep_once(environment).await;
         state.running.store(false, Ordering::SeqCst);
+
+        // Nothing was looked at, so nothing is recorded. The record answers
+        // "what did the last attempt find", and this was not an attempt.
+        if matches!(
+            swept,
+            Err(PlatformError::DesiredState(DesiredStateError::NotConnected))
+        ) {
+            return Ok(SweepResult::NotConnected);
+        }
 
         state.record(self.clock().now_unix_seconds(), outcome_of(&swept));
 

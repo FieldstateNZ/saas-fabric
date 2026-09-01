@@ -45,6 +45,20 @@ pub struct ComponentDesired {
 /// What can go wrong reading or moving desired state.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum DesiredStateError {
+    /// Nothing is connected. No operator has connected a platform repository.
+    ///
+    /// # Not a failure, and not the same as one
+    ///
+    /// A platform nobody has connected yet is a running platform waiting for
+    /// an operator, and a console can say so. A platform whose *connected*
+    /// repository cannot be read is broken and needs looking at.
+    ///
+    /// Collapsing them would tell an operator "nothing is connected" about an
+    /// integration they connected last week, and they would go and connect it
+    /// again rather than find out why it stopped working.
+    #[error("no platform repository is connected")]
+    NotConnected,
+
     /// No such environment, or no such component in it.
     #[error("{what} is not something this platform describes")]
     NotFound {

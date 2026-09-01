@@ -19,6 +19,7 @@
 //! deliberately so — the registry credential and the platform repository
 //! credential are separate integrations and must stay separable.
 
+mod binding;
 mod desired_state;
 mod diagnostic;
 mod discovery;
@@ -30,6 +31,7 @@ mod status;
 mod sweep;
 mod version;
 
+pub use binding::PlatformDesiredState;
 pub use desired_state::{ComponentDesired, DesiredState, DesiredStateError, Hold};
 pub use diagnostic::SafeDiagnostic;
 pub use discovery::{Discovery, ReleaseUnit, ResolvedImage};

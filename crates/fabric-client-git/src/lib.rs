@@ -51,7 +51,7 @@ pub use config::{GitAuthConfig, GitRepositoryConfig};
 // which crate it came from to wire this one.
 pub use fabric_git_host::GitCredential;
 pub use factory::GitRepositoryFactory;
-pub use provisioning::GitHubAppProvisioning;
+pub use provisioning::{AppPurpose, GitHubAppProvisioning};
 pub use repository::GitClientRepository;
 
 /// The event-ID domain number for this crate. See `fabric_core::event_id`.

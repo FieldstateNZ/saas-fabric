@@ -29,8 +29,8 @@ pub(crate) use converge::converge;
 pub(crate) use get_client::get_client;
 pub(crate) use get_identity::get_identity;
 pub(crate) use integration::{
-    begin_connection, begin_install, choose_repository, created, disconnect, get_integration, installed,
-    list_repositories,
+    begin_connection, begin_install, choose_repository, created, disconnect, get_integration,
+    get_platform_integration, installed, list_repositories, ClientConfigurationFlow, PlatformManagementFlow,
 };
 pub(crate) use list_clients::list_clients;
 pub(crate) use platform::get_platform;

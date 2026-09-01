@@ -70,6 +70,14 @@ pub struct ControlPlaneDeps {
     /// rather than meeting a route that does not exist.
     pub client_secrets: Option<Arc<dyn crate::ClientSecrets>>,
 
+    /// The flow that connects the platform repository, when this deployment
+    /// manages an environment.
+    ///
+    /// Separate from `platform` because they become available at different
+    /// times: the binding exists from startup and holds nothing, and this is
+    /// what an operator uses to give it something to hold.
+    pub platform_integration: Option<Arc<crate::GitIntegrationService>>,
+
     /// Platform Management, and the one environment it manages.
     ///
     /// One struct rather than two optional fields, because two that must agree

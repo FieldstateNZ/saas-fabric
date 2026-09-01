@@ -94,6 +94,14 @@ GET    /api/integrations/git/installed   host callback          (no operator)
 GET    /api/integrations/git/repositories  what the install reaches
 PUT    /api/integrations/git/repository  choose one
 DELETE /api/integrations/git             forget the integration
+GET    /api/integrations/platform        has an application been made?
+POST   /api/integrations/platform/connect    describe the app to create
+GET    /api/integrations/platform/created    host callback      (no operator)
+GET    /api/integrations/platform/install    where to install it
+GET    /api/integrations/platform/installed  host callback      (no operator)
+GET    /api/integrations/platform/repositories  what the install reaches
+PUT    /api/integrations/platform/repository    choose one
+DELETE /api/integrations/platform        forget the integration
 GET /api/clients                       list clients
 GET /api/clients/{clientId}            one client's overview
 GET /api/clients/{clientId}/identity   its identity, and reconciliation state
@@ -200,6 +208,35 @@ exists. It authenticates with the pod's own Kubernetes identity, so there is
 still no credential for a human to create or transport — which is the whole
 point, since secrets projected *into* a pod are a one-way path and the platform
 now generates credential material of its own.
+
+### Two integrations, two applications
+
+The same connection flow serves two unrelated purposes: client configuration,
+and the platform's own composition. They are **separately installable,
+configurable and removable** — two GitHub Apps, two installations, two records,
+two sets of routes. Connecting one does not connect the other, and disconnecting
+either leaves the other exactly as it was.
+
+One application holding both permissions would be smaller, and would mean an
+operator who wanted to manage clients had to grant write access to the platform
+repository as well.
+
+Which integration a request acts on is decided by **the route it was sent to**,
+never by anything in the request. There is no `/api/integrations/{kind}` and no
+integration name in a body: a caller who could name an integration is one
+refactor away from naming a third that does not exist, which is the shape §15
+forbids.
+
+The handlers are written once and mounted twice, over a `Flow` type that
+supplies the service and the console redirect key. The two differ in exactly
+three places — the application's name on the host, its callback path, and where
+its record and private key are stored.
+
+`GET /api/integrations/platform` reports the *application's* lifecycle: created,
+installed, repository chosen. It deliberately does not report whether the
+platform repository can be read — that is `GET /api/platform`'s answer, from the
+binding this integration connects, and two routes reporting one fact is one
+route away from them disagreeing.
 
 ### Integration status
 

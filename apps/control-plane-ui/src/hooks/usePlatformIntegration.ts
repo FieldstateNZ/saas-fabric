@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 
-import { getPlatformIntegration } from '../api/client'
+import { getPlatformIntegration } from '../api/platform'
 import type { PlatformIntegration } from '../api/types'
 import { describe, type Loadable } from './useClients'
 

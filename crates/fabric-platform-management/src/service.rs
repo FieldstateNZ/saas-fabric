@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use fabric_core::Clock;
 
+mod brake;
 mod errors;
 mod reconcile;
 

@@ -30,6 +30,10 @@ impl ControlPlaneError {
             | Self::Platform(PlatformError::DesiredState(DesiredStateError::NotConnected)) => {
                 "platform_not_managed"
             }
+            Self::Platform(PlatformError::DesiredState(DesiredStateError::NotFound { .. })) => {
+                "component_unknown"
+            }
+            Self::Platform(PlatformError::NotAdvancing { .. }) => "component_not_advancing",
             Self::Platform(_) => "platform_unavailable",
             Self::GitHostRefused => "git_host_refused",
             Self::IntegrationRefused(_) => "integration_refused",

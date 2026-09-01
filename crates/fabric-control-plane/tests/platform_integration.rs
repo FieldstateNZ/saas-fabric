@@ -63,9 +63,18 @@ async fn the_two_integrations_are_reported_by_two_routes() {
 /// exists and this deployment has nothing behind it" — both of which are 404,
 /// deliberately, and only one of which carries an error envelope.
 async fn refusal(plane: &support::TestControlPlane, method: &str, path: &str) -> (StatusCode, String) {
-    let request = as_operator(method, path)
-        .body(Body::empty())
-        .expect("the request must build");
+    // A body for the verbs that take one. Axum runs the `Json` extractor
+    // before the handler, so a bodyless PUT answers 415 and never reaches the
+    // refusal these tests are about.
+    let builder = as_operator(method, path);
+    let request = if method == "PUT" {
+        builder
+            .header(http::header::CONTENT_TYPE, "application/json")
+            .body(Body::from(r#"{"note":null}"#))
+    } else {
+        builder.body(Body::empty())
+    }
+    .expect("the request must build");
 
     let response = send(&plane.router, request).await;
     let status = response.status();
@@ -144,5 +153,45 @@ async fn the_client_routes_still_refuse_as_client_configuration() {
 
         assert_eq!(status, StatusCode::NOT_FOUND, "{method} {path}");
         assert_eq!(code, "integration_not_managed", "{method} {path}");
+    }
+}
+
+#[tokio::test]
+async fn the_brake_is_mounted_and_refuses_when_no_platform_is_managed() {
+    // Mounted whether or not this deployment manages a platform, for the same
+    // reason the read is: a console can say what is missing, and can say
+    // nothing about a route that does not exist.
+    let plane = control_plane();
+
+    for (method, path) in [
+        ("PUT", "/api/platform/components/saas-fabric/hold"),
+        ("DELETE", "/api/platform/components/saas-fabric/hold"),
+    ] {
+        let (status, code) = refusal(&plane, method, path).await;
+
+        assert_eq!(status, StatusCode::NOT_FOUND, "{method} {path}");
+        assert_eq!(code, "platform_not_managed", "{method} {path}");
+    }
+}
+
+#[tokio::test]
+async fn a_component_name_cannot_reach_past_its_own_segment() {
+    // The identifier rule at the routing layer. A component name selects an
+    // entry in a manifest the platform already trusts; it is one path segment
+    // and cannot be several, so a value shaped like a traversal does not even
+    // arrive as a component.
+    let plane = control_plane();
+
+    for path in [
+        "/api/platform/components/../../secrets/hold",
+        "/api/platform/components/a/b/hold",
+    ] {
+        let (status, code) = refusal(&plane, "DELETE", path).await;
+
+        assert_eq!(status, StatusCode::NOT_FOUND, "{path}");
+        assert!(
+            code.is_empty() || code == "platform_not_managed",
+            "{path} must never be served as a component: {code}"
+        );
     }
 }

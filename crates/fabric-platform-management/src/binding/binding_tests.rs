@@ -24,6 +24,14 @@ impl DesiredState for Connected {
     async fn advance(&self, _: &str, _: &str, _: &ReleaseUnit, _: &str) -> Result<(), DesiredStateError> {
         Ok(())
     }
+
+    async fn pause(&self, _: &str, _: &str, _: &crate::Hold, _: &str) -> Result<(), DesiredStateError> {
+        Ok(())
+    }
+
+    async fn resume(&self, _: &str, _: &str, _: &str) -> Result<(), DesiredStateError> {
+        Ok(())
+    }
 }
 
 fn unit() -> ReleaseUnit {

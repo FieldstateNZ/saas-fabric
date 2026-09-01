@@ -61,7 +61,9 @@ mod components;
 mod config;
 mod desired;
 mod errors;
+mod hold;
 mod host;
+mod manifest;
 mod model;
 mod port;
 

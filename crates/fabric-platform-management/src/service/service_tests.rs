@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, PoisonError};
 
-use super::PlatformManagement;
+use super::{PlatformError, PlatformManagement};
 use crate::{
     Channel, ComponentDesired, DesiredState, DesiredStateError, DesiredStateStatus, Hold, Provenance,
     Registry, RegistryError, ReleaseUnit, Resolved, UpdatePolicy, Version,
@@ -66,6 +66,10 @@ impl Registry for Registries {
 struct Recorded {
     desired: Mutex<ComponentDesired>,
     writes: Mutex<Vec<ReleaseUnit>>,
+    /// Every hold written, `None` meaning one was lifted. Separate from
+    /// `writes` because the guarantee under test is that these two paths never
+    /// become each other.
+    holds: Mutex<Vec<Option<Hold>>>,
     refuse: Option<DesiredStateError>,
 }
 
@@ -83,6 +87,7 @@ impl Recorded {
                 ]),
             }),
             writes: Mutex::new(Vec::new()),
+            holds: Mutex::new(Vec::new()),
             refuse: None,
         }
     }
@@ -94,6 +99,17 @@ impl Recorded {
 
     fn writes(&self) -> Vec<ReleaseUnit> {
         self.writes.lock().unwrap_or_else(PoisonError::into_inner).clone()
+    }
+
+    fn holds(&self) -> Vec<Option<Hold>> {
+        self.holds.lock().unwrap_or_else(PoisonError::into_inner).clone()
+    }
+
+    fn current(&self) -> ComponentDesired {
+        self.desired
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 }
 
@@ -124,6 +140,34 @@ impl DesiredState for Recorded {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .version = unit.version.clone();
+
+        Ok(())
+    }
+
+    async fn pause(&self, _: &str, _: &str, hold: &Hold, _: &str) -> Result<(), DesiredStateError> {
+        if let Some(error) = &self.refuse {
+            return Err(error.clone());
+        }
+
+        self.holds
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(Some(hold.clone()));
+        self.desired.lock().unwrap_or_else(PoisonError::into_inner).hold = Some(hold.clone());
+
+        Ok(())
+    }
+
+    async fn resume(&self, _: &str, _: &str, _: &str) -> Result<(), DesiredStateError> {
+        if let Some(error) = &self.refuse {
+            return Err(error.clone());
+        }
+
+        self.holds
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(None);
+        self.desired.lock().unwrap_or_else(PoisonError::into_inner).hold = None;
 
         Ok(())
     }
@@ -343,4 +387,159 @@ async fn versions_that_were_not_selected_are_reported() {
         "an incomplete release is nothing to advance to"
     );
     assert_eq!(status.desired_state, DesiredStateStatus::Current);
+}
+
+// ---------------------------------------------------------------------------
+// The brake.
+//
+// Pause and resume are what an *operator* does, and the guarantee worth having
+// is that they and the selector never become each other: a sweep cannot lift a
+// hold to succeed, and a pause cannot move a version.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn pausing_writes_a_hold_and_moves_nothing() {
+    let desired_state = Arc::new(Recorded::new(UpdatePolicy::Automatic, None));
+    let service = service(&registries_with_three(), &desired_state);
+
+    let status = service
+        .pause("lucentroot", "saas-fabric", Some("testing preview.3 by hand"))
+        .await
+        .expect("pausing must succeed");
+
+    assert!(
+        desired_state.writes().is_empty(),
+        "pausing must not move a version: {:?}",
+        desired_state.writes()
+    );
+    assert_eq!(
+        desired_state.current().version,
+        version("0.3.0-preview.2"),
+        "the environment runs what it ran"
+    );
+    assert!(status.is_paused(), "Automatic + hold reads as paused");
+    assert_eq!(
+        status.policy,
+        UpdatePolicy::Automatic,
+        "a pause is not a policy change; the operator did not say 'stop forever'"
+    );
+}
+
+#[tokio::test]
+async fn a_pause_carries_the_operators_note_and_a_reason_they_did_not_choose() {
+    let desired_state = Arc::new(Recorded::new(UpdatePolicy::Automatic, None));
+    let service = service(&registries_with_three(), &desired_state);
+
+    service
+        .pause("lucentroot", "saas-fabric", Some("waiting on the Secrets fix"))
+        .await
+        .expect("pausing must succeed");
+
+    let written = desired_state.holds();
+    let hold = written
+        .first()
+        .and_then(Option::as_ref)
+        .expect("a hold must have been written");
+
+    // The reason is a closed vocabulary, because a later reader decides from
+    // it. The note is the operator's, because nothing branches on it.
+    assert_eq!(hold.reason, "paused");
+    assert_eq!(hold.note.as_deref(), Some("waiting on the Secrets fix"));
+    assert!(!hold.since.is_empty(), "a hold records when it started");
+}
+
+#[tokio::test]
+async fn a_component_that_does_not_advance_cannot_be_paused() {
+    // Recording a hold on a Manual component would put a pause in the manifest
+    // that stops nothing, and show an operator "Paused" about something that
+    // was never moving.
+    let desired_state = Arc::new(Recorded::new(UpdatePolicy::Manual, None));
+    let service = service(&registries_with_three(), &desired_state);
+
+    let outcome = service.pause("lucentroot", "saas-fabric", None).await;
+
+    assert!(
+        matches!(outcome, Err(PlatformError::NotAdvancing { .. })),
+        "a manual component has nothing to pause"
+    );
+    assert!(desired_state.holds().is_empty());
+}
+
+#[tokio::test]
+async fn resuming_lifts_the_hold_and_advances_nothing() {
+    let desired_state = Arc::new(Recorded::new(UpdatePolicy::Automatic, Some(held())));
+    let service = service(&registries_with_three(), &desired_state);
+
+    let status = service
+        .resume("lucentroot", "saas-fabric")
+        .await
+        .expect("resuming must succeed");
+
+    assert_eq!(desired_state.holds(), vec![None], "one write, and it is the lift");
+    assert!(
+        desired_state.writes().is_empty(),
+        "resuming permits advancement; the next sweep decides it"
+    );
+    assert!(status.hold.is_none());
+    assert_eq!(
+        desired_state.current().version,
+        version("0.3.0-preview.2"),
+        "the version an operator resumes from is the version they were on"
+    );
+}
+
+#[tokio::test]
+async fn resuming_something_that_is_not_held_writes_no_commit() {
+    // The repository's history is the audit trail. An empty commit would
+    // record that somebody clicked, not that anything happened.
+    let desired_state = Arc::new(Recorded::new(UpdatePolicy::Automatic, None));
+    let service = service(&registries_with_three(), &desired_state);
+
+    service
+        .resume("lucentroot", "saas-fabric")
+        .await
+        .expect("resuming an unheld component is not an error");
+
+    assert!(desired_state.holds().is_empty());
+    assert!(desired_state.writes().is_empty());
+}
+
+#[tokio::test]
+async fn pausing_reports_nothing_about_what_is_newer() {
+    // It asked no registry anything. Reporting a newer version here would be
+    // stating something this pass did not observe -- and the row would go
+    // stale the moment a preview was published.
+    let desired_state = Arc::new(Recorded::new(UpdatePolicy::Automatic, None));
+    let service = service(&registries_with_three(), &desired_state);
+
+    let status = service
+        .pause("lucentroot", "saas-fabric", None)
+        .await
+        .expect("pausing must succeed");
+
+    assert_eq!(status.newer, None);
+}
+
+#[tokio::test]
+async fn a_component_the_manifest_does_not_name_cannot_be_paused() {
+    // The identifier rule. An operator may select something the environment's
+    // manifest already names; the name is a lookup key and reaches nothing
+    // else, so a value shaped like a path is simply not a component.
+    let desired_state = Arc::new(Recorded::new(UpdatePolicy::Automatic, None).refusing(
+        DesiredStateError::NotFound {
+            what: "../../etc in lucentroot".to_owned(),
+        },
+    ));
+    let service = service(&registries_with_three(), &desired_state);
+
+    let outcome = service.pause("lucentroot", "../../etc", None).await;
+
+    assert!(
+        matches!(
+            outcome,
+            Err(PlatformError::DesiredState(DesiredStateError::NotFound { .. }))
+        ),
+        "a name the manifest does not carry selects nothing"
+    );
+    assert!(desired_state.holds().is_empty());
 }

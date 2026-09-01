@@ -1,46 +1,10 @@
 //! The port through which an environment's desired state is read and moved.
 
-use std::collections::BTreeMap;
+use crate::ReleaseUnit;
 
-use crate::{Channel, ReleaseUnit, UpdatePolicy, Version};
+mod component;
 
-/// Why an operator's hold is in place.
-///
-/// Carries no version. The desired version already *is* the held one, so a
-/// break-glass edit that moves it by hand leaves the hold correctly in force
-/// rather than pointing at something nothing runs.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Hold {
-    /// What the operator gave as the reason.
-    pub reason: String,
-
-    /// When advancement stopped, as an RFC 3339 timestamp.
-    pub since: String,
-
-    /// What they wanted the next person to know.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub note: Option<String>,
-}
-
-/// What an environment is asked to run of one component.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ComponentDesired {
-    /// The version desired now.
-    pub version: Version,
-
-    /// The release stream newer versions are drawn from.
-    pub channel: Channel,
-
-    /// The standing decision about advancement.
-    pub policy: UpdatePolicy,
-
-    /// Present while advancement is paused.
-    pub hold: Option<Hold>,
-
-    /// Where each of the component's images is published, by role.
-    pub repositories: BTreeMap<String, String>,
-}
+pub use component::{ComponentDesired, Hold};
 
 /// What can go wrong reading or moving desired state.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -134,6 +98,48 @@ pub trait DesiredState: Send + Sync {
         environment: &str,
         component: &str,
         unit: &ReleaseUnit,
+        message: &str,
+    ) -> Result<(), DesiredStateError>;
+
+    /// Pauses advancement, leaving the desired version exactly where it is.
+    ///
+    /// # Why this is a separate operation and not an argument to `advance`
+    ///
+    /// `advance` is what the *selector* calls, and it must remain unable to
+    /// express a hold — that is what guarantees an automatic pass cannot clear
+    /// one in order to succeed. These are what an *operator* calls. Two verbs
+    /// with two callers beats one verb with a flag that only one caller is
+    /// trusted to set.
+    ///
+    /// The version is untouched, so no deployment overlay changes: pausing
+    /// stops the environment moving, and does not move it.
+    ///
+    /// # Errors
+    ///
+    /// [`DesiredStateError::Conflict`] if the state moved since it was read,
+    /// and the other variants otherwise.
+    async fn pause(
+        &self,
+        environment: &str,
+        component: &str,
+        hold: &Hold,
+        message: &str,
+    ) -> Result<(), DesiredStateError>;
+
+    /// Lifts a hold, leaving the desired version exactly where it is.
+    ///
+    /// Only the hold. Resuming says "you may advance again", not "advance
+    /// now" — the next sweep decides that, from what it observes then rather
+    /// than from what was true when the operator clicked.
+    ///
+    /// # Errors
+    ///
+    /// [`DesiredStateError::Conflict`] if the state moved since it was read,
+    /// and the other variants otherwise.
+    async fn resume(
+        &self,
+        environment: &str,
+        component: &str,
         message: &str,
     ) -> Result<(), DesiredStateError>;
 }

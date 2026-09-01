@@ -1,6 +1,6 @@
 //! Implementing the desired-state port over the platform repository.
 
-use fabric_platform_management::{ComponentDesired, DesiredState, DesiredStateError, ReleaseUnit};
+use fabric_platform_management::{ComponentDesired, DesiredState, DesiredStateError, Hold, ReleaseUnit};
 
 use crate::desired::{ComponentVersion, ImageDigest};
 use crate::{PlatformGitError, PlatformGitRepository};
@@ -77,6 +77,31 @@ impl DesiredState for PlatformGitRepository {
         };
 
         self.set_component_desired_state(environment, component, &wanted, message)
+            .await?;
+
+        Ok(())
+    }
+
+    async fn pause(
+        &self,
+        environment: &str,
+        component: &str,
+        hold: &Hold,
+        message: &str,
+    ) -> Result<(), DesiredStateError> {
+        self.set_component_hold(environment, component, Some(hold), message)
+            .await?;
+
+        Ok(())
+    }
+
+    async fn resume(
+        &self,
+        environment: &str,
+        component: &str,
+        message: &str,
+    ) -> Result<(), DesiredStateError> {
+        self.set_component_hold(environment, component, None, message)
             .await?;
 
         Ok(())

@@ -122,6 +122,14 @@ impl DesiredState for Several {
 
         Ok(())
     }
+
+    async fn pause(&self, _: &str, _: &str, _: &crate::Hold, _: &str) -> Result<(), DesiredStateError> {
+        panic!("a sweep must never pause a component")
+    }
+
+    async fn resume(&self, _: &str, _: &str, _: &str) -> Result<(), DesiredStateError> {
+        panic!("a sweep must never resume a component")
+    }
 }
 
 fn service(desired_state: &Arc<Several>) -> PlatformManagement {
@@ -301,6 +309,14 @@ impl DesiredState for Gated {
     async fn advance(&self, e: &str, c: &str, unit: &ReleaseUnit, m: &str) -> Result<(), DesiredStateError> {
         self.inner.advance(e, c, unit, m).await
     }
+
+    async fn pause(&self, _: &str, _: &str, _: &crate::Hold, _: &str) -> Result<(), DesiredStateError> {
+        panic!("a sweep must never pause a component")
+    }
+
+    async fn resume(&self, _: &str, _: &str, _: &str) -> Result<(), DesiredStateError> {
+        panic!("a sweep must never resume a component")
+    }
 }
 
 #[tokio::test]
@@ -367,6 +383,14 @@ async fn a_sweep_with_nothing_connected_records_nothing() {
         }
 
         async fn advance(&self, _: &str, _: &str, _: &ReleaseUnit, _: &str) -> Result<(), DesiredStateError> {
+            Err(DesiredStateError::NotConnected)
+        }
+
+        async fn pause(&self, _: &str, _: &str, _: &crate::Hold, _: &str) -> Result<(), DesiredStateError> {
+            Err(DesiredStateError::NotConnected)
+        }
+
+        async fn resume(&self, _: &str, _: &str, _: &str) -> Result<(), DesiredStateError> {
             Err(DesiredStateError::NotConnected)
         }
     }

@@ -20,6 +20,7 @@
 //! credential are separate integrations and must stay separable.
 
 mod desired_state;
+mod diagnostic;
 mod discovery;
 mod policy;
 mod registry;
@@ -30,6 +31,7 @@ mod sweep;
 mod version;
 
 pub use desired_state::{ComponentDesired, DesiredState, DesiredStateError, Hold};
+pub use diagnostic::SafeDiagnostic;
 pub use discovery::{Discovery, ReleaseUnit, ResolvedImage};
 pub use policy::UpdatePolicy;
 pub use registry::{Provenance, Registry, RegistryError, Resolved};

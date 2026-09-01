@@ -243,7 +243,7 @@ async fn a_sweep_records_what_it_found() {
     let CheckOutcome::Failed { detail } = check.outcome else {
         panic!("a sweep with a broken component reported success");
     };
-    assert!(detail.starts_with("a-broken:"), "{detail}");
+    assert!(detail.as_str().starts_with("a-broken:"), "{detail}");
 }
 
 #[tokio::test]

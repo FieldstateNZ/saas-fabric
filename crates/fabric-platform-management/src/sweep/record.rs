@@ -3,7 +3,7 @@
 use std::sync::atomic::AtomicBool;
 use std::sync::Mutex;
 
-use crate::{PlatformError, Sweep, Swept};
+use crate::{PlatformError, SafeDiagnostic, Sweep, Swept};
 
 /// What a sweep found, last time one ran.
 ///
@@ -37,7 +37,12 @@ pub enum CheckOutcome {
     /// itself could not be read.
     Failed {
         /// What went wrong, ready to put beside a timestamp.
-        detail: String,
+        ///
+        /// A [`SafeDiagnostic`] rather than a `String`, so this cannot come to
+        /// hold an upstream error somebody formatted with `Debug`. The console
+        /// is the one place a leaked credential would be hardest to notice and
+        /// easiest to forward.
+        detail: SafeDiagnostic,
     },
 }
 
@@ -81,7 +86,7 @@ pub(super) fn outcome_of(swept: &Result<Sweep, PlatformError>) -> CheckOutcome {
         Ok(sweep) => sweep,
         Err(error) => {
             return CheckOutcome::Failed {
-                detail: error.to_string(),
+                detail: SafeDiagnostic::sanitise(&error.to_string()),
             }
         }
     };
@@ -91,7 +96,7 @@ pub(super) fn outcome_of(swept: &Result<Sweep, PlatformError>) -> CheckOutcome {
     for (component, swept) in &sweep.components {
         if let Swept::Failed(error) = swept {
             return CheckOutcome::Failed {
-                detail: format!("{component}: {error}"),
+                detail: SafeDiagnostic::sanitise(&format!("{component}: {error}")),
             };
         }
     }

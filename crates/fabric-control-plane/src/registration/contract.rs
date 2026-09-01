@@ -108,4 +108,8 @@ pub struct PlatformBinding {
 
     /// The environment it manages, from this deployment's configuration.
     pub environment: String,
+
+    /// The late-bound repository, so a connected integration can point it
+    /// somewhere and a disconnected one can take it away.
+    pub repository: Arc<fabric_platform_management::PlatformDesiredState>,
 }

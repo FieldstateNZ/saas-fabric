@@ -348,3 +348,43 @@ async fn a_sweep_already_running_is_skipped_rather_than_queued() {
         SweepResult::Ran(_)
     ));
 }
+
+#[tokio::test]
+async fn a_sweep_with_nothing_connected_records_nothing() {
+    // An operator has not connected a platform repository. That is a state, not
+    // a failure -- and a "last check failed" against an integration nobody has
+    // made would send them looking for a fault instead of a connection.
+    struct Unconnected;
+
+    #[async_trait::async_trait]
+    impl DesiredState for Unconnected {
+        async fn components(&self, _: &str) -> Result<Vec<String>, DesiredStateError> {
+            Err(DesiredStateError::NotConnected)
+        }
+
+        async fn component(&self, _: &str, _: &str) -> Result<ComponentDesired, DesiredStateError> {
+            Err(DesiredStateError::NotConnected)
+        }
+
+        async fn advance(&self, _: &str, _: &str, _: &ReleaseUnit, _: &str) -> Result<(), DesiredStateError> {
+            Err(DesiredStateError::NotConnected)
+        }
+    }
+
+    let service = PlatformManagement::new(
+        Arc::new(Registries) as Arc<dyn Registry>,
+        Arc::new(Unconnected) as Arc<dyn DesiredState>,
+        Arc::new(fabric_core::SystemClock::new()) as Arc<dyn fabric_core::Clock>,
+    );
+    let state = SweepState::default();
+
+    assert_eq!(
+        service.sweep("lucentroot", &state).await.unwrap(),
+        SweepResult::NotConnected
+    );
+    assert_eq!(
+        state.last_check(),
+        None,
+        "nothing looked, so nothing was recorded"
+    );
+}

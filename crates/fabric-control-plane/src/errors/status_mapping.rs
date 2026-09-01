@@ -2,6 +2,11 @@
 
 use http::StatusCode;
 
+mod codes;
+mod messages;
+
+use fabric_platform_management::{DesiredStateError, PlatformError};
+
 use crate::ControlPlaneError;
 
 impl ControlPlaneError {
@@ -40,6 +45,18 @@ impl ControlPlaneError {
             // repository and could not get an answer. 503, not 500: nothing is
             // wrong with the request, desired state is untouched, and the
             // operator's next step is to look again shortly.
+            // Nothing is connected. 404 beside the other "this deployment
+            // does not have one" answers, because that is what it is: an
+            // operator has not connected a platform repository, and their next
+            // step is to connect one rather than to retry.
+            //
+            // Deliberately distinct from the arm below. A *connected*
+            // integration that cannot be read is broken and needs looking at;
+            // reporting that as "not connected" would send an operator to
+            // connect something they already have.
+            Self::Platform(PlatformError::DesiredState(DesiredStateError::NotConnected)) => {
+                StatusCode::NOT_FOUND
+            }
             Self::Platform(_) => StatusCode::SERVICE_UNAVAILABLE,
 
             Self::RevisionRequired => StatusCode::PRECONDITION_REQUIRED,
@@ -88,56 +105,5 @@ impl ControlPlaneError {
                 StatusCode::BAD_GATEWAY
             }
         }
-    }
-
-    /// A stable machine-readable code, so a client branches on this rather
-    /// than on message text.
-    #[must_use]
-    pub const fn code(&self) -> &'static str {
-        match self {
-            Self::Unauthenticated(_) => "unauthenticated",
-            Self::UnknownClient(_) => "unknown_client",
-            Self::InvalidRequest(_) => "invalid_request",
-            Self::InvalidDesiredState { .. } => "desired_state_invalid",
-            Self::RevisionRequired => "revision_required",
-            Self::RevisionConflict => "revision_conflict",
-            Self::RealmImmutable { .. } => "realm_immutable",
-            Self::RepositoryUnavailable => "repository_unavailable",
-            Self::InvalidFlow => "invalid_flow",
-            Self::ConvergenceUnavailable => "convergence_unavailable",
-            Self::IntegrationNotManaged => "integration_not_managed",
-            Self::PlatformNotManaged => "platform_not_managed",
-            Self::Platform(_) => "platform_unavailable",
-            Self::GitHostRefused => "git_host_refused",
-            Self::IntegrationRefused(_) => "integration_refused",
-            Self::IntegrationNotConfigured => "integration_not_configured",
-
-            // Distinct codes for statuses that collide. A console that could
-            // only see `409` would have to guess whether to offer "reload" or
-            // "this client has no secret boundary yet".
-            Self::Secrets(secrets) => match secrets {
-                crate::SecretsError::NoBoundary => "secret_no_boundary",
-                crate::SecretsError::NotFound => "secret_not_found",
-                crate::SecretsError::Conflict => "secret_stale_version",
-                crate::SecretsError::Refused => "secret_store_refused",
-                crate::SecretsError::Unavailable => "secret_store_unavailable",
-            },
-            Self::SignInRefused => "sign_in_refused",
-            Self::SignInUnavailable => "sign_in_unavailable",
-            Self::RepositoryDenied => "repository_denied",
-            Self::RepositoryRejected => "repository_rejected",
-        }
-    }
-
-    /// The message the operator sees.
-    ///
-    /// Most errors say exactly what they mean — an operator is entitled to
-    /// know what the platform is doing. The two that do not are the ones whose
-    /// detail comes from outside: a repository failure's `detail` field never
-    /// reaches here, and a stored-document failure reports the client and the
-    /// validation rule but not the file it came from.
-    #[must_use]
-    pub fn public_message(&self) -> String {
-        self.to_string()
     }
 }

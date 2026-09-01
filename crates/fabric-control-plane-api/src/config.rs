@@ -22,5 +22,5 @@ pub use desired_state::DesiredStateConfig;
 pub use env_namespace::CONFIG_PATH_VAR;
 pub use git_host::GitHostConfig;
 pub use identity_provider::IdentityProviderConfig;
-pub use platform_management::{PlatformManagementConfig, PlatformRepositoryBinding, RegistryBinding};
+pub use platform_management::{PlatformManagementConfig, RegistryBinding};
 pub use secret_store::SecretStoreConfig;

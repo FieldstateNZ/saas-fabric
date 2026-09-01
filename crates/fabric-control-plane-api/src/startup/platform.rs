@@ -5,29 +5,37 @@ use std::time::Duration;
 
 use fabric_control_plane::PlatformBinding;
 use fabric_core::Clock;
-use fabric_git_host::GitCredential;
-use fabric_platform_git::{PlatformGitRepository, PlatformRepositoryConfig};
-use fabric_platform_management::{DesiredState, PlatformManagement, Registry, SweepResult, SweepState};
+use fabric_platform_management::{
+    DesiredState, PlatformDesiredState, PlatformManagement, Registry, SweepResult, SweepState,
+};
 use fabric_registry::OciRegistry;
 
 use crate::config::PlatformManagementConfig;
-use crate::secrets;
 
-/// Builds Platform Management, if this deployment manages a platform
-/// repository.
+/// Builds Platform Management, if this deployment does platform management.
 ///
-/// # `None` means unconfigured, never "could not be built"
+/// # What is configuration, and what is not any more
 ///
-/// A deployment that states this section and gets it wrong fails to start.
-/// The alternative — falling back to unmanaged — would present a
-/// misconfiguration as a deliberate choice, and the console would say "nothing
-/// is managed" to an operator who had configured something. They would have no
-/// way to tell that from a platform that was never meant to manage anything,
-/// and the symptom would be an environment that quietly never advanced.
+/// The environment, the registry and the cadence are a deployment's: they are
+/// facts about where this control plane runs. The *repository* and its
+/// credential are not — an operator installs the Platform Management GitHub
+/// App and picks a repository, and the platform stores what it learns doing
+/// so.
+///
+/// So there is nothing to build a repository from at startup, and the binding
+/// starts unconnected. A control plane that refused to start without one could
+/// not be used to connect one.
+///
+/// # `None` still means unconfigured, and still never means "could not build"
+///
+/// A deployment that states this section and gets *its own* configuration
+/// wrong fails to start. That rule has not moved; what moved is which things
+/// are configuration. An absent integration is now legitimate runtime state
+/// rather than a misconfiguration, and it is reported rather than fatal.
 ///
 /// # Errors
 ///
-/// Returns a message naming the field or the secret. Never a credential.
+/// Returns a message naming the field. Never a credential.
 pub fn establish(
     config: Option<&PlatformManagementConfig>,
     clock: &Arc<dyn Clock>,
@@ -36,33 +44,22 @@ pub fn establish(
         return Ok(None);
     };
 
-    let credential = GitCredential::token(secrets::resolve(&config.credential)?);
-
-    let repository = PlatformGitRepository::new(
-        &PlatformRepositoryConfig {
-            api_base_url: config.repository.api_base_url.clone(),
-            owner: config.repository.owner.clone(),
-            repository: config.repository.name.clone(),
-            branch: config.repository.branch.clone(),
-            http_timeout_seconds: config.repository.http_timeout_seconds,
-        },
-        credential,
-        Arc::clone(clock),
-    )?;
-
     let registry = OciRegistry::new(
         &config.registry.base_url,
         &config.registry.host,
         config.registry.http_timeout_seconds,
     )?;
 
+    let repository = PlatformDesiredState::unconnected();
+
     Ok(Some(PlatformBinding {
         service: Arc::new(PlatformManagement::new(
             Arc::new(registry) as Arc<dyn Registry>,
-            Arc::new(repository) as Arc<dyn DesiredState>,
+            Arc::clone(&repository) as Arc<dyn DesiredState>,
             Arc::clone(clock),
         )),
-        environment: config.repository.environment.clone(),
+        repository,
+        environment: config.environment.clone(),
     }))
 }
 
@@ -89,7 +86,7 @@ pub fn start_sweeping(
 
     if config.reconciliation_interval_seconds == 0 {
         tracing::info!(
-            environment = config.repository.environment,
+            environment = config.environment,
             "platform management is configured and its sweep is disabled"
         );
         return;
@@ -127,6 +124,11 @@ pub fn start_sweeping(
 /// advancing until somebody restarted the process, and nothing would say so.
 async fn sweep_once(platform: &Arc<PlatformManagement>, environment: &str, sweeps: &Arc<SweepState>) {
     match platform.sweep(environment, sweeps).await {
+        Ok(SweepResult::NotConnected) => {
+            // Every tick until an operator connects one. Not logged at all:
+            // a minute's interval would fill a log with the fact that nobody
+            // has done something yet, and the console already says so.
+        }
         Ok(SweepResult::AlreadyRunning) => {
             tracing::warn!(
                 environment,

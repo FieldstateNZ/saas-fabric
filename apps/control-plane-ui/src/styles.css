@@ -768,3 +768,51 @@ button:disabled {
   cursor: default;
   opacity: 0.6;
 }
+
+/* Rolling back ------------------------------------------------------------
+   A list, never a field. Every entry is a version the platform resolved to a
+   complete release unit; there is nothing here to type. */
+
+.rollback {
+  margin-top: 0.75rem;
+}
+
+.rollback__list {
+  list-style: none;
+  margin: 0.5rem 0;
+  padding: 0;
+}
+
+.rollback__list li {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  margin-bottom: 0.3rem;
+}
+
+.rollback__choice {
+  font: inherit;
+  font-size: 0.875rem;
+  font-variant-numeric: tabular-nums;
+  padding: 0.3rem 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.rollback__choice:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.rollback__revision,
+.rollback__more {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.rollback__more {
+  margin: 0.4rem 0 0.6rem;
+}

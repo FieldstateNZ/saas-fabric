@@ -2,8 +2,10 @@
 
 mod body;
 mod brake;
+mod rollback;
 
 pub(crate) use brake::{pause_component, resume_component};
+pub(crate) use rollback::{roll_back_component, rollback_candidates};
 
 use axum::extract::State;
 use axum::Json;

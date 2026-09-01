@@ -33,6 +33,19 @@ impl DesiredState for PlatformDesiredState {
             .await
     }
 
+    async fn roll_back(
+        &self,
+        environment: &str,
+        component: &str,
+        unit: &ReleaseUnit,
+        hold: &Hold,
+        message: &str,
+    ) -> Result<(), DesiredStateError> {
+        self.required()?
+            .roll_back(environment, component, unit, hold, message)
+            .await
+    }
+
     async fn pause(
         &self,
         environment: &str,

@@ -14,6 +14,14 @@ use crate::{ComponentStatus, Discovery, Hold, UpdatePolicy};
 /// the note, which nothing branches on.
 const PAUSED: &str = "paused";
 
+/// The reason a rollback records.
+///
+/// Distinct from `paused` because the two are different acts, even though both
+/// stop advancement: one keeps the version and one moves it. A later reader —
+/// a person, or a future version of this — can tell which happened without
+/// diffing the repository.
+pub(super) const ROLLBACK: &str = "rollback";
+
 impl PlatformManagement {
     /// Stops a component advancing, leaving the version it runs alone.
     ///
@@ -110,7 +118,7 @@ impl PlatformManagement {
     /// timestamp outside the range of a calendar date — records nothing rather
     /// than a wrong instant: a hold with an unreadable `since` is still a hold,
     /// and the field is for a human, not for a decision.
-    fn stamp(&self) -> String {
+    pub(super) fn stamp(&self) -> String {
         OffsetDateTime::from_unix_timestamp(i64::try_from(self.clock.now_unix_seconds()).unwrap_or(i64::MAX))
             .ok()
             .and_then(|at| at.format(&Rfc3339).ok())

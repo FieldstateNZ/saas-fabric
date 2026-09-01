@@ -24,12 +24,29 @@ pub(super) enum Assembly {
 /// looking at — reporting it as publishing is the whole point — and asking
 /// only the first repository would make the answer depend on which image its
 /// build job happened to push first.
+/// Which side of the desired version a search is looking at.
+///
+/// The two directions serve two different questions and must not be one
+/// parameter with a default. *Above* is what the selector may advance to, and
+/// keeping it strictly above is what makes automatic selection unable to move
+/// an environment backwards whatever a registry lists. *Below* is what an
+/// operator may roll back to, and it exists only because they asked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Direction {
+    /// Newer than the desired version.
+    Above,
+
+    /// Older than it.
+    Below,
+}
+
 pub(super) async fn candidates(
     registry: &dyn Registry,
     roles: &BTreeMap<String, String>,
     channel: Channel,
     series: Option<&Version>,
     floor: &Version,
+    direction: Direction,
 ) -> Result<Vec<Version>, RegistryError> {
     let mut seen = BTreeSet::new();
 
@@ -39,7 +56,17 @@ pub(super) async fn candidates(
                 continue;
             };
 
-            if version.channel() != channel || &version <= floor {
+            if version.channel() != channel {
+                continue;
+            }
+
+            // Strictly, in both directions. The desired version is neither
+            // something to advance to nor something to roll back to.
+            let wanted = match direction {
+                Direction::Above => &version > floor,
+                Direction::Below => &version < floor,
+            };
+            if !wanted {
                 continue;
             }
 

@@ -2,7 +2,10 @@
 
 use std::collections::BTreeMap;
 
+mod history;
 mod unit;
+
+pub use history::{history, History};
 
 #[cfg(test)]
 mod discovery_tests;
@@ -102,7 +105,8 @@ pub async fn discover(
     series: Option<&Version>,
     floor: &Version,
 ) -> Result<Discovery, RegistryError> {
-    let candidates = unit::candidates(registry, roles, channel, series, floor).await?;
+    let candidates =
+        unit::candidates(registry, roles, channel, series, floor, unit::Direction::Above).await?;
     let mut discovery = Discovery::default();
 
     for version in candidates {

@@ -2,8 +2,11 @@
 
 use fabric_platform_management::{ComponentDesired, DesiredState, DesiredStateError, Hold, ReleaseUnit};
 
-use crate::desired::{ComponentVersion, ImageDigest};
 use crate::{PlatformGitError, PlatformGitRepository};
+
+mod wanted;
+
+use wanted::wanted_from;
 
 #[async_trait::async_trait]
 impl DesiredState for PlatformGitRepository {
@@ -58,25 +61,21 @@ impl DesiredState for PlatformGitRepository {
         unit: &ReleaseUnit,
         message: &str,
     ) -> Result<(), DesiredStateError> {
-        let wanted = ComponentVersion {
-            version: unit.version.as_str().to_owned(),
-            source_revision: unit.source_revision.clone(),
-            images: unit
-                .images
-                .iter()
-                .map(|(role, image)| {
-                    (
-                        role.clone(),
-                        ImageDigest {
-                            repository: image.repository.clone(),
-                            digest: image.digest.clone(),
-                        },
-                    )
-                })
-                .collect(),
-        };
+        self.set_component_desired_state(environment, component, &wanted_from(unit), message)
+            .await?;
 
-        self.set_component_desired_state(environment, component, &wanted, message)
+        Ok(())
+    }
+
+    async fn roll_back(
+        &self,
+        environment: &str,
+        component: &str,
+        unit: &ReleaseUnit,
+        hold: &Hold,
+        message: &str,
+    ) -> Result<(), DesiredStateError> {
+        self.roll_back_component(environment, component, &wanted_from(unit), hold, message)
             .await?;
 
         Ok(())

@@ -25,6 +25,17 @@ impl DesiredState for Connected {
         Ok(())
     }
 
+    async fn roll_back(
+        &self,
+        _: &str,
+        _: &str,
+        _: &ReleaseUnit,
+        _: &crate::Hold,
+        _: &str,
+    ) -> Result<(), DesiredStateError> {
+        Ok(())
+    }
+
     async fn pause(&self, _: &str, _: &str, _: &crate::Hold, _: &str) -> Result<(), DesiredStateError> {
         Ok(())
     }

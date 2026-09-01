@@ -7,7 +7,7 @@ use fabric_control_plane::{build_control_plane, ControlPlaneDeps};
 use fabric_core::SystemClock;
 
 use crate::config::ControlPlaneAppConfig;
-use crate::startup::{adapters, integration, operator_keys, serving};
+use crate::startup::{adapters, integration, operator_keys, platform, serving};
 
 /// The assembled control plane, plus the work that must outlive a request.
 pub struct Application {
@@ -35,10 +35,21 @@ pub struct Application {
 /// 5. The Git connection flow, which is given the binding so that an
 ///    operator connecting a repository takes effect without a restart.
 ///
-/// There is no sixth step any more. A reconciliation loop used to be spawned
-/// here, holding a service account's credential; ADR 0012 removed that
-/// credential, so convergence happens when an operator asks and carries their
-/// authority rather than the platform's.
+/// There is no sixth step for *clients* any more. A reconciliation loop used to
+/// be spawned here, holding a service account's credential; ADR 0012 removed
+/// that credential, so convergence happens when an operator asks and carries
+/// their authority rather than the platform's.
+///
+/// 6. Platform Management, when this deployment manages a platform repository,
+///    and the sweep that advances it. This one *is* unattended, and
+///    deliberately: a policy that said `automatic` and waited for a click
+///    would be a manual policy with a longer name. It carries no operator's
+///    authority because it changes no client — it moves a version pin in a
+///    repository the deployment was given, under a policy that repository
+///    states.
+///
+///    The sweep starts *after* the router is built. One that started earlier
+///    could advance an environment nobody could yet look at.
 ///
 /// # Errors
 ///
@@ -63,6 +74,7 @@ pub async fn build(config: &ControlPlaneAppConfig) -> Result<Application, String
     let (keys, sign_in) = operator_keys::establish(&config.control_plane.operator)?;
     let git_integration = integration::establish(config, &repository, &clock).await?;
     let client_secrets = integration::client_secrets(config, &clock)?;
+    let platform_management = platform::establish(config.platform_management.as_ref(), &clock)?;
 
     let services = build_control_plane(
         &config.control_plane,
@@ -75,16 +87,20 @@ pub async fn build(config: &ControlPlaneAppConfig) -> Result<Application, String
             git_integration,
             client_secrets,
 
-            // Not yet wired: the adapters and the sweep's cadence are the next
-            // step. The route is mounted regardless and answers that nothing
-            // is managed, which is a truthful answer and one a console can
-            // render — unlike a 404, whose meaning it would have to guess.
-            platform: None,
+            platform: platform_management.clone(),
 
             // Always the configured posture. The override exists for tests.
             operators: None,
         },
     )?;
+
+    // Last, and after the router: a sweep that started before the API was
+    // serving would advance an environment nobody could yet look at.
+    platform::start_sweeping(
+        config.platform_management.as_ref(),
+        platform_management.as_ref(),
+        &services.platform_sweeps,
+    );
 
     Ok(Application {
         router: serving::compose(services.router, config),

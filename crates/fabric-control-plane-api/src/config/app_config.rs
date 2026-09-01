@@ -2,7 +2,9 @@
 
 use fabric_control_plane::ControlPlaneConfig;
 
-use crate::config::{DesiredStateConfig, GitHostConfig, IdentityProviderConfig, SecretStoreConfig};
+use crate::config::{
+    DesiredStateConfig, GitHostConfig, IdentityProviderConfig, PlatformManagementConfig, SecretStoreConfig,
+};
 
 /// The process's configuration, in one struct.
 ///
@@ -49,6 +51,15 @@ pub struct ControlPlaneAppConfig {
     /// The Git host the platform creates its application on.
     #[serde(default)]
     pub git_host: GitHostConfig,
+
+    /// The platform repository this deployment manages, if it manages one.
+    ///
+    /// Absent means deliberately unconfigured, and the platform routes say so.
+    /// Present and unbuildable is a startup failure: a deployment that stated
+    /// this and got it wrong should find out at startup, not by wondering for
+    /// a week why an environment never advanced.
+    #[serde(default)]
+    pub platform_management: Option<PlatformManagementConfig>,
 
     /// The overall budget for one control-plane request, in seconds.
     ///

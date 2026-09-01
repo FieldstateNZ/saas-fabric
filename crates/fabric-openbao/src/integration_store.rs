@@ -14,15 +14,29 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use fabric_control_plane::{GitIntegration, IntegrationStore, IntegrationStoreError};
+use fabric_control_plane::{GitIntegration, IntegrationKind, IntegrationStore, IntegrationStoreError};
 
 use crate::client::OpenBao;
 use crate::kv::Read;
 use crate::secret_store::classify;
 use fabric_control_plane::SecretStoreError;
 
-/// Where the record lives within the instance's partition.
-const RECORD: &str = "git/integration";
+/// Where an integration's record lives within the instance's partition.
+///
+/// # The client path is not moving
+///
+/// `git/integration` is where a connected instance keeps its record today, and
+/// it stays there. Relocating a live integration to make the two paths look
+/// alike would be a migration whose upside is symmetry and whose downside is a
+/// platform that has forgotten how to reach client configuration.
+///
+/// The asymmetry records which one came first. That is what happened.
+const fn record(kind: IntegrationKind) -> &'static str {
+    match kind {
+        IntegrationKind::ClientConfiguration => "git/integration",
+        IntegrationKind::PlatformManagement => "integrations/platform-management/integration",
+    }
+}
 
 /// The field the record is written under.
 const DOCUMENT: &str = "record";
@@ -43,10 +57,10 @@ impl OpenBaoIntegrationStore {
 
 #[async_trait]
 impl IntegrationStore for OpenBaoIntegrationStore {
-    async fn load(&self) -> Result<Option<GitIntegration>, IntegrationStoreError> {
+    async fn load(&self, kind: IntegrationKind) -> Result<Option<GitIntegration>, IntegrationStoreError> {
         let fields = match self
             .client
-            .read(RECORD)
+            .read(record(kind))
             .await
             .map_err(|error| translate(&error))?
         {
@@ -64,18 +78,22 @@ impl IntegrationStore for OpenBaoIntegrationStore {
             .map_err(|_| IntegrationStoreError::Malformed)
     }
 
-    async fn save(&self, integration: &GitIntegration) -> Result<(), IntegrationStoreError> {
+    async fn save(
+        &self,
+        kind: IntegrationKind,
+        integration: &GitIntegration,
+    ) -> Result<(), IntegrationStoreError> {
         let document = serde_json::to_string(integration).map_err(|_| IntegrationStoreError::Malformed)?;
 
         self.client
-            .write(RECORD, serde_json::json!({ DOCUMENT: document }))
+            .write(record(kind), serde_json::json!({ DOCUMENT: document }))
             .await
             .map_err(|error| translate(&error))
     }
 
-    async fn clear(&self) -> Result<(), IntegrationStoreError> {
+    async fn clear(&self, kind: IntegrationKind) -> Result<(), IntegrationStoreError> {
         self.client
-            .remove(RECORD)
+            .remove(record(kind))
             .await
             .map_err(|error| translate(&error))
     }

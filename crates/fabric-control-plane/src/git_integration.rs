@@ -19,6 +19,7 @@ mod flow;
 #[cfg(test)]
 mod flow_tests;
 mod in_memory;
+mod kind;
 mod provisioning;
 mod record;
 #[cfg(test)]
@@ -31,6 +32,7 @@ mod store;
 
 pub use flow::{FlowStep, PendingFlows};
 pub use in_memory::{InMemoryIntegrationStore, InMemorySecretStore};
+pub use kind::IntegrationKind;
 pub use provisioning::{
     AccessibleRepository, AppCreationRequest, CreatedApp, DesiredStateFactory, GitAppProvisioning,
     InstallationDetail, ProvisioningError,

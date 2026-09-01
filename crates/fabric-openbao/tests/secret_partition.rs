@@ -12,7 +12,9 @@ mod support;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use fabric_control_plane::{GitIntegration, IntegrationStore, SecretName, SecretStore, SecretValue};
+use fabric_control_plane::{
+    GitIntegration, IntegrationKind, IntegrationStore, SecretName, SecretStore, SecretValue,
+};
 use fabric_core::SystemClock;
 use fabric_openbao::{OpenBao, OpenBaoConfig, OpenBaoIntegrationStore, OpenBaoSecretStore};
 use support::{FakeOpenBao, Recorded};
@@ -175,7 +177,10 @@ async fn the_integration_record_round_trips_through_the_store() {
     let store = OpenBaoIntegrationStore::new(client(&fake));
 
     store
-        .save(&GitIntegration::created("1234", "saas-fabric"))
+        .save(
+            IntegrationKind::ClientConfiguration,
+            &GitIntegration::created("1234", "saas-fabric"),
+        )
         .await
         .unwrap();
 
@@ -185,10 +190,91 @@ async fn the_integration_record_round_trips_through_the_store() {
 }
 
 #[tokio::test]
+async fn the_client_record_stays_exactly_where_it_already_is() {
+    // The acceptance criterion of the keying refactor. A connected instance
+    // keeps its record at `git/integration`, and an instance that came back
+    // from a restart against a moved path is a platform that has forgotten how
+    // to reach client configuration.
+    let fake = FakeOpenBao::start(answering(200, "{}")).await;
+    let store = OpenBaoIntegrationStore::new(client(&fake));
+
+    // What it answers with does not matter here -- the fake replies `{}` to
+    // everything. What matters is which path it was asked for.
+    let _ = store.load(IntegrationKind::ClientConfiguration).await;
+
+    let requests = fake.requests();
+    assert!(
+        requests[0].path.ends_with("/git/integration"),
+        "{:?}",
+        requests[0].path
+    );
+}
+
+#[tokio::test]
+async fn platform_management_writes_somewhere_else_entirely() {
+    let fake = FakeOpenBao::start(answering(200, "{}")).await;
+    let store = OpenBaoIntegrationStore::new(client(&fake));
+
+    store
+        .save(
+            IntegrationKind::PlatformManagement,
+            &GitIntegration::created("5678", "saas-fabric-platform"),
+        )
+        .await
+        .unwrap();
+
+    let written = &fake.requests()[0];
+    assert!(
+        written
+            .path
+            .ends_with("/integrations/platform-management/integration"),
+        "{:?}",
+        written.path
+    );
+    assert!(
+        !written.path.contains("/git/integration"),
+        "platform management wrote over client configuration"
+    );
+}
+
+#[tokio::test]
+async fn clearing_one_integration_names_only_its_own_path() {
+    // Removal is the operation where a shared path would be unrecoverable:
+    // connecting the wrong one again is an inconvenience, deleting the other
+    // one's record is a disconnected platform.
+    for (kind, expected) in [
+        (IntegrationKind::ClientConfiguration, "/git/integration"),
+        (
+            IntegrationKind::PlatformManagement,
+            "/integrations/platform-management/integration",
+        ),
+    ] {
+        let fake = FakeOpenBao::start(answering(200, "{}")).await;
+
+        OpenBaoIntegrationStore::new(client(&fake))
+            .clear(kind)
+            .await
+            .unwrap();
+
+        let requests = fake.requests();
+        let asked: Vec<&str> = requests.iter().map(|request| request.path.as_str()).collect();
+        assert!(asked.iter().any(|path| path.ends_with(expected)), "{asked:?}");
+        assert_eq!(
+            asked.len(),
+            1,
+            "clearing one integration touched more than one path"
+        );
+    }
+}
+
+#[tokio::test]
 async fn no_integration_record_is_absence_rather_than_a_failure() {
     let fake = FakeOpenBao::start(answering(404, r#"{"errors":[]}"#)).await;
 
-    let loaded = OpenBaoIntegrationStore::new(client(&fake)).load().await.unwrap();
+    let loaded = OpenBaoIntegrationStore::new(client(&fake))
+        .load(IntegrationKind::ClientConfiguration)
+        .await
+        .unwrap();
 
     assert!(loaded.is_none());
 }

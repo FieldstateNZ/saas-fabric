@@ -27,20 +27,22 @@ use std::sync::Arc;
 use fabric_core::Clock;
 
 use crate::git_integration::{
-    DesiredStateFactory, GitAppProvisioning, IntegrationStore, PendingFlows, SecretStore,
+    DesiredStateFactory, GitAppProvisioning, IntegrationKind, IntegrationStore, PendingFlows, SecretStore,
 };
 use crate::repository::DesiredStateBinding;
 
 pub use errors::IntegrationError;
 
-/// The name the application's private key is stored under.
-///
-/// A name within the instance's secret partition, not a path. Where it
-/// physically lands is the store's business.
-pub(crate) const PRIVATE_KEY: &str = "git/app-private-key";
-
 /// Everything the connection flow needs.
 pub struct GitIntegrationService {
+    /// Which integration this instance is for.
+    ///
+    /// One service per integration, and it carries its own kind rather than
+    /// taking one per call. A caller that could pass a kind could pass the
+    /// wrong one, and the wrong one here means connecting client
+    /// configuration and disconnecting platform management.
+    kind: IntegrationKind,
+
     /// Creates and inspects the application on the host.
     provisioning: Arc<dyn GitAppProvisioning>,
 
@@ -67,6 +69,7 @@ impl GitIntegrationService {
     /// Assembles the service.
     #[must_use]
     pub fn new(
+        kind: IntegrationKind,
         provisioning: Arc<dyn GitAppProvisioning>,
         secrets: Arc<dyn SecretStore>,
         store: Arc<dyn IntegrationStore>,
@@ -75,6 +78,7 @@ impl GitIntegrationService {
         clock: Arc<dyn Clock>,
     ) -> Self {
         Self {
+            kind,
             provisioning,
             secrets,
             store,
@@ -91,6 +95,6 @@ impl GitIntegrationService {
     ///
     /// Returns [`IntegrationError`] if the store could not be read.
     pub async fn current(&self) -> Result<Option<crate::GitIntegration>, IntegrationError> {
-        self.store.load().await.map_err(IntegrationError::from)
+        self.store.load(self.kind).await.map_err(IntegrationError::from)
     }
 }

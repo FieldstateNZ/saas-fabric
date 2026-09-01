@@ -2,7 +2,7 @@
 
 use async_trait::async_trait;
 
-use crate::git_integration::GitIntegration;
+use crate::git_integration::{GitIntegration, IntegrationKind};
 
 /// Why the integration record could not be read or written.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -25,7 +25,7 @@ pub enum IntegrationStoreError {
     Malformed,
 }
 
-/// Reads and writes one Fabric instance's Git integration record.
+/// Reads and writes one Fabric instance's Git integration records.
 ///
 /// Separate from [`SecretStore`](super::SecretStore) even though both are
 /// durable and both are, today, the same backing service. They answer
@@ -33,6 +33,12 @@ pub enum IntegrationStoreError {
 /// other holds what it must never show anyone — and collapsing them would make
 /// "is this safe to return in an API response?" a property of a field name
 /// rather than of a type.
+/// # The kind is not optional and has no default
+///
+/// Every operation names which integration it is for. A defaulted parameter
+/// would let a caller written before the second integration existed keep
+/// working *and* keep reaching the first one, which is the shape of bug that
+/// only shows up as one integration overwriting another.
 #[async_trait]
 pub trait IntegrationStore: Send + Sync {
     /// The stored record, or `None` if nothing has been connected.
@@ -41,7 +47,7 @@ pub trait IntegrationStore: Send + Sync {
     ///
     /// Returns [`IntegrationStoreError`] if the store could not be reached or
     /// holds something unreadable. **Absence is not an error.**
-    async fn load(&self) -> Result<Option<GitIntegration>, IntegrationStoreError>;
+    async fn load(&self, kind: IntegrationKind) -> Result<Option<GitIntegration>, IntegrationStoreError>;
 
     /// Writes the record, replacing any previous one.
     ///
@@ -49,7 +55,11 @@ pub trait IntegrationStore: Send + Sync {
     ///
     /// Returns [`IntegrationStoreError`] if the store could not be reached or
     /// refused the write.
-    async fn save(&self, integration: &GitIntegration) -> Result<(), IntegrationStoreError>;
+    async fn save(
+        &self,
+        kind: IntegrationKind,
+        integration: &GitIntegration,
+    ) -> Result<(), IntegrationStoreError>;
 
     /// Removes the record. Removing one that is not there is not an error.
     ///
@@ -57,5 +67,5 @@ pub trait IntegrationStore: Send + Sync {
     ///
     /// Returns [`IntegrationStoreError`] if the store could not be reached or
     /// refused the removal.
-    async fn clear(&self) -> Result<(), IntegrationStoreError>;
+    async fn clear(&self, kind: IntegrationKind) -> Result<(), IntegrationStoreError>;
 }

@@ -12,8 +12,8 @@ use std::sync::Mutex;
 use async_trait::async_trait;
 
 use crate::git_integration::{
-    GitIntegration, IntegrationStore, IntegrationStoreError, SecretName, SecretStore, SecretStoreError,
-    SecretValue,
+    GitIntegration, IntegrationKind, IntegrationStore, IntegrationStoreError, SecretName, SecretStore,
+    SecretStoreError, SecretValue,
 };
 
 /// Secrets held in this process.
@@ -52,11 +52,13 @@ impl SecretStore for InMemorySecretStore {
     }
 }
 
-/// An integration record held in this process.
+/// Integration records held in this process.
 #[derive(Default)]
 pub struct InMemoryIntegrationStore {
-    /// The record, if one has been saved.
-    held: Mutex<Option<GitIntegration>>,
+    /// The records, by integration. Keyed like the real store, so a test that
+    /// connects one integration and asserts the other is untouched is testing
+    /// the same property the OpenBao paths give.
+    held: Mutex<BTreeMap<IntegrationKind, GitIntegration>>,
 }
 
 impl InMemoryIntegrationStore {
@@ -69,17 +71,21 @@ impl InMemoryIntegrationStore {
 
 #[async_trait]
 impl IntegrationStore for InMemoryIntegrationStore {
-    async fn load(&self) -> Result<Option<GitIntegration>, IntegrationStoreError> {
-        Ok(lock(&self.held).clone())
+    async fn load(&self, kind: IntegrationKind) -> Result<Option<GitIntegration>, IntegrationStoreError> {
+        Ok(lock(&self.held).get(&kind).cloned())
     }
 
-    async fn save(&self, integration: &GitIntegration) -> Result<(), IntegrationStoreError> {
-        *lock(&self.held) = Some(integration.clone());
+    async fn save(
+        &self,
+        kind: IntegrationKind,
+        integration: &GitIntegration,
+    ) -> Result<(), IntegrationStoreError> {
+        lock(&self.held).insert(kind, integration.clone());
         Ok(())
     }
 
-    async fn clear(&self) -> Result<(), IntegrationStoreError> {
-        *lock(&self.held) = None;
+    async fn clear(&self, kind: IntegrationKind) -> Result<(), IntegrationStoreError> {
+        lock(&self.held).remove(&kind);
         Ok(())
     }
 }

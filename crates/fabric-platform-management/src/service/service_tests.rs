@@ -142,6 +142,7 @@ fn service(registries: &Arc<Registries>, desired_state: &Arc<Recorded>) -> Platf
     PlatformManagement::new(
         Arc::clone(registries) as Arc<dyn Registry>,
         Arc::clone(desired_state) as Arc<dyn DesiredState>,
+        Arc::new(fabric_core::SystemClock::new()) as Arc<dyn fabric_core::Clock>,
     )
 }
 

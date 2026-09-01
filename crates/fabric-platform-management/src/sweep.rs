@@ -1,10 +1,16 @@
 //! Reconciling every component of an environment, on a schedule somebody else
 //! keeps.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::Ordering;
 
 #[cfg(test)]
 mod sweep_tests;
+
+mod record;
+
+pub use record::{CheckOutcome, LastCheck, SweepState};
+
+use record::outcome_of;
 
 use crate::{PlatformError, PlatformManagement, Version};
 
@@ -63,13 +69,6 @@ pub enum SweepResult {
     AlreadyRunning,
 }
 
-/// Guards against two sweeps at once in one process.
-#[derive(Debug, Default)]
-pub struct SweepGuard {
-    /// Whether a sweep is in progress.
-    running: AtomicBool,
-}
-
 impl PlatformManagement {
     /// Reconciles every component of an environment.
     ///
@@ -88,13 +87,18 @@ impl PlatformManagement {
     ///
     /// [`PlatformError`] only if the environment's component list cannot be
     /// read. A component that fails is recorded and the sweep continues.
-    pub async fn sweep(&self, environment: &str, guard: &SweepGuard) -> Result<SweepResult, PlatformError> {
-        if guard.running.swap(true, Ordering::SeqCst) {
+    pub async fn sweep(&self, environment: &str, state: &SweepState) -> Result<SweepResult, PlatformError> {
+        if state.running.swap(true, Ordering::SeqCst) {
+            // Deliberately does not touch the record: a skipped sweep found
+            // nothing because it did not look, and overwriting the last real
+            // answer with that would hide it.
             return Ok(SweepResult::AlreadyRunning);
         }
 
         let swept = self.sweep_once(environment).await;
-        guard.running.store(false, Ordering::SeqCst);
+        state.running.store(false, Ordering::SeqCst);
+
+        state.record(self.clock().now_unix_seconds(), outcome_of(&swept));
 
         swept.map(SweepResult::Ran)
     }

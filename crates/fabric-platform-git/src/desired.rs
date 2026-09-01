@@ -39,6 +39,19 @@ pub struct ComponentVersion {
 }
 
 impl PlatformGitRepository {
+    /// Reads an environment's manifest as it stands on the branch.
+    ///
+    /// # Errors
+    ///
+    /// [`PlatformGitError`] if the branch or the manifest cannot be read, or
+    /// the manifest is not a shape this understands.
+    pub async fn components_manifest(&self, environment: &str) -> Result<crate::Manifest, PlatformGitError> {
+        let head = self.head().await?;
+        let stored = self.read(&manifest_path(environment), &head).await?;
+
+        Ok(Document::parse(&stored.text)?.manifest)
+    }
+
     /// Points a component at a version, in one commit.
     ///
     /// Reads the environment's manifest, works out which files carry the pins
@@ -69,7 +82,7 @@ impl PlatformGitRepository {
         message: &str,
     ) -> Result<CommitRevision, PlatformGitError> {
         let head = self.head().await?;
-        let path = format!("environments/{environment}/components.yaml");
+        let path = manifest_path(environment);
 
         let stored = self.read(&path, &head).await?;
         let mut document = Document::parse(&stored.text)?;
@@ -106,4 +119,13 @@ impl PlatformGitRepository {
 
         self.update_files_atomically(&head, &changes, message).await
     }
+}
+
+/// Where an environment's manifest lives.
+///
+/// The one place this is spelled out. A caller never supplies it: the
+/// specification is explicit that a request may not name a repository file,
+/// and an environment name is not a path.
+fn manifest_path(environment: &str) -> String {
+    format!("environments/{environment}/components.yaml")
 }

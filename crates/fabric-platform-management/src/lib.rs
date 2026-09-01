@@ -36,7 +36,7 @@ pub use registry::{Provenance, Registry, RegistryError, Resolved};
 pub use selector::{decide, Decision, Reason};
 pub use service::{PlatformError, PlatformManagement};
 pub use status::{ComponentStatus, DesiredStateStatus, Diagnostics, Reconciliation, Running};
-pub use sweep::{Sweep, SweepGuard, SweepResult, Swept};
+pub use sweep::{CheckOutcome, LastCheck, Sweep, SweepResult, SweepState, Swept};
 pub use version::{Channel, Version};
 
 /// Finds the newest release unit an environment is allowed to move to.

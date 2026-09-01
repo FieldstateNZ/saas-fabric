@@ -75,6 +75,12 @@ pub async fn build(config: &ControlPlaneAppConfig) -> Result<Application, String
             git_integration,
             client_secrets,
 
+            // Not yet wired: the adapters and the sweep's cadence are the next
+            // step. The route is mounted regardless and answers that nothing
+            // is managed, which is a truthful answer and one a console can
+            // render — unlike a 404, whose meaning it would have to guess.
+            platform: None,
+
             // Always the configured posture. The override exists for tests.
             operators: None,
         },

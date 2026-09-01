@@ -19,6 +19,7 @@ mod get_client;
 mod get_identity;
 mod integration;
 mod list_clients;
+mod platform;
 mod put_identity;
 mod secrets;
 mod secrets_path;
@@ -32,6 +33,7 @@ pub(crate) use integration::{
     list_repositories,
 };
 pub(crate) use list_clients::list_clients;
+pub(crate) use platform::get_platform;
 pub(crate) use put_identity::put_identity;
 pub(crate) use secrets::{delete_secret, list_secrets, reveal_secret, secret_metadata, write_secret};
 pub(crate) use session::{redeem_session, session_config};

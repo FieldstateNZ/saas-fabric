@@ -59,6 +59,7 @@ fabric-reconciliation  → fabric-core
 fabric-control-plane   → fabric-core
                        → fabric-client-model
                        → fabric-reconciliation
+                       → fabric-platform-management (the platform surface)
 
 fabric-keycloak        → fabric-core
                        → fabric-client-model

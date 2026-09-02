@@ -46,7 +46,7 @@ impl DesiredState for PlatformGitRepository {
             policy: entry.update,
             hold: entry.hold.clone(),
             repositories: match &entry.artifact {
-                crate::Artifact::Oci { images } => images
+                crate::Artifact::Oci { images, .. } => images
                     .iter()
                     .map(|(role, image)| (role.clone(), image.repository.clone()))
                     .collect(),

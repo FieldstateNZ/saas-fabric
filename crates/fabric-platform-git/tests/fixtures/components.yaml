@@ -18,6 +18,7 @@ components:
   keycloak:
     artifact:
       type: oci
+      sourceRevision: '0000000000000000000000000000000000000000'
       images:
         server:
           repository: ghcr.io/example/keycloak
@@ -26,10 +27,9 @@ components:
     update: manual
     desired:
       version: 26.7.2
-      sourceRevision: '0000000000000000000000000000000000000000'
     pinnedIn:
-    - path: applications/core/keycloak/overlays/lucentroot/kustomization.yaml
-      renderer: kustomize-image
+    - renderer: kustomize-image
+      path: applications/core/keycloak/overlays/lucentroot/kustomization.yaml
       image: server
     hold:
       reason: rollback
@@ -38,6 +38,7 @@ components:
   saas-fabric:
     artifact:
       type: oci
+      sourceRevision: 5707f5e725eb2179a255428bc8c08e22d0845f50
       images:
         console:
           repository: ghcr.io/fieldstatenz/saas-fabric-control-plane-ui
@@ -52,15 +53,14 @@ components:
     update: automatic
     desired:
       version: 0.3.0-preview.2
-      sourceRevision: 5707f5e725eb2179a255428bc8c08e22d0845f50
     pinnedIn:
-    - path: applications/core/saas-fabric-control-plane/overlays/lucentroot/kustomization.yaml
-      renderer: kustomize-image
+    - renderer: kustomize-image
+      path: applications/core/saas-fabric-control-plane/overlays/lucentroot/kustomization.yaml
       image: console
-    - path: applications/core/saas-fabric-control-plane/overlays/lucentroot/kustomization.yaml
-      renderer: kustomize-image
+    - renderer: kustomize-image
+      path: applications/core/saas-fabric-control-plane/overlays/lucentroot/kustomization.yaml
       image: controlPlane
-    - path: applications/core/saas-fabric/overlays/lucentroot/kustomization.yaml
-      renderer: kustomize-image
+    - renderer: kustomize-image
+      path: applications/core/saas-fabric/overlays/lucentroot/kustomization.yaml
       image: runtime
     hold: null

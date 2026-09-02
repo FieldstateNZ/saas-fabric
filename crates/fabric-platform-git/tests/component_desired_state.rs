@@ -39,6 +39,7 @@ components:
   saas-fabric:
     artifact:
       type: oci
+      sourceRevision: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
       images:
         console:
           repository: ghcr.io/fieldstatenz/saas-fabric-control-plane-ui
@@ -53,16 +54,15 @@ components:
     update: automatic
     desired:
       version: 0.3.0-preview.1
-      sourceRevision: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
     pinnedIn:
-      - path: applications/core/saas-fabric-control-plane/overlays/lucentroot/kustomization.yaml
-        renderer: kustomize-image
+      - renderer: kustomize-image
+        path: applications/core/saas-fabric-control-plane/overlays/lucentroot/kustomization.yaml
         image: console
-      - path: applications/core/saas-fabric-control-plane/overlays/lucentroot/kustomization.yaml
-        renderer: kustomize-image
+      - renderer: kustomize-image
+        path: applications/core/saas-fabric-control-plane/overlays/lucentroot/kustomization.yaml
         image: controlPlane
-      - path: applications/core/saas-fabric/overlays/lucentroot/kustomization.yaml
-        renderer: kustomize-image
+      - renderer: kustomize-image
+        path: applications/core/saas-fabric/overlays/lucentroot/kustomization.yaml
         image: runtime
     hold: null
 ";
@@ -457,8 +457,8 @@ async fn a_pin_declared_in_a_file_that_does_not_carry_it_is_refused() {
     // images. The file exists and is writable; it simply does not name this
     // image, and guessing which entry was meant is how half a promotion lands.
     let manifest = MANIFEST_TEXT.replace(
-        "      - path: applications/core/saas-fabric/overlays/lucentroot/kustomization.yaml",
-        "      - path: applications/core/saas-fabric-control-plane/overlays/lucentroot/kustomization.yaml",
+        "        path: applications/core/saas-fabric/overlays/lucentroot/kustomization.yaml",
+        "        path: applications/core/saas-fabric-control-plane/overlays/lucentroot/kustomization.yaml",
     );
 
     let host = FakePlatformHost::start(&[
@@ -526,10 +526,14 @@ async fn a_manifest_from_a_newer_schema_is_refused_rather_than_guessed_at() {
 }
 
 #[tokio::test]
-async fn a_pin_that_names_no_image_is_refused() {
-    // A component with several images needs each pin to say which one it
-    // carries. Writing the file anyway would pin whichever entry happened to
-    // match, which for the control-plane overlay is two different images.
+async fn a_kustomize_pin_that_names_no_image_does_not_even_parse() {
+    // Not rejected downstream -- unrepresentable. `image` is a field of the
+    // `kustomize-image` variant rather than an optional field beside a
+    // renderer name, so a pin without one is not a pin this schema can
+    // describe. Nothing downstream has to check for it.
+    //
+    // The failure it prevents: the control-plane overlay pins two images, so a
+    // pin that did not say which would have to guess between them.
     let manifest = MANIFEST_TEXT.replace("        image: runtime\n", "");
 
     let host = FakePlatformHost::start(&[
@@ -576,9 +580,10 @@ async fn a_pin_naming_an_image_the_component_does_not_publish_is_refused() {
 
 #[tokio::test]
 async fn an_unknown_renderer_is_refused_rather_than_guessed_at() {
-    // The field that would ruin this design if it grew a general escape. A
-    // renderer this build does not implement is a refusal, not a fallback to
-    // whichever one looks closest.
+    // The field that would ruin this design if it grew a general escape. The
+    // renderer is the variant tag, so one this build does not implement names
+    // no variant and the document does not parse -- rather than parsing into
+    // something with a renderer field nobody matched on.
     let manifest = MANIFEST_TEXT.replace("renderer: kustomize-image", "renderer: json-path");
 
     let host = FakePlatformHost::start(&[

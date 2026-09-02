@@ -22,7 +22,7 @@ mod model;
 mod overlay;
 mod pinning;
 
-pub use model::{Artifact, Desired, ImagePin, Pin, Renderer};
+pub use model::{Artifact, Desired, ImagePin, Pin};
 
 pub(crate) use document::Document;
 pub(crate) use overlay::repin;

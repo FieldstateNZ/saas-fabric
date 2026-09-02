@@ -725,3 +725,74 @@ async fn rolling_back_writes_the_digests_the_platform_resolved() {
     assert_eq!(unit.images.len(), 2, "every image moves, not one");
     assert_eq!(hold.reason, "rollback");
 }
+
+#[tokio::test]
+async fn resuming_after_a_rollback_selects_the_newest_and_not_what_it_came_from() {
+    // The property that says rollback history is not a queue. An environment
+    // rolled back from preview.2 to preview.1, with preview.3 and preview.4
+    // published since, must resume onto preview.4 -- the newest eligible
+    // coherent release -- rather than replaying the version it came from.
+    //
+    // Nothing remembers a rollback. The selector reads the floor from desired
+    // state and asks the registry what is above it, so "what we came from" is
+    // not something it could prefer even if somebody wanted it to.
+    let registries = Arc::new(Registries::default());
+    registries.publish_all("0.3.0-preview.1", "aaaa");
+    registries.publish_all("0.3.0-preview.2", "bbbb");
+    registries.publish_all("0.3.0-preview.3", "cccc");
+    registries.publish_all("0.3.0-preview.4", "dddd");
+
+    // The fixture runs preview.2.
+    let desired_state = Arc::new(Recorded::new(UpdatePolicy::Automatic, None));
+    let service = service(&registries, &desired_state);
+
+    service
+        .roll_back(
+            "lucentroot",
+            "saas-fabric",
+            "0.3.0-preview.1",
+            Some("broke Secrets"),
+        )
+        .await
+        .expect("the rollback must succeed");
+
+    assert_eq!(desired_state.current().version, version("0.3.0-preview.1"));
+
+    // Held, so a sweep changes nothing however much is newer.
+    service
+        .reconcile("lucentroot", "saas-fabric")
+        .await
+        .expect("a held reconcile is not an error");
+
+    assert!(
+        desired_state.writes().is_empty(),
+        "a rollback hold stops advancement: {:?}",
+        desired_state.writes()
+    );
+
+    service
+        .resume("lucentroot", "saas-fabric")
+        .await
+        .expect("resuming must succeed");
+
+    let status = service
+        .reconcile("lucentroot", "saas-fabric")
+        .await
+        .expect("the sweep after a resume must run")
+        .status;
+
+    assert_eq!(
+        status.desired,
+        version("0.3.0-preview.4"),
+        "the newest eligible release, not the one the rollback came from"
+    );
+    assert_eq!(
+        desired_state
+            .writes()
+            .iter()
+            .map(|unit| unit.version.as_str().to_owned())
+            .collect::<Vec<_>>(),
+        vec!["0.3.0-preview.4".to_owned()],
+        "one advance, and it skips preview.2 and preview.3 entirely"
+    );
+}

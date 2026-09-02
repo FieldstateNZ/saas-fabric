@@ -6,7 +6,7 @@
  * itself. They share one origin and one `request`, and nothing else.
  */
 import { request } from './client'
-import type { Platform, PlatformIntegration } from './types'
+import type { Platform, PlatformIntegration, RollbackCandidates } from './types'
 
 /**
  * What this deployment's environment is asked to run.
@@ -56,4 +56,36 @@ export async function resumeComponent(component: string): Promise<void> {
 /** The Platform Management application's lifecycle. */
 export async function getPlatformIntegration(): Promise<PlatformIntegration> {
   return request<PlatformIntegration>('/api/integrations/platform')
+}
+
+/**
+ * What this component could be rolled back to.
+ *
+ * The list is the only way to name a version. There is no field to type one
+ * into, and the control plane refuses anything it has not itself resolved to a
+ * complete coherent release unit.
+ */
+export async function rollbackCandidates(component: string): Promise<RollbackCandidates> {
+  return request<RollbackCandidates>(
+    `/api/platform/components/${encodeURIComponent(component)}/versions`,
+  )
+}
+
+/**
+ * Puts a component back on an older version, and holds it there.
+ *
+ * Sends a version and nothing else. The three image digests are resolved by
+ * the platform at the moment of the write, so there is no shape in which a
+ * browser could name one.
+ */
+export async function rollBackComponent(
+  component: string,
+  version: string,
+  note: string | null,
+): Promise<void> {
+  await request(`/api/platform/components/${encodeURIComponent(component)}/rollback`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ version, note }),
+  })
 }

@@ -85,6 +85,12 @@ impl ControlPlaneError {
             // to retry or to correct their request.
             Self::Platform(PlatformError::NotAdvancing { .. }) => StatusCode::CONFLICT,
 
+            // The version is not one this component can go back to. 422: the
+            // request is well-formed and its content is what cannot be acted
+            // on — and unlike a 404 there *is* a component here, it just has
+            // no such release to return to.
+            Self::Platform(PlatformError::NotRollable { .. }) => StatusCode::UNPROCESSABLE_ENTITY,
+
             Self::Platform(_) => StatusCode::SERVICE_UNAVAILABLE,
 
             Self::RevisionRequired => StatusCode::PRECONDITION_REQUIRED,

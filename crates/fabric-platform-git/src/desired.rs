@@ -1,40 +1,31 @@
 //! Moving one component's desired state, as one commit.
 
-use std::collections::BTreeMap;
-
+mod inputs;
 mod plan;
+
+pub use inputs::{ComponentVersion, ImageDigest};
+
+use fabric_platform_management::Hold;
 
 use crate::host::PlatformGitRepository;
 use crate::{CommitRevision, PlatformGitError};
 
-/// One image's new identity, as the caller resolved it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ImageDigest {
-    /// Where the image was published. Checked against what the manifest
-    /// already declares for this role, and refused if it disagrees — a caller
-    /// may move a component to a new *version*, never to a new registry.
-    pub repository: String,
-
-    /// The immutable digest to deploy.
-    pub digest: String,
-}
-
-/// What a caller asks a component to move to.
+/// What a desired-state write does to the component's hold.
 ///
-/// A release unit: one version, one source commit, and every image the
-/// component publishes. Not a per-image update — promoting the console without
-/// the control plane would put two thirds of a release on an environment and
-/// call it integrated.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ComponentVersion {
-    /// The version, once.
-    pub version: String,
+/// Advancing keeps whatever is there — clearing a hold to succeed is exactly
+/// what the selector must not be able to do. Rolling back sets one, in the
+/// same commit that moves the version, because an environment moved backwards
+/// with advancement still live would be advanced forward again on the next
+/// sweep.
+///
+/// This is the adapter's private vocabulary. The *port* states the guarantee
+/// where every caller meets it: `advance` has no hold parameter at all.
+enum HoldChange {
+    /// Leave it exactly as the manifest has it.
+    Keep,
 
-    /// The commit every image was built from.
-    pub source_revision: String,
-
-    /// Images by role. Must be exactly the roles the manifest declares.
-    pub images: BTreeMap<String, ImageDigest>,
+    /// Replace it.
+    Set(Hold),
 }
 
 impl PlatformGitRepository {
@@ -83,6 +74,43 @@ impl PlatformGitRepository {
         wanted: &ComponentVersion,
         message: &str,
     ) -> Result<CommitRevision, PlatformGitError> {
+        self.write_desired(environment, component, wanted, &HoldChange::Keep, message)
+            .await
+    }
+
+    /// Points a component at an older version *and* holds it there, in one
+    /// commit.
+    ///
+    /// # Errors
+    ///
+    /// The same as [`set_component_desired_state`](Self::set_component_desired_state).
+    pub async fn roll_back_component(
+        &self,
+        environment: &str,
+        component: &str,
+        wanted: &ComponentVersion,
+        hold: &Hold,
+        message: &str,
+    ) -> Result<CommitRevision, PlatformGitError> {
+        self.write_desired(
+            environment,
+            component,
+            wanted,
+            &HoldChange::Set(hold.clone()),
+            message,
+        )
+        .await
+    }
+
+    /// The write both of those are.
+    async fn write_desired(
+        &self,
+        environment: &str,
+        component: &str,
+        wanted: &ComponentVersion,
+        hold: &HoldChange,
+        message: &str,
+    ) -> Result<CommitRevision, PlatformGitError> {
         let mut read = self.read_manifest(environment).await?;
         let path = read.stored.path.clone();
 
@@ -100,6 +128,10 @@ impl PlatformGitRepository {
 
         let mut changes = plan::rewrite_pins(self, &read.head, entry, wanted, &roots).await?;
         plan::apply(entry, wanted);
+
+        if let HoldChange::Set(hold) = hold {
+            entry.hold = Some(hold.clone());
+        }
 
         changes.push(crate::FileChange {
             path,

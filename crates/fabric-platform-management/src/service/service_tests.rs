@@ -23,6 +23,20 @@ struct Registries {
 }
 
 impl Registries {
+    /// One image only, which is how a version fails to be a release unit.
+    fn publish(&self, repository: &str, tag: &str, revision: &str) {
+        self.published
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(
+                (repository.to_owned(), tag.to_owned()),
+                Resolved {
+                    digest: format!("sha256:{}", tag.len()),
+                    provenance: Provenance::Agreed(revision.to_owned()),
+                },
+            );
+    }
+
     fn publish_all(&self, tag: &str, revision: &str) {
         for repository in [RUNTIME, CONSOLE] {
             self.published
@@ -70,6 +84,10 @@ struct Recorded {
     /// `writes` because the guarantee under test is that these two paths never
     /// become each other.
     holds: Mutex<Vec<Option<Hold>>>,
+    /// Every rollback written, as the unit and the hold that travelled with
+    /// it. A third list, because the guarantee is that these three write paths
+    /// never become each other.
+    rollbacks: Mutex<Vec<(ReleaseUnit, Hold)>>,
     refuse: Option<DesiredStateError>,
 }
 
@@ -88,6 +106,7 @@ impl Recorded {
             }),
             writes: Mutex::new(Vec::new()),
             holds: Mutex::new(Vec::new()),
+            rollbacks: Mutex::new(Vec::new()),
             refuse: None,
         }
     }
@@ -99,6 +118,13 @@ impl Recorded {
 
     fn writes(&self) -> Vec<ReleaseUnit> {
         self.writes.lock().unwrap_or_else(PoisonError::into_inner).clone()
+    }
+
+    fn rollbacks(&self) -> Vec<(ReleaseUnit, Hold)> {
+        self.rollbacks
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 
     fn holds(&self) -> Vec<Option<Hold>> {
@@ -140,6 +166,30 @@ impl DesiredState for Recorded {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .version = unit.version.clone();
+
+        Ok(())
+    }
+
+    async fn roll_back(
+        &self,
+        _: &str,
+        _: &str,
+        unit: &ReleaseUnit,
+        hold: &Hold,
+        _: &str,
+    ) -> Result<(), DesiredStateError> {
+        if let Some(error) = &self.refuse {
+            return Err(error.clone());
+        }
+
+        self.rollbacks
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push((unit.clone(), hold.clone()));
+
+        let mut desired = self.desired.lock().unwrap_or_else(PoisonError::into_inner);
+        desired.version = unit.version.clone();
+        desired.hold = Some(hold.clone());
 
         Ok(())
     }
@@ -542,4 +592,207 @@ async fn a_component_the_manifest_does_not_name_cannot_be_paused() {
         "a name the manifest does not carry selects nothing"
     );
     assert!(desired_state.holds().is_empty());
+}
+
+// ---------------------------------------------------------------------------
+// Rolling back.
+//
+// The contract: an operator names a version the platform already observed as a
+// complete coherent release unit, and the version, its three digests and a
+// rollback hold move together in one commit.
+// ---------------------------------------------------------------------------
+
+/// A registry holding two releases below the desired one, and one broken.
+fn registries_with_history() -> Arc<Registries> {
+    let registries = Arc::new(Registries::default());
+    registries.publish_all("0.3.0-preview.1", "aaaa");
+    registries.publish_all("0.3.0-preview.2", "bbbb");
+    // Only one of its images was ever published, so it is not a release unit.
+    registries.publish(RUNTIME, "0.3.0-preview.15", "cccc");
+    registries
+}
+
+#[tokio::test]
+async fn only_versions_that_were_whole_releases_are_offered() {
+    // Desired is preview.2, so preview.1 is below it. preview.15 is above it
+    // *and* incomplete, and belongs in neither list.
+    let desired_state = Arc::new(Recorded::new(UpdatePolicy::Automatic, None));
+    let service = service(&registries_with_history(), &desired_state);
+
+    let found = service
+        .rollback_candidates("lucentroot", "saas-fabric")
+        .await
+        .expect("candidates must be readable");
+
+    assert_eq!(
+        found
+            .units
+            .iter()
+            .map(|unit| unit.version.as_str().to_owned())
+            .collect::<Vec<_>>(),
+        vec!["0.3.0-preview.1".to_owned()],
+        "only complete coherent releases below the desired one"
+    );
+    assert!(!found.more, "two candidates is not a truncated list");
+}
+
+#[tokio::test]
+async fn the_desired_version_is_not_something_to_roll_back_to() {
+    let desired_state = Arc::new(Recorded::new(UpdatePolicy::Automatic, None));
+    let service = service(&registries_with_history(), &desired_state);
+
+    let found = service
+        .rollback_candidates("lucentroot", "saas-fabric")
+        .await
+        .expect("candidates must be readable");
+
+    assert!(
+        !found
+            .units
+            .iter()
+            .any(|unit| unit.version == version("0.3.0-preview.2")),
+        "the version already running is not a destination"
+    );
+}
+
+#[tokio::test]
+async fn rolling_back_moves_the_version_and_holds_it_in_one_commit() {
+    let desired_state = Arc::new(Recorded::new(UpdatePolicy::Automatic, None));
+    let service = service(&registries_with_history(), &desired_state);
+
+    let status = service
+        .roll_back(
+            "lucentroot",
+            "saas-fabric",
+            "0.3.0-preview.1",
+            Some("broke Secrets"),
+        )
+        .await
+        .expect("the rollback must succeed");
+
+    assert_eq!(status.desired, version("0.3.0-preview.1"));
+    assert!(status.is_paused(), "an environment put back stays put");
+    assert_eq!(
+        status.policy,
+        UpdatePolicy::Automatic,
+        "rolling back is not a decision to stop advancing forever"
+    );
+
+    let hold = status.hold.as_ref().expect("a rollback records a hold");
+    assert_eq!(hold.reason, "rollback", "distinct from a plain pause");
+    assert_eq!(hold.note.as_deref(), Some("broke Secrets"));
+}
+
+#[tokio::test]
+async fn a_version_the_platform_never_observed_is_refused() {
+    // The whole of "no free-text version entry": a caller may name one, and a
+    // name that does not match an observed release unit writes nothing.
+    let desired_state = Arc::new(Recorded::new(UpdatePolicy::Automatic, None));
+    let service = service(&registries_with_history(), &desired_state);
+
+    for asked in ["0.3.0-preview.99", "not-a-version", "0.3.0-preview.15"] {
+        let outcome = service.roll_back("lucentroot", "saas-fabric", asked, None).await;
+
+        assert!(
+            matches!(outcome, Err(PlatformError::NotRollable { .. })),
+            "{asked} must not be rollable"
+        );
+    }
+
+    assert!(desired_state.rollbacks().is_empty());
+}
+
+#[tokio::test]
+async fn rolling_back_writes_the_digests_the_platform_resolved() {
+    // Not the caller's, because the caller sends none. The unit written is the
+    // one discovery assembled from the registry.
+    let desired_state = Arc::new(Recorded::new(UpdatePolicy::Automatic, None));
+    let service = service(&registries_with_history(), &desired_state);
+
+    service
+        .roll_back("lucentroot", "saas-fabric", "0.3.0-preview.1", None)
+        .await
+        .expect("the rollback must succeed");
+
+    let written = desired_state.rollbacks();
+    let (unit, hold) = written.first().expect("one rollback was written");
+
+    assert_eq!(unit.version, version("0.3.0-preview.1"));
+    assert_eq!(
+        unit.source_revision, "aaaa",
+        "the commit its images were built from"
+    );
+    assert_eq!(unit.images.len(), 2, "every image moves, not one");
+    assert_eq!(hold.reason, "rollback");
+}
+
+#[tokio::test]
+async fn resuming_after_a_rollback_selects_the_newest_and_not_what_it_came_from() {
+    // The property that says rollback history is not a queue. An environment
+    // rolled back from preview.2 to preview.1, with preview.3 and preview.4
+    // published since, must resume onto preview.4 -- the newest eligible
+    // coherent release -- rather than replaying the version it came from.
+    //
+    // Nothing remembers a rollback. The selector reads the floor from desired
+    // state and asks the registry what is above it, so "what we came from" is
+    // not something it could prefer even if somebody wanted it to.
+    let registries = Arc::new(Registries::default());
+    registries.publish_all("0.3.0-preview.1", "aaaa");
+    registries.publish_all("0.3.0-preview.2", "bbbb");
+    registries.publish_all("0.3.0-preview.3", "cccc");
+    registries.publish_all("0.3.0-preview.4", "dddd");
+
+    // The fixture runs preview.2.
+    let desired_state = Arc::new(Recorded::new(UpdatePolicy::Automatic, None));
+    let service = service(&registries, &desired_state);
+
+    service
+        .roll_back(
+            "lucentroot",
+            "saas-fabric",
+            "0.3.0-preview.1",
+            Some("broke Secrets"),
+        )
+        .await
+        .expect("the rollback must succeed");
+
+    assert_eq!(desired_state.current().version, version("0.3.0-preview.1"));
+
+    // Held, so a sweep changes nothing however much is newer.
+    service
+        .reconcile("lucentroot", "saas-fabric")
+        .await
+        .expect("a held reconcile is not an error");
+
+    assert!(
+        desired_state.writes().is_empty(),
+        "a rollback hold stops advancement: {:?}",
+        desired_state.writes()
+    );
+
+    service
+        .resume("lucentroot", "saas-fabric")
+        .await
+        .expect("resuming must succeed");
+
+    let status = service
+        .reconcile("lucentroot", "saas-fabric")
+        .await
+        .expect("the sweep after a resume must run")
+        .status;
+
+    assert_eq!(
+        status.desired,
+        version("0.3.0-preview.4"),
+        "the newest eligible release, not the one the rollback came from"
+    );
+    assert_eq!(
+        desired_state
+            .writes()
+            .iter()
+            .map(|unit| unit.version.as_str().to_owned())
+            .collect::<Vec<_>>(),
+        vec!["0.3.0-preview.4".to_owned()],
+        "one advance, and it skips preview.2 and preview.3 entirely"
+    );
 }

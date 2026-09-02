@@ -123,6 +123,17 @@ impl DesiredState for Several {
         Ok(())
     }
 
+    async fn roll_back(
+        &self,
+        _: &str,
+        _: &str,
+        _: &ReleaseUnit,
+        _: &crate::Hold,
+        _: &str,
+    ) -> Result<(), DesiredStateError> {
+        panic!("a sweep must never roll a component back")
+    }
+
     async fn pause(&self, _: &str, _: &str, _: &crate::Hold, _: &str) -> Result<(), DesiredStateError> {
         panic!("a sweep must never pause a component")
     }
@@ -310,6 +321,17 @@ impl DesiredState for Gated {
         self.inner.advance(e, c, unit, m).await
     }
 
+    async fn roll_back(
+        &self,
+        _: &str,
+        _: &str,
+        _: &ReleaseUnit,
+        _: &crate::Hold,
+        _: &str,
+    ) -> Result<(), DesiredStateError> {
+        panic!("a sweep must never roll a component back")
+    }
+
     async fn pause(&self, _: &str, _: &str, _: &crate::Hold, _: &str) -> Result<(), DesiredStateError> {
         panic!("a sweep must never pause a component")
     }
@@ -383,6 +405,17 @@ async fn a_sweep_with_nothing_connected_records_nothing() {
         }
 
         async fn advance(&self, _: &str, _: &str, _: &ReleaseUnit, _: &str) -> Result<(), DesiredStateError> {
+            Err(DesiredStateError::NotConnected)
+        }
+
+        async fn roll_back(
+            &self,
+            _: &str,
+            _: &str,
+            _: &ReleaseUnit,
+            _: &crate::Hold,
+            _: &str,
+        ) -> Result<(), DesiredStateError> {
             Err(DesiredStateError::NotConnected)
         }
 

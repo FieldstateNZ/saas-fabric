@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { pauseComponent, resumeComponent } from '../api/platform'
 import type { PlatformComponent } from '../api/types'
 import { describe } from '../hooks/useClients'
+import { RollbackPicker } from './RollbackPicker'
 
 /**
  * Stopping a component advancing, and letting it go again.
@@ -35,6 +36,7 @@ export function ComponentBrake({ component }: ComponentBrakeProps) {
   const [error, setError] = useState<string | null>(null)
   const [note, setNote] = useState('')
   const [pausing, setPausing] = useState(false)
+  const [rollingBack, setRollingBack] = useState(false)
 
   // Nothing to pause. A component that does not advance on its own has no
   // advancement to stop, and the control plane refuses it — so the console
@@ -74,6 +76,17 @@ export function ComponentBrake({ component }: ComponentBrakeProps) {
     )
   }
 
+  if (rollingBack) {
+    return (
+      <RollbackPicker
+        component={component.component}
+        onCancel={() => {
+          setRollingBack(false)
+        }}
+      />
+    )
+  }
+
   return (
     <div className="brake">
       {error !== null && <p className="error">{error}</p>}
@@ -105,15 +118,29 @@ export function ComponentBrake({ component }: ComponentBrakeProps) {
           </button>
         </>
       ) : (
-        <button
-          type="button"
-          className="brake__action"
-          onClick={() => {
-            setPausing(true)
-          }}
-        >
-          Pause automatic updates
-        </button>
+        <>
+          {/* Rollback first: it is what an operator reaches for when something
+              is wrong, and pausing is what they reach for when they want a
+              moment. */}
+          <button
+            type="button"
+            className="brake__action"
+            onClick={() => {
+              setRollingBack(true)
+            }}
+          >
+            Roll back
+          </button>
+          <button
+            type="button"
+            className="brake__action"
+            onClick={() => {
+              setPausing(true)
+            }}
+          >
+            Pause automatic updates
+          </button>
+        </>
       )}
     </div>
   )

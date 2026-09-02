@@ -1,0 +1,130 @@
+//! Putting an environment back on something it ran before.
+
+use crate::service::brake::ROLLBACK;
+use crate::service::{PlatformError, PlatformManagement};
+use crate::{history, ComponentStatus, Discovery, History, Hold, ReleaseUnit, Version};
+
+impl PlatformManagement {
+    /// What this component could be rolled back to.
+    ///
+    /// Observed, not remembered. The list is what the registry holds *now*,
+    /// resolved to whole release units — so a version withdrawn since it ran
+    /// is not offered, and neither is one whose images never agreed. Reading
+    /// it changes nothing.
+    ///
+    /// # Errors
+    ///
+    /// The desired-state variants if the component cannot be read, and
+    /// [`PlatformError::Registry`] if a registry could not be asked. Nothing
+    /// is offered from a partial answer.
+    pub async fn rollback_candidates(
+        &self,
+        environment: &str,
+        component: &str,
+    ) -> Result<History, PlatformError> {
+        let desired = self.desired_state.component(environment, component).await?;
+
+        Ok(history(
+            self.registry.as_ref(),
+            &desired.repositories,
+            desired.channel,
+            Some(&desired.version),
+            &desired.version,
+        )
+        .await?)
+    }
+
+    /// Puts a component back on an older version, and holds it there.
+    ///
+    /// # The caller names a version and nothing else
+    ///
+    /// What gets written is resolved here, from the registry, at the moment of
+    /// the write: the version, the source commit and three image digests, as
+    /// one unit. A caller cannot supply a digest, cannot move one image, and
+    /// cannot name a version that is not a complete coherent release — so
+    /// "roll back to whatever Git used to say" is not expressible, and neither
+    /// is rolling back to something that never ran.
+    ///
+    /// # The hold is not optional
+    ///
+    /// Moving an environment backwards under a live automatic policy would be
+    /// undone by the next sweep, and the operator would watch their rollback
+    /// disappear. So the hold travels in the same commit, and advancement
+    /// stays paused until somebody resumes. It is a `rollback` hold rather
+    /// than a `paused` one, because a later reader should be able to tell
+    /// which act stopped the environment.
+    ///
+    /// The policy is untouched. Rolling back is "put me here and stay until I
+    /// say otherwise", which is not a decision to stop advancing forever.
+    ///
+    /// # Errors
+    ///
+    /// [`PlatformError::NotRollable`] if the version is not one this component
+    /// can be rolled back to, and the desired-state and registry variants
+    /// otherwise.
+    pub async fn roll_back(
+        &self,
+        environment: &str,
+        component: &str,
+        version: &str,
+        note: Option<&str>,
+    ) -> Result<ComponentStatus, PlatformError> {
+        let desired = self.desired_state.component(environment, component).await?;
+
+        let candidates = history(
+            self.registry.as_ref(),
+            &desired.repositories,
+            desired.channel,
+            Some(&desired.version),
+            &desired.version,
+        )
+        .await?;
+
+        // Matched against what was observed, never parsed into a decision. A
+        // version this does not already hold a resolved unit for is not one
+        // there is anything to write.
+        let unit = chosen(&candidates, version).ok_or_else(|| PlatformError::NotRollable {
+            component: component.to_owned(),
+            version: version.to_owned(),
+        })?;
+
+        let hold = Hold {
+            reason: ROLLBACK.to_owned(),
+            since: self.stamp(),
+            note: note.map(ToOwned::to_owned),
+        };
+
+        self.desired_state
+            .roll_back(
+                environment,
+                component,
+                unit,
+                &hold,
+                &format!(
+                    "Roll {component} in {environment} back to {}",
+                    unit.version.as_str()
+                ),
+            )
+            .await?;
+
+        let mut settled = desired.clone();
+        settled.version = unit.version.clone();
+        settled.hold = Some(hold);
+
+        // Discovery is deliberately empty. This pass looked *backwards*; what
+        // is newer is a different question, and answering it from a search
+        // that never asked would be reporting something unobserved.
+        Ok(ComponentStatus::assemble(
+            component,
+            &settled,
+            &Discovery::default(),
+        ))
+    }
+}
+
+/// The unit a caller's version names, if it is one of the observed ones.
+fn chosen<'a>(candidates: &'a History, version: &str) -> Option<&'a ReleaseUnit> {
+    let wanted = Version::parse(version)?;
+
+    candidates.units.iter().find(|unit| unit.version == wanted)
+}

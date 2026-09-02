@@ -34,7 +34,7 @@ mod version;
 pub use binding::PlatformDesiredState;
 pub use desired_state::{ComponentDesired, DesiredState, DesiredStateError, Hold};
 pub use diagnostic::SafeDiagnostic;
-pub use discovery::{Discovery, ReleaseUnit, ResolvedImage};
+pub use discovery::{Discovery, History, ReleaseUnit, ResolvedImage};
 pub use policy::UpdatePolicy;
 pub use registry::{Provenance, Registry, RegistryError, Resolved};
 pub use selector::{decide, Decision, Reason};
@@ -44,4 +44,4 @@ pub use sweep::{CheckOutcome, LastCheck, Sweep, SweepResult, SweepState, Swept};
 pub use version::{Channel, Version};
 
 /// Finds the newest release unit an environment is allowed to move to.
-pub use discovery::discover;
+pub use discovery::{discover, history};

@@ -7,6 +7,7 @@ use fabric_core::Clock;
 mod brake;
 mod errors;
 mod reconcile;
+mod rollback;
 
 #[cfg(test)]
 mod service_tests;

@@ -109,6 +109,25 @@ export interface PlatformIntegration {
  */
 export type ConnectionState = 'connected' | 'unavailable' | 'not-connected' | 'not-managed'
 
+/** One version a component could be rolled back to. */
+export interface RollbackCandidate {
+  readonly version: string
+  readonly source_revision: string
+}
+
+/**
+ * What an operator is offered to roll back to.
+ *
+ * Observed, not remembered: what the registry holds now, resolved to whole
+ * release units. A version withdrawn since it ran is not here, and neither is
+ * one whose images never agreed.
+ */
+export interface RollbackCandidates {
+  readonly versions: readonly RollbackCandidate[]
+  /** Whether older versions exist that were not examined. */
+  readonly more: boolean
+}
+
 /** A repository the installation can reach. */
 export interface Candidate {
   readonly owner: string

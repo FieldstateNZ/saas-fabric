@@ -28,4 +28,19 @@ pub enum PlatformError {
         /// Which component was asked.
         component: String,
     },
+
+    /// The version asked for is not one this component can be rolled back to.
+    ///
+    /// It does not exist below the desired one, or its images are incomplete
+    /// or disagree about their source commit. Either way it is not a release
+    /// unit anything ever ran, and deploying it would be deploying a
+    /// composition that never existed.
+    #[error("{version} is not a version {component} can be rolled back to")]
+    NotRollable {
+        /// Which component was asked.
+        component: String,
+
+        /// What was asked for, as the caller wrote it.
+        version: String,
+    },
 }

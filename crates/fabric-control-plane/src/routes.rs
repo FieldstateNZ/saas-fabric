@@ -51,6 +51,8 @@ pub const API_PREFIX: &str = "/api";
 /// GET    /api/platform                        what this environment runs
 /// PUT    /api/platform/components/{c}/hold    stop it advancing
 /// DELETE /api/platform/components/{c}/hold    let it advance again
+/// GET    /api/platform/components/{c}/versions   what it could go back to
+/// POST   /api/platform/components/{c}/rollback   put it back on one
 /// GET /api/clients                       list clients
 /// GET /api/clients/{clientId}            one client's overview
 /// GET /api/clients/{clientId}/identity   its identity, and reconciliation state
@@ -85,6 +87,17 @@ pub(crate) fn control_plane_routes(state: ControlPlaneState) -> Router {
         .route(
             "/platform/components/{component}/hold",
             put(handlers::pause_component).delete(handlers::resume_component),
+        )
+        .route(
+            "/platform/components/{component}/versions",
+            get(handlers::rollback_candidates),
+        )
+        // A POST, because it is an act rather than a resource an operator
+        // composed: they name a version, and what gets written — three digests
+        // and a hold, in one commit — is the platform's to resolve.
+        .route(
+            "/platform/components/{component}/rollback",
+            post(handlers::roll_back_component),
         )
         .route("/clients", get(handlers::list_clients))
         .route("/clients/{client_id}", get(handlers::get_client))

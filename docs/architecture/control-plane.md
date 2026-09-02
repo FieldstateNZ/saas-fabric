@@ -262,6 +262,36 @@ Resuming lifts the hold and **does not advance**. What happens next is the next
 sweep's to decide from what it observes then, so nothing here reports a version
 it has not moved to.
 
+#### Rolling back
+
+```text
+GET  /api/platform/components/{component}/versions    what it could go back to
+POST /api/platform/components/{component}/rollback    put it back on one
+```
+
+An operator names **a version and nothing else**. Every candidate the listing
+offers is one Fabric resolved from the registry to a complete, coherent release
+unit — three images that exist and agree about the commit they were built from.
+A version that never was one is not offered and is refused if asked for
+(`422 version_not_rollable`), because rolling back to it would deploy a
+composition nobody ever ran.
+
+What gets written is resolved at the moment of the write: the version, its
+source commit, its three digests, **and the hold**, in one commit. There is no
+request shape carrying a digest, so "roll back to whatever Git used to say" is
+not expressible.
+
+The hold is not optional. An environment moved backwards under a live automatic
+policy would be advanced forward again by the next sweep, and the operator
+would watch their rollback disappear. It records `reason: rollback` rather than
+`paused` so a later reader can tell which act stopped the environment, and the
+policy stays `automatic` — this is "put me here and stay until I say
+otherwise", not a decision to stop advancing forever.
+
+The candidate search is bounded, and **the bound is reported**: `more: true`
+says older versions exist that were not examined. A list that stopped quietly
+would read as "this is everything there is".
+
 #### The component may be named; the environment still may not
 
 The environment reaches the platform repository as a path segment, which is why

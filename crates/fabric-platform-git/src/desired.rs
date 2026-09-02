@@ -126,7 +126,7 @@ impl PlatformGitRepository {
 
         plan::check_release_unit(component, entry, wanted)?;
 
-        let mut changes = plan::rewrite_pins(self, &read.head, entry, wanted, &roots).await?;
+        let mut changes = plan::rewrite_pins(self, &read.head, component, entry, wanted, &roots).await?;
         plan::apply(entry, wanted);
 
         if let HoldChange::Set(hold) = hold {

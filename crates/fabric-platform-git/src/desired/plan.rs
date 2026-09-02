@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::components::{check_writable, repin, Component};
+use crate::components::{check_writable, repin, Artifact, Component, Renderer};
 use crate::desired::ComponentVersion;
 use crate::host::PlatformGitRepository;
 use crate::{CommitRevision, FileChange, PlatformGitError};
@@ -21,7 +21,8 @@ pub(super) fn check_release_unit(
     entry: &Component,
     wanted: &ComponentVersion,
 ) -> Result<(), PlatformGitError> {
-    let declared: Vec<&String> = entry.desired.images.keys().collect();
+    let Artifact::Oci { images } = &entry.artifact;
+    let declared: Vec<&String> = images.keys().collect();
     let offered: Vec<&String> = wanted.images.keys().collect();
 
     if declared != offered {
@@ -32,7 +33,7 @@ pub(super) fn check_release_unit(
         });
     }
 
-    for (role, image) in &entry.desired.images {
+    for (role, image) in images {
         let Some(offered) = wanted.images.get(role) else {
             continue;
         };
@@ -61,40 +62,55 @@ pub(super) fn check_release_unit(
 pub(super) async fn rewrite_pins(
     repository: &PlatformGitRepository,
     head: &CommitRevision,
+    component: &str,
     entry: &Component,
     wanted: &ComponentVersion,
     roots: &[String],
 ) -> Result<Vec<FileChange>, PlatformGitError> {
-    let mut edited: BTreeMap<String, FileChange> = BTreeMap::new();
+    let Artifact::Oci { images } = &entry.artifact;
+    let mut edited: BTreeMap<&str, FileChange> = BTreeMap::new();
 
-    for (role, image) in &entry.desired.images {
+    for pin in &entry.pinned_in {
+        check_writable(&pin.path, roots)?;
+
+        // Which image this file carries. A pin that names one the component
+        // does not publish is the manifest disagreeing with itself, and
+        // writing the file anyway would pin whatever happened to match.
+        let role = pin.image.as_deref().ok_or_else(|| PlatformGitError::Rejected {
+            detail: format!("{} does not say which image it pins", pin.path),
+        })?;
+
+        let image = images.get(role).ok_or_else(|| PlatformGitError::Rejected {
+            detail: format!("{} pins '{role}', which {component} does not publish", pin.path),
+        })?;
+
         let Some(offered) = wanted.images.get(role) else {
             continue;
         };
 
-        for path in &image.pinned_in {
-            check_writable(path, roots)?;
-
-            if !edited.contains_key(path) {
-                let stored = repository.read(path, head).await?;
-                edited.insert(
-                    path.clone(),
-                    FileChange {
-                        path: path.clone(),
-                        text: stored.text,
-                        expected: Some(stored.revision),
-                    },
-                );
-            }
-
-            let change = edited
-                .get_mut(path)
-                .ok_or_else(|| PlatformGitError::Unavailable {
-                    detail: format!("{path} was lost while being rewritten"),
-                })?;
-
-            change.text = repin(&change.text, &image.repository, &wanted.version, &offered.digest)?;
+        if !edited.contains_key(pin.path.as_str()) {
+            let stored = repository.read(&pin.path, head).await?;
+            edited.insert(
+                pin.path.as_str(),
+                FileChange {
+                    path: pin.path.clone(),
+                    text: stored.text,
+                    expected: Some(stored.revision),
+                },
+            );
         }
+
+        let change = edited
+            .get_mut(pin.path.as_str())
+            .ok_or_else(|| PlatformGitError::Unavailable {
+                detail: format!("{} was lost while being rewritten", pin.path),
+            })?;
+
+        change.text = match pin.renderer {
+            Renderer::KustomizeImage => {
+                repin(&change.text, &image.repository, &wanted.version, &offered.digest)?
+            }
+        };
     }
 
     Ok(edited.into_values().collect())
@@ -107,9 +123,11 @@ pub(super) async fn rewrite_pins(
 /// repository's, and survive untouched.
 pub(super) fn apply(entry: &mut Component, wanted: &ComponentVersion) {
     entry.desired.version.clone_from(&wanted.version);
-    entry.desired.source_revision.clone_from(&wanted.source_revision);
+    entry.desired.source_revision = Some(wanted.source_revision.clone());
 
-    for (role, image) in &mut entry.desired.images {
+    let Artifact::Oci { images } = &mut entry.artifact;
+
+    for (role, image) in images {
         if let Some(offered) = wanted.images.get(role) {
             image.digest.clone_from(&offered.digest);
         }

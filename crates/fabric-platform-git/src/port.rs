@@ -45,12 +45,12 @@ impl DesiredState for PlatformGitRepository {
             channel: entry.channel,
             policy: entry.update,
             hold: entry.hold.clone(),
-            repositories: entry
-                .desired
-                .images
-                .iter()
-                .map(|(role, image)| (role.clone(), image.repository.clone()))
-                .collect(),
+            repositories: match &entry.artifact {
+                crate::Artifact::Oci { images } => images
+                    .iter()
+                    .map(|(role, image)| (role.clone(), image.repository.clone()))
+                    .collect(),
+            },
         })
     }
 

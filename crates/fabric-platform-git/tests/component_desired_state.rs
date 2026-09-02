@@ -31,33 +31,39 @@ const MANIFEST_TEXT: &str = r"# What LucentRoot is asked to run, and the policy 
 #
 # Machine-managed. Editing it by hand is the break-glass path.
 ---
-schemaVersion: 1
+schemaVersion: 2
 environment: lucentroot
 managedRoots:
   - applications/
 components:
   saas-fabric:
+    artifact:
+      type: oci
+      images:
+        console:
+          repository: ghcr.io/fieldstatenz/saas-fabric-control-plane-ui
+          digest: sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+        controlPlane:
+          repository: ghcr.io/fieldstatenz/saas-fabric-control-plane
+          digest: sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+        runtime:
+          repository: ghcr.io/fieldstatenz/saas-fabric
+          digest: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
     channel: preview
     update: automatic
     desired:
       version: 0.3.0-preview.1
       sourceRevision: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-      images:
-        console:
-          repository: ghcr.io/fieldstatenz/saas-fabric-control-plane-ui
-          digest: sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
-          pinnedIn:
-            - applications/core/saas-fabric-control-plane/overlays/lucentroot/kustomization.yaml
-        controlPlane:
-          repository: ghcr.io/fieldstatenz/saas-fabric-control-plane
-          digest: sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
-          pinnedIn:
-            - applications/core/saas-fabric-control-plane/overlays/lucentroot/kustomization.yaml
-        runtime:
-          repository: ghcr.io/fieldstatenz/saas-fabric
-          digest: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-          pinnedIn:
-            - applications/core/saas-fabric/overlays/lucentroot/kustomization.yaml
+    pinnedIn:
+      - path: applications/core/saas-fabric-control-plane/overlays/lucentroot/kustomization.yaml
+        renderer: kustomize-image
+        image: console
+      - path: applications/core/saas-fabric-control-plane/overlays/lucentroot/kustomization.yaml
+        renderer: kustomize-image
+        image: controlPlane
+      - path: applications/core/saas-fabric/overlays/lucentroot/kustomization.yaml
+        renderer: kustomize-image
+        image: runtime
     hold: null
 ";
 
@@ -447,9 +453,12 @@ async fn a_pin_declared_in_a_file_that_does_not_carry_it_is_refused() {
     // The rule the platform repository's CI also enforces. It is applied again
     // here because Fabric reads whatever state exists, which may be one no CI
     // has seen.
+    // The runtime's pin, pointed at the overlay that carries the *other* two
+    // images. The file exists and is writable; it simply does not name this
+    // image, and guessing which entry was meant is how half a promotion lands.
     let manifest = MANIFEST_TEXT.replace(
-        "            - applications/core/saas-fabric/overlays/lucentroot/kustomization.yaml",
-        "            - applications/core/saas-fabric-control-plane/overlays/lucentroot/kustomization.yaml",
+        "      - path: applications/core/saas-fabric/overlays/lucentroot/kustomization.yaml",
+        "      - path: applications/core/saas-fabric-control-plane/overlays/lucentroot/kustomization.yaml",
     );
 
     let host = FakePlatformHost::start(&[
@@ -497,7 +506,7 @@ async fn an_unknown_component_or_environment_is_refused() {
 
 #[tokio::test]
 async fn a_manifest_from_a_newer_schema_is_refused_rather_than_guessed_at() {
-    let manifest = MANIFEST_TEXT.replace("schemaVersion: 1", "schemaVersion: 2");
+    let manifest = MANIFEST_TEXT.replace("schemaVersion: 2", "schemaVersion: 3");
     let host = FakePlatformHost::start(&[
         (MANIFEST, &manifest),
         (RUNTIME_OVERLAY, RUNTIME_OVERLAY_TEXT),
@@ -509,6 +518,80 @@ async fn a_manifest_from_a_newer_schema_is_refused_rather_than_guessed_at() {
         .set_component_desired_state("lucentroot", "saas-fabric", &preview_two(), "Promote")
         .await
         .expect_err("a shape this was not written against is not read optimistically");
+
+    assert!(
+        matches!(failure, PlatformGitError::Rejected { .. }),
+        "{failure:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_pin_that_names_no_image_is_refused() {
+    // A component with several images needs each pin to say which one it
+    // carries. Writing the file anyway would pin whichever entry happened to
+    // match, which for the control-plane overlay is two different images.
+    let manifest = MANIFEST_TEXT.replace("        image: runtime\n", "");
+
+    let host = FakePlatformHost::start(&[
+        (MANIFEST, &manifest),
+        (RUNTIME_OVERLAY, RUNTIME_OVERLAY_TEXT),
+        (OPERATOR_OVERLAY, OPERATOR_OVERLAY_TEXT),
+    ])
+    .await;
+
+    let failure = repository(&host)
+        .set_component_desired_state("lucentroot", "saas-fabric", &preview_two(), "Promote")
+        .await
+        .expect_err("a pin that names no image cannot be written");
+
+    assert!(
+        matches!(failure, PlatformGitError::Rejected { .. }),
+        "{failure:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_pin_naming_an_image_the_component_does_not_publish_is_refused() {
+    // The manifest disagreeing with itself. Nothing is written, because the
+    // alternative is deciding on the operator's behalf which image they meant.
+    let manifest = MANIFEST_TEXT.replace("        image: runtime", "        image: sidecar");
+
+    let host = FakePlatformHost::start(&[
+        (MANIFEST, &manifest),
+        (RUNTIME_OVERLAY, RUNTIME_OVERLAY_TEXT),
+        (OPERATOR_OVERLAY, OPERATOR_OVERLAY_TEXT),
+    ])
+    .await;
+
+    let failure = repository(&host)
+        .set_component_desired_state("lucentroot", "saas-fabric", &preview_two(), "Promote")
+        .await
+        .expect_err("an image the component does not publish cannot be pinned");
+
+    assert!(
+        matches!(failure, PlatformGitError::Rejected { .. }),
+        "{failure:?}"
+    );
+}
+
+#[tokio::test]
+async fn an_unknown_renderer_is_refused_rather_than_guessed_at() {
+    // The field that would ruin this design if it grew a general escape. A
+    // renderer this build does not implement is a refusal, not a fallback to
+    // whichever one looks closest.
+    let manifest = MANIFEST_TEXT.replace("renderer: kustomize-image", "renderer: json-path");
+
+    let host = FakePlatformHost::start(&[
+        (MANIFEST, &manifest),
+        (RUNTIME_OVERLAY, RUNTIME_OVERLAY_TEXT),
+        (OPERATOR_OVERLAY, OPERATOR_OVERLAY_TEXT),
+    ])
+    .await;
+
+    let failure = repository(&host)
+        .set_component_desired_state("lucentroot", "saas-fabric", &preview_two(), "Promote")
+        .await
+        .expect_err("a renderer this build does not know is not a renderer");
 
     assert!(
         matches!(failure, PlatformGitError::Rejected { .. }),

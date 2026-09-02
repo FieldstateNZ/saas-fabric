@@ -18,8 +18,11 @@ use std::collections::BTreeMap;
 pub use fabric_platform_management::{Channel, Hold, UpdatePolicy};
 
 mod document;
+mod model;
 mod overlay;
 mod pinning;
+
+pub use model::{Artifact, Desired, ImagePin, Pin, Renderer};
 
 pub(crate) use document::Document;
 pub(crate) use overlay::repin;
@@ -29,43 +32,15 @@ pub(crate) use pinning::check_writable;
 ///
 /// A manifest declaring anything else is refused rather than half-understood:
 /// a field that has moved is worse read optimistically than not at all.
-pub const SCHEMA_VERSION: u32 = 1;
-
-/// One image of a component, and where its pin is written.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ImagePin {
-    /// The registry repository this image is published to.
-    pub repository: String,
-
-    /// The digest currently asked for.
-    pub digest: String,
-
-    /// The files that carry this pin, declared by the platform repository.
-    pub pinned_in: Vec<String>,
-}
-
-/// What a component is asked to run.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Desired {
-    /// The version, once. Not repeated per image: three images claiming a
-    /// version separately is three places for them to disagree, and
-    /// disagreement is what makes a release unit incomplete rather than
-    /// eligible.
-    pub version: String,
-
-    /// The commit every image was built from.
-    pub source_revision: String,
-
-    /// Images by role, e.g. `runtime`, `controlPlane`, `console`.
-    pub images: BTreeMap<String, ImagePin>,
-}
+pub const SCHEMA_VERSION: u32 = 2;
 
 /// One component's desired state and the policy that moves it.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Component {
+    /// Where this component's versions come from.
+    pub artifact: Artifact,
+
     /// Where to look for newer versions.
     pub channel: Channel,
 
@@ -74,6 +49,14 @@ pub struct Component {
 
     /// What it is asked to run.
     pub desired: Desired,
+
+    /// Every place this component's version is written.
+    ///
+    /// The component's statement rather than each image's, because the two
+    /// artifact kinds have to answer this in the same place — and because a
+    /// reader asking "what does moving this component touch?" should find one
+    /// list rather than assembling it.
+    pub pinned_in: Vec<Pin>,
 
     /// Present while advancement is paused.
     pub hold: Option<Hold>,

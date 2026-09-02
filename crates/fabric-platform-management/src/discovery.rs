@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 mod history;
 mod unit;
 
-pub use history::{history, History};
+pub use history::{history, resolve, History};
 
 #[cfg(test)]
 mod discovery_tests;

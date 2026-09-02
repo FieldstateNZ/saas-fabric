@@ -44,4 +44,4 @@ pub use sweep::{CheckOutcome, LastCheck, Sweep, SweepResult, SweepState, Swept};
 pub use version::{Channel, Version};
 
 /// Finds the newest release unit an environment is allowed to move to.
-pub use discovery::{discover, history};
+pub use discovery::{discover, history, resolve};

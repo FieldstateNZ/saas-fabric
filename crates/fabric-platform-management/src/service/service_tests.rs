@@ -17,12 +17,25 @@ fn version(text: &str) -> Version {
 }
 
 /// A registry holding whole release units.
+///
+/// Counts resolutions, because how *many* a request makes is a property worth
+/// keeping: the difference between resolving one version and re-deriving a
+/// listing is the difference between an answer and a gateway timeout.
 #[derive(Default)]
 struct Registries {
     published: Mutex<BTreeMap<(String, String), Resolved>>,
+    resolutions: Mutex<usize>,
 }
 
 impl Registries {
+    fn forget_resolutions(&self) {
+        *self.resolutions.lock().unwrap_or_else(PoisonError::into_inner) = 0;
+    }
+
+    fn resolutions(&self) -> usize {
+        *self.resolutions.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
     /// One image only, which is how a version fails to be a release unit.
     fn publish(&self, repository: &str, tag: &str, revision: &str) {
         self.published
@@ -67,6 +80,8 @@ impl Registry for Registries {
     }
 
     async fn resolve(&self, repository: &str, tag: &str) -> Result<Option<Resolved>, RegistryError> {
+        *self.resolutions.lock().unwrap_or_else(PoisonError::into_inner) += 1;
+
         Ok(self
             .published
             .lock()
@@ -93,9 +108,18 @@ struct Recorded {
 
 impl Recorded {
     fn new(policy: UpdatePolicy, hold: Option<Hold>) -> Self {
+        Self::at("0.3.0-preview.2", policy, hold)
+    }
+
+    /// The same fixture, running a stated version.
+    ///
+    /// Needed because candidates are filtered by *series* as well as channel,
+    /// so a test about how far back a listing reaches has to put the desired
+    /// version far enough forward for there to be a back.
+    fn at(running: &str, policy: UpdatePolicy, hold: Option<Hold>) -> Self {
         Self {
             desired: Mutex::new(ComponentDesired {
-                version: version("0.3.0-preview.2"),
+                version: version(running),
                 channel: Channel::Preview,
                 policy,
                 hold,
@@ -794,5 +818,70 @@ async fn resuming_after_a_rollback_selects_the_newest_and_not_what_it_came_from(
             .collect::<Vec<_>>(),
         vec!["0.3.0-preview.4".to_owned()],
         "one advance, and it skips preview.2 and preview.3 entirely"
+    );
+}
+
+#[tokio::test]
+async fn a_version_older_than_the_listing_bound_is_still_rollable() {
+    // The bound limits what is *offered*, not what is valid. A safety rule
+    // that made a real release unrollable because five newer ones existed
+    // would be a strange one, and an operator who knows the version they want
+    // should not be told it never existed.
+    let registries = Arc::new(Registries::default());
+    for n in 1..=8 {
+        registries.publish_all(&format!("0.3.0-preview.{n}"), "aaaa");
+    }
+
+    let desired_state = Arc::new(Recorded::at("0.3.0-preview.8", UpdatePolicy::Automatic, None));
+    let service = service(&registries, &desired_state);
+
+    let offered = service
+        .rollback_candidates("lucentroot", "saas-fabric")
+        .await
+        .expect("candidates must be readable");
+
+    assert_eq!(offered.units.len(), 5, "the listing stops at five");
+    assert!(offered.more, "and says there are more");
+    assert!(
+        !offered
+            .units
+            .iter()
+            .any(|unit| unit.version == version("0.3.0-preview.1")),
+        "preview.1 is past the bound and not offered"
+    );
+
+    // And is still a version this component can be put back on.
+    let status = service
+        .roll_back("lucentroot", "saas-fabric", "0.3.0-preview.1", None)
+        .await
+        .expect("a real release below the desired one is rollable");
+
+    assert_eq!(status.desired, version("0.3.0-preview.1"));
+}
+
+#[tokio::test]
+async fn rolling_back_asks_the_registry_about_one_version_and_not_the_whole_history() {
+    // Not a style preference. Re-deriving the listing to check membership made
+    // an operator's click pay for five versions plus a Git write, which
+    // exceeded the request budget against a real registry and answered 504.
+    let registries = Arc::new(Registries::default());
+    for n in 1..=6 {
+        registries.publish_all(&format!("0.3.0-preview.{n}"), "aaaa");
+    }
+
+    let desired_state = Arc::new(Recorded::at("0.3.0-preview.6", UpdatePolicy::Automatic, None));
+    let service = service(&registries, &desired_state);
+
+    registries.forget_resolutions();
+
+    service
+        .roll_back("lucentroot", "saas-fabric", "0.3.0-preview.5", None)
+        .await
+        .expect("the rollback must succeed");
+
+    assert_eq!(
+        registries.resolutions(),
+        2,
+        "one call per image of the one version asked for, and no listing pass"
     );
 }

@@ -2,7 +2,7 @@
 
 use crate::service::brake::ROLLBACK;
 use crate::service::{PlatformError, PlatformManagement};
-use crate::{history, ComponentStatus, Discovery, History, Hold, ReleaseUnit, Version};
+use crate::{history, resolve, ComponentStatus, Discovery, History, Hold};
 
 impl PlatformManagement {
     /// What this component could be rolled back to.
@@ -71,19 +71,20 @@ impl PlatformManagement {
     ) -> Result<ComponentStatus, PlatformError> {
         let desired = self.desired_state.component(environment, component).await?;
 
-        let candidates = history(
+        // Resolved, not looked up in a list. One version costs a fifth of
+        // what re-deriving the whole listing does, and this request also has a
+        // Git write to pay for — doing both is what returned `504` against the
+        // real registry.
+        let unit = resolve(
             self.registry.as_ref(),
             &desired.repositories,
             desired.channel,
             Some(&desired.version),
             &desired.version,
+            version,
         )
-        .await?;
-
-        // Matched against what was observed, never parsed into a decision. A
-        // version this does not already hold a resolved unit for is not one
-        // there is anything to write.
-        let unit = chosen(&candidates, version).ok_or_else(|| PlatformError::NotRollable {
+        .await?
+        .ok_or_else(|| PlatformError::NotRollable {
             component: component.to_owned(),
             version: version.to_owned(),
         })?;
@@ -98,7 +99,7 @@ impl PlatformManagement {
             .roll_back(
                 environment,
                 component,
-                unit,
+                &unit,
                 &hold,
                 &format!(
                     "Roll {component} in {environment} back to {}",
@@ -120,11 +121,4 @@ impl PlatformManagement {
             &Discovery::default(),
         ))
     }
-}
-
-/// The unit a caller's version names, if it is one of the observed ones.
-fn chosen<'a>(candidates: &'a History, version: &str) -> Option<&'a ReleaseUnit> {
-    let wanted = Version::parse(version)?;
-
-    candidates.units.iter().find(|unit| unit.version == wanted)
 }

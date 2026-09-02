@@ -288,9 +288,23 @@ would watch their rollback disappear. It records `reason: rollback` rather than
 policy stays `automatic` — this is "put me here and stay until I say
 otherwise", not a decision to stop advancing forever.
 
-The candidate search is bounded, and **the bound is reported**: `more: true`
-says older versions exist that were not examined. A list that stopped quietly
-would read as "this is everything there is".
+The candidate search is bounded at five, and **the bound is reported**:
+`more: true` says older versions exist that were not examined. A list that
+stopped quietly would read as "this is everything there is".
+
+The bound is about latency, not taste. Proving a version was a whole release
+means a manifest and a config blob per image, fetched sequentially — around
+three seconds a version against GHCR — and the listing has to fit inside one
+operator request. Raising it needs concurrency first, not a bigger number.
+
+Rolling back resolves **only the version asked for**, not the whole listing
+again. Membership in the offered list was never the property that mattered:
+what matters is that the version is in this component's channel and series,
+sits strictly below what is desired, and resolves *now* to a complete coherent
+release unit. One consequence is deliberate — a version older than the bound is
+still rollable if a caller names it, because the bound limits what is *offered*
+and it would be a strange safety rule that made a real release unrollable
+because five newer ones existed.
 
 #### The component may be named; the environment still may not
 

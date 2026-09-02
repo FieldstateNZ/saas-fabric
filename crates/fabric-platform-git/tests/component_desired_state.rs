@@ -31,33 +31,39 @@ const MANIFEST_TEXT: &str = r"# What LucentRoot is asked to run, and the policy 
 #
 # Machine-managed. Editing it by hand is the break-glass path.
 ---
-schemaVersion: 1
+schemaVersion: 2
 environment: lucentroot
 managedRoots:
   - applications/
 components:
   saas-fabric:
-    channel: preview
-    update: automatic
-    desired:
-      version: 0.3.0-preview.1
+    artifact:
+      type: oci
       sourceRevision: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
       images:
         console:
           repository: ghcr.io/fieldstatenz/saas-fabric-control-plane-ui
           digest: sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
-          pinnedIn:
-            - applications/core/saas-fabric-control-plane/overlays/lucentroot/kustomization.yaml
         controlPlane:
           repository: ghcr.io/fieldstatenz/saas-fabric-control-plane
           digest: sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
-          pinnedIn:
-            - applications/core/saas-fabric-control-plane/overlays/lucentroot/kustomization.yaml
         runtime:
           repository: ghcr.io/fieldstatenz/saas-fabric
           digest: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-          pinnedIn:
-            - applications/core/saas-fabric/overlays/lucentroot/kustomization.yaml
+    channel: preview
+    update: automatic
+    desired:
+      version: 0.3.0-preview.1
+    pinnedIn:
+      - renderer: kustomize-image
+        path: applications/core/saas-fabric-control-plane/overlays/lucentroot/kustomization.yaml
+        image: console
+      - renderer: kustomize-image
+        path: applications/core/saas-fabric-control-plane/overlays/lucentroot/kustomization.yaml
+        image: controlPlane
+      - renderer: kustomize-image
+        path: applications/core/saas-fabric/overlays/lucentroot/kustomization.yaml
+        image: runtime
     hold: null
 ";
 
@@ -447,9 +453,12 @@ async fn a_pin_declared_in_a_file_that_does_not_carry_it_is_refused() {
     // The rule the platform repository's CI also enforces. It is applied again
     // here because Fabric reads whatever state exists, which may be one no CI
     // has seen.
+    // The runtime's pin, pointed at the overlay that carries the *other* two
+    // images. The file exists and is writable; it simply does not name this
+    // image, and guessing which entry was meant is how half a promotion lands.
     let manifest = MANIFEST_TEXT.replace(
-        "            - applications/core/saas-fabric/overlays/lucentroot/kustomization.yaml",
-        "            - applications/core/saas-fabric-control-plane/overlays/lucentroot/kustomization.yaml",
+        "        path: applications/core/saas-fabric/overlays/lucentroot/kustomization.yaml",
+        "        path: applications/core/saas-fabric-control-plane/overlays/lucentroot/kustomization.yaml",
     );
 
     let host = FakePlatformHost::start(&[
@@ -497,7 +506,7 @@ async fn an_unknown_component_or_environment_is_refused() {
 
 #[tokio::test]
 async fn a_manifest_from_a_newer_schema_is_refused_rather_than_guessed_at() {
-    let manifest = MANIFEST_TEXT.replace("schemaVersion: 1", "schemaVersion: 2");
+    let manifest = MANIFEST_TEXT.replace("schemaVersion: 2", "schemaVersion: 3");
     let host = FakePlatformHost::start(&[
         (MANIFEST, &manifest),
         (RUNTIME_OVERLAY, RUNTIME_OVERLAY_TEXT),
@@ -513,5 +522,115 @@ async fn a_manifest_from_a_newer_schema_is_refused_rather_than_guessed_at() {
     assert!(
         matches!(failure, PlatformGitError::Rejected { .. }),
         "{failure:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_kustomize_pin_that_names_no_image_does_not_even_parse() {
+    // Not rejected downstream -- unrepresentable. `image` is a field of the
+    // `kustomize-image` variant rather than an optional field beside a
+    // renderer name, so a pin without one is not a pin this schema can
+    // describe. Nothing downstream has to check for it.
+    //
+    // The failure it prevents: the control-plane overlay pins two images, so a
+    // pin that did not say which would have to guess between them.
+    let manifest = MANIFEST_TEXT.replace("        image: runtime\n", "");
+
+    let host = FakePlatformHost::start(&[
+        (MANIFEST, &manifest),
+        (RUNTIME_OVERLAY, RUNTIME_OVERLAY_TEXT),
+        (OPERATOR_OVERLAY, OPERATOR_OVERLAY_TEXT),
+    ])
+    .await;
+
+    let failure = repository(&host)
+        .set_component_desired_state("lucentroot", "saas-fabric", &preview_two(), "Promote")
+        .await
+        .expect_err("a pin that names no image cannot be written");
+
+    assert!(
+        matches!(failure, PlatformGitError::Rejected { .. }),
+        "{failure:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_pin_naming_an_image_the_component_does_not_publish_is_refused() {
+    // The manifest disagreeing with itself. Nothing is written, because the
+    // alternative is deciding on the operator's behalf which image they meant.
+    let manifest = MANIFEST_TEXT.replace("        image: runtime", "        image: sidecar");
+
+    let host = FakePlatformHost::start(&[
+        (MANIFEST, &manifest),
+        (RUNTIME_OVERLAY, RUNTIME_OVERLAY_TEXT),
+        (OPERATOR_OVERLAY, OPERATOR_OVERLAY_TEXT),
+    ])
+    .await;
+
+    let failure = repository(&host)
+        .set_component_desired_state("lucentroot", "saas-fabric", &preview_two(), "Promote")
+        .await
+        .expect_err("an image the component does not publish cannot be pinned");
+
+    assert!(
+        matches!(failure, PlatformGitError::Rejected { .. }),
+        "{failure:?}"
+    );
+}
+
+#[tokio::test]
+async fn an_unknown_renderer_is_refused_rather_than_guessed_at() {
+    // The field that would ruin this design if it grew a general escape. The
+    // renderer is the variant tag, so one this build does not implement names
+    // no variant and the document does not parse -- rather than parsing into
+    // something with a renderer field nobody matched on.
+    let manifest = MANIFEST_TEXT.replace("renderer: kustomize-image", "renderer: json-path");
+
+    let host = FakePlatformHost::start(&[
+        (MANIFEST, &manifest),
+        (RUNTIME_OVERLAY, RUNTIME_OVERLAY_TEXT),
+        (OPERATOR_OVERLAY, OPERATOR_OVERLAY_TEXT),
+    ])
+    .await;
+
+    let failure = repository(&host)
+        .set_component_desired_state("lucentroot", "saas-fabric", &preview_two(), "Promote")
+        .await
+        .expect_err("a renderer this build does not know is not a renderer");
+
+    assert!(
+        matches!(failure, PlatformGitError::Rejected { .. }),
+        "{failure:?}"
+    );
+}
+
+#[tokio::test]
+async fn an_older_schema_is_named_as_a_version_rather_than_a_missing_field() {
+    // The diagnostic during a schema migration, which is the one moment it
+    // matters. A version 1 manifest read by a version 2 build fails on
+    // whichever field moved unless the version is checked first -- so the
+    // operator is told about an unknown key at exactly the moment they need to
+    // be told the file is a version behind.
+    let manifest = MANIFEST_TEXT
+        .replace("schemaVersion: 2", "schemaVersion: 1")
+        .replace(
+            "    artifact:\n      type: oci\n      sourceRevision:",
+            "    legacyShape:\n      whatever:",
+        );
+
+    let host = FakePlatformHost::start(&[(MANIFEST, &manifest)]).await;
+
+    let failure = repository(&host)
+        .components_manifest("lucentroot")
+        .await
+        .expect_err("a manifest from another schema is not read");
+
+    let PlatformGitError::Rejected { detail } = failure else {
+        panic!("a schema mismatch is a refusal");
+    };
+
+    assert!(
+        detail.contains("schemaVersion 1") && detail.contains("reads 2"),
+        "the version is what it names: {detail}"
     );
 }

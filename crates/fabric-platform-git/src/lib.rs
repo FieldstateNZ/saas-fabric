@@ -67,7 +67,9 @@ mod manifest;
 mod model;
 mod port;
 
-pub use components::{Component, Desired, Hold, ImagePin, Manifest, UpdatePolicy, SCHEMA_VERSION};
+pub use components::{
+    Artifact, Component, Desired, Hold, ImagePin, Manifest, Pin, UpdatePolicy, SCHEMA_VERSION,
+};
 pub use config::PlatformRepositoryConfig;
 pub use desired::{ComponentVersion, ImageDigest};
 pub use errors::PlatformGitError;

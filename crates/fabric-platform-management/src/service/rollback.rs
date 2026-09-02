@@ -2,7 +2,7 @@
 
 use crate::service::brake::ROLLBACK;
 use crate::service::{PlatformError, PlatformManagement};
-use crate::{history, ComponentStatus, Discovery, History, Hold, ReleaseUnit, Version};
+use crate::{history, resolve, ComponentStatus, Discovery, History, Hold};
 
 impl PlatformManagement {
     /// What this component could be rolled back to.
@@ -38,12 +38,17 @@ impl PlatformManagement {
     ///
     /// # The caller names a version and nothing else
     ///
-    /// What gets written is resolved here, from the registry, at the moment of
-    /// the write: the version, the source commit and three image digests, as
-    /// one unit. A caller cannot supply a digest, cannot move one image, and
-    /// cannot name a version that is not a complete coherent release — so
-    /// "roll back to whatever Git used to say" is not expressible, and neither
-    /// is rolling back to something that never ran.
+    /// What gets written is resolved here, from the registry, **on this
+    /// request** — not carried over from whatever the candidates listing
+    /// returned moments ago. The version, the source commit and three image
+    /// digests are assembled together, so a caller cannot supply a digest,
+    /// cannot move one image, and cannot name a version that is not a
+    /// complete coherent release.
+    ///
+    /// Re-resolving is not redundant with the listing. It is what makes a
+    /// version withdrawn between the two requests a refusal rather than a
+    /// deployment from a stale candidate object, and it is why the request
+    /// body carries a name instead of a unit.
     ///
     /// # The hold is not optional
     ///
@@ -71,19 +76,20 @@ impl PlatformManagement {
     ) -> Result<ComponentStatus, PlatformError> {
         let desired = self.desired_state.component(environment, component).await?;
 
-        let candidates = history(
+        // Resolved, not looked up in a list. One version costs a fifth of
+        // what re-deriving the whole listing does, and this request also has a
+        // Git write to pay for — doing both is what returned `504` against the
+        // real registry.
+        let unit = resolve(
             self.registry.as_ref(),
             &desired.repositories,
             desired.channel,
             Some(&desired.version),
             &desired.version,
+            version,
         )
-        .await?;
-
-        // Matched against what was observed, never parsed into a decision. A
-        // version this does not already hold a resolved unit for is not one
-        // there is anything to write.
-        let unit = chosen(&candidates, version).ok_or_else(|| PlatformError::NotRollable {
+        .await?
+        .ok_or_else(|| PlatformError::NotRollable {
             component: component.to_owned(),
             version: version.to_owned(),
         })?;
@@ -98,7 +104,7 @@ impl PlatformManagement {
             .roll_back(
                 environment,
                 component,
-                unit,
+                &unit,
                 &hold,
                 &format!(
                     "Roll {component} in {environment} back to {}",
@@ -120,11 +126,4 @@ impl PlatformManagement {
             &Discovery::default(),
         ))
     }
-}
-
-/// The unit a caller's version names, if it is one of the observed ones.
-fn chosen<'a>(candidates: &'a History, version: &str) -> Option<&'a ReleaseUnit> {
-    let wanted = Version::parse(version)?;
-
-    candidates.units.iter().find(|unit| unit.version == wanted)
 }

@@ -195,3 +195,50 @@ async fn a_component_name_cannot_reach_past_its_own_segment() {
         );
     }
 }
+
+#[tokio::test]
+async fn a_rollback_carrying_a_digest_is_refused_rather_than_ignored() {
+    // The invariant the performance fix could tempt somebody to break. The
+    // console has just fetched these values, so sending them back looks free —
+    // and a digest a browser sends is the thing that would actually be
+    // deployed, taken on trust from a caller.
+    //
+    // Refused, not silently dropped: a change that sent them would look like
+    // it worked.
+    let plane = control_plane();
+
+    let request = as_operator("POST", "/api/platform/components/saas-fabric/rollback")
+        .header(http::header::CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            r#"{"version":"0.3.0-preview.4","digest":"sha256:deadbeef"}"#,
+        ))
+        .expect("the request must build");
+
+    let response = send(&plane.router, request).await;
+
+    assert_eq!(
+        response.status(),
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "an unexpected field is a rejected body, not an ignored one"
+    );
+}
+
+#[tokio::test]
+async fn a_rollback_naming_only_a_version_is_a_body_the_api_accepts() {
+    // The other half: the shape that *is* allowed gets past deserialization
+    // and reaches the platform, which in this harness has none. Without this,
+    // the test above could pass because every body is rejected.
+    let plane = control_plane();
+
+    let request = as_operator("POST", "/api/platform/components/saas-fabric/rollback")
+        .header(http::header::CONTENT_TYPE, "application/json")
+        .body(Body::from(r#"{"version":"0.3.0-preview.4","note":null}"#))
+        .expect("the request must build");
+
+    let response = send(&plane.router, request).await;
+    let status = response.status();
+    let body = json(response).await;
+
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(body["error"]["code"], "platform_not_managed");
+}

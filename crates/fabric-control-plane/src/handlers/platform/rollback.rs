@@ -37,12 +37,28 @@ pub(crate) struct CandidatesBody {
 }
 
 /// Which version, and why.
+///
+/// # `deny_unknown_fields`, deliberately
+///
+/// A body carrying a digest, a source revision, or anything else the browser
+/// saw in the candidates listing is **refused**, not ignored. The temptation
+/// is real and will look like a performance fix: the console has just fetched
+/// those values, so why make the platform resolve them again?
+///
+/// Because a value the browser sends is a value an attacker can send. The
+/// version is a *name*, checked against the registry at the moment of the
+/// write; a digest would be the thing actually deployed, taken on trust from a
+/// caller. Silently dropping an unexpected field would let that change land
+/// looking like it worked.
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct Rollback {
     /// One of the versions the candidates listing offered.
     ///
-    /// Checked against what was observed, never trusted: a version the
-    /// platform does not already hold a resolved release unit for is refused.
+    /// A name and nothing else. It is re-resolved against the registry on this
+    /// request — not looked up in whatever the console fetched moments ago —
+    /// so a version withdrawn in between is refused rather than deployed from
+    /// a stale candidate object.
     version: String,
 
     /// Free text, shown beside the hold and never branched on.

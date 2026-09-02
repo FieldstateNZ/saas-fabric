@@ -28,6 +28,18 @@ pub(crate) struct Document {
     pub(crate) manifest: Manifest,
 }
 
+/// Just enough of a manifest to know which schema it is.
+///
+/// Deliberately permissive about everything else: its whole job is to answer
+/// the version question for a document this build may not otherwise be able to
+/// read at all.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Versioned {
+    /// The shape the document claims to be.
+    schema_version: u32,
+}
+
 impl Document {
     /// Parses a manifest, keeping its header.
     ///
@@ -36,19 +48,32 @@ impl Document {
     /// Returns [`PlatformGitError::Rejected`] if the document does not parse,
     /// or declares a schema version this crate was not written against.
     pub(crate) fn parse(text: &str) -> Result<Self, PlatformGitError> {
-        let manifest: Manifest =
+        // The version first, on its own, before anything expects a field to be
+        // where this build puts it.
+        //
+        // Reading the whole document first and checking the version after gets
+        // the diagnostic exactly backwards: a manifest from an older schema
+        // fails on whichever field moved, so the one moment somebody most needs
+        // to be told "this file is version 1 and I read version 2" is the one
+        // moment they are told about an unknown key instead.
+        let declared: Versioned =
             serde_norway::from_str(text).map_err(|error| PlatformGitError::Rejected {
                 detail: format!("the components manifest could not be read: {error}"),
             })?;
 
-        if manifest.schema_version != SCHEMA_VERSION {
+        if declared.schema_version != SCHEMA_VERSION {
             return Err(PlatformGitError::Rejected {
                 detail: format!(
                     "the components manifest declares schemaVersion {}, and this reads {SCHEMA_VERSION}",
-                    manifest.schema_version
+                    declared.schema_version
                 ),
             });
         }
+
+        let manifest: Manifest =
+            serde_norway::from_str(text).map_err(|error| PlatformGitError::Rejected {
+                detail: format!("the components manifest could not be read: {error}"),
+            })?;
 
         Ok(Self {
             header: header_of(text),

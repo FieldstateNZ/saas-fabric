@@ -603,3 +603,34 @@ async fn an_unknown_renderer_is_refused_rather_than_guessed_at() {
         "{failure:?}"
     );
 }
+
+#[tokio::test]
+async fn an_older_schema_is_named_as_a_version_rather_than_a_missing_field() {
+    // The diagnostic during a schema migration, which is the one moment it
+    // matters. A version 1 manifest read by a version 2 build fails on
+    // whichever field moved unless the version is checked first -- so the
+    // operator is told about an unknown key at exactly the moment they need to
+    // be told the file is a version behind.
+    let manifest = MANIFEST_TEXT
+        .replace("schemaVersion: 2", "schemaVersion: 1")
+        .replace(
+            "    artifact:\n      type: oci\n      sourceRevision:",
+            "    legacyShape:\n      whatever:",
+        );
+
+    let host = FakePlatformHost::start(&[(MANIFEST, &manifest)]).await;
+
+    let failure = repository(&host)
+        .components_manifest("lucentroot")
+        .await
+        .expect_err("a manifest from another schema is not read");
+
+    let PlatformGitError::Rejected { detail } = failure else {
+        panic!("a schema mismatch is a refusal");
+    };
+
+    assert!(
+        detail.contains("schemaVersion 1") && detail.contains("reads 2"),
+        "the version is what it names: {detail}"
+    );
+}

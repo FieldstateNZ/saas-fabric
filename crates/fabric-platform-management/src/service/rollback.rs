@@ -38,12 +38,17 @@ impl PlatformManagement {
     ///
     /// # The caller names a version and nothing else
     ///
-    /// What gets written is resolved here, from the registry, at the moment of
-    /// the write: the version, the source commit and three image digests, as
-    /// one unit. A caller cannot supply a digest, cannot move one image, and
-    /// cannot name a version that is not a complete coherent release — so
-    /// "roll back to whatever Git used to say" is not expressible, and neither
-    /// is rolling back to something that never ran.
+    /// What gets written is resolved here, from the registry, **on this
+    /// request** — not carried over from whatever the candidates listing
+    /// returned moments ago. The version, the source commit and three image
+    /// digests are assembled together, so a caller cannot supply a digest,
+    /// cannot move one image, and cannot name a version that is not a
+    /// complete coherent release.
+    ///
+    /// Re-resolving is not redundant with the listing. It is what makes a
+    /// version withdrawn between the two requests a refusal rather than a
+    /// deployment from a stale candidate object, and it is why the request
+    /// body carries a name instead of a unit.
     ///
     /// # The hold is not optional
     ///

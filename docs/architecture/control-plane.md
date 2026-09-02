@@ -297,6 +297,18 @@ means a manifest and a config blob per image, fetched sequentially — around
 three seconds a version against GHCR — and the listing has to fit inside one
 operator request. Raising it needs concurrency first, not a bigger number.
 
+The picker is navigation; the rollback operation is validation. They must not
+share a hidden "only the first N are legal" rule, which is why the two are
+bounded differently and deliberately.
+
+**The version is re-resolved on the rollback request**, not carried over from
+the listing the console fetched moments ago — so a version withdrawn between
+the two is refused rather than deployed from a stale candidate object. The
+request body is `{version, note}` under `deny_unknown_fields`: a body carrying
+a digest is **refused, not ignored**. That temptation will look like a
+performance fix — the browser already has those values — and a digest a caller
+sends is the thing that would actually be deployed.
+
 Rolling back resolves **only the version asked for**, not the whole listing
 again. Membership in the offered list was never the property that mattered:
 what matters is that the version is in this component's channel and series,

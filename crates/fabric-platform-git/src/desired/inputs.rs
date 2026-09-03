@@ -31,3 +31,31 @@ pub struct ComponentVersion {
     /// Images by role. Must be exactly the roles the manifest declares.
     pub images: BTreeMap<String, ImageDigest>,
 }
+
+/// What a caller asks a component to move to.
+///
+/// Two shapes, because the two artifact kinds carry different things and
+/// neither is a degenerate case of the other. A chart version has no digests
+/// to travel with it and no source commit to check.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WantedVersion {
+    /// Several images, moving together.
+    Images(ComponentVersion),
+
+    /// A chart version, which is the whole of what Argo pins.
+    Chart {
+        /// The chart version, as it is published.
+        version: String,
+    },
+}
+
+impl WantedVersion {
+    /// The version this asks for.
+    #[must_use]
+    pub fn version(&self) -> &str {
+        match self {
+            Self::Images(unit) => &unit.version,
+            Self::Chart { version } => version,
+        }
+    }
+}

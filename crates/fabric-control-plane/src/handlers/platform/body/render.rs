@@ -43,6 +43,7 @@ impl ComponentRow {
             component: status.component.clone(),
             desired: status.desired.as_str().to_owned(),
             newer: status.newer.as_ref().map(|version| version.as_str().to_owned()),
+            rollable: status.rollable,
             running: match status.running {
                 Running::Unknown => "unknown",
             },

@@ -1,5 +1,6 @@
 //! What discovery does with a registry mid-publish.
 
+use crate::Release;
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 
@@ -104,7 +105,7 @@ async fn an_incomplete_version_becomes_available_on_a_later_pass() {
     let first = pass(&registry, "0.3.0-preview.1").await;
 
     assert_eq!(
-        first.newer.as_ref().map(|unit| unit.version.as_str()),
+        first.newer.as_ref().map(|release| release.version().as_str()),
         Some("0.3.0-preview.2"),
         "the newest *complete* version is the answer"
     );
@@ -117,7 +118,7 @@ async fn an_incomplete_version_becomes_available_on_a_later_pass() {
     let second = pass(&registry, "0.3.0-preview.1").await;
 
     assert_eq!(
-        second.newer.as_ref().map(|unit| unit.version.as_str()),
+        second.newer.as_ref().map(|release| release.version().as_str()),
         Some("0.3.0-preview.3"),
         "an incomplete version must be reconsidered, not remembered as refused"
     );
@@ -138,7 +139,7 @@ async fn every_image_must_come_from_the_same_commit() {
     assert_eq!(found.incoherent, vec![version("0.3.0-preview.3")]);
     assert!(found.not_yet.is_empty(), "this is not a publishing window");
     assert_eq!(
-        found.newer.map(|unit| unit.version.as_str().to_owned()),
+        found.newer.map(|release| release.version().as_str().to_owned()),
         Some("0.3.0-preview.2".to_owned())
     );
 }
@@ -158,7 +159,7 @@ async fn a_broken_version_does_not_poison_the_channel_and_is_still_reported() {
     let found = pass(&registry, "0.3.0-preview.2").await;
 
     assert_eq!(
-        found.newer.map(|unit| unit.version.as_str().to_owned()),
+        found.newer.map(|release| release.version().as_str().to_owned()),
         Some("0.3.0-preview.4".to_owned()),
         "one bad build must not stop the channel"
     );
@@ -193,7 +194,7 @@ async fn an_image_with_no_provenance_is_not_promoted() {
     // from a push still in flight, and waiting is the cheaper mistake.
     assert_eq!(found.not_yet, vec![version("0.3.0-preview.3")]);
     assert_eq!(
-        found.newer.map(|unit| unit.version.as_str().to_owned()),
+        found.newer.map(|release| release.version().as_str().to_owned()),
         Some("0.3.0-preview.2".to_owned())
     );
 }
@@ -223,7 +224,7 @@ async fn an_artifact_whose_own_parts_disagree_is_incoherent_not_pending() {
     assert_eq!(found.incoherent, vec![version("0.3.0-preview.3")]);
     assert!(found.not_yet.is_empty(), "waiting will not fix this");
     assert_eq!(
-        found.newer.map(|unit| unit.version.as_str().to_owned()),
+        found.newer.map(|release| release.version().as_str().to_owned()),
         Some("0.3.0-preview.2".to_owned())
     );
 }
@@ -245,7 +246,7 @@ async fn selection_never_moves_backwards() {
     // `preview.10` and not `preview.9`, and certainly not `preview.2`. String
     // order would have made 9 the newest and this test would fail.
     assert_eq!(
-        found.newer.map(|unit| unit.version.as_str().to_owned()),
+        found.newer.map(|release| release.version().as_str().to_owned()),
         Some("0.3.0-preview.10".to_owned())
     );
 
@@ -265,7 +266,7 @@ async fn a_channel_and_a_series_both_bound_what_is_eligible() {
     // `0.3.0` is stable, and `0.4.0-preview.1` is another line. An automatic
     // preview policy must not walk an environment onto either.
     assert_eq!(
-        found.newer.map(|unit| unit.version.as_str().to_owned()),
+        found.newer.map(|release| release.version().as_str().to_owned()),
         Some("0.3.0-preview.2".to_owned())
     );
 }
@@ -275,10 +276,14 @@ async fn a_complete_unit_carries_every_image_and_the_commit_they_share() {
     let registry = FakeRegistry::default();
     registry.publish_all("0.3.0-preview.2", "5707f5e");
 
-    let unit = pass(&registry, "0.3.0-preview.1")
+    let found = pass(&registry, "0.3.0-preview.1")
         .await
         .newer
         .expect("a complete version");
+
+    let Release::Unit(unit) = found else {
+        panic!("images discover as a release unit, not a chart");
+    };
 
     assert_eq!(unit.source_revision, "5707f5e");
     assert_eq!(unit.images.len(), 3);

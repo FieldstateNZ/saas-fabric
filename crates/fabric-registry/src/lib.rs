@@ -33,7 +33,9 @@
 //! The one thing held between calls is the pull token, which is a credential
 //! and not an answer.
 
+mod charts;
 mod client;
 mod errors;
 
+pub use charts::HelmCharts;
 pub use client::OciRegistry;

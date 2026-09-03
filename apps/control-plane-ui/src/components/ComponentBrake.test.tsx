@@ -18,6 +18,7 @@ function component(overrides: Partial<PlatformComponent> = {}): PlatformComponen
     newer: null,
     running: 'unknown',
     policy: 'automatic',
+    rollable: true,
     paused: false,
     desiredState: 'current',
     hold: null,
@@ -111,5 +112,23 @@ describe('the brake', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Pause' }))
 
     expect(await screen.findByText(/does not advance on its own/)).toBeInTheDocument()
+  })
+})
+
+describe('a component whose versions are not immutable', () => {
+  it('is not offered a rollback whose only outcome is a refusal', () => {
+    // A chart repository pins a version, not a digest — the bytes behind it
+    // can be republished, so "put me back on what I was running" is a promise
+    // the platform cannot keep. The control plane refuses it; the console does
+    // not offer it.
+    render(<ComponentBrake component={component({ rollable: false })} />)
+
+    expect(screen.queryByRole('button', { name: 'Roll back' })).not.toBeInTheDocument()
+
+    // Pausing is still offered: stopping an environment advancing needs no
+    // immutability at all.
+    expect(
+      screen.getByRole('button', { name: /pause automatic updates/i }),
+    ).toBeInTheDocument()
   })
 })

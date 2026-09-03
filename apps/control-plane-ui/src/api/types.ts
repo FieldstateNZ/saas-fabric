@@ -184,6 +184,16 @@ export interface PlatformComponent {
   readonly newer: string | null
   readonly running: 'unknown'
   readonly policy: 'automatic' | 'manual' | 'locked'
+
+  /**
+   * Whether this component can be rolled back.
+   *
+   * `false` for an artifact whose versions are not immutable — a chart
+   * repository pins a version, and the bytes behind it can be republished, so
+   * "put me back on what I was running" is a promise it cannot keep. The
+   * console does not offer a control whose only outcome is a refusal.
+   */
+  readonly rollable: boolean
   /**
    * Whether an operator has paused an otherwise automatic component.
    *

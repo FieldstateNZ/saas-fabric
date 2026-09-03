@@ -5,7 +5,7 @@
 //! means once there is one.
 
 use crate::binding::PlatformDesiredState;
-use crate::{ComponentDesired, DesiredState, DesiredStateError, Hold, ReleaseUnit};
+use crate::{ComponentDesired, DesiredState, DesiredStateError, Hold, Release, ReleaseUnit};
 
 #[async_trait::async_trait]
 impl DesiredState for PlatformDesiredState {
@@ -25,11 +25,11 @@ impl DesiredState for PlatformDesiredState {
         &self,
         environment: &str,
         component: &str,
-        unit: &ReleaseUnit,
+        release: &Release,
         message: &str,
     ) -> Result<(), DesiredStateError> {
         self.required()?
-            .advance(environment, component, unit, message)
+            .advance(environment, component, release, message)
             .await
     }
 

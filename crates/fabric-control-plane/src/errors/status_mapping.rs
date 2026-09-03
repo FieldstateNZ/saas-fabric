@@ -91,6 +91,13 @@ impl ControlPlaneError {
             // no such release to return to.
             Self::Platform(PlatformError::NotRollable { .. }) => StatusCode::UNPROCESSABLE_ENTITY,
 
+            // 501, and deliberately not 422. The request is well-formed and
+            // the version may well be fine; what is missing is a guarantee
+            // this platform can make about that kind of artifact at all. An
+            // operator retrying with a different version would be answering
+            // the wrong question.
+            Self::Platform(PlatformError::RollbackUnsupported { .. }) => StatusCode::NOT_IMPLEMENTED,
+
             Self::Platform(_) => StatusCode::SERVICE_UNAVAILABLE,
 
             Self::RevisionRequired => StatusCode::PRECONDITION_REQUIRED,

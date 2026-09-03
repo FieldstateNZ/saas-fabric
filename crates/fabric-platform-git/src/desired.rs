@@ -2,8 +2,9 @@
 
 mod inputs;
 mod plan;
+mod render;
 
-pub use inputs::{ComponentVersion, ImageDigest};
+pub use inputs::{ComponentVersion, ImageDigest, WantedVersion};
 
 use fabric_platform_management::Hold;
 
@@ -71,7 +72,7 @@ impl PlatformGitRepository {
         &self,
         environment: &str,
         component: &str,
-        wanted: &ComponentVersion,
+        wanted: &WantedVersion,
         message: &str,
     ) -> Result<CommitRevision, PlatformGitError> {
         self.write_desired(environment, component, wanted, &HoldChange::Keep, message)
@@ -95,7 +96,7 @@ impl PlatformGitRepository {
         self.write_desired(
             environment,
             component,
-            wanted,
+            &WantedVersion::Images(wanted.clone()),
             &HoldChange::Set(hold.clone()),
             message,
         )
@@ -107,7 +108,7 @@ impl PlatformGitRepository {
         &self,
         environment: &str,
         component: &str,
-        wanted: &ComponentVersion,
+        wanted: &WantedVersion,
         hold: &HoldChange,
         message: &str,
     ) -> Result<CommitRevision, PlatformGitError> {

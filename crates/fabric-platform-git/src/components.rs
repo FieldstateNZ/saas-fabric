@@ -17,13 +17,20 @@ use std::collections::BTreeMap;
 
 pub use fabric_platform_management::{Channel, Hold, UpdatePolicy};
 
+mod argo;
+#[cfg(test)]
+#[path = "components/argo_tests.rs"]
+mod argo_tests;
 mod document;
 mod model;
 mod overlay;
+mod pin;
 mod pinning;
 
-pub use model::{Artifact, Desired, ImagePin, Pin};
+pub use model::{Artifact, Desired, ImagePin};
+pub use pin::Pin;
 
+pub(crate) use argo::retarget;
 pub(crate) use document::Document;
 pub(crate) use overlay::repin;
 pub(crate) use pinning::check_writable;

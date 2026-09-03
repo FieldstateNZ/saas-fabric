@@ -5,8 +5,9 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use super::{PlatformError, PlatformManagement};
 use crate::{
-    Channel, ComponentDesired, DesiredState, DesiredStateError, DesiredStateStatus, Hold, Provenance,
-    Registry, RegistryError, ReleaseUnit, Resolved, UpdatePolicy, Version,
+    ArtifactSource, Channel, ChartIndex, ComponentDesired, DesiredState, DesiredStateError,
+    DesiredStateStatus, Hold, Provenance, Registry, RegistryError, Release, ReleaseUnit, Resolved,
+    UpdatePolicy, Version,
 };
 
 const RUNTIME: &str = "ghcr.io/fieldstatenz/saas-fabric";
@@ -94,7 +95,7 @@ impl Registry for Registries {
 /// Desired state that records every write it is asked for.
 struct Recorded {
     desired: Mutex<ComponentDesired>,
-    writes: Mutex<Vec<ReleaseUnit>>,
+    writes: Mutex<Vec<Release>>,
     /// Every hold written, `None` meaning one was lifted. Separate from
     /// `writes` because the guarantee under test is that these two paths never
     /// become each other.
@@ -123,10 +124,12 @@ impl Recorded {
                 channel: Channel::Preview,
                 policy,
                 hold,
-                repositories: BTreeMap::from([
-                    ("console".to_owned(), CONSOLE.to_owned()),
-                    ("runtime".to_owned(), RUNTIME.to_owned()),
-                ]),
+                source: ArtifactSource::Oci {
+                    repositories: BTreeMap::from([
+                        ("console".to_owned(), CONSOLE.to_owned()),
+                        ("runtime".to_owned(), RUNTIME.to_owned()),
+                    ]),
+                },
             }),
             writes: Mutex::new(Vec::new()),
             holds: Mutex::new(Vec::new()),
@@ -140,7 +143,7 @@ impl Recorded {
         self
     }
 
-    fn writes(&self) -> Vec<ReleaseUnit> {
+    fn writes(&self) -> Vec<Release> {
         self.writes.lock().unwrap_or_else(PoisonError::into_inner).clone()
     }
 
@@ -177,7 +180,7 @@ impl DesiredState for Recorded {
             .clone())
     }
 
-    async fn advance(&self, _: &str, _: &str, unit: &ReleaseUnit, _: &str) -> Result<(), DesiredStateError> {
+    async fn advance(&self, _: &str, _: &str, release: &Release, _: &str) -> Result<(), DesiredStateError> {
         if let Some(error) = &self.refuse {
             return Err(error.clone());
         }
@@ -185,11 +188,11 @@ impl DesiredState for Recorded {
         self.writes
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .push(unit.clone());
+            .push(release.clone());
         self.desired
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .version = unit.version.clone();
+            .version = release.version().clone();
 
         Ok(())
     }
@@ -259,6 +262,7 @@ fn registries_with_three() -> Arc<Registries> {
 fn service(registries: &Arc<Registries>, desired_state: &Arc<Recorded>) -> PlatformManagement {
     PlatformManagement::new(
         Arc::clone(registries) as Arc<dyn Registry>,
+        Arc::new(Charts::default()) as Arc<dyn ChartIndex>,
         Arc::clone(desired_state) as Arc<dyn DesiredState>,
         Arc::new(fabric_core::SystemClock::new()) as Arc<dyn fabric_core::Clock>,
     )
@@ -269,6 +273,38 @@ fn held() -> Hold {
         reason: "rollback".to_owned(),
         since: "2026-09-01T09:00:00Z".to_owned(),
         note: None,
+    }
+}
+
+/// A chart repository holding stated versions.
+#[derive(Default)]
+struct Charts {
+    /// Versions by (repository, chart).
+    published: Mutex<BTreeMap<(String, String), Vec<Version>>>,
+}
+
+impl Charts {
+    fn publish(&self, repository: &str, chart: &str, versions: &[&str]) {
+        self.published
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(
+                (repository.to_owned(), chart.to_owned()),
+                versions.iter().map(|text| version(text)).collect(),
+            );
+    }
+}
+
+#[async_trait::async_trait]
+impl ChartIndex for Charts {
+    async fn versions(&self, repository: &str, chart: &str) -> Result<Vec<Version>, RegistryError> {
+        Ok(self
+            .published
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(&(repository.to_owned(), chart.to_owned()))
+            .cloned()
+            .unwrap_or_default())
     }
 }
 
@@ -306,9 +342,12 @@ async fn reconciling_an_automatic_component_advances_it_once() {
 
     let writes = desired_state.writes();
     assert_eq!(writes.len(), 1);
-    assert_eq!(writes[0].version, version("0.3.0-preview.3"));
-    assert_eq!(writes[0].source_revision, "bbbb");
-    assert_eq!(writes[0].images.len(), 2, "a release unit moves whole");
+    let Release::Unit(written) = &writes[0] else {
+        panic!("images advance as a release unit");
+    };
+    assert_eq!(written.version, version("0.3.0-preview.3"));
+    assert_eq!(written.source_revision, "bbbb");
+    assert_eq!(written.images.len(), 2, "a release unit moves whole");
 
     // The status describes what this call caused, not what a second read would
     // find -- which would race the reconciliation it just performed.
@@ -384,7 +423,7 @@ async fn automatic_advancement_stays_on_the_line_it_is_already_on() {
 
     assert_eq!(status.desired, version("0.3.0-preview.3"));
     assert_eq!(
-        desired_state.writes()[0].version,
+        desired_state.writes()[0].version().clone(),
         version("0.3.0-preview.3"),
         "an automatic policy walked onto another release line"
     );
@@ -814,7 +853,7 @@ async fn resuming_after_a_rollback_selects_the_newest_and_not_what_it_came_from(
         desired_state
             .writes()
             .iter()
-            .map(|unit| unit.version.as_str().to_owned())
+            .map(|release| release.version().as_str().to_owned())
             .collect::<Vec<_>>(),
         vec!["0.3.0-preview.4".to_owned()],
         "one advance, and it skips preview.2 and preview.3 entirely"
@@ -883,5 +922,192 @@ async fn rolling_back_asks_the_registry_about_one_version_and_not_the_whole_hist
         registries.resolutions(),
         2,
         "one call per image of the one version asked for, and no listing pass"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Charts.
+//
+// A second artifact kind, discovered differently and guaranteeing less. What
+// these pin is that the difference is visible rather than papered over.
+// ---------------------------------------------------------------------------
+
+const HELM: &str = "https://codecentric.github.io/helm-charts";
+
+/// A component published as a chart, running 7.3.0.
+fn charted(policy: UpdatePolicy) -> Arc<Recorded> {
+    let mut fixture = Recorded::at("7.3.0", policy, None);
+    fixture.desired = Mutex::new(ComponentDesired {
+        version: version("7.3.0"),
+        channel: Channel::Stable,
+        policy,
+        hold: None,
+        source: ArtifactSource::Helm {
+            repository: HELM.to_owned(),
+            chart: "keycloakx".to_owned(),
+        },
+    });
+
+    Arc::new(fixture)
+}
+
+/// The service over a chart repository holding stated versions.
+fn charted_service(charts: &Arc<Charts>, desired_state: &Arc<Recorded>) -> PlatformManagement {
+    PlatformManagement::new(
+        Arc::new(Registries::default()) as Arc<dyn Registry>,
+        Arc::clone(charts) as Arc<dyn ChartIndex>,
+        Arc::clone(desired_state) as Arc<dyn DesiredState>,
+        Arc::new(fabric_core::SystemClock::new()) as Arc<dyn fabric_core::Clock>,
+    )
+}
+
+#[tokio::test]
+async fn a_chart_reports_the_newest_version_its_repository_publishes() {
+    let charts = Arc::new(Charts::default());
+    charts.publish(HELM, "keycloakx", &["7.2.3", "7.3.0", "7.3.1"]);
+
+    let desired_state = charted(UpdatePolicy::Manual);
+    let status = charted_service(&charts, &desired_state)
+        .status("lucentroot", "keycloak")
+        .await
+        .expect("a chart component reads");
+
+    assert_eq!(status.desired, version("7.3.0"));
+    assert_eq!(status.newer, Some(version("7.3.1")));
+    assert_eq!(status.desired_state, DesiredStateStatus::UpdateAvailable);
+}
+
+#[tokio::test]
+async fn a_chart_reports_no_diagnostics_because_it_has_none_to_report() {
+    // `not_yet` and `incoherent` exist because several images can be
+    // half-published or built twice. A chart is one artifact: it cannot be
+    // partly there and cannot disagree with itself.
+    let charts = Arc::new(Charts::default());
+    charts.publish(HELM, "keycloakx", &["7.3.0", "7.3.1"]);
+
+    let status = charted_service(&charts, &charted(UpdatePolicy::Manual))
+        .status("lucentroot", "keycloak")
+        .await
+        .expect("a chart component reads");
+
+    assert!(status.diagnostics.not_yet.is_empty());
+    assert!(status.diagnostics.incoherent.is_empty());
+}
+
+#[tokio::test]
+async fn an_automatic_chart_advances_to_the_newest_version() {
+    let charts = Arc::new(Charts::default());
+    charts.publish(HELM, "keycloakx", &["7.3.0", "7.3.1", "7.3.2"]);
+
+    let desired_state = charted(UpdatePolicy::Automatic);
+    charted_service(&charts, &desired_state)
+        .reconcile("lucentroot", "keycloak")
+        .await
+        .expect("an automatic chart advances");
+
+    let writes = desired_state.writes();
+    assert_eq!(writes.len(), 1);
+    assert_eq!(
+        writes[0],
+        Release::Chart {
+            version: version("7.3.2")
+        },
+        "a chart advances as a chart, carrying no provenance it never had"
+    );
+}
+
+#[tokio::test]
+async fn a_chart_cannot_be_rolled_back_and_says_why() {
+    // Not "not implemented yet". A chart repository pins a version, and the
+    // bytes behind it can be republished -- so "put me back on what I was
+    // running" is a promise it cannot keep, and offering the control would be
+    // offering a guarantee this platform does not have.
+    let charts = Arc::new(Charts::default());
+    charts.publish(HELM, "keycloakx", &["7.2.0", "7.3.0", "7.3.1"]);
+
+    let service = charted_service(&charts, &charted(UpdatePolicy::Manual));
+
+    let listing = service.rollback_candidates("lucentroot", "keycloak").await;
+    assert!(
+        matches!(listing, Err(PlatformError::RollbackUnsupported { .. })),
+        "the listing refuses too: an empty list would say there is nowhere to go, \
+         which is a different claim"
+    );
+
+    let attempt = service.roll_back("lucentroot", "keycloak", "7.2.0", None).await;
+    assert!(
+        matches!(attempt, Err(PlatformError::RollbackUnsupported { .. })),
+        "{attempt:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_chart_can_still_be_paused_and_resumed() {
+    // Stopping an environment advancing needs no immutability at all, so the
+    // brake is offered for both kinds even though rollback is not.
+    let charts = Arc::new(Charts::default());
+    charts.publish(HELM, "keycloakx", &["7.3.0", "7.3.1"]);
+
+    let desired_state = charted(UpdatePolicy::Automatic);
+    let service = charted_service(&charts, &desired_state);
+
+    let paused = service
+        .pause("lucentroot", "keycloak", Some("watching 7.3.1 elsewhere first"))
+        .await
+        .expect("a chart pauses");
+
+    assert!(paused.is_paused());
+    assert!(!paused.rollable, "and still cannot be rolled back");
+    assert!(desired_state.writes().is_empty(), "pausing moves no version");
+
+    service
+        .resume("lucentroot", "keycloak")
+        .await
+        .expect("a chart resumes");
+}
+
+#[tokio::test]
+async fn a_stable_component_can_advance_at_all() {
+    // The defect this found. The series rule -- "an automatic policy walks
+    // forward within the desired version's own line" -- is `core == core`, and
+    // every stable advance changes the core. Applied to a stable component it
+    // meant nothing was ever newer, however much its repository published, and
+    // the console would have said so with a dash.
+    //
+    // Nothing had noticed because the only managed component was a preview.
+    let charts = Arc::new(Charts::default());
+    charts.publish(HELM, "keycloakx", &["7.3.0", "7.3.1"]);
+
+    let status = charted_service(&charts, &charted(UpdatePolicy::Manual))
+        .status("lucentroot", "keycloak")
+        .await
+        .expect("a stable component reads");
+
+    assert_eq!(
+        status.newer,
+        Some(version("7.3.1")),
+        "7.3.1 is newer than 7.3.0 and is not a different line"
+    );
+}
+
+#[tokio::test]
+async fn a_preview_still_stays_on_the_line_it_is_on() {
+    // The rule that made the one above look correct. It is right for a
+    // prerelease and only for a prerelease: 0.4.0-preview.1 is a different
+    // line, and moving to it is a deliberate act.
+    let registries = Arc::new(Registries::default());
+    registries.publish_all("0.3.0-preview.3", "aaaa");
+    registries.publish_all("0.4.0-preview.1", "bbbb");
+
+    let desired_state = Arc::new(Recorded::new(UpdatePolicy::Automatic, None));
+    let status = service(&registries, &desired_state)
+        .status("lucentroot", "saas-fabric")
+        .await
+        .expect("reads");
+
+    assert_eq!(
+        status.newer,
+        Some(version("0.3.0-preview.3")),
+        "the next preview of this line, not the first of the next one"
     );
 }

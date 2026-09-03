@@ -121,16 +121,24 @@ export function ComponentBrake({ component }: ComponentBrakeProps) {
         <>
           {/* Rollback first: it is what an operator reaches for when something
               is wrong, and pausing is what they reach for when they want a
-              moment. */}
-          <button
-            type="button"
-            className="brake__action"
-            onClick={() => {
-              setRollingBack(true)
-            }}
-          >
-            Roll back
-          </button>
+              moment.
+
+              Absent entirely for an artifact whose versions are not immutable.
+              A chart repository pins a version rather than a digest, so going
+              back to "what was running" is a promise this platform cannot
+              make — and a button whose only outcome is that refusal is worse
+              than no button. */}
+          {component.rollable && (
+            <button
+              type="button"
+              className="brake__action"
+              onClick={() => {
+                setRollingBack(true)
+              }}
+            >
+              Roll back
+            </button>
+          )}
           <button
             type="button"
             className="brake__action"

@@ -72,6 +72,13 @@ pub struct ComponentStatus {
     /// The standing decision about advancement.
     pub policy: UpdatePolicy,
 
+    /// Whether this component can be rolled back.
+    ///
+    /// A property of what it is published as, not of what has happened to it:
+    /// an image pins a digest and a chart version does not, so going back to
+    /// "what was running" is a promise only one of them supports.
+    pub rollable: bool,
+
     /// Present while an operator has paused advancement.
     pub hold: Option<Hold>,
 
@@ -95,11 +102,12 @@ impl ComponentStatus {
 
     /// Assembles what the console is told from desired state and a discovery.
     pub(crate) fn assemble(component: &str, desired: &ComponentDesired, discovery: &Discovery) -> Self {
-        let newer = discovery.newer.as_ref().map(|unit| unit.version.clone());
+        let newer = discovery.newer.as_ref().map(|release| release.version().clone());
 
         Self {
             component: component.to_owned(),
             desired: desired.version.clone(),
+            rollable: matches!(desired.source, crate::ArtifactSource::Oci { .. }),
             // Discovery only considers versions above the desired one, so
             // anything it found at all is an upgrade.
             desired_state: if newer.is_some() {

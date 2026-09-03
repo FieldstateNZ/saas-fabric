@@ -1,7 +1,5 @@
 //! What an environment is asked to run of one component.
 
-use std::collections::BTreeMap;
-
 use crate::{Channel, UpdatePolicy, Version};
 
 /// Why an operator's hold is in place.
@@ -38,6 +36,6 @@ pub struct ComponentDesired {
     /// Present while advancement is paused.
     pub hold: Option<Hold>,
 
-    /// Where each of the component's images is published, by role.
-    pub repositories: BTreeMap<String, String>,
+    /// Where this component's versions are published, and how.
+    pub source: crate::ArtifactSource,
 }

@@ -1,6 +1,6 @@
 //! The port through which an environment's desired state is read and moved.
 
-use crate::ReleaseUnit;
+use crate::{Release, ReleaseUnit};
 
 mod component;
 mod errors;
@@ -39,11 +39,12 @@ pub trait DesiredState: Send + Sync {
         component: &str,
     ) -> Result<ComponentDesired, DesiredStateError>;
 
-    /// Moves a component onto a release unit.
+    /// Moves a component onto a release.
     ///
-    /// Takes the unit discovery assembled, so the version, the source commit
-    /// and every image's digest travel together. There is no way to express
-    /// moving one image, changing a policy, or clearing a hold.
+    /// Takes what discovery assembled, so everything that must move together
+    /// does: for images, the version, the source commit and every digest; for
+    /// a chart, the version, which is the whole of it. There is no way to
+    /// express moving one image, changing a policy, or clearing a hold.
     ///
     /// # Errors
     ///
@@ -53,11 +54,20 @@ pub trait DesiredState: Send + Sync {
         &self,
         environment: &str,
         component: &str,
-        unit: &ReleaseUnit,
+        release: &Release,
         message: &str,
     ) -> Result<(), DesiredStateError>;
 
     /// Moves a component onto an older release unit and holds it there.
+    ///
+    /// # It takes a `ReleaseUnit`, and that is the point
+    ///
+    /// Rolling back is offered for images and not for charts, and the
+    /// signature is where that is settled rather than a check somewhere.
+    /// A chart repository pins a version, not a digest: the bytes behind
+    /// `7.3.0` can be republished, so "put me back on what I was running" is a
+    /// promise it cannot keep. Until that lifecycle is modelled there is
+    /// nothing here for a chart to be passed as.
     ///
     /// # Why the version and the hold are one operation
     ///

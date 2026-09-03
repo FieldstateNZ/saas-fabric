@@ -2,8 +2,8 @@
 
 use std::collections::BTreeMap;
 
-use crate::components::{check_writable, repin, Artifact, Component, Pin};
-use crate::desired::ComponentVersion;
+use crate::components::{check_writable, Artifact, Component};
+use crate::desired::{render::render, WantedVersion};
 use crate::host::PlatformGitRepository;
 use crate::{CommitRevision, FileChange, PlatformGitError};
 
@@ -19,9 +19,13 @@ use crate::{CommitRevision, FileChange, PlatformGitError};
 pub(super) fn check_release_unit(
     component: &str,
     entry: &Component,
-    wanted: &ComponentVersion,
+    wanted: &WantedVersion,
 ) -> Result<(), PlatformGitError> {
-    let Artifact::Oci { images, .. } = &entry.artifact;
+    // Only the image shape has a set of roles to agree about. A chart is one
+    // artifact, so there is nothing here for it to disagree with.
+    let (Artifact::Oci { images, .. }, WantedVersion::Images(wanted)) = (&entry.artifact, wanted) else {
+        return Ok(());
+    };
     let declared: Vec<&String> = images.keys().collect();
     let offered: Vec<&String> = wanted.images.keys().collect();
 
@@ -64,10 +68,9 @@ pub(super) async fn rewrite_pins(
     head: &CommitRevision,
     component: &str,
     entry: &Component,
-    wanted: &ComponentVersion,
+    wanted: &WantedVersion,
     roots: &[String],
 ) -> Result<Vec<FileChange>, PlatformGitError> {
-    let Artifact::Oci { images, .. } = &entry.artifact;
     let mut edited: BTreeMap<&str, FileChange> = BTreeMap::new();
 
     for pin in &entry.pinned_in {
@@ -92,24 +95,11 @@ pub(super) async fn rewrite_pins(
                 detail: format!("{path} was lost while being rewritten"),
             })?;
 
-        // Every arm knows exactly what it edits. There is no shape in which a
-        // renderer arrives without what it needs, so nothing here checks for
-        // one.
-        match pin {
-            Pin::KustomizeImage { image: role, .. } => {
-                // A pin naming an image the component does not publish is the
-                // manifest disagreeing with itself, and repinning anyway would
-                // write whichever entry happened to match.
-                let image = images.get(role).ok_or_else(|| PlatformGitError::Rejected {
-                    detail: format!("{path} pins '{role}', which {component} does not publish"),
-                })?;
-
-                let Some(offered) = wanted.images.get(role) else {
-                    continue;
-                };
-
-                change.text = repin(&change.text, &image.repository, &wanted.version, &offered.digest)?;
-            }
+        // Every arm knows exactly what it edits, and a renderer that does not
+        // match the artifact is a manifest disagreeing with itself rather than
+        // something to render approximately.
+        if let Some(text) = render(&change.text, path, component, entry, pin, wanted)? {
+            change.text = text;
         }
     }
 
@@ -121,17 +111,26 @@ pub(super) async fn rewrite_pins(
 /// Only the version, the source commit and each image's digest. The channel,
 /// the update policy, the hold and every `pinnedIn` are the platform
 /// repository's, and survive untouched.
-pub(super) fn apply(entry: &mut Component, wanted: &ComponentVersion) {
-    entry.desired.version.clone_from(&wanted.version);
+pub(super) fn apply(entry: &mut Component, wanted: &WantedVersion) {
+    wanted.version().clone_into(&mut entry.desired.version);
 
-    let Artifact::Oci {
-        source_revision,
-        images,
-    } = &mut entry.artifact;
-    source_revision.clone_from(&wanted.source_revision);
+    let (
+        Artifact::Oci {
+            source_revision,
+            images,
+        },
+        WantedVersion::Images(unit),
+    ) = (&mut entry.artifact, wanted)
+    else {
+        // A chart's version is the whole of its desired state. There is no
+        // provenance to record and no digest to move.
+        return;
+    };
+
+    source_revision.clone_from(&unit.source_revision);
 
     for (role, image) in images {
-        if let Some(offered) = wanted.images.get(role) {
+        if let Some(offered) = unit.images.get(role) {
             image.digest.clone_from(&offered.digest);
         }
     }

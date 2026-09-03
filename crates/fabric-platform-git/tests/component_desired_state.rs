@@ -15,6 +15,7 @@ use fabric_core::Clock;
 use fabric_git_host::GitCredential;
 use fabric_platform_git::{
     ComponentVersion, ImageDigest, PlatformGitError, PlatformGitRepository, PlatformRepositoryConfig,
+    WantedVersion,
 };
 
 mod support;
@@ -148,7 +149,11 @@ async fn host() -> FakePlatformHost {
 }
 
 /// `preview.2`, complete and from one commit.
-fn preview_two() -> ComponentVersion {
+fn preview_two() -> WantedVersion {
+    WantedVersion::Images(preview_two_unit())
+}
+
+fn preview_two_unit() -> ComponentVersion {
     let mut images = BTreeMap::new();
     for (role, repository, digest) in [
         (
@@ -346,11 +351,16 @@ async fn two_thirds_of_a_release_is_refused() {
     let host = host().await;
     let repository = repository(&host);
 
-    let mut partial = preview_two();
+    let mut partial = preview_two_unit();
     partial.images.remove("console");
 
     let failure = repository
-        .set_component_desired_state("lucentroot", "saas-fabric", &partial, "Promote LucentRoot")
+        .set_component_desired_state(
+            "lucentroot",
+            "saas-fabric",
+            &WantedVersion::Images(partial),
+            "Promote LucentRoot",
+        )
         .await
         .expect_err("a component's images move together");
 
@@ -372,11 +382,16 @@ async fn a_version_change_may_not_become_a_registry_change() {
     let host = host().await;
     let repository = repository(&host);
 
-    let mut elsewhere = preview_two();
+    let mut elsewhere = preview_two_unit();
     elsewhere.images.get_mut("runtime").unwrap().repository = "ghcr.io/attacker/saas-fabric".to_owned();
 
     let failure = repository
-        .set_component_desired_state("lucentroot", "saas-fabric", &elsewhere, "Promote LucentRoot")
+        .set_component_desired_state(
+            "lucentroot",
+            "saas-fabric",
+            &WantedVersion::Images(elsewhere),
+            "Promote LucentRoot",
+        )
         .await
         .expect_err("the registry is not a caller's to choose");
 

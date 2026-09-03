@@ -1,12 +1,14 @@
 //! Implementing the desired-state port over the platform repository.
 
-use fabric_platform_management::{ComponentDesired, DesiredState, DesiredStateError, Hold, ReleaseUnit};
+use fabric_platform_management::{
+    ArtifactSource, ComponentDesired, DesiredState, DesiredStateError, Hold, Release, ReleaseUnit,
+};
 
 use crate::{PlatformGitError, PlatformGitRepository};
 
 mod wanted;
 
-use wanted::wanted_from;
+use wanted::{unit_from, wanted_from};
 
 #[async_trait::async_trait]
 impl DesiredState for PlatformGitRepository {
@@ -45,11 +47,17 @@ impl DesiredState for PlatformGitRepository {
             channel: entry.channel,
             policy: entry.update,
             hold: entry.hold.clone(),
-            repositories: match &entry.artifact {
-                crate::Artifact::Oci { images, .. } => images
-                    .iter()
-                    .map(|(role, image)| (role.clone(), image.repository.clone()))
-                    .collect(),
+            source: match &entry.artifact {
+                crate::Artifact::Oci { images, .. } => ArtifactSource::Oci {
+                    repositories: images
+                        .iter()
+                        .map(|(role, image)| (role.clone(), image.repository.clone()))
+                        .collect(),
+                },
+                crate::Artifact::Helm { repository, chart } => ArtifactSource::Helm {
+                    repository: repository.clone(),
+                    chart: chart.clone(),
+                },
             },
         })
     }
@@ -58,10 +66,10 @@ impl DesiredState for PlatformGitRepository {
         &self,
         environment: &str,
         component: &str,
-        unit: &ReleaseUnit,
+        release: &Release,
         message: &str,
     ) -> Result<(), DesiredStateError> {
-        self.set_component_desired_state(environment, component, &wanted_from(unit), message)
+        self.set_component_desired_state(environment, component, &wanted_from(release), message)
             .await?;
 
         Ok(())
@@ -75,7 +83,7 @@ impl DesiredState for PlatformGitRepository {
         hold: &Hold,
         message: &str,
     ) -> Result<(), DesiredStateError> {
-        self.roll_back_component(environment, component, &wanted_from(unit), hold, message)
+        self.roll_back_component(environment, component, &unit_from(unit), hold, message)
             .await?;
 
         Ok(())

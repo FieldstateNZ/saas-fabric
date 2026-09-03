@@ -4,8 +4,9 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use crate::{
-    Channel, CheckOutcome, ComponentDesired, DesiredState, DesiredStateError, PlatformManagement, Provenance,
-    Registry, RegistryError, ReleaseUnit, Resolved, SweepResult, SweepState, Swept, UpdatePolicy, Version,
+    ArtifactSource, Channel, ChartIndex, CheckOutcome, ComponentDesired, DesiredState, DesiredStateError,
+    PlatformManagement, Provenance, Registry, RegistryError, Release, ReleaseUnit, Resolved, SweepResult,
+    SweepState, Swept, UpdatePolicy, Version,
 };
 
 const RUNTIME: &str = "ghcr.io/fieldstatenz/saas-fabric";
@@ -48,7 +49,9 @@ impl Several {
                 channel: Channel::Preview,
                 policy,
                 hold: None,
-                repositories: BTreeMap::from([("runtime".to_owned(), RUNTIME.to_owned())]),
+                source: ArtifactSource::Oci {
+                    repositories: BTreeMap::from([("runtime".to_owned(), RUNTIME.to_owned())]),
+                },
             })
         };
 
@@ -102,7 +105,7 @@ impl DesiredState for Several {
         &self,
         _: &str,
         component: &str,
-        unit: &ReleaseUnit,
+        release: &Release,
         _: &str,
     ) -> Result<(), DesiredStateError> {
         self.advanced
@@ -117,7 +120,7 @@ impl DesiredState for Several {
             .get_mut(component)
             .expect("a component that was advanced exists")
         {
-            desired.version = unit.version.clone();
+            desired.version = release.version().clone();
         }
 
         Ok(())
@@ -146,9 +149,30 @@ impl DesiredState for Several {
 fn service(desired_state: &Arc<Several>) -> PlatformManagement {
     PlatformManagement::new(
         Arc::new(Registries) as Arc<dyn Registry>,
+        Arc::new(Charts::default()) as Arc<dyn ChartIndex>,
         Arc::clone(desired_state) as Arc<dyn DesiredState>,
         Arc::new(fabric_core::SystemClock::new()) as Arc<dyn fabric_core::Clock>,
     )
+}
+
+/// A chart repository holding stated versions.
+#[derive(Default)]
+struct Charts {
+    /// Versions by (repository, chart).
+    published: Mutex<BTreeMap<(String, String), Vec<Version>>>,
+}
+
+#[async_trait::async_trait]
+impl ChartIndex for Charts {
+    async fn versions(&self, repository: &str, chart: &str) -> Result<Vec<Version>, RegistryError> {
+        Ok(self
+            .published
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(&(repository.to_owned(), chart.to_owned()))
+            .cloned()
+            .unwrap_or_default())
+    }
 }
 
 #[tokio::test]
@@ -317,8 +341,8 @@ impl DesiredState for Gated {
         self.inner.component(environment, component).await
     }
 
-    async fn advance(&self, e: &str, c: &str, unit: &ReleaseUnit, m: &str) -> Result<(), DesiredStateError> {
-        self.inner.advance(e, c, unit, m).await
+    async fn advance(&self, e: &str, c: &str, release: &Release, m: &str) -> Result<(), DesiredStateError> {
+        self.inner.advance(e, c, release, m).await
     }
 
     async fn roll_back(
@@ -361,6 +385,7 @@ async fn a_sweep_already_running_is_skipped_rather_than_queued() {
 
     let service = Arc::new(PlatformManagement::new(
         Arc::new(Registries) as Arc<dyn Registry>,
+        Arc::new(Charts::default()) as Arc<dyn ChartIndex>,
         Arc::clone(&desired_state) as Arc<dyn DesiredState>,
         Arc::new(fabric_core::SystemClock::new()) as Arc<dyn fabric_core::Clock>,
     ));
@@ -404,7 +429,7 @@ async fn a_sweep_with_nothing_connected_records_nothing() {
             Err(DesiredStateError::NotConnected)
         }
 
-        async fn advance(&self, _: &str, _: &str, _: &ReleaseUnit, _: &str) -> Result<(), DesiredStateError> {
+        async fn advance(&self, _: &str, _: &str, _: &Release, _: &str) -> Result<(), DesiredStateError> {
             Err(DesiredStateError::NotConnected)
         }
 
@@ -430,6 +455,7 @@ async fn a_sweep_with_nothing_connected_records_nothing() {
 
     let service = PlatformManagement::new(
         Arc::new(Registries) as Arc<dyn Registry>,
+        Arc::new(Charts::default()) as Arc<dyn ChartIndex>,
         Arc::new(Unconnected) as Arc<dyn DesiredState>,
         Arc::new(fabric_core::SystemClock::new()) as Arc<dyn fabric_core::Clock>,
     );

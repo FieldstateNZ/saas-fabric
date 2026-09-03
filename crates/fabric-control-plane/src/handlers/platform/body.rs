@@ -46,6 +46,14 @@ pub struct ComponentRow {
     /// The standing decision about advancement.
     pub policy: &'static str,
 
+    /// Whether this component can be rolled back.
+    ///
+    /// `false` for an artifact whose versions are not immutable — a chart
+    /// repository pins a version, and the bytes behind it can be republished.
+    /// The console uses it to not offer a control whose only outcome is a
+    /// refusal.
+    pub rollable: bool,
+
     /// Whether an operator has paused an otherwise automatic component.
     ///
     /// A separate field rather than a third policy value, because the operator

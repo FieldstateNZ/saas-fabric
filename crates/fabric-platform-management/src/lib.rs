@@ -19,7 +19,9 @@
 //! deliberately so — the registry credential and the platform repository
 //! credential are separate integrations and must stay separable.
 
+mod artifact;
 mod binding;
+mod charts;
 mod desired_state;
 mod diagnostic;
 mod discovery;
@@ -31,7 +33,9 @@ mod status;
 mod sweep;
 mod version;
 
+pub use artifact::{ArtifactSource, Release};
 pub use binding::PlatformDesiredState;
+pub use charts::ChartIndex;
 pub use desired_state::{ComponentDesired, DesiredState, DesiredStateError, Hold};
 pub use diagnostic::SafeDiagnostic;
 pub use discovery::{Discovery, History, ReleaseUnit, ResolvedImage};
@@ -44,4 +48,4 @@ pub use sweep::{CheckOutcome, LastCheck, Sweep, SweepResult, SweepState, Swept};
 pub use version::{Channel, Version};
 
 /// Finds the newest release unit an environment is allowed to move to.
-pub use discovery::{discover, history, resolve};
+pub use discovery::{discover, discover_chart, history, resolve};

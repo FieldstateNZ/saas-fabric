@@ -35,6 +35,36 @@ pub enum PlatformError {
     /// or disagree about their source commit. Either way it is not a release
     /// unit anything ever ran, and deploying it would be deploying a
     /// composition that never existed.
+    /// This component is published as something rollback cannot promise about.
+    ///
+    /// # Not "not implemented yet"
+    ///
+    /// Rolling back an image pins a digest: the bytes an environment goes back
+    /// to are the bytes it ran. A classic chart repository pins a *version*,
+    /// and the bytes behind `7.3.0` can be republished — so "put me back on
+    /// what I was running" is a promise it cannot keep, and offering the
+    /// control anyway would be offering a guarantee this platform does not
+    /// have.
+    ///
+    /// It becomes possible when chart lifecycle is modelled — an OCI chart
+    /// registry, or a digest recorded at the moment of deployment. Until then
+    /// the honest answer is that this component cannot be rolled back, and an
+    /// operator's route back is a deliberate forward change to the version
+    /// they want.
+    #[error("{component} is published as {artifact}, which cannot be rolled back")]
+    RollbackUnsupported {
+        /// Which component was asked.
+        component: String,
+
+        /// What it is published as, in an operator's words.
+        artifact: &'static str,
+    },
+
+    /// The version asked for is not one this component can be rolled back to.
+    ///
+    /// It does not exist below the desired one, or its images are incomplete
+    /// or disagree about their source commit. Either way it is not a release
+    /// unit anything ever ran.
     #[error("{version} is not a version {component} can be rolled back to")]
     NotRollable {
         /// Which component was asked.

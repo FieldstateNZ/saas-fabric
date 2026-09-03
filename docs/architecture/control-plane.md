@@ -262,6 +262,51 @@ Resuming lifts the hold and **does not advance**. What happens next is the next
 sweep's to decide from what it observes then, so nothing here reports a version
 it has not moved to.
 
+#### Two artifact kinds, and one that cannot be rolled back
+
+A component is published either as **container images** or as a **Helm chart**,
+and the two are discovered differently and guarantee different things. They are
+not one shape with fields left empty:
+
+| | images | chart |
+|---|---|---|
+| discovered from | a registry — tags, manifests, config blobs | a chart repository's `index.yaml` |
+| eligibility | every image carries the version and agrees on its source commit | the version is published |
+| what deploys | an immutable digest | a version |
+| rollback | offered | **refused** |
+
+**Rollback is refused for charts, and that is not "not implemented yet".**
+Rolling back an image pins a digest, so the bytes an environment returns to are
+the bytes it ran. A classic chart repository pins a version, and the bytes
+behind `7.3.0` can be republished — "put me back on what I was running" is a
+promise it cannot keep, and offering the control would be offering a guarantee
+this platform does not have. `501 rollback_unsupported`, and the console omits
+the button rather than showing one that only refuses.
+
+It becomes possible when chart lifecycle is modelled: an OCI chart registry, or
+a digest recorded at the moment of deployment. Until then an operator's route
+back is a deliberate forward change to the version they want.
+
+The refusal is in the signatures rather than in a check: `advance` takes a
+`Release`, which is either kind; `roll_back` takes a `ReleaseUnit`, which only
+images produce. There is nothing to forget to check.
+
+Pause and resume are offered for both. Stopping an environment advancing needs
+no immutability at all.
+
+#### The series only means something for a prerelease
+
+An automatic policy walks forward within the desired version's own line, and a
+line is a `major.minor.patch` core. That is right for a prerelease —
+`0.3.0-preview.9` and `preview.10` are the same line, `0.4.0-preview.1` is a
+different one — and wrong for anything else: **every stable advance changes the
+core**, so applying the rule to a stable component meant it could never advance
+and would report "nothing newer" however much its repository published.
+
+What should bound a stable advance instead is **not settled**. Patch and minor
+are ordinary; a major upgrade is not something to take on a sweep. Until it is
+decided, a stable component should be `manual`.
+
 #### Rolling back
 
 ```text

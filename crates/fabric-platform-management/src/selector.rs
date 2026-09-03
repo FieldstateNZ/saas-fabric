@@ -3,7 +3,7 @@
 #[cfg(test)]
 mod selector_tests;
 
-use crate::{Discovery, ReleaseUnit, UpdatePolicy};
+use crate::{Discovery, Release, UpdatePolicy};
 
 /// Why nothing is being done.
 ///
@@ -29,7 +29,7 @@ pub enum Reason {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Decision {
     /// Move desired state to this release unit.
-    Advance(ReleaseUnit),
+    Advance(Release),
 
     /// Leave desired state alone.
     Stay(Reason),
@@ -67,7 +67,7 @@ pub fn decide(policy: UpdatePolicy, held: bool, discovery: &Discovery) -> Decisi
         UpdatePolicy::Locked => Decision::Stay(Reason::Locked),
         UpdatePolicy::Automatic if held => Decision::Stay(Reason::Held),
         UpdatePolicy::Automatic => match &discovery.newer {
-            Some(unit) => Decision::Advance(unit.clone()),
+            Some(release) => Decision::Advance(release.clone()),
             None => Decision::Stay(Reason::NothingNewer),
         },
     }

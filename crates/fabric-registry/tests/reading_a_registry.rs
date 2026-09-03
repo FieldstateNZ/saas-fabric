@@ -219,7 +219,7 @@ async fn discovery_runs_end_to_end_over_the_wire() {
         .unwrap();
 
     assert_eq!(
-        first.newer.as_ref().map(|unit| unit.version.as_str()),
+        first.newer.as_ref().map(|release| release.version().as_str()),
         Some("0.3.0-preview.2")
     );
     assert_eq!(first.not_yet, vec![Version::parse("0.3.0-preview.3").unwrap()]);
@@ -231,13 +231,15 @@ async fn discovery_runs_end_to_end_over_the_wire() {
         .unwrap();
 
     assert_eq!(
-        second.newer.as_ref().map(|unit| unit.version.as_str()),
+        second.newer.as_ref().map(|release| release.version().as_str()),
         Some("0.3.0-preview.3"),
         "the same adapter, asked again, must see the completed release"
     );
     assert!(second.not_yet.is_empty());
 
-    let unit = second.newer.unwrap();
+    let fabric_platform_management::Release::Unit(unit) = second.newer.unwrap() else {
+        panic!("images discover as a release unit");
+    };
     assert_eq!(unit.source_revision, "bbbb");
     assert_eq!(
         unit.images["console"].digest,

@@ -71,7 +71,7 @@ pub use components::{
     Artifact, Component, Desired, Hold, ImagePin, Manifest, Pin, UpdatePolicy, SCHEMA_VERSION,
 };
 pub use config::PlatformRepositoryConfig;
-pub use desired::{ComponentVersion, ImageDigest};
+pub use desired::{ComponentVersion, ImageDigest, WantedVersion};
 pub use errors::PlatformGitError;
 pub use host::PlatformGitRepository;
 pub use model::{CommitRevision, FileChange, FileRevision, StoredFile};

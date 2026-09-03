@@ -1,6 +1,7 @@
 //! Five branches, and the one that writes is the one that must be hard to
 //! reach by accident.
 
+use crate::Release;
 use std::collections::BTreeMap;
 
 use super::{decide, Decision, Reason};
@@ -28,7 +29,7 @@ fn unit(text: &str) -> ReleaseUnit {
 /// Something newer exists, and it is complete.
 fn something_newer() -> Discovery {
     Discovery {
-        newer: Some(unit("0.3.0-preview.3")),
+        newer: Some(Release::Unit(unit("0.3.0-preview.3"))),
         ..Discovery::default()
     }
 }
@@ -84,7 +85,7 @@ fn an_automatic_component_advances_to_what_discovery_found() {
         panic!("an automatic component with an available update should advance");
     };
 
-    assert_eq!(chosen, unit("0.3.0-preview.3"));
+    assert_eq!(chosen, Release::Unit(unit("0.3.0-preview.3")));
 }
 
 #[test]
@@ -124,7 +125,7 @@ fn a_held_component_still_reports_what_it_is_holding_back_from() {
         Decision::Stay(Reason::Held)
     );
     assert_eq!(
-        found.newer.map(|unit| unit.version.as_str().to_owned()),
+        found.newer.map(|release| release.version().as_str().to_owned()),
         Some("0.3.0-preview.3".to_owned()),
         "the decision must not consume or hide what was discovered"
     );

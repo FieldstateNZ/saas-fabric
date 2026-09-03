@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use super::PlatformDesiredState;
-use crate::{ComponentDesired, DesiredState, DesiredStateError, ReleaseUnit};
+use crate::{ComponentDesired, DesiredState, DesiredStateError, Release, ReleaseUnit};
 
 /// A repository that is reachable, and whose reads fail.
 struct Connected;
@@ -21,7 +21,7 @@ impl DesiredState for Connected {
         })
     }
 
-    async fn advance(&self, _: &str, _: &str, _: &ReleaseUnit, _: &str) -> Result<(), DesiredStateError> {
+    async fn advance(&self, _: &str, _: &str, _: &Release, _: &str) -> Result<(), DesiredStateError> {
         Ok(())
     }
 
@@ -74,7 +74,7 @@ async fn every_operation_says_not_connected_until_something_is() {
     );
     assert_eq!(
         binding
-            .advance("lucentroot", "saas-fabric", &unit(), "Promote")
+            .advance("lucentroot", "saas-fabric", &Release::Unit(unit()), "Promote")
             .await
             .expect_err("nothing is connected"),
         DesiredStateError::NotConnected

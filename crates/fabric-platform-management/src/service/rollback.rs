@@ -1,6 +1,7 @@
 //! Putting an environment back on something it ran before.
 
 use crate::service::brake::ROLLBACK;
+use crate::service::rollable::rollable;
 use crate::service::{PlatformError, PlatformManagement};
 use crate::{history, resolve, ComponentStatus, Discovery, History, Hold};
 
@@ -23,10 +24,11 @@ impl PlatformManagement {
         component: &str,
     ) -> Result<History, PlatformError> {
         let desired = self.desired_state.component(environment, component).await?;
+        let repositories = rollable(component, &desired)?;
 
         Ok(history(
             self.registry.as_ref(),
-            &desired.repositories,
+            repositories,
             desired.channel,
             Some(&desired.version),
             &desired.version,
@@ -75,6 +77,7 @@ impl PlatformManagement {
         note: Option<&str>,
     ) -> Result<ComponentStatus, PlatformError> {
         let desired = self.desired_state.component(environment, component).await?;
+        let repositories = rollable(component, &desired)?;
 
         // Resolved, not looked up in a list. One version costs a fifth of
         // what re-deriving the whole listing does, and this request also has a
@@ -82,7 +85,7 @@ impl PlatformManagement {
         // real registry.
         let unit = resolve(
             self.registry.as_ref(),
-            &desired.repositories,
+            repositories,
             desired.channel,
             Some(&desired.version),
             &desired.version,

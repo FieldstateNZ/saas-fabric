@@ -17,6 +17,7 @@ use fabric_platform_git::{
     ComponentVersion, ImageDigest, PlatformGitError, PlatformGitRepository, PlatformRepositoryConfig,
     WantedVersion,
 };
+use fabric_platform_management::DesiredRevision;
 
 mod support;
 
@@ -184,13 +185,41 @@ fn preview_two_unit() -> ComponentVersion {
     }
 }
 
+/// The revision the manifest is at, which every write must present.
+///
+/// Read through the port, exactly as a decision would read it — so a test
+/// writes against the state it decided from, and a test that wants a stale
+/// decision has to construct one deliberately.
+fn unread() -> DesiredRevision {
+    // For a manifest this build cannot read at all. The write refuses on the
+    // read long before the revision is compared, so what it says is immaterial
+    // -- and pretending to have read one would be the lie.
+    DesiredRevision::new("never-read")
+}
+
+async fn at(repository: &PlatformGitRepository) -> DesiredRevision {
+    use fabric_platform_management::DesiredState as _;
+
+    repository
+        .component("lucentroot", "saas-fabric")
+        .await
+        .expect("the component reads")
+        .revision
+}
+
 #[tokio::test]
 async fn a_promotion_moves_the_manifest_and_every_pin_in_one_commit() {
     let host = host().await;
     let repository = repository(&host);
 
     repository
-        .set_component_desired_state("lucentroot", "saas-fabric", &preview_two(), "Promote LucentRoot")
+        .set_component_desired_state(
+            "lucentroot",
+            "saas-fabric",
+            &preview_two(),
+            &at(&repository).await,
+            "Promote LucentRoot",
+        )
         .await
         .unwrap();
 
@@ -219,7 +248,13 @@ async fn an_overlay_keeps_everything_that_is_not_the_pin() {
     let repository = repository(&host);
 
     repository
-        .set_component_desired_state("lucentroot", "saas-fabric", &preview_two(), "Promote LucentRoot")
+        .set_component_desired_state(
+            "lucentroot",
+            "saas-fabric",
+            &preview_two(),
+            &at(&repository).await,
+            "Promote LucentRoot",
+        )
         .await
         .unwrap();
 
@@ -245,7 +280,13 @@ async fn the_manifests_header_and_the_platforms_own_settings_survive() {
     let repository = repository(&host);
 
     repository
-        .set_component_desired_state("lucentroot", "saas-fabric", &preview_two(), "Promote LucentRoot")
+        .set_component_desired_state(
+            "lucentroot",
+            "saas-fabric",
+            &preview_two(),
+            &at(&repository).await,
+            "Promote LucentRoot",
+        )
         .await
         .unwrap();
 
@@ -284,7 +325,13 @@ async fn a_hold_is_carried_through_rather_than_cleared() {
     let repository = repository(&host);
 
     repository
-        .set_component_desired_state("lucentroot", "saas-fabric", &preview_two(), "Promote LucentRoot")
+        .set_component_desired_state(
+            "lucentroot",
+            "saas-fabric",
+            &preview_two(),
+            &at(&repository).await,
+            "Promote LucentRoot",
+        )
         .await
         .unwrap();
 
@@ -318,7 +365,13 @@ async fn a_hold_created_after_the_decision_stops_the_write() {
     host.someone_else_commits(&[(MANIFEST, &held)]);
 
     let failure = repository
-        .set_component_desired_state("lucentroot", "saas-fabric", &preview_two(), "Promote LucentRoot")
+        .set_component_desired_state(
+            "lucentroot",
+            "saas-fabric",
+            &preview_two(),
+            &at(&repository).await,
+            "Promote LucentRoot",
+        )
         .await
         .expect_err("a stale policy view must not carry across a concurrent change");
 
@@ -359,6 +412,7 @@ async fn two_thirds_of_a_release_is_refused() {
             "lucentroot",
             "saas-fabric",
             &WantedVersion::Images(partial),
+            &at(&repository).await,
             "Promote LucentRoot",
         )
         .await
@@ -390,6 +444,7 @@ async fn a_version_change_may_not_become_a_registry_change() {
             "lucentroot",
             "saas-fabric",
             &WantedVersion::Images(elsewhere),
+            &at(&repository).await,
             "Promote LucentRoot",
         )
         .await
@@ -421,7 +476,13 @@ async fn a_pin_declared_outside_the_managed_roots_is_refused() {
         let repository = repository(&host);
 
         let failure = repository
-            .set_component_desired_state("lucentroot", "saas-fabric", &preview_two(), "Promote")
+            .set_component_desired_state(
+                "lucentroot",
+                "saas-fabric",
+                &preview_two(),
+                &at(&repository).await,
+                "Promote",
+            )
             .await
             .expect_err("a trusted manifest still does not get to name any file");
 
@@ -451,8 +512,16 @@ async fn a_managed_root_cannot_open_the_whole_filesystem() {
     ])
     .await;
 
-    let failure = repository(&host)
-        .set_component_desired_state("lucentroot", "saas-fabric", &preview_two(), "Promote")
+    let repository = repository(&host);
+
+    let failure = repository
+        .set_component_desired_state(
+            "lucentroot",
+            "saas-fabric",
+            &preview_two(),
+            &at(&repository).await,
+            "Promote",
+        )
         .await
         .expect_err("no manifest may widen this to the filesystem");
 
@@ -485,7 +554,13 @@ async fn a_pin_declared_in_a_file_that_does_not_carry_it_is_refused() {
     let repository = repository(&host);
 
     let failure = repository
-        .set_component_desired_state("lucentroot", "saas-fabric", &preview_two(), "Promote")
+        .set_component_desired_state(
+            "lucentroot",
+            "saas-fabric",
+            &preview_two(),
+            &at(&repository).await,
+            "Promote",
+        )
         .await
         .expect_err("a file that does not pin the image cannot be repinned");
 
@@ -503,7 +578,13 @@ async fn an_unknown_component_or_environment_is_refused() {
 
     for (environment, component) in [("lucentroot", "keycloak"), ("production", "saas-fabric")] {
         let failure = repository
-            .set_component_desired_state(environment, component, &preview_two(), "Promote")
+            .set_component_desired_state(
+                environment,
+                component,
+                &preview_two(),
+                &at(&repository).await,
+                "Promote",
+            )
             .await
             .expect_err("only what the manifest declares may be moved");
 
@@ -529,8 +610,10 @@ async fn a_manifest_from_a_newer_schema_is_refused_rather_than_guessed_at() {
     ])
     .await;
 
-    let failure = repository(&host)
-        .set_component_desired_state("lucentroot", "saas-fabric", &preview_two(), "Promote")
+    let repository = repository(&host);
+
+    let failure = repository
+        .set_component_desired_state("lucentroot", "saas-fabric", &preview_two(), &unread(), "Promote")
         .await
         .expect_err("a shape this was not written against is not read optimistically");
 
@@ -558,8 +641,10 @@ async fn a_kustomize_pin_that_names_no_image_does_not_even_parse() {
     ])
     .await;
 
-    let failure = repository(&host)
-        .set_component_desired_state("lucentroot", "saas-fabric", &preview_two(), "Promote")
+    let repository = repository(&host);
+
+    let failure = repository
+        .set_component_desired_state("lucentroot", "saas-fabric", &preview_two(), &unread(), "Promote")
         .await
         .expect_err("a pin that names no image cannot be written");
 
@@ -582,8 +667,16 @@ async fn a_pin_naming_an_image_the_component_does_not_publish_is_refused() {
     ])
     .await;
 
-    let failure = repository(&host)
-        .set_component_desired_state("lucentroot", "saas-fabric", &preview_two(), "Promote")
+    let repository = repository(&host);
+
+    let failure = repository
+        .set_component_desired_state(
+            "lucentroot",
+            "saas-fabric",
+            &preview_two(),
+            &at(&repository).await,
+            "Promote",
+        )
         .await
         .expect_err("an image the component does not publish cannot be pinned");
 
@@ -608,8 +701,10 @@ async fn an_unknown_renderer_is_refused_rather_than_guessed_at() {
     ])
     .await;
 
-    let failure = repository(&host)
-        .set_component_desired_state("lucentroot", "saas-fabric", &preview_two(), "Promote")
+    let repository = repository(&host);
+
+    let failure = repository
+        .set_component_desired_state("lucentroot", "saas-fabric", &preview_two(), &unread(), "Promote")
         .await
         .expect_err("a renderer this build does not know is not a renderer");
 
@@ -647,5 +742,102 @@ async fn an_older_schema_is_named_as_a_version_rather_than_a_missing_field() {
     assert!(
         detail.contains("schemaVersion 1") && detail.contains("reads 2"),
         "the version is what it names: {detail}"
+    );
+}
+
+#[tokio::test]
+async fn a_decision_taken_against_state_that_has_since_moved_is_refused() {
+    // The gap this closes. A sweep reads desired state, decides, and writes --
+    // and between the read and the write an operator adds a hold. The write
+    // used to re-read and apply the decision to whatever it found, so the hold
+    // was silently ignored: the decision was right when it was taken and wrong
+    // by the time it landed.
+    //
+    // The revision the decision was read at is now the write's precondition,
+    // so state that moved in between is a conflict.
+    let host = host().await;
+    let repository = repository(&host);
+
+    let stale = at(&repository).await;
+
+    // Somebody else writes. Any write moves the manifest's revision.
+    let held = MANIFEST_TEXT.replace(
+        "    hold: null",
+        "    hold:\n      reason: paused\n      since: 2026-09-04T09:00:00Z",
+    );
+    host.someone_else_commits(&[(MANIFEST, &held)]);
+
+    let failure = repository
+        .set_component_desired_state("lucentroot", "saas-fabric", &preview_two(), &stale, "Promote")
+        .await
+        .expect_err("a decision about the old state cannot be applied to the new one");
+
+    assert!(
+        matches!(failure, PlatformGitError::Conflict { .. }),
+        "moved state is a conflict, not an overwrite: {failure:?}"
+    );
+}
+
+#[tokio::test]
+async fn the_same_decision_applies_cleanly_when_nothing_has_moved() {
+    // The other half, and the one that keeps the test above honest: if a
+    // fresh revision were also refused, the check would be rejecting
+    // everything rather than rejecting staleness.
+    let host = host().await;
+    let repository = repository(&host);
+
+    repository
+        .set_component_desired_state(
+            "lucentroot",
+            "saas-fabric",
+            &preview_two(),
+            &at(&repository).await,
+            "Promote",
+        )
+        .await
+        .expect("a decision taken against current state applies");
+}
+
+#[tokio::test]
+async fn a_chart_release_must_agree_with_the_artifact_and_the_pin() {
+    // Three statements of one identity: what the component is published as,
+    // what discovery found, and what the file pins. A release discovered from
+    // one chart written into a pin for another would deploy plausible-looking
+    // wrong software, so all three are compared before any of them is written.
+    let manifest = MANIFEST_TEXT
+        .replace(
+            "    artifact:\n      type: oci\n      sourceRevision: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n      images:\n        console:\n          repository: ghcr.io/fieldstatenz/saas-fabric-control-plane-ui\n          digest: sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\n        controlPlane:\n          repository: ghcr.io/fieldstatenz/saas-fabric-control-plane\n          digest: sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n        runtime:\n          repository: ghcr.io/fieldstatenz/saas-fabric\n          digest: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n",
+            "    artifact:\n      type: helm\n      repository: https://charts.example.test\n      chart: keycloakx\n",
+        )
+        .replace(
+            "    pinnedIn:\n      - renderer: kustomize-image\n        path: applications/core/saas-fabric-control-plane/overlays/lucentroot/kustomization.yaml\n        image: console\n      - renderer: kustomize-image\n        path: applications/core/saas-fabric-control-plane/overlays/lucentroot/kustomization.yaml\n        image: controlPlane\n      - renderer: kustomize-image\n        path: applications/core/saas-fabric/overlays/lucentroot/kustomization.yaml\n        image: runtime\n",
+            "    pinnedIn:\n      - renderer: argo-target-revision\n        path: applications/core/saas-fabric/overlays/lucentroot/kustomization.yaml\n        repository: https://charts.example.test\n        chart: keycloakx\n",
+        );
+
+    let host =
+        FakePlatformHost::start(&[(MANIFEST, &manifest), (RUNTIME_OVERLAY, RUNTIME_OVERLAY_TEXT)]).await;
+    let repository = repository(&host);
+
+    // A release of a *different* chart, which the manifest does not publish.
+    let elsewhere = WantedVersion::Chart {
+        repository: "https://charts.example.test".to_owned(),
+        chart: "postgresql".to_owned(),
+        version: "16.0.0".to_owned(),
+    };
+
+    let failure = repository
+        .set_component_desired_state(
+            "lucentroot",
+            "saas-fabric",
+            &elsewhere,
+            &at(&repository).await,
+            "Promote",
+        )
+        .await
+        .expect_err("a release of another chart is not this component's release");
+
+    assert!(
+        matches!(failure, PlatformGitError::Rejected { .. }),
+        "{failure:?}"
     );
 }

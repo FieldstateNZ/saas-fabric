@@ -61,8 +61,22 @@ pub enum Release {
     /// Several images, moving together.
     Unit(ReleaseUnit),
 
-    /// A chart version, which is the whole of what gets written.
+    /// A chart version, and the chart it is a version of.
+    ///
+    /// # Why the identity travels with the version
+    ///
+    /// A bare version says nothing about *what* it is a version of. Discovery
+    /// found `7.3.1` of one chart in one repository; a pin names a chart in a
+    /// repository too, and if the write does not compare them then a release
+    /// discovered from one chart can be written into a pin for another. The
+    /// number would be plausible and the software would be wrong.
     Chart {
+        /// The chart repository this version was discovered in.
+        repository: String,
+
+        /// The chart it is a version of.
+        chart: String,
+
         /// The chart version. Not the application version: Argo pins the
         /// chart, and an application version is metadata beside it.
         version: Version,
@@ -75,7 +89,7 @@ impl Release {
     pub const fn version(&self) -> &Version {
         match self {
             Self::Unit(unit) => &unit.version,
-            Self::Chart { version } => version,
+            Self::Chart { version, .. } => version,
         }
     }
 }

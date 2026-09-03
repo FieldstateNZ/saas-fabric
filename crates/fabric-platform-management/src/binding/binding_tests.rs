@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use super::PlatformDesiredState;
-use crate::{ComponentDesired, DesiredState, DesiredStateError, Release, ReleaseUnit};
+use crate::{ComponentDesired, DesiredRevision, DesiredState, DesiredStateError, Release, ReleaseUnit};
 
 /// A repository that is reachable, and whose reads fail.
 struct Connected;
@@ -21,7 +21,14 @@ impl DesiredState for Connected {
         })
     }
 
-    async fn advance(&self, _: &str, _: &str, _: &Release, _: &str) -> Result<(), DesiredStateError> {
+    async fn advance(
+        &self,
+        _: &str,
+        _: &str,
+        _: &Release,
+        _: &DesiredRevision,
+        _: &str,
+    ) -> Result<(), DesiredStateError> {
         Ok(())
     }
 
@@ -31,16 +38,24 @@ impl DesiredState for Connected {
         _: &str,
         _: &ReleaseUnit,
         _: &crate::Hold,
+        _: &DesiredRevision,
         _: &str,
     ) -> Result<(), DesiredStateError> {
         Ok(())
     }
 
-    async fn pause(&self, _: &str, _: &str, _: &crate::Hold, _: &str) -> Result<(), DesiredStateError> {
+    async fn pause(
+        &self,
+        _: &str,
+        _: &str,
+        _: &crate::Hold,
+        _: &DesiredRevision,
+        _: &str,
+    ) -> Result<(), DesiredStateError> {
         Ok(())
     }
 
-    async fn resume(&self, _: &str, _: &str, _: &str) -> Result<(), DesiredStateError> {
+    async fn resume(&self, _: &str, _: &str, _: &DesiredRevision, _: &str) -> Result<(), DesiredStateError> {
         Ok(())
     }
 }
@@ -74,7 +89,13 @@ async fn every_operation_says_not_connected_until_something_is() {
     );
     assert_eq!(
         binding
-            .advance("lucentroot", "saas-fabric", &Release::Unit(unit()), "Promote")
+            .advance(
+                "lucentroot",
+                "saas-fabric",
+                &Release::Unit(unit()),
+                &DesiredRevision::new("r1"),
+                "Promote",
+            )
             .await
             .expect_err("nothing is connected"),
         DesiredStateError::NotConnected

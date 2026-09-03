@@ -109,6 +109,7 @@ impl PlatformManagement {
                 component,
                 &unit,
                 &hold,
+                &desired.revision,
                 &format!(
                     "Roll {component} in {environment} back to {}",
                     unit.version.as_str()

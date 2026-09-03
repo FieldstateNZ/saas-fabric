@@ -36,7 +36,7 @@ mod version;
 pub use artifact::{ArtifactSource, Release};
 pub use binding::PlatformDesiredState;
 pub use charts::ChartIndex;
-pub use desired_state::{ComponentDesired, DesiredState, DesiredStateError, Hold};
+pub use desired_state::{ComponentDesired, DesiredRevision, DesiredState, DesiredStateError, Hold};
 pub use diagnostic::SafeDiagnostic;
 pub use discovery::{Discovery, History, ReleaseUnit, ResolvedImage};
 pub use policy::UpdatePolicy;

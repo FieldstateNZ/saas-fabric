@@ -3,10 +3,11 @@
 mod inputs;
 mod plan;
 mod render;
+mod write;
 
 pub use inputs::{ComponentVersion, ImageDigest, WantedVersion};
 
-use fabric_platform_management::Hold;
+use fabric_platform_management::{DesiredRevision, Hold};
 
 use crate::host::PlatformGitRepository;
 use crate::{CommitRevision, PlatformGitError};
@@ -73,9 +74,10 @@ impl PlatformGitRepository {
         environment: &str,
         component: &str,
         wanted: &WantedVersion,
+        at: &DesiredRevision,
         message: &str,
     ) -> Result<CommitRevision, PlatformGitError> {
-        self.write_desired(environment, component, wanted, &HoldChange::Keep, message)
+        self.write_desired(environment, component, wanted, &HoldChange::Keep, at, message)
             .await
     }
 
@@ -91,6 +93,7 @@ impl PlatformGitRepository {
         component: &str,
         wanted: &ComponentVersion,
         hold: &Hold,
+        at: &DesiredRevision,
         message: &str,
     ) -> Result<CommitRevision, PlatformGitError> {
         self.write_desired(
@@ -98,48 +101,9 @@ impl PlatformGitRepository {
             component,
             &WantedVersion::Images(wanted.clone()),
             &HoldChange::Set(hold.clone()),
+            at,
             message,
         )
         .await
-    }
-
-    /// The write both of those are.
-    async fn write_desired(
-        &self,
-        environment: &str,
-        component: &str,
-        wanted: &WantedVersion,
-        hold: &HoldChange,
-        message: &str,
-    ) -> Result<CommitRevision, PlatformGitError> {
-        let mut read = self.read_manifest(environment).await?;
-        let path = read.stored.path.clone();
-
-        let roots = read.document.manifest.managed_roots.clone();
-        let entry = read
-            .document
-            .manifest
-            .components
-            .get_mut(component)
-            .ok_or_else(|| PlatformGitError::Rejected {
-                detail: format!("{path} does not know the component '{component}'"),
-            })?;
-
-        plan::check_release_unit(component, entry, wanted)?;
-
-        let mut changes = plan::rewrite_pins(self, &read.head, component, entry, wanted, &roots).await?;
-        plan::apply(entry, wanted);
-
-        if let HoldChange::Set(hold) = hold {
-            entry.hold = Some(hold.clone());
-        }
-
-        changes.push(crate::FileChange {
-            path,
-            text: read.document.render()?,
-            expected: Some(read.stored.revision),
-        });
-
-        self.update_files_atomically(&read.head, &changes, message).await
     }
 }

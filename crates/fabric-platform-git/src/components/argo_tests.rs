@@ -84,3 +84,60 @@ fn an_ambiguous_file_is_refused_rather_than_guessed_between() {
         "{failure:?}"
     );
 }
+
+#[test]
+fn a_lookalike_list_elsewhere_in_the_file_is_not_a_source() {
+    // The renderer knows one location, not one shape. A list of things that
+    // happen to carry `chart:` and `targetRevision:` outside `spec.sources`
+    // is somebody else's data, and editing it because it looks similar is the
+    // arbitrary-edit engine this design exists to refuse.
+    let decoy = format!(
+        "metadata:
+  annotations:
+    inventory: |
+      - repoURL: {CHARTS}
+        chart: keycloakx
+        targetRevision: 0.0.1
+{APPLICATION}"
+    );
+
+    let out = retarget(&decoy, CHARTS, "keycloakx", "7.3.1").expect("the real source still matches");
+
+    assert!(
+        out.contains("targetRevision: 0.0.1"),
+        "the annotation is not a source and must be untouched:\n{out}"
+    );
+    assert!(out.contains("targetRevision: 7.3.1"));
+}
+
+#[test]
+fn a_source_of_a_source_is_not_a_source() {
+    // Nested lists inside a source -- values files, parameters -- are not
+    // entries of `spec.sources` and must not be read as if they were.
+    let nested = APPLICATION.replace(
+        "      helm:\n        releaseName: keycloak\n",
+        "      helm:\n        parameters:\n          - name: image.tag\n            value: 26.7.2\n",
+    );
+
+    let out = retarget(&nested, CHARTS, "keycloakx", "7.3.1").expect("one source matches");
+
+    assert!(out.contains("value: 26.7.2"), "{out}");
+    assert!(out.contains("targetRevision: 7.3.1"));
+}
+
+#[test]
+fn a_release_from_another_chart_is_not_written_into_this_pin() {
+    // The rule the renderer alone cannot enforce, because by the time it is
+    // called somebody has already decided which file and which version. What
+    // it *can* enforce is that the chart the pin names is the chart it edits —
+    // and `render` above it checks that the artifact, the release and the pin
+    // all name the same one, because a version is only a number and a number
+    // is plausible against the wrong chart.
+    let failure = retarget(APPLICATION, CHARTS, "postgresql", "7.3.1")
+        .expect_err("this file pins keycloakx and nothing else");
+
+    assert!(
+        matches!(failure, PlatformGitError::Rejected { .. }),
+        "{failure:?}"
+    );
+}

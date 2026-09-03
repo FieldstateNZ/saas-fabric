@@ -68,6 +68,7 @@ impl PlatformManagement {
                 environment,
                 component,
                 &hold,
+                &desired.revision,
                 &format!("Pause {component} in {environment}"),
             )
             .await?;
@@ -104,6 +105,7 @@ impl PlatformManagement {
             .resume(
                 environment,
                 component,
+                &desired.revision,
                 &format!("Resume {component} in {environment}"),
             )
             .await?;

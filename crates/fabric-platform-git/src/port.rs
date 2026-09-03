@@ -1,7 +1,8 @@
 //! Implementing the desired-state port over the platform repository.
 
 use fabric_platform_management::{
-    ArtifactSource, ComponentDesired, DesiredState, DesiredStateError, Hold, Release, ReleaseUnit,
+    ArtifactSource, ComponentDesired, DesiredRevision, DesiredState, DesiredStateError, Hold, Release,
+    ReleaseUnit,
 };
 
 use crate::{PlatformGitError, PlatformGitRepository};
@@ -23,7 +24,9 @@ impl DesiredState for PlatformGitRepository {
         environment: &str,
         component: &str,
     ) -> Result<ComponentDesired, DesiredStateError> {
-        let manifest = self.components_manifest(environment).await?;
+        let read = self.read_manifest(environment).await?;
+        let manifest_revision = read.stored.revision;
+        let manifest = read.document.manifest;
 
         let entry = manifest
             .components
@@ -43,6 +46,7 @@ impl DesiredState for PlatformGitRepository {
             })?;
 
         Ok(ComponentDesired {
+            revision: DesiredRevision::new(manifest_revision.as_str()),
             version,
             channel: entry.channel,
             policy: entry.update,
@@ -67,9 +71,10 @@ impl DesiredState for PlatformGitRepository {
         environment: &str,
         component: &str,
         release: &Release,
+        at: &DesiredRevision,
         message: &str,
     ) -> Result<(), DesiredStateError> {
-        self.set_component_desired_state(environment, component, &wanted_from(release), message)
+        self.set_component_desired_state(environment, component, &wanted_from(release), at, message)
             .await?;
 
         Ok(())
@@ -81,9 +86,10 @@ impl DesiredState for PlatformGitRepository {
         component: &str,
         unit: &ReleaseUnit,
         hold: &Hold,
+        at: &DesiredRevision,
         message: &str,
     ) -> Result<(), DesiredStateError> {
-        self.roll_back_component(environment, component, &unit_from(unit), hold, message)
+        self.roll_back_component(environment, component, &unit_from(unit), hold, at, message)
             .await?;
 
         Ok(())
@@ -94,9 +100,10 @@ impl DesiredState for PlatformGitRepository {
         environment: &str,
         component: &str,
         hold: &Hold,
+        at: &DesiredRevision,
         message: &str,
     ) -> Result<(), DesiredStateError> {
-        self.set_component_hold(environment, component, Some(hold), message)
+        self.set_component_hold(environment, component, Some(hold), at, message)
             .await?;
 
         Ok(())
@@ -106,9 +113,10 @@ impl DesiredState for PlatformGitRepository {
         &self,
         environment: &str,
         component: &str,
+        at: &DesiredRevision,
         message: &str,
     ) -> Result<(), DesiredStateError> {
-        self.set_component_hold(environment, component, None, message)
+        self.set_component_hold(environment, component, None, at, message)
             .await?;
 
         Ok(())

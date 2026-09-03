@@ -5,7 +5,7 @@
 //! means once there is one.
 
 use crate::binding::PlatformDesiredState;
-use crate::{ComponentDesired, DesiredState, DesiredStateError, Hold, Release, ReleaseUnit};
+use crate::{ComponentDesired, DesiredRevision, DesiredState, DesiredStateError, Hold, Release, ReleaseUnit};
 
 #[async_trait::async_trait]
 impl DesiredState for PlatformDesiredState {
@@ -26,10 +26,11 @@ impl DesiredState for PlatformDesiredState {
         environment: &str,
         component: &str,
         release: &Release,
+        at: &DesiredRevision,
         message: &str,
     ) -> Result<(), DesiredStateError> {
         self.required()?
-            .advance(environment, component, release, message)
+            .advance(environment, component, release, at, message)
             .await
     }
 
@@ -39,10 +40,11 @@ impl DesiredState for PlatformDesiredState {
         component: &str,
         unit: &ReleaseUnit,
         hold: &Hold,
+        at: &DesiredRevision,
         message: &str,
     ) -> Result<(), DesiredStateError> {
         self.required()?
-            .roll_back(environment, component, unit, hold, message)
+            .roll_back(environment, component, unit, hold, at, message)
             .await
     }
 
@@ -51,10 +53,11 @@ impl DesiredState for PlatformDesiredState {
         environment: &str,
         component: &str,
         hold: &Hold,
+        at: &DesiredRevision,
         message: &str,
     ) -> Result<(), DesiredStateError> {
         self.required()?
-            .pause(environment, component, hold, message)
+            .pause(environment, component, hold, at, message)
             .await
     }
 
@@ -62,8 +65,9 @@ impl DesiredState for PlatformDesiredState {
         &self,
         environment: &str,
         component: &str,
+        at: &DesiredRevision,
         message: &str,
     ) -> Result<(), DesiredStateError> {
-        self.required()?.resume(environment, component, message).await
+        self.required()?.resume(environment, component, at, message).await
     }
 }

@@ -55,11 +55,43 @@ pub(super) fn render(
 
         (
             Pin::ArgoTargetRevision {
-                chart, repository, ..
+                chart: pinned_chart,
+                repository: pinned_repository,
+                ..
             },
-            Artifact::Helm { .. },
-            WantedVersion::Chart { version },
-        ) => Ok(Some(retarget(text, repository, chart, version)?)),
+            Artifact::Helm {
+                chart: published_chart,
+                repository: published_repository,
+            },
+            WantedVersion::Chart {
+                chart: found_chart,
+                repository: found_repository,
+                version,
+            },
+        ) => {
+            // Three statements of the same identity: what the component is
+            // published as, what discovery found, and what this file pins. A
+            // version is only a number, and a number is plausible against the
+            // wrong chart — so all three must agree before any of them is
+            // written.
+            let agreed = published_chart == found_chart
+                && published_repository == found_repository
+                && pinned_chart == published_chart
+                && pinned_repository == published_repository;
+
+            if !agreed {
+                return Err(PlatformGitError::Rejected {
+                    detail: format!(
+                        "{path}: {component} publishes {published_chart} from \
+                         {published_repository}, the release is {found_chart} from \
+                         {found_repository}, and this pins {pinned_chart} from \
+                         {pinned_repository}"
+                    ),
+                });
+            }
+
+            Ok(Some(retarget(text, pinned_repository, pinned_chart, version)?))
+        }
 
         (pin, artifact, _) => Err(PlatformGitError::Rejected {
             detail: format!(

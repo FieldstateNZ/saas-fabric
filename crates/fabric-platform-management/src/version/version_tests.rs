@@ -80,3 +80,35 @@ fn a_series_is_the_version_core() {
     assert!(!version("0.3.1-preview.1").is_series(&series));
     assert!(!version("0.4.0").is_series(&series));
 }
+
+#[test]
+fn build_metadata_is_a_chart_thing_and_never_an_image_thing() {
+    // `+` is not legal in an OCI tag, so a version carrying one could never
+    // name its own image. A chart is not an image and Helm permits it.
+    assert!(Version::parse("1.2.3+build.7").is_none());
+    assert!(Version::parse_chart("1.2.3+build.7").is_some());
+}
+
+#[test]
+fn build_metadata_is_written_back_but_takes_no_part_in_precedence() {
+    let plain = Version::parse_chart("1.2.3").expect("a version");
+    let built = Version::parse_chart("1.2.3+build.7").expect("a version");
+
+    // SemVer: build metadata is ignored when comparing.
+    assert_eq!(plain.cmp(&built), std::cmp::Ordering::Equal);
+
+    // And equality agrees with ordering, which is why `Eq` is written rather
+    // than derived over the text. A `BTreeSet` that disagreed with `Ord` would
+    // keep both or keep one depending on insertion order.
+    assert_eq!(plain, built);
+
+    // What gets written is still what was published.
+    assert_eq!(built.as_str(), "1.2.3+build.7");
+}
+
+#[test]
+fn empty_or_illegal_build_metadata_is_not_a_version() {
+    for text in ["1.2.3+", "1.2.3+has spaces", "1.2.3+has/slash"] {
+        assert!(Version::parse_chart(text).is_none(), "{text}");
+    }
+}

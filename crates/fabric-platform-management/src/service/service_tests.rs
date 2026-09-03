@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use super::{PlatformError, PlatformManagement};
 use crate::{
-    ArtifactSource, Channel, ChartIndex, ComponentDesired, DesiredState, DesiredStateError,
+    ArtifactSource, Channel, ChartIndex, ComponentDesired, DesiredRevision, DesiredState, DesiredStateError,
     DesiredStateStatus, Hold, Provenance, Registry, RegistryError, Release, ReleaseUnit, Resolved,
     UpdatePolicy, Version,
 };
@@ -120,6 +120,7 @@ impl Recorded {
     fn at(running: &str, policy: UpdatePolicy, hold: Option<Hold>) -> Self {
         Self {
             desired: Mutex::new(ComponentDesired {
+                revision: DesiredRevision::new("read-1"),
                 version: version(running),
                 channel: Channel::Preview,
                 policy,
@@ -180,7 +181,14 @@ impl DesiredState for Recorded {
             .clone())
     }
 
-    async fn advance(&self, _: &str, _: &str, release: &Release, _: &str) -> Result<(), DesiredStateError> {
+    async fn advance(
+        &self,
+        _: &str,
+        _: &str,
+        release: &Release,
+        _: &DesiredRevision,
+        _: &str,
+    ) -> Result<(), DesiredStateError> {
         if let Some(error) = &self.refuse {
             return Err(error.clone());
         }
@@ -203,6 +211,7 @@ impl DesiredState for Recorded {
         _: &str,
         unit: &ReleaseUnit,
         hold: &Hold,
+        _: &DesiredRevision,
         _: &str,
     ) -> Result<(), DesiredStateError> {
         if let Some(error) = &self.refuse {
@@ -221,7 +230,14 @@ impl DesiredState for Recorded {
         Ok(())
     }
 
-    async fn pause(&self, _: &str, _: &str, hold: &Hold, _: &str) -> Result<(), DesiredStateError> {
+    async fn pause(
+        &self,
+        _: &str,
+        _: &str,
+        hold: &Hold,
+        _: &DesiredRevision,
+        _: &str,
+    ) -> Result<(), DesiredStateError> {
         if let Some(error) = &self.refuse {
             return Err(error.clone());
         }
@@ -235,7 +251,7 @@ impl DesiredState for Recorded {
         Ok(())
     }
 
-    async fn resume(&self, _: &str, _: &str, _: &str) -> Result<(), DesiredStateError> {
+    async fn resume(&self, _: &str, _: &str, _: &DesiredRevision, _: &str) -> Result<(), DesiredStateError> {
         if let Some(error) = &self.refuse {
             return Err(error.clone());
         }
@@ -938,6 +954,7 @@ const HELM: &str = "https://codecentric.github.io/helm-charts";
 fn charted(policy: UpdatePolicy) -> Arc<Recorded> {
     let mut fixture = Recorded::at("7.3.0", policy, None);
     fixture.desired = Mutex::new(ComponentDesired {
+        revision: DesiredRevision::new("read-1"),
         version: version("7.3.0"),
         channel: Channel::Stable,
         policy,
@@ -995,25 +1012,33 @@ async fn a_chart_reports_no_diagnostics_because_it_has_none_to_report() {
 }
 
 #[tokio::test]
-async fn an_automatic_chart_advances_to_the_newest_version() {
+async fn a_stable_component_on_automatic_advances_nothing_and_says_why() {
+    // Fail closed. A prerelease advances within its line and the line stops it
+    // crossing to another; a stable version has no line, so nothing would stop
+    // 7.3.0 becoming 8.0.0 on a sweep at three in the morning.
+    //
+    // Which upgrades an automatic stable policy may take is undecided, and the
+    // safe answer to an undecided rule is to do nothing and say so -- not to
+    // do whatever the code happens to permit.
     let charts = Arc::new(Charts::default());
-    charts.publish(HELM, "keycloakx", &["7.3.0", "7.3.1", "7.3.2"]);
+    charts.publish(HELM, "keycloakx", &["7.3.0", "7.3.1", "8.0.0"]);
 
     let desired_state = charted(UpdatePolicy::Automatic);
-    charted_service(&charts, &desired_state)
+    let status = charted_service(&charts, &desired_state)
         .reconcile("lucentroot", "keycloak")
         .await
-        .expect("an automatic chart advances");
+        .expect("a reconcile that declines is not an error")
+        .status;
 
-    let writes = desired_state.writes();
-    assert_eq!(writes.len(), 1);
-    assert_eq!(
-        writes[0],
-        Release::Chart {
-            version: version("7.3.2")
-        },
-        "a chart advances as a chart, carrying no provenance it never had"
+    assert!(
+        desired_state.writes().is_empty(),
+        "nothing advances until the policy is defined: {:?}",
+        desired_state.writes()
     );
+
+    // And the operator is still told what exists, so the decision they have to
+    // make is visible rather than hidden behind a component that looks idle.
+    assert_eq!(status.newer, Some(version("8.0.0")));
 }
 
 #[tokio::test]

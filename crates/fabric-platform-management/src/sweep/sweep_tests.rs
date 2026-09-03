@@ -4,9 +4,9 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use crate::{
-    ArtifactSource, Channel, ChartIndex, CheckOutcome, ComponentDesired, DesiredState, DesiredStateError,
-    PlatformManagement, Provenance, Registry, RegistryError, Release, ReleaseUnit, Resolved, SweepResult,
-    SweepState, Swept, UpdatePolicy, Version,
+    ArtifactSource, Channel, ChartIndex, CheckOutcome, ComponentDesired, DesiredRevision, DesiredState,
+    DesiredStateError, PlatformManagement, Provenance, Registry, RegistryError, Release, ReleaseUnit,
+    Resolved, SweepResult, SweepState, Swept, UpdatePolicy, Version,
 };
 
 const RUNTIME: &str = "ghcr.io/fieldstatenz/saas-fabric";
@@ -45,6 +45,7 @@ impl Several {
     fn new() -> Self {
         let describe = |policy| {
             Ok(ComponentDesired {
+                revision: DesiredRevision::new("read-1"),
                 version: version("0.3.0-preview.2"),
                 channel: Channel::Preview,
                 policy,
@@ -106,6 +107,7 @@ impl DesiredState for Several {
         _: &str,
         component: &str,
         release: &Release,
+        _: &DesiredRevision,
         _: &str,
     ) -> Result<(), DesiredStateError> {
         self.advanced
@@ -132,16 +134,24 @@ impl DesiredState for Several {
         _: &str,
         _: &ReleaseUnit,
         _: &crate::Hold,
+        _: &DesiredRevision,
         _: &str,
     ) -> Result<(), DesiredStateError> {
         panic!("a sweep must never roll a component back")
     }
 
-    async fn pause(&self, _: &str, _: &str, _: &crate::Hold, _: &str) -> Result<(), DesiredStateError> {
+    async fn pause(
+        &self,
+        _: &str,
+        _: &str,
+        _: &crate::Hold,
+        _: &DesiredRevision,
+        _: &str,
+    ) -> Result<(), DesiredStateError> {
         panic!("a sweep must never pause a component")
     }
 
-    async fn resume(&self, _: &str, _: &str, _: &str) -> Result<(), DesiredStateError> {
+    async fn resume(&self, _: &str, _: &str, _: &DesiredRevision, _: &str) -> Result<(), DesiredStateError> {
         panic!("a sweep must never resume a component")
     }
 }
@@ -341,8 +351,15 @@ impl DesiredState for Gated {
         self.inner.component(environment, component).await
     }
 
-    async fn advance(&self, e: &str, c: &str, release: &Release, m: &str) -> Result<(), DesiredStateError> {
-        self.inner.advance(e, c, release, m).await
+    async fn advance(
+        &self,
+        e: &str,
+        c: &str,
+        release: &Release,
+        at: &DesiredRevision,
+        m: &str,
+    ) -> Result<(), DesiredStateError> {
+        self.inner.advance(e, c, release, at, m).await
     }
 
     async fn roll_back(
@@ -351,16 +368,24 @@ impl DesiredState for Gated {
         _: &str,
         _: &ReleaseUnit,
         _: &crate::Hold,
+        _: &DesiredRevision,
         _: &str,
     ) -> Result<(), DesiredStateError> {
         panic!("a sweep must never roll a component back")
     }
 
-    async fn pause(&self, _: &str, _: &str, _: &crate::Hold, _: &str) -> Result<(), DesiredStateError> {
+    async fn pause(
+        &self,
+        _: &str,
+        _: &str,
+        _: &crate::Hold,
+        _: &DesiredRevision,
+        _: &str,
+    ) -> Result<(), DesiredStateError> {
         panic!("a sweep must never pause a component")
     }
 
-    async fn resume(&self, _: &str, _: &str, _: &str) -> Result<(), DesiredStateError> {
+    async fn resume(&self, _: &str, _: &str, _: &DesiredRevision, _: &str) -> Result<(), DesiredStateError> {
         panic!("a sweep must never resume a component")
     }
 }
@@ -429,7 +454,14 @@ async fn a_sweep_with_nothing_connected_records_nothing() {
             Err(DesiredStateError::NotConnected)
         }
 
-        async fn advance(&self, _: &str, _: &str, _: &Release, _: &str) -> Result<(), DesiredStateError> {
+        async fn advance(
+            &self,
+            _: &str,
+            _: &str,
+            _: &Release,
+            _: &DesiredRevision,
+            _: &str,
+        ) -> Result<(), DesiredStateError> {
             Err(DesiredStateError::NotConnected)
         }
 
@@ -439,16 +471,30 @@ async fn a_sweep_with_nothing_connected_records_nothing() {
             _: &str,
             _: &ReleaseUnit,
             _: &crate::Hold,
+            _: &DesiredRevision,
             _: &str,
         ) -> Result<(), DesiredStateError> {
             Err(DesiredStateError::NotConnected)
         }
 
-        async fn pause(&self, _: &str, _: &str, _: &crate::Hold, _: &str) -> Result<(), DesiredStateError> {
+        async fn pause(
+            &self,
+            _: &str,
+            _: &str,
+            _: &crate::Hold,
+            _: &DesiredRevision,
+            _: &str,
+        ) -> Result<(), DesiredStateError> {
             Err(DesiredStateError::NotConnected)
         }
 
-        async fn resume(&self, _: &str, _: &str, _: &str) -> Result<(), DesiredStateError> {
+        async fn resume(
+            &self,
+            _: &str,
+            _: &str,
+            _: &DesiredRevision,
+            _: &str,
+        ) -> Result<(), DesiredStateError> {
             Err(DesiredStateError::NotConnected)
         }
     }

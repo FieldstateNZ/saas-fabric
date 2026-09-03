@@ -42,8 +42,18 @@ pub enum WantedVersion {
     /// Several images, moving together.
     Images(ComponentVersion),
 
-    /// A chart version, which is the whole of what Argo pins.
+    /// A chart version, and the chart it is a version of.
+    ///
+    /// The identity travels with the version so that the write can refuse a
+    /// release discovered somewhere other than where the manifest says to put
+    /// it. A number alone would be plausible against the wrong chart.
     Chart {
+        /// The chart repository it was discovered in.
+        repository: String,
+
+        /// The chart it is a version of.
+        chart: String,
+
         /// The chart version, as it is published.
         version: String,
     },
@@ -55,7 +65,7 @@ impl WantedVersion {
     pub fn version(&self) -> &str {
         match self {
             Self::Images(unit) => &unit.version,
-            Self::Chart { version } => version,
+            Self::Chart { version, .. } => version,
         }
     }
 }

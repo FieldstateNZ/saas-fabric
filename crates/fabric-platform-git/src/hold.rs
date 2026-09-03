@@ -1,6 +1,6 @@
 //! Pausing and resuming a component, as one commit each.
 
-use fabric_platform_management::Hold;
+use fabric_platform_management::{DesiredRevision, Hold};
 
 use crate::host::PlatformGitRepository;
 use crate::{CommitRevision, PlatformGitError};
@@ -33,10 +33,17 @@ impl PlatformGitRepository {
         environment: &str,
         component: &str,
         hold: Option<&Hold>,
+        at: &DesiredRevision,
         message: &str,
     ) -> Result<CommitRevision, PlatformGitError> {
         let mut read = self.read_manifest(environment).await?;
         let path = read.stored.path.clone();
+
+        // The same precondition every write has: the state this was decided
+        // against, not whatever this read happened to find.
+        if read.stored.revision.as_str() != at.as_str() {
+            return Err(PlatformGitError::Conflict { path });
+        }
 
         // A lookup, and only a lookup. The name an operator chose selects an
         // entry in a document this platform already trusts; it reaches no

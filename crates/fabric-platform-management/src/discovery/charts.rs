@@ -37,7 +37,14 @@ pub async fn discover_chart(
         .max();
 
     Ok(Discovery {
-        newer: newest.map(|version| Release::Chart { version }),
+        // The identity travels with the version, so the write can refuse a
+        // release that was discovered somewhere other than where the pin says
+        // to put it.
+        newer: newest.map(|version| Release::Chart {
+            repository: repository.to_owned(),
+            chart: chart.to_owned(),
+            version,
+        }),
         not_yet: Vec::new(),
         incoherent: Vec::new(),
     })

@@ -13,7 +13,13 @@ use crate::desired::{ComponentVersion, ImageDigest, WantedVersion};
 pub(super) fn wanted_from(release: &Release) -> WantedVersion {
     match release {
         Release::Unit(unit) => WantedVersion::Images(unit_from(unit)),
-        Release::Chart { version } => WantedVersion::Chart {
+        Release::Chart {
+            repository,
+            chart,
+            version,
+        } => WantedVersion::Chart {
+            repository: repository.clone(),
+            chart: chart.clone(),
             version: version.as_str().to_owned(),
         },
     }

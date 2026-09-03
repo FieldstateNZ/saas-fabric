@@ -294,6 +294,21 @@ images produce. There is nothing to forget to check.
 Pause and resume are offered for both. Stopping an environment advancing needs
 no immutability at all.
 
+#### A decision is applied to the state it was taken against
+
+Every write presents the revision its decision was read at, and desired state
+that moved in between is a conflict rather than an overwrite.
+
+Without it, a sweep reads, decides, and writes — and an operator who adds a
+hold between the read and the write watches it be ignored, because the write
+re-reads and applies a decision taken about something else. The decision was
+right when it was taken and wrong by the time it landed.
+
+The selector's own docs already claimed this. They were describing the
+intended design, not the implemented one: the precondition was the revision the
+*adapter* had just read for itself, which proves only that nothing changed
+during the write.
+
 #### The series only means something for a prerelease
 
 An automatic policy walks forward within the desired version's own line, and a
@@ -303,9 +318,14 @@ different one — and wrong for anything else: **every stable advance changes th
 core**, so applying the rule to a stable component meant it could never advance
 and would report "nothing newer" however much its repository published.
 
-What should bound a stable advance instead is **not settled**. Patch and minor
-are ordinary; a major upgrade is not something to take on a sweep. Until it is
-decided, a stable component should be `manual`.
+What should bound a stable advance instead is **not settled**, so the
+combination fails closed: a stable component on `automatic` advances nothing
+and reports `UndefinedStablePolicy`. It still shows what is newer, so the
+decision that is owed stays visible rather than looking like an idle component.
+
+Patch and minor upgrades are ordinary; a major is not something to take on a
+sweep. Until that is chosen, a stable component that should move is `manual`,
+where a person chooses.
 
 #### Rolling back
 

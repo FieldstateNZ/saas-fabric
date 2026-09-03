@@ -5,15 +5,13 @@ use crate::{Release, ReleaseUnit};
 mod component;
 mod errors;
 
-pub use component::{ComponentDesired, Hold};
+pub use component::{ComponentDesired, DesiredRevision, Hold};
 pub use errors::DesiredStateError;
 
 /// Where an environment's desired state is kept.
 ///
 /// Implemented by an adapter that knows how the platform repository is laid
-/// out. Nothing here knows which files carry a pin — that is the platform
-/// repository's own statement, and asking this port to move a component is the
-/// whole of what this crate does about it.
+/// out. Nothing here knows which files carry a pin.
 #[async_trait::async_trait]
 pub trait DesiredState: Send + Sync {
     /// Every component an environment describes.
@@ -46,6 +44,13 @@ pub trait DesiredState: Send + Sync {
     /// a chart, the version, which is the whole of it. There is no way to
     /// express moving one image, changing a policy, or clearing a hold.
     ///
+    /// # `at` is the read this decision was taken against
+    ///
+    /// Not the read the write happens to make. A component whose policy, hold,
+    /// version or artifact changed in between is a
+    /// [`Conflict`](DesiredStateError::Conflict), because the decision being
+    /// applied was taken about something else.
+    ///
     /// # Errors
     ///
     /// [`DesiredStateError::Conflict`] if the state moved since it was read,
@@ -55,6 +60,7 @@ pub trait DesiredState: Send + Sync {
         environment: &str,
         component: &str,
         release: &Release,
+        at: &DesiredRevision,
         message: &str,
     ) -> Result<(), DesiredStateError>;
 
@@ -93,6 +99,7 @@ pub trait DesiredState: Send + Sync {
         component: &str,
         unit: &ReleaseUnit,
         hold: &Hold,
+        at: &DesiredRevision,
         message: &str,
     ) -> Result<(), DesiredStateError>;
 
@@ -118,6 +125,7 @@ pub trait DesiredState: Send + Sync {
         environment: &str,
         component: &str,
         hold: &Hold,
+        at: &DesiredRevision,
         message: &str,
     ) -> Result<(), DesiredStateError>;
 
@@ -135,6 +143,7 @@ pub trait DesiredState: Send + Sync {
         &self,
         environment: &str,
         component: &str,
+        at: &DesiredRevision,
         message: &str,
     ) -> Result<(), DesiredStateError>;
 }

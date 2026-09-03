@@ -16,6 +16,15 @@ pub struct HelmCharts {
     http: reqwest::Client,
 }
 
+/// How much of an index this will read.
+///
+/// A chart repository serves every chart it holds in one document, and a busy
+/// one is large: the index this platform reads today is around 200 kB for 220
+/// releases. Eight megabytes is far past any of that and still a bound — an
+/// unbounded read of a remote document is an unbounded allocation decided by
+/// somebody else.
+const MOST: usize = 8 * 1024 * 1024;
+
 /// Just enough of an index to list versions.
 ///
 /// A chart index carries a great deal this does not read — descriptions,
@@ -74,25 +83,62 @@ impl ChartIndex for HelmCharts {
             ));
         }
 
-        let body = response
-            .text()
+        // Streamed rather than `text()`, so the bound is applied as the body
+        // arrives instead of after it has all been held.
+        let mut body = Vec::new();
+        let mut stream = response;
+
+        while let Some(chunk) = stream
+            .chunk()
             .await
-            .map_err(|error| transport_failure("reading a chart index", &error))?;
+            .map_err(|error| transport_failure("reading a chart index", &error))?
+        {
+            if body.len() + chunk.len() > MOST {
+                return Err(RegistryError::Refused {
+                    detail: format!("the chart index at {url} is larger than {MOST} bytes"),
+                });
+            }
+            body.extend_from_slice(&chunk);
+        }
+
+        let body = String::from_utf8(body).map_err(|_| RegistryError::Refused {
+            detail: format!("the chart index at {url} is not text"),
+        })?;
 
         let index: Index = serde_norway::from_str(&body).map_err(|error| RegistryError::Refused {
             detail: format!("reading a chart index: {error}"),
         })?;
 
-        Ok(index
-            .entries
-            .get(chart)
-            .into_iter()
-            .flatten()
-            // A release the index lists whose version this cannot parse is
-            // skipped rather than refused: a chart repository serves every
-            // chart it holds, and one unparseable entry belonging to somebody
-            // else's chart is not this component's problem.
-            .filter_map(|entry| Version::parse(&entry.version))
-            .collect())
+        // Only this chart's own releases. Another chart's malformed entry is
+        // not this component's problem; one of its own is.
+        let Some(releases) = index.entries.get(chart) else {
+            return Ok(Vec::new());
+        };
+
+        let mut versions = Vec::with_capacity(releases.len());
+
+        for entry in releases {
+            // Refused, not skipped. A version this cannot read is one it
+            // cannot order either, so skipping it would mean answering "the
+            // newest is X" while holding something that might have been newer
+            // -- a wrong answer given confidently, which is worse than none.
+            let version = Version::parse_chart(&entry.version).ok_or_else(|| RegistryError::Refused {
+                detail: format!("{chart} lists '{}', which is not a version", entry.version),
+            })?;
+
+            // Two releases of equal precedence -- the same version twice, or
+            // two differing only in build metadata, which SemVer says is not a
+            // difference. There is no newest of them, and picking would be
+            // picking arbitrarily.
+            if versions.contains(&version) {
+                return Err(RegistryError::Refused {
+                    detail: format!("{chart} lists {version} more than once"),
+                });
+            }
+
+            versions.push(version);
+        }
+
+        Ok(versions)
     }
 }

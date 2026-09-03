@@ -28,7 +28,12 @@ impl PlatformManagement {
         let (desired, discovery) = self.look(environment, component).await?;
         let was = desired.version.clone();
 
-        let Decision::Advance(release) = decide(desired.policy, desired.hold.is_some(), &discovery) else {
+        let Decision::Advance(release) = decide(
+            desired.policy,
+            desired.channel,
+            desired.hold.is_some(),
+            &discovery,
+        ) else {
             return Ok(Reconciliation {
                 was,
                 status: ComponentStatus::assemble(component, &desired, &discovery),
@@ -42,13 +47,13 @@ impl PlatformManagement {
                 "Advance {environment} to {component} {}\n\nBuilt from {}.",
                 unit.version, unit.source_revision
             ),
-            Release::Chart { version } => {
+            Release::Chart { version, .. } => {
                 format!("Advance {environment} to {component} chart {version}")
             }
         };
 
         self.desired_state
-            .advance(environment, component, &release, &message)
+            .advance(environment, component, &release, &desired.revision, &message)
             .await?;
 
         // Reported from what was written rather than by reading again: a

@@ -1,5 +1,9 @@
 //! Moving one chart source's `targetRevision` in an Argo Application.
 
+mod position;
+
+use position::Position;
+
 use crate::PlatformGitError;
 
 /// Rewrites the `targetRevision` of the source naming this chart.
@@ -47,22 +51,31 @@ pub(crate) fn retarget(
     let mut out = String::with_capacity(text.len() + 32);
     let mut rewritten = 0_usize;
     let mut source: Option<Source> = None;
+    let mut sources = Position::Outside;
 
     for line in text.lines() {
         let trimmed = line.trim_start();
+        let indent = line.len() - trimmed.len();
 
-        // A `- ` at any indent starts a new list entry, which ends whatever
-        // was being accumulated. Sources are the only list this walks into,
-        // and a source's own keys are indented past its dash.
-        // A list entry carries its first key on the same line as its dash,
-        // so the dash is stripped before the line is read as a key.
+        // Where in the document this line is. Only entries of `spec.sources`
+        // are sources; a `- ` anywhere else is somebody else's list, and a
+        // renderer that edited one because it happened to carry a `chart:` key
+        // would be exactly the arbitrary-edit engine this design refuses.
+        sources.observe(trimmed, indent);
+
         let (starts_entry, key) = match trimmed.strip_prefix("- ") {
             Some(rest) => (true, rest),
             None => (false, trimmed),
         };
 
         if starts_entry {
-            source = Some(Source::default());
+            source = sources.entry_at(indent).then(Source::default);
+        }
+
+        // Leaving the list closes whatever source was open, so a key after
+        // it is never read as part of one.
+        if !sources.inside() {
+            source = None;
         }
 
         if let Some(open) = source.as_mut() {

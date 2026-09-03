@@ -1,6 +1,7 @@
 //! Versions, and the ordering that keeps an environment moving forwards.
 
 mod ordering;
+mod parse;
 
 #[cfg(test)]
 mod version_tests;
@@ -25,7 +26,18 @@ pub enum Channel {
 /// "never move backwards" rule built on `<` over strings would wave through
 /// exactly the rollback it exists to prevent, and only once a preview number
 /// reached two digits.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// # Equality is precedence, not spelling
+///
+/// `PartialEq` is written rather than derived so that it agrees with `Ord`.
+/// `SemVer` says build metadata is ignored when comparing, so `1.2.3+a` and
+/// `1.2.3+b` order as equal — and a derived equality over the text would call
+/// them different, which is the kind of disagreement that makes a `BTreeSet`
+/// quietly keep both or quietly keep one.
+///
+/// Two versions that compare equal and are spelled differently are a problem
+/// for whoever is choosing between them, and the chart index refuses such a
+/// pair rather than picking.
+#[derive(Debug, Clone, Eq)]
 pub struct Version {
     /// The version as written, which is also the image tag.
     pub(crate) text: String,
@@ -35,54 +47,22 @@ pub struct Version {
 
     /// Dot-separated prerelease identifiers, empty for a release.
     pub(crate) pre: Vec<String>,
+
+    /// Build metadata, if the version carried any.
+    ///
+    /// Kept because it is part of how the version is *written* — a chart
+    /// pinned as `1.2.3+build.7` has to be written back that way — and ignored
+    /// in every comparison, because `SemVer` says it is not part of precedence.
+    pub(crate) build: Option<String>,
+}
+
+impl PartialEq for Version {
+    fn eq(&self, other: &Self) -> bool {
+        self.key() == other.key()
+    }
 }
 
 impl Version {
-    /// Parses a version, rejecting build metadata.
-    ///
-    /// `+` is not a legal character in an OCI tag, so a version carrying one
-    /// could never name its own image.
-    #[must_use]
-    pub fn parse(text: &str) -> Option<Self> {
-        let (core_text, pre_text) = match text.split_once('-') {
-            Some((core, pre)) => (core, Some(pre)),
-            None => (text, None),
-        };
-
-        if core_text.contains('+') || pre_text.is_some_and(|pre| pre.contains('+')) {
-            return None;
-        }
-
-        let mut parts = core_text.split('.');
-        let core = (
-            numeric(parts.next()?)?,
-            numeric(parts.next()?)?,
-            numeric(parts.next()?)?,
-        );
-        if parts.next().is_some() {
-            return None;
-        }
-
-        let pre = match pre_text {
-            None => Vec::new(),
-            Some(pre) => {
-                let parts: Vec<String> = pre.split('.').map(ToOwned::to_owned).collect();
-                if parts.iter().any(|part| {
-                    part.is_empty() || !part.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
-                }) {
-                    return None;
-                }
-                parts
-            }
-        };
-
-        Some(Self {
-            text: text.to_owned(),
-            core,
-            pre,
-        })
-    }
-
     /// The version as written.
     #[must_use]
     pub fn as_str(&self) -> &str {
@@ -104,13 +84,4 @@ impl Version {
     pub fn is_series(&self, series: &Self) -> bool {
         self.core == series.core
     }
-}
-
-/// A version-core component: digits, and no leading zero unless it is zero.
-fn numeric(text: &str) -> Option<u64> {
-    if text.is_empty() || (text.len() > 1 && text.starts_with('0')) {
-        return None;
-    }
-
-    text.parse().ok()
 }

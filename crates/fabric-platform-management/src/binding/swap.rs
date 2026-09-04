@@ -5,6 +5,17 @@
 //! has stopped targeting a repository has been told that nothing more will be
 //! written there, and a caller mid-operation against the old one finishes
 //! against the old one rather than half against each.
+//!
+//! # What the promise does not cover
+//!
+//! It holds for every operation that runs to completion or fails. It does not
+//! hold for one that is *cancelled* — an operator's browser disconnecting, or
+//! the API's request timeout, drops the handler's future, and a future dropped
+//! mid-write releases the guard while its last request may already be on the
+//! wire. That is inherent to cancellation rather than something this could
+//! wait for: there is nothing left to wait on once the future is gone. The
+//! write either landed or it did not, nobody is told which, and the next read
+//! sees whatever landed.
 
 use std::sync::Arc;
 

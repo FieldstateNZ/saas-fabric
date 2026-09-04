@@ -55,6 +55,13 @@ mod swap;
 /// write guard — so they complete only once everything that began against the
 /// old repository has finished, and nothing starts against it afterwards.
 ///
+/// The wait is bounded because [`DesiredState`](crate::DesiredState) requires every
+/// implementation to bound its operations, and a deployment's budget is checked at
+/// startup to be shorter than one request. Without that the drain would be
+/// unbounded: an operator's disconnect would queue behind a stalling Git host and
+/// be cut off by the request timeout, leaving them a `504` and a platform still
+/// pointed at the repository they asked it to forget.
+///
 /// And a decision is **tagged** with the generation of the binding it was read
 /// through, because draining says nothing about a decision read a minute ago
 /// and written now. `binding/live.rs` keeps that counter beside the repository
@@ -85,10 +92,9 @@ impl PlatformDesiredState {
     /// be read through it. What separates the two is the *error* callers get,
     /// not this.
     ///
-    /// It waits for a rebind in progress rather than reporting around one. A
-    /// non-blocking read would answer "not connected" for the moment a
-    /// repository is being swapped, which is a lie about a platform connected
-    /// on both sides of it.
+    /// Async only because the lock is. There is nothing to wait for that a
+    /// blocking read would not also have waited for — this answers from state
+    /// already in memory, and the `.await` is the accessor's, not an I/O call's.
     pub async fn is_connected(&self) -> bool {
         self.live().await.repository().is_ok()
     }

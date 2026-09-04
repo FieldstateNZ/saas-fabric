@@ -29,6 +29,13 @@ pub struct PlatformManagementTarget {
     /// How long a call to it may take.
     http_timeout_seconds: u64,
 
+    /// How long a whole desired-state operation may take.
+    ///
+    /// Separate from the above because an operation is many calls. Startup has
+    /// already checked this is shorter than one request, which is what makes
+    /// the binding's drain finish inside an operator's disconnect.
+    operation_timeout_seconds: u64,
+
     /// Stamps installation tokens.
     clock: Arc<dyn Clock>,
 
@@ -42,12 +49,14 @@ impl PlatformManagementTarget {
     pub fn new(
         api_base_url: String,
         http_timeout_seconds: u64,
+        operation_timeout_seconds: u64,
         clock: Arc<dyn Clock>,
         binding: Arc<PlatformDesiredState>,
     ) -> Self {
         Self {
             api_base_url,
             http_timeout_seconds,
+            operation_timeout_seconds,
             clock,
             binding,
         }
@@ -79,6 +88,7 @@ impl IntegrationTarget for PlatformManagementTarget {
                 repository: repository.name.clone(),
                 branch: repository.branch.clone(),
                 http_timeout_seconds: self.http_timeout_seconds,
+                operation_timeout_seconds: self.operation_timeout_seconds,
             },
             credential,
             Arc::clone(&self.clock),

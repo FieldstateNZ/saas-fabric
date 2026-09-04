@@ -77,7 +77,11 @@ pub async fn build(config: &ControlPlaneAppConfig) -> Result<Application, String
     let (keys, sign_in) = operator_keys::establish(&config.control_plane.operator)?;
 
     // Before the flows, because one of them connects it.
-    let platform_management = platform::establish(config.platform_management.as_ref(), &clock)?;
+    let platform_management = platform::establish(
+        config.platform_management.as_ref(),
+        config.request_timeout_seconds,
+        &clock,
+    )?;
 
     let integrations =
         integration::establish(config, &repository, platform_management.as_ref(), &clock).await?;

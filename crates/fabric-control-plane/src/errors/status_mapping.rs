@@ -4,8 +4,7 @@ use http::StatusCode;
 
 mod codes;
 mod messages;
-
-use fabric_platform_management::{DesiredStateError, PlatformError};
+mod platform;
 
 use crate::ControlPlaneError;
 
@@ -19,7 +18,8 @@ impl ControlPlaneError {
     /// unrelated conflicts are 409. Merging them would put unrelated failures
     /// in one arm and delete the comment explaining each — and the distinction
     /// an operator acts on survives anyway in the machine code beside it, where
-    /// every one of them has its own.
+    /// every one of them has its own. The platform's own arms follow the same
+    /// rule in `platform.rs`.
     ///
     /// One arm here used to be a block for no reason but to keep this lint
     /// quiet. Saying so is better than the trick.
@@ -52,54 +52,16 @@ impl ControlPlaneError {
             | Self::IntegrationRefused(_)
             | Self::InvalidFlow => StatusCode::BAD_REQUEST,
 
+            // Platform Management has six of these, spread over four statuses
+            // and each with its own reason. They live next door rather than
+            // swamping this match.
+            Self::Platform(platform) => platform::status(platform),
+
             // 428, not 400. The request is well-formed; what is missing is the
             // precondition that makes it safe to apply, and 428 is the status
             // that says exactly that. A client seeing it knows to read the
             // resource and retry with its entity tag, where a 400 would only
             // tell it something was wrong.
-            // Platform Management reached a registry or the platform
-            // repository and could not get an answer. 503, not 500: nothing is
-            // wrong with the request, desired state is untouched, and the
-            // operator's next step is to look again shortly.
-            // Nothing is connected. 404 beside the other "this deployment
-            // does not have one" answers, because that is what it is: an
-            // operator has not connected a platform repository, and their next
-            // step is to connect one rather than to retry.
-            //
-            // Deliberately distinct from the arm below. A *connected*
-            // integration that cannot be read is broken and needs looking at;
-            // reporting that as "not connected" would send an operator to
-            // connect something they already have.
-            // Two different absences, one status, and two different *codes* —
-            // which is where the distinction an operator acts on lives. Nobody
-            // has connected a platform repository, or the environment's
-            // manifest does not name this component. Neither is fixed by
-            // asking again, so neither is a 503.
-            Self::Platform(PlatformError::DesiredState(
-                DesiredStateError::NotConnected | DesiredStateError::NotFound { .. },
-            )) => StatusCode::NOT_FOUND,
-
-            // 409, not 503 and not 400. The request is well-formed and was
-            // understood; the component's state is what does not permit it,
-            // and an operator's next step is to look at the policy rather than
-            // to retry or to correct their request.
-            Self::Platform(PlatformError::NotAdvancing { .. }) => StatusCode::CONFLICT,
-
-            // The version is not one this component can go back to. 422: the
-            // request is well-formed and its content is what cannot be acted
-            // on — and unlike a 404 there *is* a component here, it just has
-            // no such release to return to.
-            Self::Platform(PlatformError::NotRollable { .. }) => StatusCode::UNPROCESSABLE_ENTITY,
-
-            // 501, and deliberately not 422. The request is well-formed and
-            // the version may well be fine; what is missing is a guarantee
-            // this platform can make about that kind of artifact at all. An
-            // operator retrying with a different version would be answering
-            // the wrong question.
-            Self::Platform(PlatformError::RollbackUnsupported { .. }) => StatusCode::NOT_IMPLEMENTED,
-
-            Self::Platform(_) => StatusCode::SERVICE_UNAVAILABLE,
-
             Self::RevisionRequired => StatusCode::PRECONDITION_REQUIRED,
 
             // 409, as ADR 0008 requires. Not 412: a failed `If-Match` on a

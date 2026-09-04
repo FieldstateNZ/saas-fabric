@@ -23,6 +23,17 @@ serde_json.workspace = true
 # The maintained fork of `serde_yaml`; confined to the control plane.
 serde_norway.workspace = true
 thiserror.workspace = true
+# `tokio::time::timeout`, which bounds one desired-state operation so the
+# platform binding's drain is bounded too.
+#
+# Be clear about what this line actually enables. Workspace-inherited features
+# are *additive*, so this crate links a tokio with `macros`, `rt-multi-thread`,
+# `sync` and `time` -- everything the workspace entry declares -- not `time`
+# alone. Nothing here may start a runtime, spawn a task or block on one: this
+# crate is a library called from a host that owns the runtime. That is a
+# convention, not a checked invariant; `scripts/check_architecture.py` has no
+# rule for it yet.
+tokio = { workspace = true, features = ["time"] }
 tracing.workspace = true
 
 [dev-dependencies]

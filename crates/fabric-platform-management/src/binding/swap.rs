@@ -9,13 +9,15 @@
 //! # What the promise does not cover
 //!
 //! It holds for every operation that runs to completion or fails. It does not
-//! hold for one that is *cancelled* — an operator's browser disconnecting, or
-//! the API's request timeout, drops the handler's future, and a future dropped
-//! mid-write releases the guard while its last request may already be on the
-//! wire. That is inherent to cancellation rather than something this could
-//! wait for: there is nothing left to wait on once the future is gone. The
-//! write either landed or it did not, nobody is told which, and the next read
-//! sees whatever landed.
+//! hold for one that is *cancelled* — an operator's browser disconnecting, the
+//! API's request timeout, or the adapter's own operation budget expiring (the
+//! one of the three that fires on an unattended sweep, where no request exists
+//! to be cut off) drops the future, and a future dropped mid-write releases
+//! the guard while its last request may already be on the wire. That is
+//! inherent to cancellation rather than something this could wait for: there
+//! is nothing left to wait on once the future is gone. The write either landed
+//! or it did not, nobody is told which, and the next read sees whatever
+//! landed.
 
 use std::sync::Arc;
 

@@ -47,6 +47,11 @@ use crate::config::PlatformManagementConfig;
 /// this refuses to start otherwise rather than leaving a deployment one slow
 /// Git host away from a disconnect that silently does nothing.
 ///
+/// What that bounds is the *unbind*. The rest of a disconnect — deleting the
+/// key, clearing the record — runs after it, so a budget only just inside the
+/// request leaves that tail no room. The check is a floor, not a
+/// recommendation; the defaults leave ten seconds.
+///
 /// # Errors
 ///
 /// Returns a message naming the field. Never a credential.

@@ -9,13 +9,15 @@ use crate::{ComponentDesired, DesiredRevision, DesiredStateError, Hold, Release}
 ///
 /// # Every operation must be bounded
 ///
-/// A contract on the implementation, not a hope. The platform binding holds a
-/// lock across these calls, so the longest one can take is the longest an
-/// operator's disconnect can wait — and that is cut off by the API's request
-/// timeout. Bounding each network request is not enough: an operation is many
-/// requests, and a host answering every one just inside its limit runs for
-/// minutes. Bound the *operation*, and answer
+/// A contract, not a hope: the platform binding holds a lock across these
+/// calls, so the longest one can take is the longest an operator's disconnect
+/// can wait — and that is cut off by the API's request timeout. Bounding each
+/// request is not enough; an operation is many, and a host answering every one
+/// just inside its limit runs for minutes. Bound the *operation*, and answer
 /// [`Unavailable`](DesiredStateError::Unavailable) when the budget is spent.
+/// Every write answers [`Conflict`](DesiredStateError::Conflict) if the state
+/// it was decided against has moved since it was read, and the other variants
+/// for what they name — said once here rather than under each method.
 #[async_trait::async_trait]
 pub trait DesiredState: Send + Sync {
     /// Every component an environment describes.

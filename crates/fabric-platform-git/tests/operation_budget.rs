@@ -154,7 +154,10 @@ async fn the_budget_it_gave_up_on_is_what_the_operator_is_told() {
         panic!("expected an unavailable repository");
     };
 
-    assert!(detail.contains('1'), "the budget is named: {detail}");
+    assert!(
+        detail.contains("1-second budget"),
+        "the budget is named: {detail}"
+    );
     assert!(!detail.contains("127.0.0.1"), "no address: {detail}");
     assert!(!detail.contains("test-bearer"), "no credential: {detail}");
 }

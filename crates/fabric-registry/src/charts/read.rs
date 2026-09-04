@@ -33,9 +33,16 @@ pub(super) async fn bounded_get(http: &reqwest::Client, url: reqwest::Url) -> Re
             // and this reader's own transport policy said no to where it was
             // sent next. Grouping it with `Unavailable` would tell an
             // operator to retry a request that will refuse again.
-            RegistryError::Refused {
-                detail: format!("reading a chart index at {url} was redirected off HTTPS"),
-            }
+            //
+            // `reqwest` keeps the `transport::RedirectRefused` this reader's
+            // own policy raised as this error's `source()`, so surface that
+            // reason rather than a generic one -- it already names which
+            // rule refused and which URL it refused.
+            let detail = std::error::Error::source(&error).map_or_else(
+                || format!("reading a chart index at {url} was redirected off the allowed transport"),
+                ToString::to_string,
+            );
+            RegistryError::Refused { detail }
         } else {
             transport_failure("reading a chart index", &error)
         }

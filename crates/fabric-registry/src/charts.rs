@@ -37,9 +37,9 @@ pub struct HelmCharts {
 impl HelmCharts {
     /// Builds a reader that only ever speaks HTTPS.
     ///
-    /// This is the only constructor the composition root calls. See
-    /// [`plain_http_to_loopback`](Self::plain_http_to_loopback) for the one
-    /// exception, which exists for tests alone.
+    /// This is the only constructor the composition root calls. The one
+    /// exception, which exists for tests alone, is hidden from this crate's
+    /// published docs -- see this file's own source if you need it.
     ///
     /// # Errors
     ///
@@ -61,9 +61,14 @@ impl HelmCharts {
     /// Nothing in production ever calls this — [`new`](Self::new) is what the
     /// composition root uses, and it never widens past `Transport::Https`.
     ///
+    /// Hidden from this crate's published docs (`#[doc(hidden)]`): it is not
+    /// a capability offered to anyone but this crate's own test suite, and
+    /// it should not read like one to somebody skimming the crate's API.
+    ///
     /// # Errors
     ///
     /// The same as [`new`](Self::new).
+    #[doc(hidden)]
     pub fn plain_http_to_loopback(http_timeout_seconds: u64) -> Result<Self, String> {
         Self::build(http_timeout_seconds, Transport::LoopbackToo)
     }

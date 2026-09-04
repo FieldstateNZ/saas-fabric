@@ -10,8 +10,18 @@
 //! host of their choosing. Requiring HTTPS on the initial request and
 //! refusing to leave it on any hop closes that: every byte of an index this
 //! reads travelled over a connection nobody in the middle could rewrite.
+//!
+//! [`decide`] below is the one rule this whole module exists to state; the
+//! two submodules are its two consumers rather than rules of their own —
+//! [`index_url`] validates the address a caller asked to read before the
+//! first request goes out, and [`redirect`] wires the same decision into
+//! `reqwest`'s own redirect policy for every hop afterwards.
 
-use fabric_platform_management::RegistryError;
+mod index_url;
+mod redirect;
+
+pub(super) use index_url::validated_index_url;
+pub(super) use redirect::policy;
 
 /// How many redirects a chart index read will follow before refusing.
 ///
@@ -51,7 +61,12 @@ pub(super) enum Transport {
 /// address a caller asked to read and every redirect afterwards, and the
 /// whole decision is testable with no HTTP connection anywhere.
 fn decide(transport: Transport, previous: &[reqwest::Url], next: &reqwest::Url) -> Result<(), String> {
-    if previous.len() >= MAX_REDIRECTS {
+    // `previous` already carries the original request's own URL by the time
+    // the first redirect is checked -- `reqwest` pushes it before calling
+    // this policy -- so a bound of `MAX_REDIRECTS` means `MAX_REDIRECTS`
+    // hops are allowed, the same way `reqwest`'s own default `limited(10)`
+    // policy follows exactly ten redirects rather than nine.
+    if previous.len() > MAX_REDIRECTS {
         return Err(format!(
             "reading a chart index followed more than {MAX_REDIRECTS} redirects, at {next}"
         ));
@@ -98,53 +113,6 @@ fn is_loopback(url: &reqwest::Url) -> bool {
     bare.parse::<std::net::IpAddr>().is_ok_and(|ip| ip.is_loopback())
 }
 
-/// Parses and validates the URL a chart index will be read from.
-///
-/// Refuses a URL that does not parse, and refuses one [`decide`] would
-/// refuse as the first hop of a chain — so a caller can never send the
-/// initial request before this has agreed to it.
-///
-/// # Errors
-///
-/// [`RegistryError::Refused`] naming the URL and which rule it failed.
-pub(super) fn validated_index_url(transport: Transport, raw: &str) -> Result<reqwest::Url, RegistryError> {
-    let url = reqwest::Url::parse(raw).map_err(|error| RegistryError::Refused {
-        detail: format!("the chart index address '{raw}' does not parse: {error}"),
-    })?;
-
-    decide(transport, &[], &url).map_err(|detail| RegistryError::Refused { detail })?;
-
-    Ok(url)
-}
-
-/// Carries a refusal reason through `reqwest`'s own redirect-error channel,
-/// so a caller can recognise a policy refusal via `reqwest::Error::is_redirect`
-/// without this reader inventing a second channel for the same information.
-#[derive(Debug)]
-struct RedirectRefused(String);
-
-impl std::fmt::Display for RedirectRefused {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str(&self.0)
-    }
-}
-
-impl std::error::Error for RedirectRefused {}
-
-/// Builds the redirect policy for `transport`.
-///
-/// `transport` is `Copy`, so the closure captures it by value rather than
-/// borrowing — satisfying the `Fn + Send + Sync + 'static` bound
-/// `reqwest::redirect::Policy::custom` requires without a lifetime to carry.
-pub(super) fn policy(transport: Transport) -> reqwest::redirect::Policy {
-    reqwest::redirect::Policy::custom(move |attempt| {
-        match decide(transport, attempt.previous(), attempt.url()) {
-            Ok(()) => attempt.follow(),
-            Err(reason) => attempt.error(RedirectRefused(reason)),
-        }
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -181,8 +149,23 @@ mod tests {
     }
 
     #[test]
-    fn more_hops_than_the_bound_are_refused() {
+    fn exactly_the_bound_of_hops_is_still_followed() {
+        // `previous` already holds the original request's URL by the time
+        // the first redirect is checked, so exactly `MAX_REDIRECTS` entries
+        // is the boundary that must still be allowed -- matching `reqwest`'s
+        // own `limited(10)`, which follows ten redirects, not nine.
         let previous = vec![url("https://example.test/index.yaml"); MAX_REDIRECTS];
+        assert!(decide(
+            Transport::Https,
+            &previous,
+            &url("https://example.test/index.yaml")
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn one_hop_past_the_bound_is_refused() {
+        let previous = vec![url("https://example.test/index.yaml"); MAX_REDIRECTS + 1];
         assert!(decide(
             Transport::Https,
             &previous,

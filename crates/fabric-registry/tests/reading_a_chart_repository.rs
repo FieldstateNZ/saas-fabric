@@ -407,6 +407,94 @@ async fn an_index_larger_than_the_bound_is_refused_rather_than_held() {
 }
 
 #[tokio::test]
+async fn an_unrelated_charts_alias_amplification_costs_neither_memory_nor_time() {
+    // A neighbouring chart repeats one 100-key anchor 200,000 times, well
+    // inside the byte bound. A reader that materialises every chart's
+    // entries as a `Value` before picking the requested one re-inflates the
+    // anchor on every alias, and does not just get slow: measured against
+    // this exact fixture it allocated 6.28 GB and took 43 seconds. The
+    // `DeserializeSeed` this reader now uses never turns an alias it is not
+    // keeping into a value at all, so this should read in well under a
+    // second -- if this test ever turns slow or memory-hungry, the fix has
+    // regressed back toward materialising unrelated charts.
+    let mut amplified = String::from(
+        "apiVersion: v1
+entries:
+  keycloakx:
+    - version: 7.3.1
+    - version: 7.3.0
+  amplified-elsewhere:
+",
+    );
+
+    {
+        use std::fmt::Write as _;
+        write!(amplified, "    - &a {{").expect("writing to a String cannot fail");
+        for n in 0..100 {
+            write!(amplified, "k{n}: {n}, ").expect("writing to a String cannot fail");
+        }
+        writeln!(amplified, "}}").expect("writing to a String cannot fail");
+
+        for _ in 0..200_000 {
+            writeln!(amplified, "    - *a").expect("writing to a String cannot fail");
+        }
+    }
+    assert!(
+        amplified.len() > 1024 * 1024,
+        "the fixture has to be large enough for amplification to matter"
+    );
+
+    let (base, _recorded) = serving(&amplified).await;
+
+    let started = std::time::Instant::now();
+    let found = charts()
+        .versions(&base, "keycloakx")
+        .await
+        .expect("only keycloakx's own entries are read");
+    let elapsed = started.elapsed();
+
+    let text: Vec<&str> = found
+        .iter()
+        .map(fabric_platform_management::Version::as_str)
+        .collect();
+    assert_eq!(
+        text,
+        vec!["7.3.1", "7.3.0"],
+        "the amplified neighbour is never in the way"
+    );
+
+    assert!(
+        elapsed < std::time::Duration::from_secs(5),
+        "reading past an alias-amplified neighbour took {elapsed:?}; the fix has regressed"
+    );
+}
+
+#[tokio::test]
+async fn the_requested_chart_listed_twice_under_entries_is_refused() {
+    // Today's `BTreeMap`-based reader would insert the second occurrence
+    // over the first and pick silently between them. A `DeserializeSeed`
+    // sees both key/value pairs as they arrive off the wire, so it can, and
+    // does, refuse instead.
+    let (base, _recorded) = serving(
+        "apiVersion: v1
+entries:
+  keycloakx:
+    - version: 7.3.0
+  keycloakx:
+    - version: 8.0.0
+",
+    )
+    .await;
+
+    let failure = charts()
+        .versions(&base, "keycloakx")
+        .await
+        .expect_err("a chart named twice under entries is not something to pick between");
+
+    assert!(matches!(failure, RegistryError::Refused { .. }), "{failure:?}");
+}
+
+#[tokio::test]
 async fn a_repository_that_refuses_is_a_registry_failure_and_not_an_empty_list() {
     let (base, _recorded) = serving("").await;
 

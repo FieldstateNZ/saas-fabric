@@ -32,11 +32,19 @@ const CHART_REPOSITORY: &str = "https://codecentric.github.io/helm-charts";
 const CHART: &str = "keycloakx";
 const APPLICATION: &str = "applications/core/keycloak/application.yaml";
 
-/// An Argo Application shaped like the ones this platform deploys, in the
-/// canonical shape `components::argo_tests::APPLICATION` documents: the
-/// chart, and the repository holding its values, which carries a
-/// `targetRevision` of its own that a chart pin must never touch.
-const APPLICATION_TEXT: &str = r"spec:
+/// A complete Argo Application for a Helm-published component: the chart
+/// source this platform bumps, and the repository holding its values, which
+/// carries a `targetRevision` of its own that a chart pin must never touch.
+const APPLICATION_TEXT: &str = r"apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: keycloak
+  namespace: argocd
+spec:
+  project: default
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: keycloak
   sources:
     # The upstream chart. Bumping this is a deliberate act.
     - repoURL: https://codecentric.github.io/helm-charts
@@ -44,6 +52,48 @@ const APPLICATION_TEXT: &str = r"spec:
       targetRevision: 7.3.0
       helm:
         releaseName: keycloak
+    - repoURL: https://github.com/FieldstateNZ/saas-fabric-platform.git
+      targetRevision: PLACEHOLDER
+      ref: platform
+";
+
+/// The same Application, with two decoy sources added: `postgresql` from the
+/// same repository as the real chart, and `keycloakx` again from a different
+/// one. Neither is what this component publishes.
+///
+/// Without them, a test asserting a mismatched pin is refused cannot tell a
+/// working check from a disabled one -- `retarget` already refuses when no
+/// source matches the pin's identity, so a pin naming a chart or repository
+/// nothing in the file carries would be refused either way. These decoys
+/// give a disabled check something to wrongly succeed against: a source that
+/// *does* match the pin's own (wrong) identity, and would have its revision
+/// silently moved if `render` did not compare that identity to the artifact
+/// first.
+const DECOY_APPLICATION_TEXT: &str = r"apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: keycloak
+  namespace: argocd
+spec:
+  project: default
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: keycloak
+  sources:
+    # The upstream chart. Bumping this is a deliberate act.
+    - repoURL: https://codecentric.github.io/helm-charts
+      chart: keycloakx
+      targetRevision: 7.3.0
+      helm:
+        releaseName: keycloak
+    # A decoy: a different chart, same repository as the real one.
+    - repoURL: https://codecentric.github.io/helm-charts
+      chart: postgresql
+      targetRevision: 16.0.0
+    # A decoy: the same chart, a different repository than the real one.
+    - repoURL: https://charts.example.test
+      chart: keycloakx
+      targetRevision: 1.0.0
     - repoURL: https://github.com/FieldstateNZ/saas-fabric-platform.git
       targetRevision: PLACEHOLDER
       ref: platform
@@ -875,45 +925,118 @@ async fn the_same_decision_applies_cleanly_when_nothing_has_moved() {
         .expect("a decision taken against current state applies");
 }
 
-#[tokio::test]
-async fn a_chart_release_must_agree_with_the_artifact_and_the_pin() {
-    // What the component is published as and what the file pins must both
-    // agree with a release before it is written. A release discovered from
-    // one chart written into a pin for another would deploy plausible-looking
-    // wrong software.
-    let manifest = helm_manifest(
-        "saas-fabric",
-        "0.3.0-preview.1",
-        "https://charts.example.test",
-        "keycloakx",
-        &[(RUNTIME_OVERLAY, "https://charts.example.test", "keycloakx")],
-    );
+// `a_chart_release_must_agree_with_the_artifact_and_the_pin` used to live
+// here. It is gone: with `check_release` now exhaustive over every
+// (artifact, release) combination, a release naming another chart is
+// refused before any pin is read -- which is exactly what
+// `a_helm_release_must_name_the_chart_the_component_publishes` proves below.
+// Keeping both meant two tests exercising the same rejection through the
+// same code path, one of them dressed up with a pin that played no part in
+// the result. The two tests below take its place: they exercise the check
+// this one never reached -- `render`'s pin-vs-artifact comparison -- using a
+// release that agrees with the artifact exactly, so the only thing left to
+// disagree is the pin.
 
-    let host =
-        FakePlatformHost::start(&[(MANIFEST, &manifest), (RUNTIME_OVERLAY, RUNTIME_OVERLAY_TEXT)]).await;
+#[tokio::test]
+async fn a_pin_naming_a_chart_the_artifact_does_not_publish_is_refused_even_when_a_release_matches_exactly() {
+    // A release of R/keycloakx that agrees with the artifact exactly passes
+    // `check_release` -- it is decided upstream, before any pin is read, and
+    // has nothing to disagree with here. If `render`'s own pin-vs-artifact
+    // comparison did not also run, `retarget` would go looking for a source
+    // named `postgresql` in R -- find the decoy this fixture carries -- and
+    // move *its* revision to keycloakx's new number, silently deploying the
+    // wrong chart's pin.
+    let manifest = helm_manifest(
+        "keycloak",
+        "7.3.0",
+        CHART_REPOSITORY,
+        CHART,
+        &[(APPLICATION, CHART_REPOSITORY, "postgresql")],
+    );
+    let host = FakePlatformHost::start(&[(MANIFEST, &manifest), (APPLICATION, DECOY_APPLICATION_TEXT)]).await;
     let repository = repository(&host);
 
-    // A release of a *different* chart, which the manifest does not publish.
-    let elsewhere = WantedVersion::Chart {
-        repository: "https://charts.example.test".to_owned(),
-        chart: "postgresql".to_owned(),
-        version: "16.0.0".to_owned(),
+    let matching = WantedVersion::Chart {
+        repository: CHART_REPOSITORY.to_owned(),
+        chart: CHART.to_owned(),
+        version: "7.3.1".to_owned(),
     };
 
     let failure = repository
         .set_component_desired_state(
             "lucentroot",
-            "saas-fabric",
-            &elsewhere,
-            &revision_of(&repository, "lucentroot", "saas-fabric").await,
+            "keycloak",
+            &matching,
+            &revision_of(&repository, "lucentroot", "keycloak").await,
             "Promote",
         )
         .await
-        .expect_err("a release of another chart is not this component's release");
+        .expect_err("a pin naming another chart is the manifest disagreeing with itself");
 
     assert!(
         matches!(failure, PlatformGitError::Rejected { .. }),
         "{failure:?}"
+    );
+    assert_eq!(host.ref_updates(), 0);
+    let application = host.current(APPLICATION).unwrap();
+    assert!(
+        application.contains("targetRevision: 7.3.0"),
+        "the real source moved: {application}"
+    );
+    assert!(
+        application.contains("targetRevision: 16.0.0"),
+        "the decoy's revision moved even though the pin was refused: {application}"
+    );
+}
+
+#[tokio::test]
+async fn a_pin_naming_a_repository_the_artifact_does_not_publish_from_is_refused_even_when_a_release_matches_exactly(
+) {
+    // The other half of the same comparison. Same chart name as the
+    // artifact, wrong repository -- if `render` compared only the chart
+    // name, this would pass, and `retarget` would find the decoy naming
+    // keycloakx from the wrong repository and move its revision instead of
+    // refusing.
+    let manifest = helm_manifest(
+        "keycloak",
+        "7.3.0",
+        CHART_REPOSITORY,
+        CHART,
+        &[(APPLICATION, "https://charts.example.test", CHART)],
+    );
+    let host = FakePlatformHost::start(&[(MANIFEST, &manifest), (APPLICATION, DECOY_APPLICATION_TEXT)]).await;
+    let repository = repository(&host);
+
+    let matching = WantedVersion::Chart {
+        repository: CHART_REPOSITORY.to_owned(),
+        chart: CHART.to_owned(),
+        version: "7.3.1".to_owned(),
+    };
+
+    let failure = repository
+        .set_component_desired_state(
+            "lucentroot",
+            "keycloak",
+            &matching,
+            &revision_of(&repository, "lucentroot", "keycloak").await,
+            "Promote",
+        )
+        .await
+        .expect_err("a pin naming another repository is the manifest disagreeing with itself");
+
+    assert!(
+        matches!(failure, PlatformGitError::Rejected { .. }),
+        "{failure:?}"
+    );
+    assert_eq!(host.ref_updates(), 0);
+    let application = host.current(APPLICATION).unwrap();
+    assert!(
+        application.contains("targetRevision: 7.3.0"),
+        "the real source moved: {application}"
+    );
+    assert!(
+        application.contains("targetRevision: 1.0.0"),
+        "the decoy's revision moved even though the pin was refused: {application}"
     );
 }
 
@@ -994,6 +1117,7 @@ async fn an_image_version_with_build_metadata_is_refused_on_read() {
         matches!(failure, DesiredStateError::Refused { .. }),
         "{failure:?}"
     );
+    assert_eq!(host.ref_updates(), 0, "a read must never write");
 }
 
 #[tokio::test]

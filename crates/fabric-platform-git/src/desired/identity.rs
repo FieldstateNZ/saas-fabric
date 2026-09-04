@@ -1,4 +1,9 @@
 //! Refusing a request that is not this component's release.
+//!
+//! One closely related set of pure functions: every rule that refuses a
+//! release before a file is read, kept together because none of them is
+//! useful, or even meaningful, apart from the shape they all check —
+//! whether this request is a version of *this* component.
 
 use std::collections::BTreeMap;
 
@@ -31,10 +36,14 @@ use crate::PlatformGitError;
 ///   version of this component, whatever number it carries; there is no
 ///   partial agreement left to check.
 ///
-/// No arm falls through to a default `Ok(())`. That default is the defect
-/// this replaces: it let a mismatched shape reach `apply`, which writes
-/// whatever version string it is given into `desired.version` without
-/// knowing it disagreed with the artifact.
+/// No arm falls through to a default `Ok(())`, and none of them can: the two
+/// mismatched combinations are written out explicitly rather than caught by
+/// a wildcard, so a third `Artifact` variant would leave this match
+/// non-exhaustive and refuse to compile, instead of quietly refusing every
+/// release at runtime. That wildcard is the defect this replaces — it let a
+/// mismatched shape reach `apply`, which writes whatever version string it
+/// is given into `desired.version` without knowing it disagreed with the
+/// artifact.
 ///
 /// # Errors
 ///
@@ -58,10 +67,11 @@ pub(super) fn check_release(
             },
         ) => check_chart(component, repository, chart, found_repository, found_chart),
 
-        (artifact, wanted) => Err(PlatformGitError::Rejected {
+        (Artifact::Oci { .. }, WantedVersion::Chart { .. })
+        | (Artifact::Helm { .. }, WantedVersion::Images(_)) => Err(PlatformGitError::Rejected {
             detail: format!(
                 "{component} publishes {}, and the request carries {}",
-                artifact.describe(),
+                entry.artifact.describe(),
                 wanted.describe(),
             ),
         }),
@@ -88,11 +98,11 @@ fn check_images(
         });
     }
 
-    for (role, image) in images {
-        let Some(offered) = wanted.images.get(role) else {
-            continue;
-        };
-
+    // Both are `BTreeMap`s, so both iterate in ascending key order — and the
+    // check above just proved the two key sets are equal. `zip` therefore
+    // pairs each role with itself, not with whatever the next key happens to
+    // be, so there is no missing-role case left for this loop to handle.
+    for ((role, image), (_, offered)) in images.iter().zip(&wanted.images) {
         // A version change may not become a registry change. Where a component
         // is published is the platform repository's statement, not a caller's.
         if offered.repository != image.repository {

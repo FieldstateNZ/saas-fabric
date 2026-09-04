@@ -2,6 +2,8 @@
 
 use std::collections::BTreeMap;
 
+use crate::components::{HELM_WORDS, IMAGES_WORDS};
+
 /// One image's new identity, as the caller resolved it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImageDigest {
@@ -71,14 +73,18 @@ impl WantedVersion {
 
     /// What shape this request is, for a message an operator reads.
     ///
-    /// Worded to match [`Artifact::describe`](crate::components::Artifact::describe),
-    /// so a refusal reads as "publishes X, and the request carries Y" rather
-    /// than two unrelated vocabularies describing the same disagreement.
+    /// `pub(crate)`, not `pub`: this is plumbing for this crate's own
+    /// refusal messages, not part of the port's vocabulary. Shares its
+    /// words with [`Artifact::describe`](crate::components::Artifact::describe)
+    /// via [`IMAGES_WORDS`](crate::components::IMAGES_WORDS) and
+    /// [`HELM_WORDS`](crate::components::HELM_WORDS), so a refusal reads as
+    /// "publishes X, and the request carries Y" in one vocabulary rather
+    /// than two that could drift apart.
     #[must_use]
-    pub const fn describe(&self) -> &'static str {
+    pub(crate) const fn describe(&self) -> &'static str {
         match self {
-            Self::Images(_) => "container images",
-            Self::Chart { .. } => "a Helm chart",
+            Self::Images(_) => IMAGES_WORDS,
+            Self::Chart { .. } => HELM_WORDS,
         }
     }
 }

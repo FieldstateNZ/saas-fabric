@@ -1,4 +1,12 @@
 //! Reading a version, for an image tag and for a chart.
+//!
+//! Past the 120-line guideline (file-size-policy.md) for one cohesive
+//! reason: `SemVer`'s core, prerelease, and build-metadata grammars are one
+//! parse, and its two identifier-legality rules genuinely share a shape
+//! ([`is_identifier_shape`]) that would otherwise be checked twice.
+//! Splitting the shared predicate into its own file would separate it from
+//! the two rules that exist only to disagree about its stricter numeric
+//! case.
 
 use crate::Version;
 
@@ -26,11 +34,7 @@ impl Version {
     pub fn parse_chart(text: &str) -> Option<Self> {
         let (text, build) = match text.split_once('+') {
             Some((rest, build)) => {
-                if build.is_empty()
-                    || !build
-                        .chars()
-                        .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-')
-                {
+                if build.split('.').any(|part| !legal_build_identifier(part)) {
                     return None;
                 }
                 (rest, Some(build.to_owned()))
@@ -101,6 +105,13 @@ fn numeric(text: &str) -> Option<u64> {
     text.parse().ok()
 }
 
+/// The identifier shape `SemVer` §9 and §10 agree on: a non-empty run of
+/// ASCII alphanumerics and `-`. Shared by [`legal_prerelease_identifier`]
+/// and [`legal_build_identifier`] rather than checked twice.
+fn is_identifier_shape(part: &str) -> bool {
+    !part.is_empty() && part.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+}
+
 /// Whether a prerelease identifier is legal under `SemVer` §9.
 ///
 /// Any non-empty run of `[0-9A-Za-z-]` is legal on its own; a *purely
@@ -109,7 +120,7 @@ fn numeric(text: &str) -> Option<u64> {
 /// no bound on one, and `ordering.rs` compares numeric identifiers by digit
 /// count and text instead.
 fn legal_prerelease_identifier(part: &str) -> bool {
-    if part.is_empty() || !part.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+    if !is_identifier_shape(part) {
         return false;
     }
 
@@ -118,4 +129,14 @@ fn legal_prerelease_identifier(part: &str) -> bool {
     }
 
     true
+}
+
+/// Whether a build-metadata identifier is legal under `SemVer` §10: the
+/// same shape as a prerelease identifier, minus the numeric leading-zero
+/// rule — §10 allows one, since build metadata is never compared. Checking
+/// each dot-separated piece this way is what catches `1.2.4+foo.` and
+/// `1.2.4+foo..bar`, which one alphanumeric-and-`.`-and-`-` run over the
+/// whole suffix let through.
+fn legal_build_identifier(part: &str) -> bool {
+    is_identifier_shape(part)
 }

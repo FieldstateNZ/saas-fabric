@@ -114,6 +114,48 @@ fn empty_or_illegal_build_metadata_is_not_a_version() {
 }
 
 #[test]
+fn build_metadata_is_dot_separated_identifiers_not_one_character_run() {
+    // Validating `+foo.` as one run of `[0-9A-Za-z.-]` accepts a `.` in any
+    // position, including a leading, trailing, or doubled one -- none of
+    // which SemVer's §10 grammar (dot-separated, each identifier non-empty)
+    // allows. Such a version could be selected as an upgrade and written
+    // into Argo's `targetRevision`, so this has to be refused at parse time.
+    for text in [
+        "1.2.4+foo.",
+        "1.2.4+.foo",
+        "1.2.4+foo..bar",
+        "1.2.4+",
+        "1.2.4+foo_bar",
+    ] {
+        assert!(Version::parse_chart(text).is_none(), "{text} should be refused");
+    }
+}
+
+#[test]
+fn build_metadata_identifiers_may_carry_a_leading_zero() {
+    // Unlike a numeric prerelease identifier, SemVer's §10 puts no
+    // restriction on leading zeroes in build metadata -- it is never
+    // compared, so there is nothing for a leading zero to make ambiguous.
+    for text in [
+        "1.2.4+foo.bar",
+        "1.2.4+001",
+        "1.2.4+0.0",
+        "1.2.4+build-7",
+        "1.2.4+20130313144700",
+    ] {
+        assert!(Version::parse_chart(text).is_some(), "{text} should parse");
+    }
+}
+
+#[test]
+fn a_prerelease_and_its_build_metadata_are_both_validated() {
+    let version = Version::parse_chart("1.2.4-rc.1+foo.bar").expect("both parts are legal identifiers");
+
+    assert_eq!(version.as_str(), "1.2.4-rc.1+foo.bar");
+    assert_eq!(version.channel(), Channel::Preview);
+}
+
+#[test]
 fn a_numeric_prerelease_identifier_may_not_carry_a_leading_zero() {
     for text in [
         "1.0.0-01",

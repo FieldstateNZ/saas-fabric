@@ -13,10 +13,17 @@ async-trait.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 time.workspace = true
-# Only the lock. The platform binding holds a read guard across the await of
-# whatever it delegates to, so that an unbind waits for the operations already
-# running against the repository it is replacing -- and a guard that blocks the
-# thread cannot be held across an await point.
+# `tokio::sync::RwLock`. The platform binding holds a read guard across the
+# await of whatever it delegates to, so that an unbind waits for the operations
+# already running against the repository it is replacing -- and a guard that
+# blocks the thread cannot be held across an await point.
+#
+# It is not *only* the lock, and the honest version matters. Workspace-inherited
+# features are additive, so what this crate links is a tokio carrying `macros`,
+# `rt-multi-thread`, `sync` and `time`. The rule is that nothing in this crate
+# may use the runtime -- no `spawn`, no `block_on`, no timers: it holds the
+# rules and is called from a host that owns the runtime. Nothing enforces that;
+# `scripts/check_architecture.py` has no rule for it yet.
 tokio = { workspace = true, features = ["sync"] }
 tracing.workspace = true
 

@@ -1,6 +1,8 @@
 //! Tests for how a refusal is presented.
 
+use axum::response::IntoResponse as _;
 use fabric_client_model::{ClientId, DesiredStateError, RealmName};
+use fabric_platform_management::{DesiredStateError as PlatformDesiredStateError, PlatformError};
 use http::StatusCode;
 
 use crate::operator::OperatorAuthError;
@@ -89,6 +91,36 @@ fn a_repository_failure_detail_does_not_survive_translation() {
 
     assert!(!error.public_message().contains("clients/acme"));
     assert!(!error.public_message().contains("github"));
+}
+
+#[test]
+fn a_decision_taken_against_state_that_moved_is_a_conflict_not_an_outage() {
+    // It reaches an operator from their own pause, resume or rollback click:
+    // the component's state moved, or the platform was rebound to another
+    // repository, between the read and the write. Falling to the catch-all made
+    // it a 503 with a `Retry-After` and a server-error log line — telling them
+    // to retry something that would be refused identically, and recording their
+    // click as a platform fault.
+    let error = ControlPlaneError::Platform(PlatformError::DesiredState(PlatformDesiredStateError::Conflict));
+
+    assert_eq!(error.status(), StatusCode::CONFLICT);
+    assert_eq!(error.code(), "platform_state_moved");
+}
+
+#[test]
+fn a_stale_platform_decision_is_not_advertised_as_retryable() {
+    // The header is what a console and an impatient client act on. 409 never
+    // carries it, so this is really a check that the arm above did not land in
+    // the 503 group by accident.
+    let response =
+        ControlPlaneError::Platform(PlatformError::DesiredState(PlatformDesiredStateError::Conflict))
+            .into_response();
+
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    assert!(
+        response.headers().get(http::header::RETRY_AFTER).is_none(),
+        "a decision that has to be retaken is not something to retry unchanged"
+    );
 }
 
 #[test]

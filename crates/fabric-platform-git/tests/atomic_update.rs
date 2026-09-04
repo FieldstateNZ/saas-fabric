@@ -53,6 +53,7 @@ fn repository(host: &FakePlatformHost) -> PlatformGitRepository {
             repository: REPOSITORY.to_owned(),
             branch: BRANCH.to_owned(),
             http_timeout_seconds: 5,
+            operation_timeout_seconds: 30,
         },
         GitCredential::token("test-bearer"),
         Arc::new(TestClock),

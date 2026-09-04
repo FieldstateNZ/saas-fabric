@@ -66,6 +66,7 @@ pub(super) fn clients(
 pub(super) fn platform(
     config: &ControlPlaneAppConfig,
     binding: &PlatformBinding,
+    operation_timeout_seconds: u64,
     secrets: &Arc<dyn SecretStore>,
     store: &Arc<dyn IntegrationStore>,
     clock: &Arc<dyn Clock>,
@@ -82,6 +83,7 @@ pub(super) fn platform(
         Arc::new(PlatformManagementTarget::new(
             host.api_base_url.clone(),
             host.http_timeout_seconds,
+            operation_timeout_seconds,
             Arc::clone(clock),
             Arc::clone(&binding.repository),
         )),

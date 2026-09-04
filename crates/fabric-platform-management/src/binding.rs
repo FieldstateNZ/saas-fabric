@@ -44,11 +44,10 @@ mod swap;
 /// # An unbind waits, and a decision knows what it was read from
 ///
 /// Changing the binding used to look free. Every operation cloned the
-/// repository out of the lock and released it before awaiting, so a sweep that
-/// began against repository A and an operator who disconnected half a second
-/// later produced a commit landing in A *after* the platform had been told to
-/// stop targeting it. A revision could not catch that: it proves the manifest
-/// did not move, and A's manifest had not moved.
+/// repository out of the lock and released it before awaiting, so a sweep begun
+/// against repository A and an operator disconnecting half a second later
+/// produced a commit landing in A *after* the platform had been told to stop
+/// targeting it. A revision could not catch that: A's manifest had not moved.
 ///
 /// So an unbind **drains**. Every operation runs in a task that owns the read
 /// guard for as long as the delegated call takes, and [`connect`](Self::connect),
@@ -62,14 +61,15 @@ mod swap;
 /// operation's last request possibly already on the wire. Running it in a task
 /// of its own leaves a dropped caller nothing to cancel: the work finishes, the
 /// guard is held until it does, and the drain waits. See `binding/holding.rs`.
+/// That task is spawned, so every operation through this type is awaited inside
+/// a Tokio runtime — and does not survive that runtime being dropped.
 ///
 /// The wait is bounded because [`DesiredState`](crate::DesiredState) requires
 /// every implementation to bound its operations by refusing to *start* work it
 /// cannot finish in budget, and a deployment's budget plus one call to the host
-/// is checked at startup to be shorter than one request. Without that the drain
-/// would be unbounded: an operator's disconnect would queue behind a stalling
-/// Git host and be cut off by the request timeout, leaving them a `504` and a
-/// platform still pointed at the repository they asked it to forget.
+/// is checked at startup to be shorter than one request. Without it an
+/// operator's disconnect would queue behind a stalling Git host and be cut off
+/// by the request timeout, leaving a `504` and a platform still pointed there.
 ///
 /// And a decision is **tagged** with the generation of the binding it was read
 /// through, because draining says nothing about a decision read a minute ago

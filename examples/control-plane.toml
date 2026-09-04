@@ -153,3 +153,34 @@ path = "examples/clients"
 # schedule, because there is no authority available when nobody is there.
 [identity_provider]
 mode = "in_memory"
+
+
+# ---------------------------------------------------------------------------
+# Platform Management
+# ---------------------------------------------------------------------------
+#
+# Omitted here, and omitting it is a decision rather than an oversight: this
+# deployment manages no platform repository, so the platform routes report
+# themselves unconfigured instead of failing. A deployment that does manage one
+# states which environment it *is* and nothing about which repository holds it —
+# an operator installs the Platform Management GitHub App and picks that.
+#
+#     [platform_management]
+#     environment = "lucentroot"
+#
+#     # How long one whole desired-state operation may take. The budget stops
+#     # the adapter *starting* a call it cannot afford and never abandons a
+#     # write already sent, so an operation runs for this plus one
+#     # `git_host.http_timeout_seconds` — and startup refuses to run unless
+#     # that **sum** is strictly less than `request_timeout_seconds` above.
+#     #
+#     # The platform binding holds a lock across an operation, so an operator's
+#     # disconnect waits for whatever is already running. A sum that did not fit
+#     # would leave them a 504 with nothing released and the platform still
+#     # pointed at the repository they asked it to forget. The defaults are
+#     # 15 + 10 against 30, which leaves five seconds for the rest of an unbind.
+#     operation_timeout_seconds = 15
+#
+#     # How often the environment is swept. Zero disables it, and so does
+#     # omitting this whole section.
+#     reconciliation_interval_seconds = 60

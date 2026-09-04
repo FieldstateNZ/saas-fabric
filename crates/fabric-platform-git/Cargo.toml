@@ -23,25 +23,30 @@ serde_json.workspace = true
 # The maintained fork of `serde_yaml`; confined to the control plane.
 serde_norway.workspace = true
 thiserror.workspace = true
-# `tokio::task_local!`, which carries one operation's budget from the port down
-# to the single site that puts a request on the wire. It replaced
-# `tokio::time::timeout`: a timeout drops the future, and a dropped future
-# releases the platform binding with its last write possibly already sent.
+# Two things. `tokio::task_local!` carries one operation's budget from the port
+# down to the single site that puts a request on the wire; it replaced a
+# `tokio::time::timeout` around the whole operation, because a timeout drops the
+# future and a dropped future releases the platform binding with its last write
+# possibly already sent. And `tokio::time::timeout` is still used for the one
+# thing a gate cannot bound -- the queue for the bearer mutex, where cutting a
+# token exchange short costs a wasted mint and nothing in the repository.
 #
 # Be clear about what this line actually enables. Workspace-inherited features
 # are *additive*, so this crate links a tokio with `macros`, `rt-multi-thread`,
-# `sync` and `time` -- everything the workspace entry declares -- not `rt`
-# alone. Nothing here may start a runtime, spawn a task or block on one: this
-# crate is a library called from a host that owns the runtime, and reading a
-# task-local is none of those. That is a convention, not a checked invariant;
-# `scripts/check_architecture.py` has no rule for it yet.
-tokio = { workspace = true, features = ["rt"] }
+# `sync` and `time` -- everything the workspace entry declares -- not `rt` and
+# `time` alone. Nothing here may start a runtime, spawn a task or block on one:
+# this crate is a library called from a host that owns the runtime, and reading
+# a task-local or awaiting a timer is none of those. That is a convention, not a
+# checked invariant; `scripts/check_architecture.py` has no rule for it yet.
+tokio = { workspace = true, features = ["rt", "time"] }
 tracing.workspace = true
 
 [dev-dependencies]
 base64.workspace = true
 serde_json.workspace = true
-tokio = { workspace = true, features = ["io-util", "macros", "net", "rt-multi-thread"] }
+# `time` because the budget tests measure and delay: a fake host that sits on a
+# chosen request, and a bound asserted against the clock rather than argued for.
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt-multi-thread", "time"] }
 
 [lints]
 workspace = true

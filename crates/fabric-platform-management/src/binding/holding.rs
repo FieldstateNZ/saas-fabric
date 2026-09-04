@@ -52,9 +52,8 @@ impl PlatformDesiredState {
 
 /// What [`writing`](PlatformDesiredState::writing) hands back.
 ///
-/// A named alias rather than the tuple spelled out at every call site: the
-/// shape is five things a write cannot start without, and writing it five times
-/// would say nothing the name does not.
+/// A named alias rather than the tuple at every call site: five things a write
+/// cannot start without, and spelling them out five times says nothing more.
 pub(super) type Writing = (
     OwnedRwLockReadGuard<Live>,
     Arc<dyn DesiredState>,
@@ -68,18 +67,25 @@ pub(super) type Writing = (
 /// # Why the caller's own future will not do
 ///
 /// Holding the guard across the delegated await is enough while the caller
-/// stays. It is not enough when the caller goes away: an axum handler cut off
-/// by the request timeout, or one whose browser closed, has its future dropped,
-/// and a guard dropped with it releases the binding while the operation's last
-/// request may already be on the wire. A disconnect could then return — telling
-/// an operator the platform had stopped writing to that repository — and the
-/// abandoned write land in it afterwards.
+/// stays. It is not enough when the caller goes away: an axum handler cut off by
+/// the request timeout, or one whose browser closed, has its future dropped, and
+/// a guard dropped with it releases the binding while the operation's last
+/// request may already be on the wire — so a disconnect could return, telling an
+/// operator the platform had stopped writing there, and the write land after it.
 ///
 /// A task is not cancelled by the disappearance of whoever spawned it. So the
-/// operation, the arguments it was given and the guard all move into one, the
-/// delegate simply waits for it, and a caller that stops waiting changes
-/// nothing about what the platform finishes doing or about what the drain
-/// waits for.
+/// operation, its arguments and the guard all move into one, the delegate waits
+/// for it, and a caller that stops waiting changes nothing about what the
+/// platform finishes doing or about what the drain waits for.
+///
+/// # What the task does not survive
+///
+/// It is spawned, so this needs a Tokio runtime — and a detached operation does
+/// not outlive that runtime being dropped once graceful shutdown has returned.
+/// A panic inside the operation is the other: it drops this guard and the
+/// request in flight together, and the caller is told `Unavailable`. Both land
+/// where the residual a network leaves does — the platform gave up on a call
+/// the host may still apply — which is not something a lock can close.
 ///
 /// # Errors
 ///

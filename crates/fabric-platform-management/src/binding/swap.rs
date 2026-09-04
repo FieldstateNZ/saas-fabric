@@ -17,11 +17,11 @@
 //! None of the three can do that now. A caller that goes away drops nothing the
 //! operation is running in, because the operation runs in a task of its own
 //! that owns the guard (`binding/holding.rs`). And the budget refuses to
-//! *start* a request it cannot afford rather than cancelling one it already
+//! *start* a request it cannot afford rather than cancelling a write it already
 //! sent, so an operation always reaches an outcome — a failure is still an
 //! outcome — inside the budget plus one call to the host.
 //!
-//! # The one thing left, which no caller can close
+//! # The three things left, which no caller can close
 //!
 //! A request the platform gave up waiting for is not a request the host gave up
 //! applying. If the adapter's `http_timeout_seconds` fires on a ref update the
@@ -30,6 +30,14 @@
 //! network, not of a lock: there is no answer to wait for and nothing to
 //! withdraw. What the platform *reports* is honest either way, because it
 //! reports the write as failed; the next read sees whatever landed.
+//!
+//! The other two arrive in the same place. A panic inside an operation drops
+//! its guard and its in-flight request together, so the caller is told the
+//! platform is unavailable and nobody can say whether the host applied the
+//! call. And a detached operation does not survive the process: once graceful
+//! shutdown has returned and the runtime is dropped, whatever was still running
+//! stops where it stood. Neither is a swap returning early — one that has
+//! returned has waited — and both leave exactly the residual above.
 
 use std::sync::Arc;
 

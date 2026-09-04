@@ -45,7 +45,13 @@ pub struct PlatformManagementConfig {
     /// `504`, and the platform is still pointed at the repository they asked it
     /// to forget.
     ///
-    /// Startup therefore refuses a value that is not strictly less than
+    /// # What it actually bounds, which is a little more than itself
+    ///
+    /// The budget stops the adapter *starting* a call it cannot afford. It
+    /// never abandons one already sent, because a write abandoned mid-flight
+    /// would release the binding while it might still land. So one operation
+    /// can run for this long plus one `git_host.http_timeout_seconds`, and it
+    /// is that **sum** startup requires to be strictly less than
     /// `request_timeout_seconds`: see `startup::platform`.
     #[serde(default = "default_operation_timeout")]
     pub operation_timeout_seconds: u64,
@@ -100,8 +106,10 @@ const fn default_timeout() -> u64 {
     10
 }
 
-/// Twenty seconds: comfortably more than a healthy operation needs, and
-/// comfortably inside the thirty-second request budget a disconnect gets.
+/// Fifteen seconds: comfortably more than a healthy operation needs, and — with
+/// the other defaults, a ten-second call timeout and a thirty-second request —
+/// leaving five seconds spare once the one call the budget cannot cut short is
+/// counted too. Twenty used to fit when the budget cancelled; it no longer does.
 const fn default_operation_timeout() -> u64 {
-    20
+    15
 }

@@ -13,18 +13,26 @@ async-trait.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 time.workspace = true
-# `tokio::sync::RwLock`. The platform binding holds a read guard across the
-# await of whatever it delegates to, so that an unbind waits for the operations
-# already running against the repository it is replacing -- and a guard that
-# blocks the thread cannot be held across an await point.
+# `tokio::sync::RwLock` and `tokio::spawn`, and nothing else from the runtime.
 #
-# It is not *only* the lock, and the honest version matters. Workspace-inherited
-# features are additive, so what this crate links is a tokio carrying `macros`,
-# `rt-multi-thread`, `sync` and `time`. The rule is that nothing in this crate
-# may use the runtime -- no `spawn`, no `block_on`, no timers: it holds the
-# rules and is called from a host that owns the runtime. Nothing enforces that;
+# The lock is how an unbind waits: the platform binding holds a read guard for
+# the whole of whatever it delegates to, so replacing the repository waits for
+# the operations already running against the one being replaced -- and a guard
+# that blocks the thread cannot be held across an await point.
+#
+# `rt` is the deliberate part. Each delegated operation is spawned into a task
+# that owns that guard, because a caller can be cancelled -- a request timeout,
+# a closed browser -- and a guard held by a cancelled future is released with
+# the operation's last write possibly already sent. A task is not cancelled by
+# whoever spawned it going away, which is exactly the property needed and is the
+# only reason this crate touches the runtime. No `block_on`, no timers, nothing
+# else.
+#
+# Be honest about the rest: workspace-inherited features are additive, so what
+# this crate links is a tokio carrying `macros`, `rt-multi-thread`, `sync` and
+# `time`. The narrower rule above is a convention; nothing enforces it, and
 # `scripts/check_architecture.py` has no rule for it yet.
-tokio = { workspace = true, features = ["sync"] }
+tokio = { workspace = true, features = ["sync", "rt"] }
 tracing.workspace = true
 
 [dev-dependencies]

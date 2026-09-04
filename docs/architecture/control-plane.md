@@ -337,20 +337,32 @@ That wait is bounded by the adapter's **operation budget**, not by the timeout
 on any one request to the Git host: an operation is around thirty requests, so
 bounding them individually would still let a stalling host hold the binding for
 minutes, and the disconnect would be cut off by the request timeout before it
-took effect. `platform_management.operation_timeout_seconds` is the budget, and
-startup refuses to run unless it is shorter than `request_timeout_seconds`.
+took effect. `platform_management.operation_timeout_seconds` is the budget. It
+is a gate on *starting* a request rather than a timeout around the operation —
+it never abandons a call already sent — so an operation runs for at most the
+budget plus one `git_host.http_timeout_seconds`, and startup refuses to run
+unless that **sum** is shorter than `request_timeout_seconds`.
 
-The guarantee covers every operation that runs to completion or fails. One
-**cancelled** mid-write — a browser disconnecting, the request timeout firing,
-or the operation budget itself expiring, which is the one of the three that
-reaches an unattended sweep — may still land, because a dropped future releases
-the lock with its last request possibly already sent. That is inherent to
-cancellation; the next read sees whatever landed.
+Cancellation no longer weakens any of this. Three things could once drop an
+operation mid-write and release the lock with its last request possibly already
+sent — a browser disconnecting, the request timeout firing, and the budget
+itself expiring. A caller going away now cancels nothing, because each delegated
+operation runs in a task of its own that owns the read guard; and the budget
+refuses the next request instead of dropping the one in flight. So the invariant
+is unqualified: **a disconnect or a rebind returns only after every request the
+platform started against the old repository has an outcome, and the platform
+never starts one against it afterwards.**
 
-What the budget bound guarantees is the **unbind**. The rest of a disconnect —
+One residual is inherent to a network and is stated rather than hidden: a
+request the platform gave up on after `git_host.http_timeout_seconds` is not a
+request the host gave up applying, so a ref update reported as failed may be
+committed by the host a moment later. Nothing can withdraw it and nothing
+reports it as done; the next read sees whatever landed.
+
+What the bound guarantees is the **unbind**. The rest of a disconnect —
 deleting the key, clearing the record — runs after it and is bounded by its
-own stores' timeouts, so a budget only just inside the request timeout leaves
-that tail no room; the defaults leave ten seconds.
+own stores' timeouts, so a sum only just inside the request timeout leaves
+that tail no room; the defaults (15 + 10 against 30) leave five seconds.
 
 #### The series only means something for a prerelease
 

@@ -1,5 +1,7 @@
 //! What the binding holds, and which binding it is.
 
+use std::sync::Arc;
+
 use crate::binding::bound::Bound;
 use crate::{DesiredState, DesiredStateError};
 
@@ -56,10 +58,16 @@ impl Live {
     }
 
     /// The live repository, or the refusal that says why there is none.
-    pub(super) fn repository(&self) -> Result<&dyn DesiredState, DesiredStateError> {
+    ///
+    /// Hands back the [`Arc`] rather than a `&dyn DesiredState`, because the
+    /// task that runs the operation outlives this borrow: a reference into the
+    /// guard could not be moved into it. Cloning an `Arc` to answer
+    /// [`is_connected`](super::PlatformDesiredState::is_connected) is a cheap
+    /// price for that.
+    pub(super) fn repository(&self) -> Result<Arc<dyn DesiredState>, DesiredStateError> {
         match &self.bound {
             Bound::Nothing => Err(DesiredStateError::NotConnected),
-            Bound::Repository(repository) => Ok(repository.as_ref()),
+            Bound::Repository(repository) => Ok(Arc::clone(repository)),
             Bound::Unusable(detail) => Err(DesiredStateError::Unavailable {
                 detail: detail.as_str().to_owned(),
             }),

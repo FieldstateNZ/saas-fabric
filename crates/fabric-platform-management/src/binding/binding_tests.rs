@@ -711,3 +711,67 @@ async fn pause_and_resume_are_bound_to_the_generation_too() {
 
     assert_eq!(b.seen(), vec!["sha-b".to_owned()]);
 }
+
+#[tokio::test]
+async fn an_operation_outlives_a_caller_that_stopped_waiting() {
+    // The hole the drain used to have. An operator's request is cut off at
+    // `request_timeout_seconds`, or their browser closes, and axum drops the
+    // handler future — which, when the guard lived in that future, released the
+    // binding with the write's last request possibly already on the wire. A
+    // disconnect could then return, telling the operator the platform had
+    // stopped writing to that repository, and the abandoned write land in it.
+    let journal: Journal = Arc::new(Mutex::new(Vec::new()));
+    let (a, gate) = Fake::gated("A", "sha-a", &journal);
+    let started = Arc::clone(&a.started);
+
+    let binding = PlatformDesiredState::unconnected();
+    binding.connect(Arc::clone(&a) as Arc<dyn DesiredState>).await;
+
+    let at = binding
+        .component("lucentroot", "saas-fabric")
+        .await
+        .expect("A answers")
+        .revision;
+
+    let write = advancing(&binding, at);
+    started.notified().await;
+
+    // Exactly what the request timeout does to a handler: the future is gone.
+    write.abort();
+
+    let mut disconnecting = {
+        let binding = Arc::clone(&binding);
+
+        tokio::spawn(async move { binding.disconnect().await })
+    };
+
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), &mut disconnecting)
+            .await
+            .is_err(),
+        "the caller went away; the write did not, and the disconnect must still wait for it"
+    );
+
+    gate.notify_one();
+    disconnecting.await.expect("the disconnect task must not panic");
+
+    assert_eq!(
+        journal.lock().unwrap_or_else(PoisonError::into_inner).clone(),
+        vec!["A wrote".to_owned()],
+        "the write ran to completion even though nobody was waiting for it"
+    );
+    assert_eq!(a.seen().len(), 1, "and it landed in A exactly once");
+    assert_eq!(
+        binding
+            .advance(
+                "lucentroot",
+                "saas-fabric",
+                &Release::Unit(unit()),
+                &DesiredRevision::new("sha-a"),
+                "Promote",
+            )
+            .await
+            .expect_err("the disconnect has taken effect"),
+        DesiredStateError::NotConnected
+    );
+}

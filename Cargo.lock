@@ -328,6 +328,7 @@ dependencies = [
 name = "fabric-control-plane-api"
 version = "0.3.0"
 dependencies = [
+ "async-trait",
  "axum",
  "fabric-client-git",
  "fabric-client-model",

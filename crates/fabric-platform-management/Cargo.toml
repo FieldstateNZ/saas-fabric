@@ -13,6 +13,11 @@ async-trait.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 time.workspace = true
+# Only the lock. The platform binding holds a read guard across the await of
+# whatever it delegates to, so that an unbind waits for the operations already
+# running against the repository it is replacing -- and a guard that blocks the
+# thread cannot be held across an await point.
+tokio = { workspace = true, features = ["sync"] }
 tracing.workspace = true
 
 [dev-dependencies]

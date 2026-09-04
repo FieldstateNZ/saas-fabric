@@ -4,13 +4,17 @@
 #[path = "binding/binding_tests.rs"]
 mod binding_tests;
 
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
-use self::bound::Bound;
-use crate::{DesiredState, DesiredStateError, SafeDiagnostic};
+use tokio::sync::{RwLock, RwLockReadGuard};
+
+use self::live::Live;
 
 mod bound;
 mod delegate;
+mod generation;
+mod live;
+mod swap;
 
 /// The platform repository this control plane is currently connected to.
 ///
@@ -20,13 +24,12 @@ mod delegate;
 /// operator installs a GitHub App and picks a repository, and the platform
 /// stores what it learns doing so — so at startup there is nothing to build
 /// from, and a control plane that refused to start without one could not be
-/// used to connect one.
-///
-/// The same device the client desired-state binding uses, for the same reason.
+/// used to connect one. The same device the client desired-state binding uses,
+/// for the same reason.
 ///
 /// # Unconnected is a state, not an error
 ///
-/// Every operation answers [`NotConnected`](DesiredStateError::NotConnected)
+/// Every operation answers [`NotConnected`](crate::DesiredStateError::NotConnected)
 /// while nothing is bound. The console renders that as "not connected"; a
 /// *connected* repository that cannot be read answers something else, and an
 /// operator is told which.
@@ -36,9 +39,35 @@ mod delegate;
 /// no longer be read, must not be told "not connected" — they would go and
 /// connect it again instead of finding out why it stopped working. See
 /// [`unusable`](Self::unusable).
+///
+/// # An unbind waits, and a decision knows what it was read from
+///
+/// Changing the binding used to look free. Every operation cloned the
+/// repository out of the lock and released it before awaiting, so a sweep that
+/// began against repository A and an operator who disconnected half a second
+/// later produced a commit landing in A *after* the platform had been told to
+/// stop targeting it. A revision could not catch that: it proves the manifest
+/// did not move, and A's manifest had not moved.
+///
+/// So an unbind **drains**. Every operation holds the read guard across the
+/// await it delegates to, and [`connect`](Self::connect),
+/// [`disconnect`](Self::disconnect) and [`unusable`](Self::unusable) take the
+/// write guard — so they complete only once everything that began against the
+/// old repository has finished, and nothing starts against it afterwards.
+///
+/// And a decision is **tagged** with the generation of the binding it was read
+/// through, because draining says nothing about a decision read a minute ago
+/// and written now. `binding/live.rs` keeps that counter beside the repository
+/// under the same lock; `binding/generation.rs` puts it on the revision, and
+/// says why a mismatch is a
+/// [`Conflict`](crate::DesiredStateError::Conflict) rather than a refusal.
 pub struct PlatformDesiredState {
-    /// What is bound, behind a lock held only long enough to clone.
-    current: RwLock<Bound>,
+    /// What is bound, and which binding it is.
+    ///
+    /// An async lock rather than [`std::sync::RwLock`]: the guard is held
+    /// across an await, which is the whole of the drain, and a blocking guard
+    /// held across an await point is how a runtime deadlocks.
+    current: RwLock<Live>,
 }
 
 impl PlatformDesiredState {
@@ -46,33 +75,8 @@ impl PlatformDesiredState {
     #[must_use]
     pub fn unconnected() -> Arc<Self> {
         Arc::new(Self {
-            current: RwLock::new(Bound::Nothing),
+            current: RwLock::new(Live::unconnected()),
         })
-    }
-
-    /// Points the platform at a repository, replacing whatever was there.
-    pub fn connect(&self, repository: Arc<dyn DesiredState>) {
-        self.set(Bound::Repository(repository));
-    }
-
-    /// Records that a connected integration could not be made to work.
-    ///
-    /// The text is sanitised here rather than by the caller, because here is
-    /// where it becomes something an operator reads. What arrives is whatever
-    /// the composition root observed trying to build a client; what leaves is
-    /// a [`SafeDiagnostic`].
-    pub fn unusable(&self, detail: &str) {
-        self.set(Bound::Unusable(SafeDiagnostic::sanitise(detail)));
-    }
-
-    /// Forgets the current repository.
-    ///
-    /// Used when an operator disconnects the integration, or when what was
-    /// stored turns out to be unusable. The platform goes back to reporting
-    /// itself unconnected rather than failing against something it can no
-    /// longer reach.
-    pub fn disconnect(&self) {
-        self.set(Bound::Nothing);
     }
 
     /// Whether a repository is live.
@@ -80,28 +84,17 @@ impl PlatformDesiredState {
     /// `false` for a connected integration that could not be built: nothing can
     /// be read through it. What separates the two is the *error* callers get,
     /// not this.
-    #[must_use]
-    pub fn is_connected(&self) -> bool {
-        self.required().is_ok()
+    ///
+    /// It waits for a rebind in progress rather than reporting around one. A
+    /// non-blocking read would answer "not connected" for the moment a
+    /// repository is being swapped, which is a lie about a platform connected
+    /// on both sides of it.
+    pub async fn is_connected(&self) -> bool {
+        self.live().await.repository().is_ok()
     }
 
-    /// The live repository, or the refusal that says why there is none.
-    fn required(&self) -> Result<Arc<dyn DesiredState>, DesiredStateError> {
-        match &*self.current.read().map_err(|_| DesiredStateError::Unavailable {
-            detail: "the platform binding is poisoned".to_owned(),
-        })? {
-            Bound::Nothing => Err(DesiredStateError::NotConnected),
-            Bound::Repository(repository) => Ok(Arc::clone(repository)),
-            Bound::Unusable(detail) => Err(DesiredStateError::Unavailable {
-                detail: detail.as_str().to_owned(),
-            }),
-        }
-    }
-
-    /// Replaces what is bound.
-    fn set(&self, bound: Bound) {
-        if let Ok(mut current) = self.current.write() {
-            *current = bound;
-        }
+    /// The binding, held for as long as the caller holds the guard.
+    async fn live(&self) -> RwLockReadGuard<'_, Live> {
+        self.current.read().await
     }
 }

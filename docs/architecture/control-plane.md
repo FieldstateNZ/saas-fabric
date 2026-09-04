@@ -333,6 +333,19 @@ and a disconnect completes only once the operations already in flight against
 the old repository have finished, so nothing this platform reports as done was
 done to a repository an operator had already stopped targeting.
 
+That wait is bounded by the adapter's **operation budget**, not by the timeout
+on any one request to the Git host: an operation is around thirty requests, so
+bounding them individually would still let a stalling host hold the binding for
+minutes, and the disconnect would be cut off by the request timeout before it
+took effect. `platform_management.operation_timeout_seconds` is the budget, and
+startup refuses to run unless it is shorter than `request_timeout_seconds`.
+
+The guarantee covers every operation that runs to completion or fails. One
+**cancelled** mid-write — a browser disconnecting, or the request timeout
+firing — may still land, because a dropped future releases the lock with its
+last request possibly already sent. That is inherent to cancellation; the next
+read sees whatever landed.
+
 #### The series only means something for a prerelease
 
 An automatic policy walks forward within the desired version's own line, and a

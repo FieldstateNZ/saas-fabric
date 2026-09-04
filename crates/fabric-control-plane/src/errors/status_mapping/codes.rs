@@ -34,6 +34,14 @@ impl ControlPlaneError {
                 "component_unknown"
             }
             Self::Platform(PlatformError::NotAdvancing { .. }) => "component_not_advancing",
+            // Its own code beside `revision_conflict`, because they are not the
+            // same event to a console: that one is a client's desired state
+            // moving, this one is a platform component's. Both mean "read again
+            // and redo it", and a console that could only see `409` would not
+            // know which page to reload.
+            Self::Platform(PlatformError::DesiredState(DesiredStateError::Conflict)) => {
+                "platform_state_moved"
+            }
             Self::Platform(PlatformError::NotRollable { .. }) => "version_not_rollable",
             Self::Platform(PlatformError::RollbackUnsupported { .. }) => "rollback_unsupported",
             Self::Platform(_) => "platform_unavailable",

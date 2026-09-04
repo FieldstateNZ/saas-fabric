@@ -36,16 +36,45 @@ use crate::config::PlatformManagementConfig;
 /// are configuration. An absent integration is now legitimate runtime state
 /// rather than a misconfiguration, and it is reported rather than fatal.
 ///
+/// # The operation budget has to fit inside a request
+///
+/// The platform binding holds a lock across every desired-state call, so an
+/// operator's disconnect waits for whatever is already running. If one
+/// operation could outlast one request, the disconnect would be cut off by the
+/// API's request timeout before it took effect — the operator would be told
+/// `504` and the platform would still be pointed at the repository they asked
+/// it to forget. So the budget must be strictly shorter than a request, and
+/// this refuses to start otherwise rather than leaving a deployment one slow
+/// Git host away from a disconnect that silently does nothing.
+///
 /// # Errors
 ///
 /// Returns a message naming the field. Never a credential.
 pub fn establish(
     config: Option<&PlatformManagementConfig>,
+    request_timeout_seconds: u64,
     clock: &Arc<dyn Clock>,
 ) -> Result<Option<PlatformBinding>, String> {
     let Some(config) = config else {
         return Ok(None);
     };
+
+    if config.operation_timeout_seconds == 0 {
+        return Err(
+            "platform_management.operation_timeout_seconds must be at least 1: zero would time \
+             out every operation immediately"
+                .to_owned(),
+        );
+    }
+
+    if config.operation_timeout_seconds >= request_timeout_seconds {
+        return Err(format!(
+            "platform_management.operation_timeout_seconds ({}) must be less than \
+             request_timeout_seconds ({request_timeout_seconds}): an operator's disconnect waits \
+             for the operation already in flight, and it must be able to finish inside one request",
+            config.operation_timeout_seconds
+        ));
+    }
 
     let registry = OciRegistry::new(
         &config.registry.base_url,
@@ -70,4 +99,63 @@ pub fn establish(
         repository,
         environment: config.environment.clone(),
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::RegistryBinding;
+
+    fn managed(operation_timeout_seconds: u64) -> PlatformManagementConfig {
+        PlatformManagementConfig {
+            environment: "lucentroot".to_owned(),
+            registry: RegistryBinding::default(),
+            reconciliation_interval_seconds: 60,
+            operation_timeout_seconds,
+        }
+    }
+
+    fn clock() -> Arc<dyn Clock> {
+        fabric_core::SystemClock::shared()
+    }
+
+    #[test]
+    fn a_budget_that_could_outlast_a_request_is_refused_at_startup() {
+        // The failure this prevents is silent: the operator's disconnect would
+        // be cut off by the request timeout while still waiting for the
+        // binding, so nothing would be released and they would be told 504.
+        for operation in [30, 45] {
+            // `err()` rather than `expect_err`: the success type is not
+            // `Debug`, and making a composition-root binding printable to
+            // please a test would be the wrong way round.
+            let message = establish(Some(&managed(operation)), 30, &clock())
+                .err()
+                .expect("a budget at or over the request timeout must not start");
+
+            assert!(message.contains("operation_timeout_seconds"), "{message}");
+            assert!(message.contains("request_timeout_seconds"), "{message}");
+        }
+    }
+
+    #[test]
+    fn a_zero_budget_is_refused_at_startup() {
+        let message = establish(Some(&managed(0)), 30, &clock())
+            .err()
+            .expect("zero would time every operation out immediately");
+
+        assert!(message.contains("operation_timeout_seconds"), "{message}");
+    }
+
+    #[test]
+    fn a_budget_inside_the_request_starts() {
+        assert!(establish(Some(&managed(20)), 30, &clock()).is_ok());
+    }
+
+    #[test]
+    fn a_deployment_that_manages_no_platform_is_not_asked_about_budgets() {
+        // Absent is deliberately unconfigured, not misconfigured. Validating a
+        // section nobody wrote would turn "we do no platform management" into a
+        // startup failure.
+        assert!(establish(None, 1, &clock()).expect("absent is fine").is_none());
+    }
 }

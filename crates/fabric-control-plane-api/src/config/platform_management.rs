@@ -31,6 +31,24 @@ pub struct PlatformManagementConfig {
     /// slower elsewhere is a change to a manifest, not to a release.
     #[serde(default = "default_interval")]
     pub reconciliation_interval_seconds: u64,
+
+    /// The budget for one whole desired-state operation, in seconds.
+    ///
+    /// # Why this is separate from the per-request timeout
+    ///
+    /// One `advance` is around thirty calls to the Git host, each bounded by
+    /// `git_host.http_timeout_seconds`. A host that answers every one of them
+    /// just inside that limit keeps the operation running for minutes, and the
+    /// platform binding holds a lock for the whole of it — so an operator's
+    /// disconnect queues behind it and is cut off by
+    /// `request_timeout_seconds` before it can take effect. The operator sees
+    /// `504`, and the platform is still pointed at the repository they asked it
+    /// to forget.
+    ///
+    /// Startup therefore refuses a value that is not strictly less than
+    /// `request_timeout_seconds`: see `startup::platform`.
+    #[serde(default = "default_operation_timeout")]
+    pub operation_timeout_seconds: u64,
 }
 
 /// Where published artifacts are looked up.
@@ -80,4 +98,10 @@ fn default_registry_host() -> String {
 /// Ten seconds, matching the other platform clients.
 const fn default_timeout() -> u64 {
     10
+}
+
+/// Twenty seconds: comfortably more than a healthy operation needs, and
+/// comfortably inside the thirty-second request budget a disconnect gets.
+const fn default_operation_timeout() -> u64 {
+    20
 }

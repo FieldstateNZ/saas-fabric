@@ -2,7 +2,7 @@
 
 use fabric_platform_management::RegistryError;
 
-use super::{decide, Transport};
+use super::{decide, shown, Transport};
 
 /// Parses and validates the URL a chart index will be read from.
 ///
@@ -17,7 +17,10 @@ use super::{decide, Transport};
 /// userinfo into a `Basic` auth header on every request sent to it — which
 /// contradicts the one guarantee `HelmCharts` makes: that it carries no
 /// credential at all. Refusing it here means a credential slipped into a
-/// repository address is never silently honoured.
+/// repository address is never silently honoured. The refusal itself names
+/// the address through [`shown`], not the parsed [`Url`](reqwest::Url)'s own
+/// `Display`, so the credential this catches never turns up a second time in
+/// the very message reporting it.
 ///
 /// # The suffix this reader appends has to land in the path
 ///
@@ -37,19 +40,31 @@ pub(in crate::charts) fn validated_index_url(
     transport: Transport,
     raw: &str,
 ) -> Result<reqwest::Url, RegistryError> {
+    // `raw` is never interpolated into this message, even though
+    // `url::ParseError`'s `Display` is a fixed string per failure kind and
+    // never echoes the text it failed on -- `raw` is whatever a caller
+    // configured as a repository address, which might itself carry a
+    // credential pasted straight into it, and this reader does not get to
+    // assume that risk away just because today's parser happens not to.
     let url = reqwest::Url::parse(raw).map_err(|error| RegistryError::Refused {
-        detail: format!("the chart index address '{raw}' does not parse: {error}"),
+        detail: format!("the chart index address does not parse: {error}"),
     })?;
 
     if !url.username().is_empty() || url.password().is_some() {
         return Err(RegistryError::Refused {
-            detail: format!("the chart index address '{url}' carries a credential in the URL itself"),
+            detail: format!(
+                "the chart index address at {} carries a credential in the URL itself",
+                shown(&url)
+            ),
         });
     }
 
     if url.query().is_some() || url.fragment().is_some() {
         return Err(RegistryError::Refused {
-            detail: format!("the chart index address '{url}' carries a query or a fragment"),
+            detail: format!(
+                "the chart index address at {} carries a query or a fragment",
+                shown(&url)
+            ),
         });
     }
 

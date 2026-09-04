@@ -2,6 +2,7 @@
 
 use fabric_platform_management::RegistryError;
 
+use super::transport::shown;
 use crate::errors::{status_failure, transport_failure};
 
 /// How much of an index this will read.
@@ -18,6 +19,14 @@ const MOST: usize = 8 * 1024 * 1024;
 /// Exactly one request per call: a redirect the transport policy allows is
 /// followed by the HTTP client itself, inside this same `.send()`, never by
 /// this function calling out again.
+///
+/// `url` reaches here only after `transport::validated_index_url` has
+/// already refused any userinfo, query, or fragment on it, so every message
+/// below could safely format it directly. It goes through
+/// [`shown`](super::transport::shown) anyway: one rule for how a URL is
+/// shown, applied everywhere this crate names one, is worth more than an
+/// exception that is only correct as long as nothing upstream of this
+/// function ever changes.
 ///
 /// # Errors
 ///
@@ -39,7 +48,12 @@ pub(super) async fn bounded_get(http: &reqwest::Client, url: reqwest::Url) -> Re
             // reason rather than a generic one -- it already names which
             // rule refused and which URL it refused.
             let detail = std::error::Error::source(&error).map_or_else(
-                || format!("reading a chart index at {url} was redirected off the allowed transport"),
+                || {
+                    format!(
+                        "reading a chart index at {} was redirected off the allowed transport",
+                        shown(&url)
+                    )
+                },
                 ToString::to_string,
             );
             RegistryError::Refused { detail }
@@ -69,13 +83,13 @@ pub(super) async fn bounded_get(http: &reqwest::Client, url: reqwest::Url) -> Re
     {
         if body.len() + chunk.len() > MOST {
             return Err(RegistryError::Refused {
-                detail: format!("the chart index at {url} is larger than {MOST} bytes"),
+                detail: format!("the chart index at {} is larger than {MOST} bytes", shown(&url)),
             });
         }
         body.extend_from_slice(&chunk);
     }
 
     String::from_utf8(body).map_err(|_| RegistryError::Refused {
-        detail: format!("the chart index at {url} is not text"),
+        detail: format!("the chart index at {} is not text", shown(&url)),
     })
 }

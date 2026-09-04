@@ -597,6 +597,25 @@ async fn plain_http_is_refused_before_any_connection_is_attempted() {
 }
 
 #[tokio::test]
+async fn a_credential_embedded_in_the_repository_address_never_reaches_the_refusal() {
+    // No server is listening at example.test, so a `Refused` here proves the
+    // userinfo was caught before any connection was attempted -- and its
+    // `detail` is what a sweep failure logs and what the control-plane API
+    // hands back to the console verbatim, so that string is exactly where a
+    // leaked password would surface.
+    let failure = HelmCharts::new(10)
+        .expect("the client builds")
+        .versions("https://user:secret@example.test/charts", "keycloakx")
+        .await
+        .expect_err("a URL carrying a credential is refused");
+
+    let RegistryError::Refused { detail } = failure else {
+        panic!("expected Refused, got {failure:?}");
+    };
+    assert!(!detail.contains("secret"), "{detail}");
+}
+
+#[tokio::test]
 async fn plain_http_to_loopback_still_refuses_a_non_loopback_host() {
     // No DNS lookup or connection is attempted for a non-loopback plain HTTP
     // host, even under the loopback-tolerant test policy -- `Refused` proves

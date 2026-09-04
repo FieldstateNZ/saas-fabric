@@ -19,9 +19,11 @@
 
 mod index_url;
 mod redirect;
+mod shown;
 
 pub(super) use index_url::validated_index_url;
 pub(super) use redirect::policy;
+pub(super) use shown::shown;
 
 /// How many redirects a chart index read will follow before refusing.
 ///
@@ -68,7 +70,8 @@ fn decide(transport: Transport, previous: &[reqwest::Url], next: &reqwest::Url) 
     // policy follows exactly ten redirects rather than nine.
     if previous.len() > MAX_REDIRECTS {
         return Err(format!(
-            "reading a chart index followed more than {MAX_REDIRECTS} redirects, at {next}"
+            "reading a chart index followed more than {MAX_REDIRECTS} redirects, at {}",
+            shown(next)
         ));
     }
 
@@ -87,6 +90,8 @@ fn decide(transport: Transport, previous: &[reqwest::Url], next: &reqwest::Url) 
         return Ok(());
     }
 
+    // A redirect target the repository named -- rendered via `shown`, not its own `Display`.
+    let next = shown(next);
     Err(match transport {
         Transport::Https => format!("the chart index at {next} must use HTTPS"),
         Transport::LoopbackToo => {

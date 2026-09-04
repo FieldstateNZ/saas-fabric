@@ -1283,29 +1283,32 @@ async fn a_helm_release_that_matches_exactly_is_written_even_with_no_pins() {
     assert!(host.current(MANIFEST).unwrap().contains("version: 7.3.1"));
 }
 
-#[tokio::test]
-async fn a_helm_component_cannot_be_rolled_back_to_an_image_release() {
-    // `roll_back_component` always wraps its unit in `WantedVersion::Images`,
-    // so this is the same hole as `advance`, reached from the rollback path
-    // instead. The service layer refuses this earlier, via `rollable()` --
-    // but the adapter must refuse it too, rather than trust every caller
-    // above it to have asked first.
-    let manifest = helm_manifest("keycloak", "7.3.0", CHART_REPOSITORY, CHART, &[]);
-    let host = FakePlatformHost::start(&[(MANIFEST, &manifest)]).await;
-    let repository = repository(&host);
-
-    let hold = Hold {
+/// The hold a rollback writes, as the service composes it.
+fn rollback_hold() -> Hold {
+    Hold {
         reason: "rollback".to_owned(),
         since: "2026-09-04T09:00:00Z".to_owned(),
         note: None,
-    };
+    }
+}
+
+#[tokio::test]
+async fn a_helm_component_cannot_be_rolled_back_to_an_image_release() {
+    // Rolling back is offered for both kinds now, so `roll_back_component`
+    // takes whichever shape a caller brings -- which makes this the same hole
+    // as `advance`, reached from the rollback path. The *shape* is what is
+    // refused, not the kind: an image release is not a version of a Helm
+    // component whatever number it carries.
+    let manifest = helm_manifest("keycloak", "7.3.0", CHART_REPOSITORY, CHART, &[]);
+    let host = FakePlatformHost::start(&[(MANIFEST, &manifest)]).await;
+    let repository = repository(&host);
 
     let failure = repository
         .roll_back_component(
             "lucentroot",
             "keycloak",
-            &preview_two_unit(),
-            &hold,
+            &WantedVersion::Images(preview_two_unit()),
+            &rollback_hold(),
             &revision_of(&repository, "lucentroot", "keycloak").await,
             "Roll back",
         )
@@ -1317,4 +1320,62 @@ async fn a_helm_component_cannot_be_rolled_back_to_an_image_release() {
         "{failure:?}"
     );
     assert_eq!(host.ref_updates(), 0);
+}
+
+#[tokio::test]
+async fn a_helm_component_is_rolled_back_to_an_older_chart_version_and_held_there() {
+    // The other half, and the one the decision turns on: an operator whose
+    // chart upgrade went wrong gets a route back through the product rather
+    // than a hand edit of the platform repository. The version moves in the
+    // manifest and in the Argo source the pin names, the hold travels in the
+    // same commit so the next sweep does not undo it, and nothing else in the
+    // file is touched -- including the platform repository's own source, which
+    // is not a chart and carries a `targetRevision` of its own.
+    let manifest = helm_manifest(
+        "keycloak",
+        "7.3.1",
+        CHART_REPOSITORY,
+        CHART,
+        &[(APPLICATION, CHART_REPOSITORY, CHART)],
+    );
+    let application = APPLICATION_TEXT.replace("targetRevision: 7.3.0", "targetRevision: 7.3.1");
+    let host = FakePlatformHost::start(&[(MANIFEST, &manifest), (APPLICATION, &application)]).await;
+    let repository = repository(&host);
+
+    let older = Release::Chart {
+        repository: CHART_REPOSITORY.to_owned(),
+        chart: CHART.to_owned(),
+        version: Version::parse("7.3.0").expect("a chart version"),
+    };
+
+    repository
+        .roll_back(
+            "lucentroot",
+            "keycloak",
+            &older,
+            &rollback_hold(),
+            &revision_of(&repository, "lucentroot", "keycloak").await,
+            "Roll keycloak in lucentroot back to 7.3.0",
+        )
+        .await
+        .expect("a chart component rolls back");
+
+    assert_eq!(host.ref_updates(), 1, "the version and the hold are one commit");
+
+    let manifest = host.current(MANIFEST).unwrap();
+    assert!(manifest.contains("version: 7.3.0"), "{manifest}");
+    assert!(
+        manifest.contains("reason: rollback"),
+        "the hold must travel with the version: {manifest}"
+    );
+
+    let application = host.current(APPLICATION).unwrap();
+    assert!(
+        application.contains("targetRevision: 7.3.0"),
+        "the chart source did not move back: {application}"
+    );
+    assert!(
+        application.contains("targetRevision: PLACEHOLDER"),
+        "the platform repository's own source is not a chart and must not move: {application}"
+    );
 }

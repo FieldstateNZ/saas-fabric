@@ -2,10 +2,14 @@
 
 use std::collections::BTreeMap;
 
+mod chart_history;
+mod chart_resolve;
 mod charts;
 mod history;
 mod unit;
 
+pub use chart_history::chart_history;
+pub use chart_resolve::resolve_chart;
 pub use charts::discover_chart;
 pub use history::{history, resolve, History};
 

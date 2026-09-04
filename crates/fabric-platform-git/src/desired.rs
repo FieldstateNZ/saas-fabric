@@ -85,6 +85,15 @@ impl PlatformGitRepository {
     /// Points a component at an older version *and* holds it there, in one
     /// commit.
     ///
+    /// # It takes either shape, and checks which
+    ///
+    /// It used to take a `ComponentVersion` and wrap it in
+    /// [`WantedVersion::Images`], which made "images only" a property of this
+    /// signature. Rolling back is now offered for a chart too, so the shape a
+    /// caller brings is theirs to bring — and the same identity check every
+    /// other write runs refuses one that does not match what the component
+    /// publishes, before any file is read.
+    ///
     /// # Errors
     ///
     /// The same as [`set_component_desired_state`](Self::set_component_desired_state).
@@ -92,7 +101,7 @@ impl PlatformGitRepository {
         &self,
         environment: &str,
         component: &str,
-        wanted: &ComponentVersion,
+        wanted: &WantedVersion,
         hold: &Hold,
         at: &DesiredRevision,
         message: &str,
@@ -100,7 +109,7 @@ impl PlatformGitRepository {
         self.write_desired(
             environment,
             component,
-            &WantedVersion::Images(wanted.clone()),
+            wanted,
             &HoldChange::Set(hold.clone()),
             at,
             message,

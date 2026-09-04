@@ -1,6 +1,6 @@
 //! The port through which an environment's desired state is read and moved.
 
-use crate::{Release, ReleaseUnit};
+use crate::Release;
 
 mod component;
 mod errors;
@@ -64,16 +64,23 @@ pub trait DesiredState: Send + Sync {
         message: &str,
     ) -> Result<(), DesiredStateError>;
 
-    /// Moves a component onto an older release unit and holds it there.
+    /// Moves a component onto an older release and holds it there.
     ///
-    /// # It takes a `ReleaseUnit`, and that is the point
+    /// # It takes a whole release, and that is the point
     ///
-    /// Rolling back is offered for images and not for charts, and the
-    /// signature is where that is settled rather than a check somewhere.
-    /// A chart repository pins a version, not a digest: the bytes behind
-    /// `7.3.0` can be republished, so "put me back on what I was running" is a
-    /// promise it cannot keep. Until that lifecycle is modelled there is
-    /// nothing here for a chart to be passed as.
+    /// Rolling back means restoring a previously selected desired version, and
+    /// it is offered for either kind. What this takes is the whole release, so
+    /// nothing can move on its own: for images the version, the source commit
+    /// and every digest travel together, resolved from a registry rather than
+    /// supplied, so rolling back to a version with somebody else's digests is
+    /// not a shape that exists. For a chart the version is the whole of it —
+    /// there is no digest to carry, and the repository and chart name travel
+    /// with it so a release discovered against one chart cannot be written
+    /// into a pin for another.
+    ///
+    /// The two restore different amounts, and that is stated to the operator
+    /// rather than enforced here: an image rollback returns the exact bytes,
+    /// a chart rollback the version, which a repository may have republished.
     ///
     /// # Why the version and the hold are one operation
     ///
@@ -83,12 +90,6 @@ pub trait DesiredState: Send + Sync {
     /// sweep would undo it, and the operator would watch their rollback
     /// disappear. One commit or neither.
     ///
-    /// # It takes a unit, so there is nothing to disagree about
-    ///
-    /// The version, the source commit and every image digest travel together,
-    /// resolved from a registry rather than supplied. There is no way to
-    /// express rolling back to a version with somebody else's digests.
-    ///
     /// # Errors
     ///
     /// [`DesiredStateError::Conflict`] if the state moved since it was read,
@@ -97,7 +98,7 @@ pub trait DesiredState: Send + Sync {
         &self,
         environment: &str,
         component: &str,
-        unit: &ReleaseUnit,
+        release: &Release,
         hold: &Hold,
         at: &DesiredRevision,
         message: &str,

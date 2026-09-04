@@ -4,11 +4,11 @@ use std::sync::Arc;
 
 use fabric_core::Clock;
 
+mod backwards;
 mod brake;
 mod errors;
 mod look;
 mod reconcile;
-mod rollable;
 mod rollback;
 
 #[cfg(test)]

@@ -27,9 +27,11 @@ pub enum ArtifactSource {
     ///
     /// A classic chart repository pins a *version*, not a digest. The bytes
     /// behind `7.3.0` can be republished, and nothing here would see it. That
-    /// is strictly weaker than what the OCI kind gives, and it is why some
-    /// operations this platform offers for images are refused for charts —
-    /// see [`Rollback`](crate::PlatformError::RollbackUnsupported).
+    /// is strictly weaker than what the OCI kind gives. It is not a reason to
+    /// refuse an operation: rolling back restores a previously selected
+    /// desired version, and for a chart the version is what there is to
+    /// restore. The difference is *stated* to the operator — see
+    /// [`ArtifactKind`] — rather than enforced by declining to act.
     Helm {
         /// The chart repository's base URL.
         repository: String,
@@ -39,13 +41,36 @@ pub enum ArtifactSource {
     },
 }
 
+/// Which of the two kinds a component is published as, and nothing more.
+///
+/// [`ArtifactSource`] carries *where* things are published, which is what
+/// discovery needs and what nobody outside this crate should have to hold.
+/// This carries only which kind it is, because that is the whole of what the
+/// console needs in order to word what a rollback of this component restores.
+///
+/// # Why the console is told the kind rather than a yes-or-no
+///
+/// It used to be told `rollable: true/false`, and the answer for a chart was
+/// `false`. Now both kinds can be rolled back and the halves of the guarantee
+/// differ — an image rollback restores the exact bytes, a chart rollback
+/// restores the version — so the console needs to say *which*, and a boolean
+/// has nowhere to say it from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArtifactKind {
+    /// Container images, published to a registry.
+    Oci,
+
+    /// A chart, published to a chart repository.
+    Helm,
+}
+
 impl ArtifactSource {
-    /// What this kind is called, for a message an operator reads.
+    /// Which kind this is, without where it is published.
     #[must_use]
-    pub const fn describe(&self) -> &'static str {
+    pub const fn kind(&self) -> ArtifactKind {
         match self {
-            Self::Oci { .. } => "container images",
-            Self::Helm { .. } => "a Helm chart",
+            Self::Oci { .. } => ArtifactKind::Oci,
+            Self::Helm { .. } => ArtifactKind::Helm,
         }
     }
 }

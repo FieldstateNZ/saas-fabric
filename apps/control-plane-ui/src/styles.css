@@ -808,6 +808,7 @@ button:disabled {
 }
 
 .rollback__revision,
+.rollback__caveat,
 .rollback__more {
   font-size: 0.8rem;
   color: var(--muted);
@@ -815,4 +816,12 @@ button:disabled {
 
 .rollback__more {
   margin: 0.4rem 0 0.6rem;
+}
+
+/* What a chart rollback restores, and what it does not. Muted like the other
+   asides rather than styled as a warning: nothing is wrong, and an operator
+   reading it is being told what they are getting. */
+.rollback__caveat {
+  margin: 0 0 0.6rem;
+  max-width: 46ch;
 }

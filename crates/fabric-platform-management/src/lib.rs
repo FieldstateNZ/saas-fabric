@@ -33,7 +33,7 @@ mod status;
 mod sweep;
 mod version;
 
-pub use artifact::{ArtifactSource, Release};
+pub use artifact::{ArtifactKind, ArtifactSource, Release};
 pub use binding::PlatformDesiredState;
 pub use charts::ChartIndex;
 pub use desired_state::{ComponentDesired, DesiredRevision, DesiredState, DesiredStateError, Hold};
@@ -47,5 +47,6 @@ pub use status::{ComponentStatus, DesiredStateStatus, Diagnostics, Reconciliatio
 pub use sweep::{CheckOutcome, LastCheck, Sweep, SweepResult, SweepState, Swept};
 pub use version::{Channel, Version};
 
-/// Finds the newest release unit an environment is allowed to move to.
-pub use discovery::{discover, discover_chart, history, resolve};
+/// Finds the releases an environment is allowed to move to, above and below
+/// the version it runs, for either artifact kind.
+pub use discovery::{chart_history, discover, discover_chart, history, resolve, resolve_chart};

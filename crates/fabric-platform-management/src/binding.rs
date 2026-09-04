@@ -68,8 +68,8 @@ mod swap;
 /// every implementation to bound its operations by refusing to *start* work it
 /// cannot finish in budget, and a deployment's budget plus one call to the host
 /// is checked at startup to be shorter than one request. Without it an
-/// operator's disconnect would queue behind a stalling Git host and be cut off
-/// by the request timeout, leaving a `504` and a platform still pointed there.
+/// operator's disconnect would queue behind a stalling Git host until the
+/// request timeout, leaving them a `504` they could not tell from a platform that never let go.
 ///
 /// And a decision is **tagged** with the generation of the binding it was read
 /// through, because draining says nothing about a decision read a minute ago

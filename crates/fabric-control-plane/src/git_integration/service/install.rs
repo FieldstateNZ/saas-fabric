@@ -13,6 +13,8 @@ impl GitIntegrationService {
     /// Returns [`IntegrationError::NotOurFlow`] if the callback does not name
     /// a live flow, [`IntegrationError::HostRefused`] if no token could be
     /// minted for the installation, or a store failure.
+    /// [`IntegrationError::Unavailable`] also stands for a transition nothing
+    /// watched to the end, which is not the same as one that failed.
     pub async fn complete_install(&self, installation_id: &str, state: &str) -> Result<(), IntegrationError> {
         let flow = self
             .flows
@@ -36,13 +38,15 @@ impl GitIntegrationService {
             repository: settle(&detail.repositories),
         });
 
-        self.store_and_bind(&integration, &key).await?;
+        // Owned, because the line is written inside the transition, which
+        // outlives this request and its borrows.
+        let (subject, id) = (flow.operator.clone(), installation_id.to_owned());
+        let settled_on_a_repository = integration.repository().is_some();
 
-        logging::integration_installed(
-            &flow.operator,
-            installation_id,
-            integration.repository().is_some(),
-        );
+        self.store_and_bind(&integration, &key, move || {
+            logging::integration_installed(&subject, &id, settled_on_a_repository);
+        })
+        .await?;
 
         Ok(())
     }
@@ -54,7 +58,9 @@ impl GitIntegrationService {
     /// Returns [`IntegrationError::Refused`] if the named repository is not
     /// one the installation can actually reach — an operator choosing from a
     /// stale list must not be able to point the platform at something it
-    /// cannot read.
+    /// cannot read. [`IntegrationError::Unavailable`] also stands for a
+    /// transition nothing watched to the end, which is not the same as one
+    /// that failed.
     pub async fn choose_repository(
         &self,
         operator: &Operator,
@@ -88,9 +94,12 @@ impl GitIntegrationService {
             installation.repository = Some(as_selected(chosen));
         }
 
-        self.store_and_bind(&integration, &key).await?;
+        let (subject, owner, name) = (operator.subject().to_owned(), owner.to_owned(), name.to_owned());
 
-        logging::integration_repository_chosen(operator.subject(), owner, name);
+        self.store_and_bind(&integration, &key, move || {
+            logging::integration_repository_chosen(&subject, &owner, &name);
+        })
+        .await?;
 
         Ok(())
     }

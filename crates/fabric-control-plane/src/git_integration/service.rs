@@ -74,6 +74,16 @@ pub struct GitIntegrationService {
 }
 
 impl GitIntegrationService {
+    /// Whether a transition holds the order right now.
+    ///
+    /// For tests only: the one thing a test about ordering has to see is
+    /// that the order is engaged while a transition is parked, and nothing
+    /// in production has a reason to ask.
+    #[cfg(test)]
+    pub(super) fn order_is_held(&self) -> bool {
+        self.transitions.try_lock().is_err()
+    }
+
     /// Assembles the service.
     #[must_use]
     pub fn new(

@@ -649,7 +649,7 @@ impl RecordingTarget {
 /// load-bearing. A door that held every call would serialise transitions all by
 /// itself, and a test over it could not tell the order this service keeps from
 /// the order the fake kept on its behalf — which is exactly the property
-/// `two_transitions_settle_on_the_last_one_asked_for` is about.
+/// `two_overlapping_transitions_each_apply_in_full_and_in_order` is about.
 struct Gate {
     /// Rung once for every call that reaches the door.
     arrivals: tokio::sync::mpsc::UnboundedSender<()>,
@@ -1091,7 +1091,7 @@ async fn a_cancelled_disconnect_still_clears_the_key_and_the_record() {
 }
 
 #[tokio::test]
-async fn two_transitions_settle_on_the_last_one_asked_for() {
+async fn two_overlapping_transitions_each_apply_in_full_and_in_order() {
     let (service, mut gated) = gated(
         &[
             ("FieldstateNZ", "a"),
@@ -1131,6 +1131,19 @@ async fn two_transitions_settle_on_the_last_one_asked_for() {
     // order if something does.
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
+    // The order is held by a transition at this moment -- the first, parked
+    // inside its bind -- and the second has not reached the target: the door
+    // holds only the first call, so a second bind would have rung the bell and
+    // walked through. Held back, then, by the order and by nothing else.
+    assert!(
+        service.order_is_held(),
+        "the order must be held across the parked transition"
+    );
+    assert!(
+        gated.arrivals.try_recv().is_err(),
+        "the second transition must not have reached the target while the first holds the order"
+    );
+
     drop(door);
 
     first
@@ -1161,6 +1174,6 @@ async fn two_transitions_settle_on_the_last_one_asked_for() {
             .repository()
             .map(SelectedRepository::describe),
         Some("FieldstateNZ/c".to_owned()),
-        "and the record and the binding must agree on the last one asked for"
+        "and the record and the binding must agree on whichever reached the order second"
     );
 }

@@ -1,5 +1,12 @@
 //! Starting a connection, and completing the application's creation.
+//!
+//! Over the advisory size on purpose: the creation leg writes the key and
+//! the record as one transition, and splitting it would put the two halves
+//! of one change in two files.
 
+use std::sync::Arc;
+
+use crate::git_integration::service::settling::settling;
 use crate::git_integration::service::{GitIntegrationService, IntegrationError};
 use crate::git_integration::{AppCreationRequest, FlowStep, GitIntegration, SecretName};
 use crate::logging;
@@ -53,6 +60,8 @@ impl GitIntegrationService {
     ///
     /// Returns [`IntegrationError::NotOurFlow`] if the callback does not name
     /// a live flow, or a failure from the host or either store.
+    /// [`IntegrationError::Unavailable`] also stands for a transition nothing
+    /// watched to the end, which is not the same as one that failed.
     pub async fn complete_creation(&self, code: &str, state: &str) -> Result<(), IntegrationError> {
         let flow = self
             .flows
@@ -61,20 +70,29 @@ impl GitIntegrationService {
 
         let created = self.provisioning.redeem_creation(code).await?;
 
-        self.secrets
-            .put(&SecretName::new(self.kind.private_key()), &created.private_key)
-            .await?;
+        // The key and the record are one change written to two places, so
+        // they go as one transition: a request cut off between them would
+        // leave a key nothing accounts for, and the code that minted it is
+        // spent, so repeating the flow orphans a second application on the
+        // host. See `settling.rs`.
+        let kind = self.kind;
+        let secrets = Arc::clone(&self.secrets);
+        let store = Arc::clone(&self.store);
+        let subject = flow.operator.clone();
 
-        self.store
-            .save(
-                self.kind,
-                &GitIntegration::created(&created.app_id, &created.app_slug),
-            )
-            .await?;
+        settling(Arc::clone(&self.transitions), async move {
+            secrets
+                .put(&SecretName::new(kind.private_key()), &created.private_key)
+                .await?;
+            store
+                .save(kind, &GitIntegration::created(&created.app_id, &created.app_slug))
+                .await?;
 
-        logging::integration_app_created(&flow.operator, &created.app_slug);
+            logging::integration_app_created(&subject, &created.app_slug);
 
-        Ok(())
+            Ok(())
+        })
+        .await
     }
 
     /// Where the operator installs the application.

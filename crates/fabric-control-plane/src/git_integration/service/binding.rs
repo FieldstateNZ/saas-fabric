@@ -19,17 +19,28 @@ impl GitIntegrationService {
     /// it: the operator may see `504` and the platform converges anyway, so
     /// asking again is safe rather than the only repair. See `settling.rs`.
     ///
+    /// `settled` is the caller's record of who did this, and it runs inside the
+    /// transition, last. A request that stopped waiting still changed what the
+    /// platform points at, and a change that lands must be accounted for by
+    /// whoever asked for it — logged from the caller, it would be the one case
+    /// where the change lands and the line does not.
+    ///
     /// # Errors
     ///
     /// Returns [`IntegrationError`] if the store refused, or
     /// [`IntegrationError::Refused`] if the integration does not describe a
-    /// repository this platform can build a client for.
+    /// repository this platform can build a client for — by which point the
+    /// record is already written, and nobody is named for it: `settled` runs
+    /// only when the platform points where the operator asked. The target has
+    /// been told it is unusable; a target with nowhere to say so leaves the
+    /// record and the binding disagreeing until the next transition.
     /// [`IntegrationError::Unavailable`] also stands for a transition nothing
     /// watched to the end, which is not the same as one that failed.
     pub(super) async fn store_and_bind(
         &self,
         integration: &GitIntegration,
         key: &SecretValue,
+        settled: impl FnOnce() + Send + 'static,
     ) -> Result<(), IntegrationError> {
         // Owned copies, because the task outlives the borrows they arrived as.
         // The collaborators are shared already, so cloning them costs a
@@ -44,7 +55,11 @@ impl GitIntegrationService {
             store.save(kind, &integration).await?;
             point(&target, &integration, &key)
                 .await
-                .map_err(IntegrationError::Refused)
+                .map_err(IntegrationError::Refused)?;
+
+            settled();
+
+            Ok(())
         })
         .await
     }

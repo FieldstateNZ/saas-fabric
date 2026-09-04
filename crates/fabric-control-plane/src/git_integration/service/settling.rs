@@ -48,7 +48,8 @@ use crate::logging;
 /// not outlive that runtime being dropped once graceful shutdown has returned.
 /// A panic inside it is the other, and lands in the same place: the caller is
 /// told the platform is unavailable, and nobody can say how far the transition
-/// got. Both leave the residual `disconnect` already states.
+/// got — the record and the live binding may disagree, which is the one
+/// outcome nothing else reports, and why it is logged at error.
 ///
 /// # Errors
 ///

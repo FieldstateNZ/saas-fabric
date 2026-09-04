@@ -52,6 +52,15 @@ impl GitIntegrationService {
     ///
     /// # What is still not promised, and cannot be
     ///
+    /// A rebind that read the record and the key *before* this took its turn
+    /// still holds both, and runs after: it saves the record again and binds
+    /// with the key it captured, which the key store no longer has. The record
+    /// and the binding agree, but the disconnect has been undone by a request
+    /// that was already in hand when it arrived, and the next restart finds a
+    /// record with no key and reports the integration connected and failing.
+    /// Two overlapping requests — two operators, or one with two tabs — is
+    /// what that takes.
+    ///
     /// A request the platform stopped waiting for is not a request the host
     /// stopped applying. If a call times out on a ref update the host is still
     /// processing, the platform is told the write failed and the host may

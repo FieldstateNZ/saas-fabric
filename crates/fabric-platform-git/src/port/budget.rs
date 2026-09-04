@@ -42,7 +42,7 @@ impl PlatformGitRepository {
             // budget and nothing else — no path, no URL, no credential.
             Err(_elapsed) => Err(DesiredStateError::Unavailable {
                 detail: format!(
-                    "the platform repository did not answer within {} seconds",
+                    "the platform repository did not answer inside its {}-second budget",
                     self.config.operation_timeout_seconds
                 ),
             }),

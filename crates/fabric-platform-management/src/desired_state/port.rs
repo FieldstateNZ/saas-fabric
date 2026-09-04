@@ -9,13 +9,15 @@ use crate::{ComponentDesired, DesiredRevision, DesiredStateError, Hold, Release,
 ///
 /// # Every operation must be bounded
 ///
-/// A contract on the implementation, not a hope. The platform binding holds a
-/// lock across these calls, so the longest one can take is the longest an
-/// operator's disconnect can wait — and that is cut off by the API's request
-/// timeout. Bounding each network request is not enough: an operation is many
-/// requests, and a host answering every one just inside its limit runs for
-/// minutes. Bound the *operation*, and answer
+/// A contract, not a hope: the platform binding holds a lock across these
+/// calls, so the longest one can take is the longest an operator's disconnect
+/// can wait — and that is cut off by the API's request timeout. Bounding each
+/// request is not enough; an operation is many, and a host answering every one
+/// just inside its limit runs for minutes. Bound the *operation*, and answer
 /// [`Unavailable`](DesiredStateError::Unavailable) when the budget is spent.
+/// Every write answers [`Conflict`](DesiredStateError::Conflict) if the state
+/// it was decided against has moved since it was read, and the other variants
+/// for what they name — said once here rather than under each method.
 #[async_trait::async_trait]
 pub trait DesiredState: Send + Sync {
     /// Every component an environment describes.
@@ -76,7 +78,10 @@ pub trait DesiredState: Send + Sync {
     /// A chart repository pins a version, not a digest: the bytes behind
     /// `7.3.0` can be republished, so "put me back on what I was running" is a
     /// promise it cannot keep. Until that lifecycle is modelled there is
-    /// nothing here for a chart to be passed as.
+    /// nothing here for a chart to be passed as. And a unit travels whole —
+    /// the version, the source commit and every digest, resolved from a
+    /// registry rather than supplied — so there is no way to express rolling
+    /// back to a version with somebody else's digests.
     ///
     /// # Why the version and the hold are one operation
     ///
@@ -85,12 +90,6 @@ pub trait DesiredState: Send + Sync {
     /// moved backwards with automatic advancement still live — so the next
     /// sweep would undo it, and the operator would watch their rollback
     /// disappear. One commit or neither.
-    ///
-    /// # It takes a unit, so there is nothing to disagree about
-    ///
-    /// The version, the source commit and every image digest travel together,
-    /// resolved from a registry rather than supplied. There is no way to
-    /// express rolling back to a version with somebody else's digests.
     ///
     /// # Errors
     ///

@@ -341,10 +341,16 @@ took effect. `platform_management.operation_timeout_seconds` is the budget, and
 startup refuses to run unless it is shorter than `request_timeout_seconds`.
 
 The guarantee covers every operation that runs to completion or fails. One
-**cancelled** mid-write — a browser disconnecting, or the request timeout
-firing — may still land, because a dropped future releases the lock with its
-last request possibly already sent. That is inherent to cancellation; the next
-read sees whatever landed.
+**cancelled** mid-write — a browser disconnecting, the request timeout firing,
+or the operation budget itself expiring, which is the one of the three that
+reaches an unattended sweep — may still land, because a dropped future releases
+the lock with its last request possibly already sent. That is inherent to
+cancellation; the next read sees whatever landed.
+
+What the budget bound guarantees is the **unbind**. The rest of a disconnect —
+deleting the key, clearing the record — runs after it and is bounded by its
+own stores' timeouts, so a budget only just inside the request timeout leaves
+that tail no room; the defaults leave ten seconds.
 
 #### The series only means something for a prerelease
 

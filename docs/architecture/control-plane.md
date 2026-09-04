@@ -327,6 +327,12 @@ intended design, not the implemented one: the precondition was the revision the
 *adapter* had just read for itself, which proves only that nothing changed
 during the write.
 
+The state a decision is taken against includes **which repository was bound**,
+so a disconnect or a rebind between the read and the write is a conflict too —
+and a disconnect completes only once the operations already in flight against
+the old repository have finished, so nothing this platform reports as done was
+done to a repository an operator had already stopped targeting.
+
 #### The series only means something for a prerelease
 
 An automatic policy walks forward within the desired version's own line, and a

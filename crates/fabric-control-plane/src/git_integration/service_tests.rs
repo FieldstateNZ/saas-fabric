@@ -580,8 +580,9 @@ struct RecordingTarget {
     unusable: Mutex<Vec<String>>,
 }
 
+#[async_trait::async_trait]
 impl IntegrationTarget for RecordingTarget {
-    fn bind(&self, integration: &GitIntegration, _private_key: &SecretValue) -> Result<(), String> {
+    async fn bind(&self, integration: &GitIntegration, _private_key: &SecretValue) -> Result<(), String> {
         self.bound.lock().expect("the fake is not poisoned").push(
             integration
                 .repository()
@@ -591,11 +592,11 @@ impl IntegrationTarget for RecordingTarget {
         Ok(())
     }
 
-    fn unbind(&self) {
+    async fn unbind(&self) {
         *self.unbound.lock().expect("the fake is not poisoned") += 1;
     }
 
-    fn unusable(&self, detail: &str) {
+    async fn unusable(&self, detail: &str) {
         self.unusable
             .lock()
             .expect("the fake is not poisoned")

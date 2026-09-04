@@ -33,11 +33,11 @@ impl GitIntegrationService {
         let Ok(key) = self.private_key().await else {
             let detail = "the application's key could not be read";
             logging::integration_restore_failed(detail);
-            self.target.unusable(detail);
+            self.target.unusable(detail).await;
             return;
         };
 
-        if let Err(error) = self.rebind(&integration, &key) {
+        if let Err(error) = self.rebind(&integration, &key).await {
             logging::integration_restore_failed(&error);
         }
     }
@@ -56,24 +56,56 @@ impl GitIntegrationService {
             .ok_or(IntegrationError::NotConnected)
     }
 
+    /// Records the integration, then points the platform at what it describes.
+    ///
+    /// Both places an operator can settle a repository do exactly this, and the
+    /// order is not interchangeable: a binding that worked against a record
+    /// nobody stored would be gone at the next restart, and the operator would
+    /// be looking at a platform that worked until it quietly didn't.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`IntegrationError`] if the store refused, or
+    /// [`IntegrationError::Refused`] if the integration does not describe a
+    /// repository this platform can build a client for.
+    pub(super) async fn store_and_bind(
+        &self,
+        integration: &GitIntegration,
+        key: &SecretValue,
+    ) -> Result<(), IntegrationError> {
+        self.store.save(self.kind, integration).await?;
+        self.rebind(integration, key)
+            .await
+            .map_err(IntegrationError::Refused)
+    }
+
     /// Points the binding at this integration, or leaves it unbound.
     ///
     /// An integration with no repository settled is not an error: it is an
     /// application that is installed and waiting for somebody to say where
     /// client configuration lives. The platform reports itself unconfigured
     /// until it knows.
-    pub(super) fn rebind(&self, integration: &GitIntegration, key: &SecretValue) -> Result<(), String> {
+    ///
+    /// Awaits the target, which is what lets a binding *drain*: pointing the
+    /// platform somewhere new returns only once the operations already running
+    /// against where it used to point have finished.
+    pub(super) async fn rebind(&self, integration: &GitIntegration, key: &SecretValue) -> Result<(), String> {
         if !integration.is_usable() {
-            self.target.unbind();
+            self.target.unbind().await;
             return Ok(());
         }
 
         // Recorded as well as returned. The caller is sometimes an operator
         // mid-connection, who sees the error — and sometimes a restart, where
         // nobody is watching and the console is the only thing that will say
-        // so.
-        self.target.bind(integration, key).inspect_err(|error| {
-            self.target.unusable(error);
-        })
+        // so. A `match` rather than `inspect_err`, because recording it is
+        // itself an await and a closure cannot hold one.
+        match self.target.bind(integration, key).await {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                self.target.unusable(&error).await;
+                Err(error)
+            }
+        }
     }
 }

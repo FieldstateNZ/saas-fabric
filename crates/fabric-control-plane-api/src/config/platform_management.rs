@@ -48,8 +48,8 @@ pub struct PlatformManagementConfig {
     /// # What it actually bounds, which is a little more than itself
     ///
     /// The budget stops the adapter *starting* a call it cannot afford. It
-    /// never abandons one already sent, because a write abandoned mid-flight
-    /// would release the binding while it might still land. So one operation
+    /// never abandons a write already sent, because a write abandoned
+    /// mid-flight would release the binding while it might still land. So one operation
     /// can run for this long plus one `git_host.http_timeout_seconds`, and it
     /// is that **sum** startup requires to be strictly less than
     /// `request_timeout_seconds`: see `startup::platform`.

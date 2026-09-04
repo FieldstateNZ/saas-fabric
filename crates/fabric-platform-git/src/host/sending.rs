@@ -55,7 +55,14 @@ impl PlatformGitRepository {
             return Ok(response);
         }
 
-        self.bearers.invalidate().await;
+        // Bounded the same way the acquisition is, because it waits on the
+        // same mutex: a mint stalled ahead of this would otherwise hold the
+        // operation -- and the binding's guard -- for as long as the queue
+        // in front of it. Cutting it short costs a retry that presents the
+        // dead token once more and is refused again, which is an outcome.
+        tokio::time::timeout(self.bearer_allowance(), self.bearers.invalidate())
+            .await
+            .map_err(|_expired| self.out_of_budget())?;
 
         self.attempt(operation, method, url, body).await
     }

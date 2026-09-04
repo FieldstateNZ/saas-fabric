@@ -407,6 +407,20 @@ async fn a_stalled_token_endpoint_cannot_stretch_an_operation_past_its_bound() {
              request; they took {first_took:?} and {second_took:?}"
         );
     }
+
+    // The floor is what proves the second operation genuinely queued behind
+    // the first's stalled mint rather than failing fast for some other reason;
+    // and the mint has to have been reached at all, or the queue this bounds
+    // was never exercised.
+    assert!(
+        second_took >= Duration::from_secs(3),
+        "the second operation waited out the first's request timeout, not {second_took:?}"
+    );
+    assert!(
+        host.paths().iter().any(|path| path.contains("/access_tokens")),
+        "the token endpoint was asked: {:?}",
+        host.paths()
+    );
 }
 
 #[tokio::test]

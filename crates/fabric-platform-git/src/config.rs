@@ -41,8 +41,9 @@ pub struct PlatformRepositoryConfig {
     /// by construction rather than by hope.
     ///
     /// It is a gate on *starting* a request, not a timeout around the
-    /// operation: a request already on the wire runs to its own outcome under
-    /// `http_timeout_seconds`, and the request after it is refused. So the real
+    /// operation: a write already on the wire runs to its own outcome under
+    /// `http_timeout_seconds`, and the request after it is refused (only a
+    /// bearer acquisition, which writes nothing, is ever cut short). So the real
     /// bound on one operation is this value plus one `http_timeout_seconds`,
     /// which is the sum a deployment's `request_timeout_seconds` is checked
     /// against at startup.

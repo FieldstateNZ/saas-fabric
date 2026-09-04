@@ -34,7 +34,7 @@ pub struct PlatformManagementTarget {
     /// Separate from the above because an operation is many calls. Startup has
     /// already checked this *plus* one of the above is shorter than one
     /// request — the budget declines to start a call it cannot afford and never
-    /// abandons one already sent — which is what makes the binding's drain
+    /// abandons a write already sent — which is what makes the binding's drain
     /// finish inside an operator's disconnect.
     operation_timeout_seconds: u64,
 

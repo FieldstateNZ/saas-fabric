@@ -46,7 +46,7 @@ use crate::config::PlatformManagementConfig;
 /// refuses to start rather than leaving that one slow Git host away.
 ///
 /// The budget alone is not the bound. It stops the adapter *starting* a call it
-/// cannot afford and never abandons one already sent — a write abandoned
+/// cannot afford and never abandons a write already sent — one abandoned
 /// mid-flight would release the binding while it might still land — so an
 /// operation runs for the budget plus one `git_host.http_timeout_seconds`. That
 /// sum is what must fit, and the refusal names all three values.

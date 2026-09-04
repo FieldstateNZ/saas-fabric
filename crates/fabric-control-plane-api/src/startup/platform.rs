@@ -36,13 +36,13 @@ use crate::config::PlatformManagementConfig;
 /// are configuration. An absent integration is now legitimate runtime state
 /// rather than a misconfiguration, and it is reported rather than fatal.
 ///
-/// # The operation budget, plus one call, has to fit inside a request
+/// # The maximum drain has to sit below a request, with room left over
 ///
 /// The platform binding holds a lock across every desired-state call, so an
-/// operator's disconnect waits for whatever is already running. If one
-/// operation could outlast one request, the disconnect would be cut off by the
-/// API's request timeout before it took effect — the operator told `504`, the
-/// platform still pointed at the repository they asked it to forget. So this
+/// operator's disconnect waits for whatever is already running. A disconnect no
+/// longer *fails* when that wait outlasts the request — it runs in a task of
+/// its own and finishes either way — but the operator is told `504` and has no
+/// way to tell a platform that took a while from one that never let go. So this
 /// refuses to start rather than leaving that one slow Git host away.
 ///
 /// The budget alone is not the bound. It stops the adapter *starting* a call it
@@ -51,9 +51,12 @@ use crate::config::PlatformManagementConfig;
 /// operation runs for the budget plus one `git_host.http_timeout_seconds`. That
 /// sum is what must fit, and the refusal names all three values.
 ///
-/// What it bounds is the *unbind*: the rest of a disconnect runs after it, so a
-/// sum only just inside the request leaves that tail no room. The check is a
-/// floor rather than a recommendation; the defaults leave five seconds.
+/// What the sum bounds is the **drain**, and nothing else. A disconnect deletes
+/// a key and a record after it, and a rebind stores before it. So the rule is
+/// "the longest drain sits below the request timeout, with explicit headroom
+/// for the rest of the operation" rather than "the whole handler fits". The
+/// check is a floor rather than a recommendation; the defaults leave five
+/// seconds.
 ///
 /// # Errors
 ///
@@ -88,7 +91,8 @@ pub fn establish(
              ({http_timeout_seconds}) must be less than request_timeout_seconds \
              ({request_timeout_seconds}): an operator's disconnect waits for the operation already \
              in flight, which runs for the budget plus the one call the budget cannot cut short, \
-             and all of that must finish inside one request",
+             and that wait has to sit below one request with room left for the rest of the \
+             disconnect",
             config.operation_timeout_seconds
         ));
     }
@@ -139,8 +143,10 @@ mod tests {
     #[test]
     fn a_budget_that_could_outlast_a_request_is_refused_at_startup() {
         // The failure this prevents is silent: the operator's disconnect would
-        // be cut off by the request timeout while still waiting for the
-        // binding, so nothing would be released and they would be told 504.
+        // still be waiting for the binding when the request timeout fired, so
+        // they would be told 504 with no way to tell a slow disconnect from a
+        // stuck one. The disconnect finishes either way; the answer is what is
+        // lost.
         for operation in [30, 45] {
             // `err()` rather than `expect_err`: the success type is not
             // `Debug`, and making a composition-root binding printable to
@@ -159,8 +165,9 @@ mod tests {
         // The whole point of the sum. Twenty-five is comfortably inside a
         // thirty-second request on its own, and an operation that spends it and
         // then waits out one ten-second call to the host is not — so the
-        // disconnect queued behind it is cut off at thirty having released
-        // nothing, which is exactly the silent failure the check exists for.
+        // disconnect queued behind it is cut off at thirty with nothing to
+        // show the operator, which is exactly the silence the check exists to
+        // prevent.
         let message = establish(Some(&managed(25)), 10, 30, &clock())
             .err()
             .expect("a budget that only fits without the call it cannot cut short must not start");

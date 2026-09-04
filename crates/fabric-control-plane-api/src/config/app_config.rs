@@ -71,8 +71,10 @@ pub struct ControlPlaneAppConfig {
     /// It is also the ceiling in a rule startup enforces:
     /// `git_host.http_timeout_seconds` plus
     /// `platform_management.operation_timeout_seconds` must be strictly less
-    /// than this, so a disconnect queued behind a platform operation finishes
-    /// inside one request instead of being cut off by it.
+    /// than this. That sum is the longest a disconnect can wait for the
+    /// binding to drain, so the maximum drain time is bounded below this with
+    /// explicit headroom for the rest of the integration operation — the
+    /// deletions after it, and the storing a rebind does before it.
     #[serde(default = "default_request_timeout")]
     pub request_timeout_seconds: u64,
 }

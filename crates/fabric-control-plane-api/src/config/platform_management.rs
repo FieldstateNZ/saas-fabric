@@ -40,10 +40,10 @@ pub struct PlatformManagementConfig {
     /// `git_host.http_timeout_seconds`. A host that answers every one of them
     /// just inside that limit keeps the operation running for minutes, and the
     /// platform binding holds a lock for the whole of it — so an operator's
-    /// disconnect queues behind it and is cut off by
-    /// `request_timeout_seconds` before it can take effect. The operator sees
-    /// `504`, and the platform is still pointed at the repository they asked it
-    /// to forget.
+    /// disconnect queues behind it and `request_timeout_seconds` fires first.
+    /// The disconnect itself still finishes, in a task of its own; what the
+    /// operator gets is a `504` and no way to tell a platform that took a
+    /// while from one that never let go.
     ///
     /// # What it actually bounds, which is a little more than itself
     ///
@@ -51,8 +51,9 @@ pub struct PlatformManagementConfig {
     /// never abandons a write already sent, because a write abandoned
     /// mid-flight would release the binding while it might still land. So one
     /// operation can run for this long plus one `git_host.http_timeout_seconds`,
-    /// and it is that **sum** startup requires to be strictly less than
-    /// `request_timeout_seconds`: see `startup::platform`.
+    /// and it is that **sum** — the longest a drain can take — that startup
+    /// requires to be strictly less than `request_timeout_seconds`, leaving
+    /// headroom for the rest of the operation: see `startup::platform`.
     #[serde(default = "default_operation_timeout")]
     pub operation_timeout_seconds: u64,
 }

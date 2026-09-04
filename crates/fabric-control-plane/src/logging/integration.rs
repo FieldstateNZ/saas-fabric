@@ -84,6 +84,24 @@ pub(crate) fn integration_disconnected(operator: &str) {
     );
 }
 
+/// A transition finished without anything watching it finish.
+///
+/// The task it runs in panicked, or the runtime is shutting down. The operator
+/// is told the platform is unavailable, which is all anybody can honestly say:
+/// this is not a transition that failed, it is one nothing saw the end of, and
+/// the record and the live binding may or may not have both been written.
+///
+/// Errored rather than warned, because it is the one outcome that can leave
+/// those two disagreeing, and nothing else will report it.
+pub(crate) fn integration_transition_unobserved() {
+    tracing::error!(
+        event = "control_plane.integration_transition_unobserved",
+        event_id = event_id(DOMAIN_ID, EventType::Error, 4),
+        "an integration transition was not observed to finish; the stored record and the live \
+         binding may not agree"
+    );
+}
+
 /// A stored integration could not be restored at startup.
 ///
 /// Warned rather than errored, and the process continues. The platform reports

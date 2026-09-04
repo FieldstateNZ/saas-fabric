@@ -193,6 +193,33 @@ seconds, and cannot produce a wrong outcome.
 binding. Deleting an organisation's application from a console button would be
 doing more than the button said.
 
+**A transition outlives the request that asked for it.** Settling a repository
+writes two places — the stored record, and the live binding — and pointing the
+binding somewhere new waits for the operations still running against where it
+used to point. Run inside an operator's request, that wait was cancellable, so
+a request timeout or a closed browser could drop the future between the two
+halves: the record naming the repository the operator chose and the platform
+still reading the one they replaced, with nothing to report it. A disconnect had
+the mirror of it — cut off after the drain and before the deletions, it left the
+binding released with the key and the record still there, which is the opposite
+of the "it has done nothing" its own documentation used to claim.
+
+So the whole of each transition — save then rebind, or unbind then delete then
+clear — runs in a task the handler only *awaits*. A caller that goes away
+detaches it rather than stopping it, and the platform converges regardless; the
+operator may see a `504` and find the change already made, and asking again is
+safe rather than the only repair. The transitions are also **ordered** against
+one another, so two overlapping ones cannot interleave into a record naming one
+repository and a binding pointing at another: each applies in full, and the
+platform ends on whichever ran last.
+
+This is the same reasoning as the drain itself — an operation the caller cannot
+cancel — applied one level up, to the workflow that changes what is bound rather
+than to the operations running through it. Its residuals are the same two: a
+panic, and a runtime dropped at shutdown. Both leave a transition nobody
+observed to the end, which is logged and answered as unavailable rather than as
+a failure.
+
 ### Where the platform keeps its own state
 
 Two ports, one backing service, and the separation is in the types rather than
@@ -358,12 +385,12 @@ done to a repository an operator had already stopped targeting.
 That wait is bounded by the adapter's **operation budget**, not by the timeout
 on any one request to the Git host: an operation is around thirty requests, so
 bounding them individually would still let a stalling host hold the binding for
-minutes, and the disconnect would be cut off by the request timeout before it
-took effect. `platform_management.operation_timeout_seconds` is the budget. It
-is a gate on *starting* a request rather than a timeout around the operation —
-it never abandons a write already sent — so an operation runs for at most the
-budget plus one `git_host.http_timeout_seconds`, and startup refuses to run
-unless that **sum** is shorter than `request_timeout_seconds`.
+minutes, and the operator's disconnect would be cut off by the request timeout
+before it could answer them. `platform_management.operation_timeout_seconds` is
+the budget. It is a gate on *starting* a request rather than a timeout around
+the operation — it never abandons a write already sent — so an operation runs
+for at most the budget plus one `git_host.http_timeout_seconds`, and startup
+refuses to run unless that **sum** is shorter than `request_timeout_seconds`.
 
 Cancellation no longer weakens any of this. Three things could once drop an
 operation mid-write and release the lock with its last request possibly already
@@ -393,10 +420,18 @@ None of the three is a swap returning early — one that has returned has waited
 and all three collapse into the same caveat as the first: the platform gave up
 on a call the host may still apply, and reports it as failed either way.
 
-What the bound guarantees is the **unbind**. The rest of a disconnect —
-deleting the key, clearing the record — runs after it and is bounded by its
-own stores' timeouts, so a sum only just inside the request timeout leaves
-that tail no room; the defaults (15 + 10 against 30) leave five seconds.
+What the bound guarantees is the **drain**, and only that. A disconnect spends
+time before it and deletes a key and a record after it; a rebind stores and
+builds before it waits. So the honest statement of the rule is that *the
+maximum drain time is bounded below the API request timeout, leaving explicit
+headroom for the rest of the integration operation* — not that a whole handler
+fits inside one request, which the sum has never shown. The defaults
+(15 + 10 against 30) leave five seconds of that headroom.
+
+And the headroom is a courtesy to the operator rather than a correctness
+requirement, because a request that runs out of it no longer loses the work:
+the integration transition finishes in a task of its own either way. What a
+`504` costs is the answer, not the outcome.
 
 #### The series only means something for a prerelease
 

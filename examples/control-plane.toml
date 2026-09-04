@@ -175,10 +175,12 @@ mode = "in_memory"
 #     # that **sum** is strictly less than `request_timeout_seconds` above.
 #     #
 #     # The platform binding holds a lock across an operation, so an operator's
-#     # disconnect waits for whatever is already running. A sum that did not fit
-#     # would leave them a 504 with nothing released and the platform still
-#     # pointed at the repository they asked it to forget. The defaults are
-#     # 15 + 10 against 30, which leaves five seconds for the rest of an unbind.
+#     # disconnect waits for whatever is already running. That wait is the
+#     # longest drain, and it is what the sum bounds — below the request
+#     # timeout, with headroom for the rest of the disconnect, rather than a
+#     # promise the whole of it fits. A sum that did not fit would leave the
+#     # operator a 504 they could not tell from a platform that never let go.
+#     # The defaults are 15 + 10 against 30, leaving five seconds of headroom.
 #     operation_timeout_seconds = 15
 #
 #     # How often the environment is swept. Zero disables it, and so does

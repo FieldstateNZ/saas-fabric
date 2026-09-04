@@ -1,5 +1,8 @@
 //! Forgetting an integration.
 
+use std::sync::Arc;
+
+use crate::git_integration::service::settling::settling;
 use crate::git_integration::service::{GitIntegrationService, IntegrationError};
 use crate::git_integration::SecretName;
 use crate::logging;
@@ -23,13 +26,29 @@ impl GitIntegrationService {
     ///
     /// Releasing the binding *waits*, and that is the load-bearing part of
     /// going first: every operation already running against the repository has
-    /// an outcome before this returns, and none starts against it afterwards.
-    /// Cancelling this request cannot shorten that wait, because the operations
-    /// run in tasks of their own rather than inside whoever asked for them.
+    /// an outcome before the deletions begin, and none starts against it
+    /// afterwards. Cancelling this request cannot shorten that wait, because
+    /// the operations run in tasks of their own rather than inside whoever
+    /// asked for them.
     ///
-    /// The wait is bounded by the adapter's operation budget plus the one call
-    /// to the Git host the budget cannot cut short, which startup has checked
-    /// together fit inside one request.
+    /// That wait is bounded by the adapter's operation budget plus the one call
+    /// to the Git host the budget cannot cut short. Startup checks that sum is
+    /// below the API request timeout, leaving explicit headroom for the rest of
+    /// this — the drain is the longest step, not the only one.
+    ///
+    /// # A request that is cut off does not stop the disconnect
+    ///
+    /// All three steps run in one transition, in a task of its own, which this
+    /// only awaits. If the request timeout fires or the operator's browser goes
+    /// away, the handler's future is dropped and the disconnect carries on
+    /// regardless: the binding is released, the key deleted and the record
+    /// cleared. The operator may see `504` and find the integration gone.
+    ///
+    /// Asking again is safe — a second disconnect releases a binding already
+    /// released and deletes what is already deleted — and it is also *ordered*
+    /// against every other transition on this integration, so a disconnect and
+    /// a rebind that overlap cannot leave the record and the binding
+    /// disagreeing. See `settling.rs`.
     ///
     /// # What is still not promised, and cannot be
     ///
@@ -44,26 +63,26 @@ impl GitIntegrationService {
     /// Returns [`IntegrationError`] if either store refused. The binding is
     /// released by then — a disconnect that got that far and then failed leaves
     /// the platform not using the integration, which is the safe half to land
-    /// on.
-    ///
-    /// # A disconnect that was cut off has done nothing
-    ///
-    /// This is not an error it can return, because it never gets to return.
-    /// If the request timeout or the operator's browser cancels the request,
-    /// the handler future is dropped — possibly while still waiting for the
-    /// binding — and then nothing has been released, no key deleted and no
-    /// record cleared. The operator sees `504` and the integration is exactly
-    /// as it was. There is no half-state to repair; the answer is to ask again.
+    /// on. [`IntegrationError::Unavailable`] also stands for a transition
+    /// nothing watched to the end, which is not the same as one that failed.
     pub async fn disconnect(&self, operator: &Operator) -> Result<(), IntegrationError> {
-        self.target.unbind().await;
+        // Owned copies, because the task outlives the borrows they arrived as.
+        let kind = self.kind;
+        let secrets = Arc::clone(&self.secrets);
+        let store = Arc::clone(&self.store);
+        let target = Arc::clone(&self.target);
+        let subject = operator.subject().to_owned();
 
-        self.secrets
-            .delete(&SecretName::new(self.kind.private_key()))
-            .await?;
-        self.store.clear(self.kind).await?;
+        settling(Arc::clone(&self.transitions), async move {
+            target.unbind().await;
 
-        logging::integration_disconnected(operator.subject());
+            secrets.delete(&SecretName::new(kind.private_key())).await?;
+            store.clear(kind).await?;
 
-        Ok(())
+            logging::integration_disconnected(&subject);
+
+            Ok(())
+        })
+        .await
     }
 }

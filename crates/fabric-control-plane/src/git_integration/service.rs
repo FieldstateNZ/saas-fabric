@@ -21,6 +21,9 @@ mod connect;
 mod disconnect;
 mod errors;
 mod install;
+mod restore;
+mod settling;
+mod stored;
 
 use std::sync::Arc;
 
@@ -59,6 +62,15 @@ pub struct GitIntegrationService {
 
     /// Stamps flow expiry.
     clock: Arc<dyn Clock>,
+
+    /// One transition at a time.
+    ///
+    /// A transition records what the operator settled on and points the live
+    /// binding at it — one change written to two places. Two overlapping could
+    /// interleave into a record naming one repository and a binding pointing
+    /// at another; held across the whole of each, the platform ends on
+    /// whichever ran last instead of half of each. See `settling.rs`.
+    transitions: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl GitIntegrationService {
@@ -80,15 +92,7 @@ impl GitIntegrationService {
             flows: Arc::new(PendingFlows::new()),
             target,
             clock,
+            transitions: Arc::new(tokio::sync::Mutex::new(())),
         }
-    }
-
-    /// The stored integration, if this platform has one.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`IntegrationError`] if the store could not be read.
-    pub async fn current(&self) -> Result<Option<crate::GitIntegration>, IntegrationError> {
-        self.store.load(self.kind).await.map_err(IntegrationError::from)
     }
 }

@@ -13,6 +13,7 @@ use self::live::Live;
 mod bound;
 mod delegate;
 mod generation;
+mod holding;
 mod live;
 mod swap;
 
@@ -49,18 +50,26 @@ mod swap;
 /// stop targeting it. A revision could not catch that: it proves the manifest
 /// did not move, and A's manifest had not moved.
 ///
-/// So an unbind **drains**. Every operation holds the read guard across the
-/// await it delegates to, and [`connect`](Self::connect),
+/// So an unbind **drains**. Every operation runs in a task that owns the read
+/// guard for as long as the delegated call takes, and [`connect`](Self::connect),
 /// [`disconnect`](Self::disconnect) and [`unusable`](Self::unusable) take the
 /// write guard — so they complete only once everything that began against the
-/// old repository has finished, and nothing starts against it afterwards.
+/// old repository has an outcome, and nothing starts against it afterwards.
 ///
-/// The wait is bounded because [`DesiredState`](crate::DesiredState) requires every
-/// implementation to bound its operations, and a deployment's budget is checked at
-/// startup to be shorter than one request. Without that the drain would be
-/// unbounded: an operator's disconnect would queue behind a stalling Git host and
-/// be cut off by the request timeout, leaving them a `504` and a platform still
-/// pointed at the repository they asked it to forget.
+/// The task matters as much as the guard. A caller can go away mid-operation —
+/// the API's request timeout drops a handler's future, and so does a closed
+/// browser — and a guard held by that future would be released with the
+/// operation's last request possibly already on the wire. Running it in a task
+/// of its own leaves a dropped caller nothing to cancel: the work finishes, the
+/// guard is held until it does, and the drain waits. See `binding/holding.rs`.
+///
+/// The wait is bounded because [`DesiredState`](crate::DesiredState) requires
+/// every implementation to bound its operations by refusing to *start* work it
+/// cannot finish in budget, and a deployment's budget plus one call to the host
+/// is checked at startup to be shorter than one request. Without that the drain
+/// would be unbounded: an operator's disconnect would queue behind a stalling
+/// Git host and be cut off by the request timeout, leaving them a `504` and a
+/// platform still pointed at the repository they asked it to forget.
 ///
 /// And a decision is **tagged** with the generation of the binding it was read
 /// through, because draining says nothing about a decision read a minute ago
@@ -74,7 +83,12 @@ pub struct PlatformDesiredState {
     /// An async lock rather than [`std::sync::RwLock`]: the guard is held
     /// across an await, which is the whole of the drain, and a blocking guard
     /// held across an await point is how a runtime deadlocks.
-    current: RwLock<Live>,
+    ///
+    /// Behind an [`Arc`] so a guard can be *owned*. A borrowed guard cannot
+    /// outlive this struct's borrow and so cannot be moved into the task that
+    /// runs the operation, which is what makes the drain survive a caller that
+    /// stopped waiting.
+    current: Arc<RwLock<Live>>,
 }
 
 impl PlatformDesiredState {
@@ -82,7 +96,7 @@ impl PlatformDesiredState {
     #[must_use]
     pub fn unconnected() -> Arc<Self> {
         Arc::new(Self {
-            current: RwLock::new(Live::unconnected()),
+            current: Arc::new(RwLock::new(Live::unconnected())),
         })
     }
 

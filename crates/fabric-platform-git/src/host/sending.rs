@@ -61,6 +61,21 @@ impl PlatformGitRepository {
     }
 
     /// Applies the headers, a current bearer, and sends once.
+    ///
+    /// # The operation's budget is checked here, and only here
+    ///
+    /// This is the one place in the adapter where anything goes on the wire, so
+    /// it is the one place that can decide not to. The budget is a gate on
+    /// *starting* a request rather than a timeout around the operation — see
+    /// [`refuse_if_the_budget_is_spent`](PlatformGitRepository::refuse_if_the_budget_is_spent)
+    /// — which is what keeps the platform from ever abandoning a write it has
+    /// already sent.
+    ///
+    /// Twice, because obtaining a bearer under the App posture mints one, and
+    /// minting is a request to the host like any other. Checking only at the
+    /// top would let a mint that consumed the last of the budget be followed by
+    /// the call itself, and the operation would run for a second request
+    /// timeout past its bound.
     async fn attempt(
         &self,
         operation: &str,
@@ -68,6 +83,8 @@ impl PlatformGitRepository {
         url: String,
         body: Option<serde_json::Value>,
     ) -> Result<Response, PlatformGitError> {
+        self.refuse_if_the_budget_is_spent()?;
+
         let mut headers = HeaderMap::new();
         headers.insert(ACCEPT, HeaderValue::from_static("application/vnd.github+json"));
         headers.insert(API_VERSION_HEADER, HeaderValue::from_static(API_VERSION));
@@ -75,6 +92,8 @@ impl PlatformGitRepository {
         headers.insert(USER_AGENT, HeaderValue::from_static("saas-fabric-control-plane"));
 
         let bearer = self.bearers.bearer(&self.http).await?;
+
+        self.refuse_if_the_budget_is_spent()?;
 
         let mut builder = self
             .http

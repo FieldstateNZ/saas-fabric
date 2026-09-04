@@ -5,10 +5,10 @@
 //! lock across these calls, so one that ran unboundedly would block an
 //! operator's disconnect for as long as a failing Git host felt like taking.
 //!
-//! The budget bounds when a request may *start*, and never cancels one already
-//! sent — see [`within_budget`](PlatformGitRepository::within_budget) for why a
-//! cancellation here would put a write into a repository the platform had just
-//! reported it had stopped writing to.
+//! The budget bounds when a request may *start*, and never cancels a write
+//! already sent — see [`within_budget`](PlatformGitRepository::within_budget)
+//! for why a cancellation there would put a write into a repository the
+//! platform had just reported it had stopped writing to.
 
 use fabric_platform_management::{
     ComponentDesired, DesiredRevision, DesiredState, DesiredStateError, Hold, Release,

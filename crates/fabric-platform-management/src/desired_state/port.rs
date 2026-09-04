@@ -15,7 +15,7 @@ use crate::{ComponentDesired, DesiredRevision, DesiredStateError, Hold, Release}
 /// request separately is not enough — an operation is many of them — so bound
 /// the *operation*, answering [`Unavailable`](DesiredStateError::Unavailable)
 /// when the budget is spent. Bound it by refusing to **start** a request it
-/// cannot afford, never by abandoning one already sent: a write dropped
+/// cannot afford, never by abandoning a write already sent: one dropped
 /// mid-flight releases the binding while it may still land, in a repository
 /// the platform has by then reported it stopped writing to. So an operation
 /// ends within its budget plus the one request it may still have running.

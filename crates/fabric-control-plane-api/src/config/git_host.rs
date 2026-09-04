@@ -31,6 +31,12 @@ pub struct GitHostConfig {
     pub committer_email: String,
 
     /// How long a call to the host may take.
+    ///
+    /// It is also half of a rule startup enforces: this plus
+    /// `platform_management.operation_timeout_seconds` must be strictly less
+    /// than `request_timeout_seconds`. A platform operation runs for its budget
+    /// plus the one call that budget cannot cut short, and an operator's
+    /// disconnect waits for all of it inside a single request.
     #[serde(default = "default_timeout")]
     pub http_timeout_seconds: u64,
 }

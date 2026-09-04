@@ -67,6 +67,12 @@ pub struct ControlPlaneAppConfig {
     /// repository that accepts connections and never answers would hold
     /// operator requests open until the browser gave up, with nothing in the
     /// logs to say why.
+    ///
+    /// It is also the ceiling in a rule startup enforces:
+    /// `git_host.http_timeout_seconds` plus
+    /// `platform_management.operation_timeout_seconds` must be strictly less
+    /// than this, so a disconnect queued behind a platform operation finishes
+    /// inside one request instead of being cut off by it.
     #[serde(default = "default_request_timeout")]
     pub request_timeout_seconds: u64,
 }

@@ -65,17 +65,21 @@ impl PlatformGitRepository {
     /// # The operation's budget is checked here, and only here
     ///
     /// This is the one place in the adapter where anything goes on the wire, so
-    /// it is the one place that can decide not to. The budget is a gate on
-    /// *starting* a request rather than a timeout around the operation — see
+    /// it is the one place that can decide not to. The budget gates the
+    /// *starting* of a request rather than timing the operation out — see
     /// [`refuse_if_the_budget_is_spent`](PlatformGitRepository::refuse_if_the_budget_is_spent)
-    /// — which is what keeps the platform from ever abandoning a write it has
-    /// already sent.
+    /// — which is what keeps a write already sent from being abandoned.
     ///
-    /// Twice, because obtaining a bearer under the App posture mints one, and
-    /// minting is a request to the host like any other. Checking only at the
-    /// top would let a mint that consumed the last of the budget be followed by
-    /// the call itself, and the operation would run for a second request
-    /// timeout past its bound.
+    /// Twice, because obtaining a bearer under the App posture mints one, and a
+    /// mint is a request like any other: checking only at the top would let one
+    /// that consumed the last of the budget be followed by the call itself, and
+    /// the operation would run a second request timeout past its bound.
+    ///
+    /// The acquisition *between* the two checks is bounded rather than gated,
+    /// because neither check sees the queue inside it — see
+    /// [`bearer_allowance`](PlatformGitRepository::bearer_allowance). Cutting a
+    /// mint short is safe where cutting a write short is not: a token exchange
+    /// has no desired-state side effect, which is all that rule protects.
     async fn attempt(
         &self,
         operation: &str,
@@ -91,7 +95,10 @@ impl PlatformGitRepository {
         // Required by the host, which refuses requests without one.
         headers.insert(USER_AGENT, HeaderValue::from_static("saas-fabric-control-plane"));
 
-        let bearer = self.bearers.bearer(&self.http).await?;
+        let acquired = tokio::time::timeout(self.bearer_allowance(), self.bearers.bearer(&self.http))
+            .await
+            .map_err(|_expired| self.out_of_budget())?;
+        let bearer = acquired?;
 
         self.refuse_if_the_budget_is_spent()?;
 

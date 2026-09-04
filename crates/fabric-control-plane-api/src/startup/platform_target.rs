@@ -54,8 +54,9 @@ impl PlatformManagementTarget {
     }
 }
 
+#[async_trait::async_trait]
 impl IntegrationTarget for PlatformManagementTarget {
-    fn bind(&self, integration: &GitIntegration, private_key: &SecretValue) -> Result<(), String> {
+    async fn bind(&self, integration: &GitIntegration, private_key: &SecretValue) -> Result<(), String> {
         let repository = integration
             .repository()
             .ok_or_else(|| "the integration has not settled on a repository".to_owned())?;
@@ -83,16 +84,21 @@ impl IntegrationTarget for PlatformManagementTarget {
             Arc::clone(&self.clock),
         )?;
 
-        self.binding.connect(Arc::new(platform) as Arc<dyn DesiredState>);
+        // Awaited, and that is the point of the whole signature: the binding
+        // does not swap until every operation already running against the
+        // repository it is replacing has finished.
+        self.binding
+            .connect(Arc::new(platform) as Arc<dyn DesiredState>)
+            .await;
 
         Ok(())
     }
 
-    fn unbind(&self) {
-        self.binding.disconnect();
+    async fn unbind(&self) {
+        self.binding.disconnect().await;
     }
 
-    fn unusable(&self, detail: &str) {
-        self.binding.unusable(detail);
+    async fn unusable(&self, detail: &str) {
+        self.binding.unusable(detail).await;
     }
 }

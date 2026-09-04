@@ -36,9 +36,7 @@ impl GitIntegrationService {
             repository: settle(&detail.repositories),
         });
 
-        self.store.save(self.kind, &integration).await?;
-        self.rebind(&integration, &key)
-            .map_err(IntegrationError::Refused)?;
+        self.store_and_bind(&integration, &key).await?;
 
         logging::integration_installed(
             &flow.operator,
@@ -90,9 +88,7 @@ impl GitIntegrationService {
             installation.repository = Some(as_selected(chosen));
         }
 
-        self.store.save(self.kind, &integration).await?;
-        self.rebind(&integration, &key)
-            .map_err(IntegrationError::Refused)?;
+        self.store_and_bind(&integration, &key).await?;
 
         logging::integration_repository_chosen(operator.subject(), owner, name);
 

@@ -21,13 +21,19 @@ impl GitIntegrationService {
     /// record without a key is harmless while a key without a record is a
     /// credential nothing accounts for.
     ///
+    /// Releasing the binding *waits*, and that is the load-bearing part of
+    /// going first. A sweep that had already started against the repository is
+    /// finished with before the key is deleted, so nothing lands there after
+    /// this returns and nothing is interrupted halfway through a commit by a
+    /// credential vanishing underneath it.
+    ///
     /// # Errors
     ///
     /// Returns [`IntegrationError`] if either store refused. The binding is
     /// already released by then — a disconnect that half-failed leaves the
     /// platform not using the integration, which is the safe half to land on.
     pub async fn disconnect(&self, operator: &Operator) -> Result<(), IntegrationError> {
-        self.target.unbind();
+        self.target.unbind().await;
 
         self.secrets
             .delete(&SecretName::new(self.kind.private_key()))

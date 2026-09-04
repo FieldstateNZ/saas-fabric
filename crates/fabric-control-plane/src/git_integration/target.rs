@@ -20,6 +20,17 @@ use crate::repository::DesiredStateBinding;
 /// all the way down. One port makes the flow indifferent to what it is
 /// connecting, which is what lets there be two of it without two copies of the
 /// callback correlation, the key handling, or the record semantics.
+///
+/// # Why every method is async
+///
+/// Not because binding does I/O — neither implementation does. It is because
+/// pointing a platform somewhere new has to *wait* for whatever is already
+/// running against where it used to point. A synchronous `unbind` can only
+/// swap a pointer and return, which leaves an operation in flight free to
+/// finish writing to a repository the operator has just stopped targeting.
+/// The waiting belongs to whoever owns the binding, and the only way to let
+/// them do it is for this port to be able to await them.
+#[async_trait::async_trait]
 pub trait IntegrationTarget: Send + Sync {
     /// Point whatever this integration drives at the repository it describes.
     ///
@@ -27,7 +38,7 @@ pub trait IntegrationTarget: Send + Sync {
     ///
     /// Returns a message if the integration does not describe a usable
     /// repository, or a client for it cannot be built.
-    fn bind(&self, integration: &GitIntegration, private_key: &SecretValue) -> Result<(), String>;
+    async fn bind(&self, integration: &GitIntegration, private_key: &SecretValue) -> Result<(), String>;
 
     /// Forget it.
     ///
@@ -35,7 +46,7 @@ pub trait IntegrationTarget: Send + Sync {
     /// turns out not to name a repository yet. The second is not a failure:
     /// an application can be installed and waiting for somebody to say where
     /// to look.
-    fn unbind(&self);
+    async fn unbind(&self);
 
     /// Record that a stored integration could not be made to work.
     ///
@@ -48,7 +59,7 @@ pub trait IntegrationTarget: Send + Sync {
     /// from what its sweep observes, which is a stronger signal than what was
     /// true at startup, and a target with nowhere to put this should not be
     /// made to invent somewhere.
-    fn unusable(&self, _detail: &str) {}
+    async fn unusable(&self, _detail: &str) {}
 }
 
 /// The target that client configuration binds.
@@ -68,8 +79,14 @@ impl ClientConfigurationTarget {
     }
 }
 
+/// Nothing here awaits anything, and that is not an oversight: the client
+/// binding swaps a pointer under a blocking lock and has the same race this
+/// port's async signature exists to let the platform side close. Fixing it is
+/// its own change — the two bindings fail differently and their tests are
+/// separate — so this implementation satisfies the signature and no more.
+#[async_trait::async_trait]
 impl IntegrationTarget for ClientConfigurationTarget {
-    fn bind(&self, integration: &GitIntegration, private_key: &SecretValue) -> Result<(), String> {
+    async fn bind(&self, integration: &GitIntegration, private_key: &SecretValue) -> Result<(), String> {
         let repository = self.factory.build(integration, private_key)?;
         let described = repository.describe();
         self.binding.bind(repository);
@@ -78,7 +95,7 @@ impl IntegrationTarget for ClientConfigurationTarget {
         Ok(())
     }
 
-    fn unbind(&self) {
+    async fn unbind(&self) {
         self.binding.unbind();
     }
 }

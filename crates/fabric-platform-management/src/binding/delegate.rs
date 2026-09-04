@@ -1,16 +1,26 @@
 //! Passing every operation through to whatever is bound.
 //!
-//! Pure delegation, and one `required()` per call. That is the whole of it: a
-//! binding decides *whether* there is a repository, never what an operation
-//! means once there is one.
+//! Delegation, and two things around it. Every call takes the read guard and
+//! **keeps it until the delegated call has finished**, so an operation runs to
+//! completion against the repository it started against and a rebind waits for
+//! it. And every revision that leaves here is tagged with the generation it was
+//! read at, while every revision that arrives on a write must carry that same
+//! generation and is stripped of it before the adapter sees it.
+//!
+//! The repository is resolved before the tag is checked, and that order is
+//! deliberate: a platform with nothing bound answers `NotConnected`, which is a
+//! state an operator acts on, rather than `Conflict`, which would send them to
+//! retry something that has nothing to retry against.
 
-use crate::binding::PlatformDesiredState;
+use crate::binding::{generation, PlatformDesiredState};
 use crate::{ComponentDesired, DesiredRevision, DesiredState, DesiredStateError, Hold, Release, ReleaseUnit};
 
 #[async_trait::async_trait]
 impl DesiredState for PlatformDesiredState {
     async fn components(&self, environment: &str) -> Result<Vec<String>, DesiredStateError> {
-        self.required()?.components(environment).await
+        let live = self.live().await;
+
+        live.repository()?.components(environment).await
     }
 
     async fn component(
@@ -18,7 +28,12 @@ impl DesiredState for PlatformDesiredState {
         environment: &str,
         component: &str,
     ) -> Result<ComponentDesired, DesiredStateError> {
-        self.required()?.component(environment, component).await
+        let live = self.live().await;
+        let mut desired = live.repository()?.component(environment, component).await?;
+
+        desired.revision = generation::tag(live.generation(), &desired.revision);
+
+        Ok(desired)
     }
 
     async fn advance(
@@ -29,8 +44,12 @@ impl DesiredState for PlatformDesiredState {
         at: &DesiredRevision,
         message: &str,
     ) -> Result<(), DesiredStateError> {
-        self.required()?
-            .advance(environment, component, release, at, message)
+        let live = self.live().await;
+        let repository = live.repository()?;
+        let at = generation::untag(live.generation(), at)?;
+
+        repository
+            .advance(environment, component, release, &at, message)
             .await
     }
 
@@ -43,8 +62,12 @@ impl DesiredState for PlatformDesiredState {
         at: &DesiredRevision,
         message: &str,
     ) -> Result<(), DesiredStateError> {
-        self.required()?
-            .roll_back(environment, component, unit, hold, at, message)
+        let live = self.live().await;
+        let repository = live.repository()?;
+        let at = generation::untag(live.generation(), at)?;
+
+        repository
+            .roll_back(environment, component, unit, hold, &at, message)
             .await
     }
 
@@ -56,9 +79,11 @@ impl DesiredState for PlatformDesiredState {
         at: &DesiredRevision,
         message: &str,
     ) -> Result<(), DesiredStateError> {
-        self.required()?
-            .pause(environment, component, hold, at, message)
-            .await
+        let live = self.live().await;
+        let repository = live.repository()?;
+        let at = generation::untag(live.generation(), at)?;
+
+        repository.pause(environment, component, hold, &at, message).await
     }
 
     async fn resume(
@@ -68,6 +93,10 @@ impl DesiredState for PlatformDesiredState {
         at: &DesiredRevision,
         message: &str,
     ) -> Result<(), DesiredStateError> {
-        self.required()?.resume(environment, component, at, message).await
+        let live = self.live().await;
+        let repository = live.repository()?;
+        let at = generation::untag(live.generation(), at)?;
+
+        repository.resume(environment, component, &at, message).await
     }
 }

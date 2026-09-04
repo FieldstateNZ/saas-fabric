@@ -1,10 +1,25 @@
 //! Moving one chart source's `targetRevision` in an Argo Application.
 
+mod entry;
+mod lines;
 mod position;
+mod scalar;
+mod seen;
+mod value;
+mod walk;
 
-use position::Position;
+use entry::Entry;
+use lines::Line;
 
 use crate::PlatformGitError;
+
+/// Why an Application is one this cannot edit, as a clause with no subject.
+///
+/// The modules below say what was wrong; this file says which chart and which
+/// repository it was wrong about. Naming in one place is what makes every
+/// refusal sound like the same renderer — and `retarget` is not told the path,
+/// so that identity is all it has to offer.
+pub(super) type Refusal = String;
 
 /// Rewrites the `targetRevision` of the source naming this chart.
 ///
@@ -30,110 +45,76 @@ use crate::PlatformGitError;
 /// identity the manifest declares must match, and the trusted values come from
 /// `pinnedIn`, not from the file being edited.
 ///
+/// The match is also structural, not textual. The list must be the `sources:`
+/// directly under the document's top-level `spec:`, the entry must be one of
+/// its own, and the revision must be that entry's own key — see
+/// [`position`] and [`entry`] for what each of those rules out.
+///
 /// # Edited as lines, not parsed and re-serialised
 ///
 /// The same reason the Kustomize renderer is: these files are written by
 /// people and their comments are load-bearing. A load-and-dump would delete
 /// every one of them and attach the damage to a routine version bump.
 ///
+/// Byte preservation is held to the same standard: the only bytes that differ
+/// between the file that goes in and the file that comes out are the version
+/// token itself. Line endings, the final newline or its absence, indentation,
+/// the spacing after the colon, the author's quoting and any trailing comment
+/// all come back untouched.
+///
 /// # Errors
 ///
-/// Returns [`PlatformGitError::Rejected`] unless **exactly one** source
-/// matches. None means the manifest's `pinnedIn` is wrong about this file;
-/// more than one means the file is ambiguous, and choosing between them is how
-/// the wrong chart gets deployed.
+/// Returns [`PlatformGitError::Rejected`] unless **exactly one** source matches
+/// and declares exactly one revision of its own. None means the manifest's
+/// `pinnedIn` is wrong about this file; more than one means the file is
+/// ambiguous, and choosing between them is how the wrong chart gets deployed. A
+/// shape this cannot read is refused for the same reason, not guessed at.
 pub(crate) fn retarget(
     text: &str,
     repository: &str,
     chart: &str,
     version: &str,
 ) -> Result<String, PlatformGitError> {
-    let mut out = String::with_capacity(text.len() + 32);
-    let mut rewritten = 0_usize;
-    let mut source: Option<Source> = None;
-    let mut sources = Position::Outside;
+    let refuse = |why: Refusal| PlatformGitError::Rejected {
+        detail: format!("the Argo Application pinning chart '{chart}' from {repository} {why}"),
+    };
 
-    for line in text.lines() {
-        let trimmed = line.trim_start();
-        let indent = line.len() - trimmed.len();
+    let lines = Line::split(text).map_err(&refuse)?;
+    let sources = walk::collect(&lines).map_err(&refuse)?;
 
-        // Where in the document this line is. Only entries of `spec.sources`
-        // are sources; a `- ` anywhere else is somebody else's list, and a
-        // renderer that edited one because it happened to carry a `chart:` key
-        // would be exactly the arbitrary-edit engine this design refuses.
-        sources.observe(trimmed, indent);
+    if let Some(key) = sources.iter().find_map(Entry::said_twice) {
+        return Err(refuse(format!(
+            "has a source declaring '{key}' twice, and which one it means cannot be told"
+        )));
+    }
 
-        let (starts_entry, key) = match trimmed.strip_prefix("- ") {
-            Some(rest) => (true, rest),
-            None => (false, trimmed),
+    let matched: Vec<&Entry<'_>> = sources.iter().filter(|s| s.names(repository, chart)).collect();
+    let [source] = matched.as_slice() else {
+        return Err(PlatformGitError::Rejected {
+            detail: match matched.len() {
+                0 => format!("no source names chart '{chart}' from {repository}"),
+                found => format!("{found} sources name chart '{chart}' from {repository}"),
+            },
+        });
+    };
+
+    let Some((pinned, revision)) = source.target() else {
+        return Err(refuse(
+            "names it in a source that declares no targetRevision of its own".to_owned(),
+        ));
+    };
+    let rewritten = revision.rewrite(version).map_err(&refuse)?;
+
+    let mut out = String::with_capacity(text.len() + version.len());
+    for (index, line) in lines.iter().enumerate() {
+        let content = if index == *pinned {
+            rewritten.as_str()
+        } else {
+            line.content
         };
-
-        if starts_entry {
-            source = sources.entry_at(indent).then(Source::default);
-        }
-
-        // Leaving the list closes whatever source was open, so a key after
-        // it is never read as part of one.
-        if !sources.inside() {
-            source = None;
-        }
-
-        if let Some(open) = source.as_mut() {
-            open.observe(key);
-
-            if open.matches(repository, chart) && key.starts_with("targetRevision:") {
-                out.push_str(&line[..line.len() - key.len()]);
-                out.push_str("targetRevision: ");
-                out.push_str(version);
-                out.push('\n');
-                rewritten += 1;
-                continue;
-            }
-        }
-
-        out.push_str(line);
-        out.push('\n');
+        out.push_str(content);
+        out.push_str(line.terminator);
     }
 
-    match rewritten {
-        1 => Ok(out),
-        0 => Err(PlatformGitError::Rejected {
-            detail: format!("no source names chart '{chart}' from {repository}"),
-        }),
-        found => Err(PlatformGitError::Rejected {
-            detail: format!("{found} sources name chart '{chart}' from {repository}"),
-        }),
-    }
-}
-
-/// What has been seen of the source currently being read.
-#[derive(Default)]
-struct Source {
-    /// Its `repoURL`, if it has declared one yet.
-    repository: Option<String>,
-
-    /// Its `chart`, if it has declared one yet.
-    chart: Option<String>,
-}
-
-impl Source {
-    /// Records a key of this source.
-    ///
-    /// `targetRevision` may appear before `repoURL` or after it, so a source is
-    /// only ever matched on what has been read so far — which is why the file
-    /// is walked twice in effect: once to accumulate, once to decide. Argo's
-    /// own manifests put `repoURL` first, and a file that does not is one this
-    /// refuses rather than half-edits, because `rewritten` would then be zero.
-    fn observe(&mut self, key: &str) {
-        for (name, field) in [("repoURL:", &mut self.repository), ("chart:", &mut self.chart)] {
-            if let Some(value) = key.strip_prefix(name) {
-                *field = Some(value.trim().trim_matches(['"', '\'']).to_owned());
-            }
-        }
-    }
-
-    /// Whether this is the source the manifest declared.
-    fn matches(&self, repository: &str, chart: &str) -> bool {
-        self.repository.as_deref() == Some(repository) && self.chart.as_deref() == Some(chart)
-    }
+    Ok(out)
 }

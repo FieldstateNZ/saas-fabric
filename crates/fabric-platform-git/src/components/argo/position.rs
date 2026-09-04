@@ -1,63 +1,120 @@
-//! Where in an Argo Application a line sits.
+//! Where in an Argo Application the walk currently is.
 
-/// Where in an Argo Application the walk currently is.
+use super::lines::Line;
+use super::scalar::Scalar;
+use super::Refusal;
+
+/// What a line is, to the walk.
+pub(super) enum Role {
+    /// Not part of `spec.sources`.
+    Elsewhere,
+    /// The `- ` that opens one of its entries.
+    Opens,
+    /// Somewhere inside the list, below whatever entry is open.
+    Within,
+}
+
+/// The walk's position in the document.
 ///
-/// Argo puts a chart source in `spec.sources`, and nowhere else in these files
-/// is a list of things with a `chart:` and a `targetRevision:`. Tracking the
-/// two keys that lead there is what stops this renderer from being willing to
-/// edit any list that happens to look similar.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// # Only one `sources:` is the sources list
+///
+/// Argo puts a chart source in the `sources:` that is a **direct key of the
+/// document's top-level `spec:`**. Both halves of that matter. A `sources:`
+/// under `spec.template` is a pod template's business; one nested inside a
+/// source's own `helm:` block is a values file listing its inputs. Either can
+/// name the same chart, so a renderer entering whichever `sources:` it met
+/// first would edit one of them — or count it as a second match and refuse a
+/// file that was never ambiguous. So this tracks two indents rather than two
+/// key names: the column `spec`'s own keys sit at, and the column its sources'
+/// entries sit at. A key deeper than the first is nested, not direct.
 pub(super) enum Position {
-    /// Not under `spec:` at all.
+    /// Not inside a top-level `spec:`.
     Outside,
-
-    /// Under `spec:`, at the indent its keys sit at.
-    Spec(usize),
-
-    /// Under `spec.sources:`, at the indent its entries sit at.
-    SourceList(usize),
+    /// Inside one. `children` is the column its own keys sit at, learned from
+    /// the first of them.
+    Spec { children: Option<usize> },
+    /// Inside its `sources:`.
+    Sources {
+        /// The column `sources:` itself sits at, which is where the list ends.
+        children: usize,
+        /// The column each entry's `- ` sits at, learned from the first. YAML
+        /// lets a sequence sit at its key's own indent or deeper; both are the
+        /// same document.
+        entries: Option<usize>,
+    },
 }
 
 impl Position {
-    /// Follows the walk into and out of `spec.sources`.
-    pub(super) fn observe(&mut self, trimmed: &str, indent: usize) {
-        match *self {
+    /// Follows the walk into and out of `spec.sources`, and says what the line
+    /// is once there.
+    ///
+    /// # Errors
+    ///
+    /// A clause saying why, when `spec:` or `sources:` is a shape it cannot
+    /// step into.
+    pub(super) fn observe(&mut self, line: &Line<'_>) -> Result<Role, Refusal> {
+        if line.starts_a_document() {
+            *self = Self::Outside;
+            return Ok(Role::Elsewhere);
+        }
+
+        match self {
             Self::Outside => {
-                if indent == 0 && trimmed.starts_with("spec:") {
-                    *self = Self::Spec(indent);
+                if line.indent() == 0 && opens(line, "spec")? {
+                    *self = Self::Spec { children: None };
                 }
+                Ok(Role::Elsewhere)
             }
-            Self::Spec(spec) => {
-                // A key back at the document's top level has left `spec`.
-                if indent <= spec && !trimmed.is_empty() && !trimmed.starts_with('#') {
+            Self::Spec { children } => {
+                // A key back at the document's own level has left `spec`.
+                if line.indent() == 0 {
                     *self = Self::Outside;
-                    self.observe(trimmed, indent);
-                } else if trimmed.starts_with("sources:") {
-                    *self = Self::SourceList(indent);
+                    return self.observe(line);
                 }
+                let keys = *children.get_or_insert(line.indent());
+                if line.indent() == keys && opens(line, "sources")? {
+                    *self = Self::Sources {
+                        children: keys,
+                        entries: None,
+                    };
+                }
+                Ok(Role::Elsewhere)
             }
-            Self::SourceList(sources) => {
-                // Any key at or above `sources:`' own indent ends the list.
-                if indent <= sources
-                    && !trimmed.starts_with("- ")
-                    && !trimmed.is_empty()
-                    && !trimmed.starts_with('#')
-                {
-                    *self = Self::Outside;
-                    self.observe(trimmed, indent);
+            Self::Sources { children, entries } => {
+                let keys = *children;
+                // Anything at or above the list's own key that is not one of
+                // its entries has ended it.
+                if line.indent() < keys || (line.indent() == keys && !line.opens_entry()) {
+                    *self = Self::Spec { children: Some(keys) };
+                    return self.observe(line);
                 }
+                if line.opens_entry() && line.indent() == *entries.get_or_insert(line.indent()) {
+                    return Ok(Role::Opens);
+                }
+                Ok(Role::Within)
             }
         }
     }
+}
 
-    /// Whether the walk is inside the sources list.
-    pub(super) const fn inside(self) -> bool {
-        matches!(self, Self::SourceList(_))
+/// Whether this line is the key `name`, opening a block for the walk to enter.
+///
+/// # Errors
+///
+/// A value on the same line — `sources: [...]`, `spec: {…}` — is flow style,
+/// which has no indentation to walk. Stepping past it would leave the sources
+/// it holds unread, and the file looking like it named none, so it is refused.
+fn opens(line: &Line<'_>, name: &str) -> Result<bool, Refusal> {
+    let Some(key) = Scalar::read(line, line.rest).filter(|key| key.key == name) else {
+        return Ok(false);
+    };
+
+    if key.carries_a_value() {
+        return Err(format!(
+            "writes '{name}' and its contents on one line, and only the indented form \
+             can be read without guessing at where each source ends"
+        ));
     }
 
-    /// Whether a `- ` at this indent starts a source rather than something
-    /// nested inside one.
-    pub(super) const fn entry_at(self, indent: usize) -> bool {
-        matches!(self, Self::SourceList(sources) if indent > sources)
-    }
+    Ok(true)
 }

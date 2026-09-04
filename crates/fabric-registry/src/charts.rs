@@ -1,8 +1,12 @@
 //! Reading a classic Helm chart repository.
 
+mod index;
+mod read;
+mod transport;
+
 use fabric_platform_management::{ChartIndex, RegistryError, Version};
 
-use crate::errors::{status_failure, transport_failure};
+use self::transport::Transport;
 
 /// A chart repository, read over its published index.
 ///
@@ -11,134 +15,100 @@ use crate::errors::{status_failure, transport_failure};
 /// A chart repository serves `index.yaml` to anybody, so this carries no
 /// credential — and a boundary that does not exist cannot be conflated with
 /// one that does. The same reasoning as the OCI registry, for the same reason.
+///
+/// # HTTPS end to end
+///
+/// The index this reads names a version that gets pinned into what Argo
+/// deploys, so a byte on the wire between here and the repository is a byte
+/// that can steer a rollout. `reqwest`'s default redirect policy would follow
+/// an `https://` request wherever a `30x` pointed it, including back down to
+/// `http://` — making the first hop's HTTPS a formality rather than a
+/// guarantee. The `transport` submodule enforces HTTPS on every hop instead,
+/// initial request and every redirect alike.
 pub struct HelmCharts {
-    /// The HTTP client.
+    /// The HTTP client, built with a redirect policy matching `transport`.
     http: reqwest::Client,
-}
 
-/// How much of an index this will read.
-///
-/// A chart repository serves every chart it holds in one document, and a busy
-/// one is large: the index this platform reads today is around 200 kB for 220
-/// releases. Eight megabytes is far past any of that and still a bound — an
-/// unbounded read of a remote document is an unbounded allocation decided by
-/// somebody else.
-const MOST: usize = 8 * 1024 * 1024;
-
-/// Just enough of an index to list versions.
-///
-/// A chart index carries a great deal this does not read — descriptions,
-/// digests of the packaged archive, maintainers, `appVersion`. Naming only
-/// what is used keeps a field this platform does not act on from looking like
-/// one it does.
-#[derive(serde::Deserialize)]
-struct Index {
-    /// Releases by chart name.
-    #[serde(default)]
-    entries: std::collections::BTreeMap<String, Vec<Entry>>,
-}
-
-/// One published release of a chart.
-#[derive(serde::Deserialize)]
-struct Entry {
-    /// The chart version, which is what Argo pins.
-    version: String,
+    /// Which URLs this reader is permitted to speak to. `Copy`, so it can be
+    /// captured by the redirect closure without a lifetime to carry.
+    transport: Transport,
 }
 
 impl HelmCharts {
-    /// Builds a reader.
+    /// Builds a reader that only ever speaks HTTPS.
+    ///
+    /// This is the only constructor the composition root calls. See
+    /// [`plain_http_to_loopback`](Self::plain_http_to_loopback) for the one
+    /// exception, which exists for tests alone.
     ///
     /// # Errors
     ///
-    /// Returns a message if the HTTP client cannot be built.
+    /// Returns a message if `http_timeout_seconds` is zero, or if the HTTP
+    /// client cannot be built.
     pub fn new(http_timeout_seconds: u64) -> Result<Self, String> {
-        Ok(Self {
-            http: reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(http_timeout_seconds))
-                .user_agent("saas-fabric-control-plane")
-                .build()
-                .map_err(|error| format!("chart repository: {error}"))?,
-        })
+        Self::build(http_timeout_seconds, Transport::Https)
+    }
+
+    /// Builds a reader for a test that serves a chart index from a loopback
+    /// socket.
+    ///
+    /// This crate's integration tests run a real HTTP server so they can
+    /// check how this adapter behaves on the wire, and that server has no
+    /// certificate to offer — plain HTTP is what a test can stand up without
+    /// one. This constructor is the only way a [`HelmCharts`] accepts plain
+    /// HTTP, it accepts that only to a loopback host, and every other rule is
+    /// unchanged: a redirect off HTTPS, or off loopback, is still refused.
+    /// Nothing in production ever calls this — [`new`](Self::new) is what the
+    /// composition root uses, and it never widens past `Transport::Https`.
+    ///
+    /// # Errors
+    ///
+    /// The same as [`new`](Self::new).
+    pub fn plain_http_to_loopback(http_timeout_seconds: u64) -> Result<Self, String> {
+        Self::build(http_timeout_seconds, Transport::LoopbackToo)
+    }
+
+    /// Shared construction for both constructors.
+    fn build(http_timeout_seconds: u64, transport: Transport) -> Result<Self, String> {
+        if http_timeout_seconds == 0 {
+            // reqwest reads zero as "no timeout", which is the difference
+            // between a bounded discovery pass and one that hangs.
+            return Err("chart repository: timeout_seconds is zero".to_owned());
+        }
+
+        let http = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(http_timeout_seconds))
+            .user_agent("saas-fabric-control-plane")
+            .redirect(transport::policy(transport))
+            .build()
+            .map_err(|error| format!("chart repository: {error}"))?;
+
+        Ok(Self { http, transport })
     }
 }
 
 #[async_trait::async_trait]
 impl ChartIndex for HelmCharts {
     async fn versions(&self, repository: &str, chart: &str) -> Result<Vec<Version>, RegistryError> {
-        let url = format!("{}/index.yaml", repository.trim_end_matches('/'));
+        let raw_url = format!("{}/index.yaml", repository.trim_end_matches('/'));
+        let url = transport::validated_index_url(self.transport, &raw_url)?;
 
-        let response = self
-            .http
-            .get(&url)
-            .send()
-            .await
-            .map_err(|error| transport_failure("reading a chart index", &error))?;
+        let body = read::bounded_get(&self.http, url).await?;
 
-        if !response.status().is_success() {
-            let status = response.status();
-            return Err(status_failure(
-                "reading a chart index",
-                status,
-                response.headers(),
-            ));
-        }
+        index::versions_of(&body, chart)
+    }
+}
 
-        // Streamed rather than `text()`, so the bound is applied as the body
-        // arrives instead of after it has all been held.
-        let mut body = Vec::new();
-        let mut stream = response;
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-        while let Some(chunk) = stream
-            .chunk()
-            .await
-            .map_err(|error| transport_failure("reading a chart index", &error))?
-        {
-            if body.len() + chunk.len() > MOST {
-                return Err(RegistryError::Refused {
-                    detail: format!("the chart index at {url} is larger than {MOST} bytes"),
-                });
-            }
-            body.extend_from_slice(&chunk);
-        }
-
-        let body = String::from_utf8(body).map_err(|_| RegistryError::Refused {
-            detail: format!("the chart index at {url} is not text"),
-        })?;
-
-        let index: Index = serde_norway::from_str(&body).map_err(|error| RegistryError::Refused {
-            detail: format!("reading a chart index: {error}"),
-        })?;
-
-        // Only this chart's own releases. Another chart's malformed entry is
-        // not this component's problem; one of its own is.
-        let Some(releases) = index.entries.get(chart) else {
-            return Ok(Vec::new());
-        };
-
-        let mut versions = Vec::with_capacity(releases.len());
-
-        for entry in releases {
-            // Refused, not skipped. A version this cannot read is one it
-            // cannot order either, so skipping it would mean answering "the
-            // newest is X" while holding something that might have been newer
-            // -- a wrong answer given confidently, which is worse than none.
-            let version = Version::parse_chart(&entry.version).ok_or_else(|| RegistryError::Refused {
-                detail: format!("{chart} lists '{}', which is not a version", entry.version),
-            })?;
-
-            // Two releases of equal precedence -- the same version twice, or
-            // two differing only in build metadata, which SemVer says is not a
-            // difference. There is no newest of them, and picking would be
-            // picking arbitrarily.
-            if versions.contains(&version) {
-                return Err(RegistryError::Refused {
-                    detail: format!("{chart} lists {version} more than once"),
-                });
-            }
-
-            versions.push(version);
-        }
-
-        Ok(versions)
+    #[test]
+    fn a_zero_second_timeout_is_refused_by_both_constructors() {
+        assert!(HelmCharts::new(0).is_err(), "new");
+        assert!(
+            HelmCharts::plain_http_to_loopback(0).is_err(),
+            "plain_http_to_loopback"
+        );
     }
 }

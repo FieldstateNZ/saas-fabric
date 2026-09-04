@@ -112,3 +112,40 @@ fn empty_or_illegal_build_metadata_is_not_a_version() {
         assert!(Version::parse_chart(text).is_none(), "{text}");
     }
 }
+
+#[test]
+fn a_numeric_prerelease_identifier_may_not_carry_a_leading_zero() {
+    for text in [
+        "1.0.0-01",
+        "1.0.0-alpha.01",
+        "1.0.0-0.01",
+        "1.0.0-00",
+        // `parse_chart` runs the same prerelease grammar as `parse`, whether
+        // or not the version also carries build metadata.
+        "1.0.0-01+build",
+        // Not a leading-zero problem, but a purely numeric identifier is
+        // refused if it cannot be compared as the `u64` `key()` needs.
+        "1.0.0-123456789012345678901",
+    ] {
+        assert!(Version::parse_chart(text).is_none(), "{text} should be refused");
+    }
+}
+
+#[test]
+fn a_numeric_prerelease_identifier_without_a_leading_zero_still_parses() {
+    for text in [
+        "1.0.0-0",
+        "1.0.0-01a",
+        "1.0.0-0a",
+        "1.0.0-alpha.0",
+        "1.0.0-10",
+        "1.0.0-1.0.0",
+        "0.3.0-preview.20260831.9",
+    ] {
+        assert!(Version::parse(text).is_some(), "{text} should parse");
+        assert!(
+            Version::parse_chart(text).is_some(),
+            "{text} should parse as a chart version"
+        );
+    }
+}

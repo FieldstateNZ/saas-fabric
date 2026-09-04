@@ -57,9 +57,7 @@ impl Version {
             None => Vec::new(),
             Some(pre) => {
                 let parts: Vec<String> = pre.split('.').map(ToOwned::to_owned).collect();
-                if parts.iter().any(|part| {
-                    part.is_empty() || !part.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
-                }) {
+                if parts.iter().any(|part| !legal_prerelease_identifier(part)) {
                     return None;
                 }
                 parts
@@ -87,4 +85,29 @@ fn numeric(text: &str) -> Option<u64> {
     }
 
     text.parse().ok()
+}
+
+/// Whether a prerelease identifier is legal under `SemVer` §9.
+///
+/// Any non-empty run of `[0-9A-Za-z-]` is legal on its own, but a *purely
+/// numeric* identifier is stricter: `SemVer` forbids a leading zero, because
+/// otherwise `01` and `1` would be two different spellings of the same
+/// number. This also refuses a numeric identifier too large for a `u64` —
+/// not a `SemVer` rule, but load-bearing here: `key()` in `ordering.rs`
+/// parses a numeric identifier with `parse::<u64>()` and silently falls back
+/// to comparing it as a string when that fails. An oversized identifier
+/// would then sort as text instead of a number — a wrong precedence given
+/// with no warning, which is the exact failure this type exists to prevent.
+/// Refusing it at parse time means an identifier `key()` sees as numeric-
+/// looking is always one it can actually parse as a number.
+fn legal_prerelease_identifier(part: &str) -> bool {
+    if part.is_empty() || !part.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+        return false;
+    }
+
+    if !part.chars().all(|c| c.is_ascii_digit()) {
+        return true;
+    }
+
+    (part.len() == 1 || !part.starts_with('0')) && part.parse::<u64>().is_ok()
 }

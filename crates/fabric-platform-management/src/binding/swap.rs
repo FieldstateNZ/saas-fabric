@@ -6,18 +6,30 @@
 //! written there, and a caller mid-operation against the old one finishes
 //! against the old one rather than half against each.
 //!
-//! # What the promise does not cover
+//! # Nothing a caller does can cancel the wait
 //!
-//! It holds for every operation that runs to completion or fails. It does not
-//! hold for one that is *cancelled* — an operator's browser disconnecting, the
-//! API's request timeout, or the adapter's own operation budget expiring (the
-//! one of the three that fires on an unattended sweep, where no request exists
-//! to be cut off) drops the future, and a future dropped mid-write releases
-//! the guard while its last request may already be on the wire. That is
-//! inherent to cancellation rather than something this could wait for: there
-//! is nothing left to wait on once the future is gone. The write either landed
-//! or it did not, nobody is told which, and the next read sees whatever
-//! landed.
+//! The promise used to hold only for an operation that ran to completion or
+//! failed. Three things could cancel one instead — an operator's browser
+//! disconnecting, the API's request timeout, and the adapter's own operation
+//! budget — and each dropped the future, which released the guard with the
+//! operation's last request possibly already on the wire.
+//!
+//! None of the three can do that now. A caller that goes away drops nothing the
+//! operation is running in, because the operation runs in a task of its own
+//! that owns the guard (`binding/holding.rs`). And the budget refuses to
+//! *start* a request it cannot afford rather than cancelling one it already
+//! sent, so an operation always reaches an outcome — a failure is still an
+//! outcome — inside the budget plus one call to the host.
+//!
+//! # The one thing left, which no caller can close
+//!
+//! A request the platform gave up waiting for is not a request the host gave up
+//! applying. If the adapter's `http_timeout_seconds` fires on a ref update the
+//! host is still processing, the platform is told the call failed and the host
+//! may commit it a moment later — after this returns. That is a property of a
+//! network, not of a lock: there is no answer to wait for and nothing to
+//! withdraw. What the platform *reports* is honest either way, because it
+//! reports the write as failed; the next read sees whatever landed.
 
 use std::sync::Arc;
 

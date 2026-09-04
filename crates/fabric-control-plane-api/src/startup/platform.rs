@@ -36,27 +36,31 @@ use crate::config::PlatformManagementConfig;
 /// are configuration. An absent integration is now legitimate runtime state
 /// rather than a misconfiguration, and it is reported rather than fatal.
 ///
-/// # The operation budget has to fit inside a request
+/// # The operation budget, plus one call, has to fit inside a request
 ///
 /// The platform binding holds a lock across every desired-state call, so an
 /// operator's disconnect waits for whatever is already running. If one
 /// operation could outlast one request, the disconnect would be cut off by the
-/// API's request timeout before it took effect — the operator would be told
-/// `504` and the platform would still be pointed at the repository they asked
-/// it to forget. So the budget must be strictly shorter than a request, and
-/// this refuses to start otherwise rather than leaving a deployment one slow
-/// Git host away from a disconnect that silently does nothing.
+/// API's request timeout before it took effect — the operator told `504`, the
+/// platform still pointed at the repository they asked it to forget. So this
+/// refuses to start rather than leaving that one slow Git host away.
 ///
-/// What that bounds is the *unbind*. The rest of a disconnect — deleting the
-/// key, clearing the record — runs after it, so a budget only just inside the
-/// request leaves that tail no room. The check is a floor, not a
-/// recommendation; the defaults leave ten seconds.
+/// The budget alone is not the bound. It stops the adapter *starting* a call it
+/// cannot afford and never abandons one already sent — a write abandoned
+/// mid-flight would release the binding while it might still land — so an
+/// operation runs for the budget plus one `git_host.http_timeout_seconds`. That
+/// sum is what must fit, and the refusal names all three values.
+///
+/// What it bounds is the *unbind*: the rest of a disconnect runs after it, so a
+/// sum only just inside the request leaves that tail no room. The check is a
+/// floor rather than a recommendation; the defaults leave five seconds.
 ///
 /// # Errors
 ///
 /// Returns a message naming the field. Never a credential.
 pub fn establish(
     config: Option<&PlatformManagementConfig>,
+    http_timeout_seconds: u64,
     request_timeout_seconds: u64,
     clock: &Arc<dyn Clock>,
 ) -> Result<Option<PlatformBinding>, String> {
@@ -72,11 +76,19 @@ pub fn establish(
         );
     }
 
-    if config.operation_timeout_seconds >= request_timeout_seconds {
+    // Saturating, so a deployment that wrote something absurd is refused rather
+    // than wrapping round into a sum that looks small enough.
+    let longest = config
+        .operation_timeout_seconds
+        .saturating_add(http_timeout_seconds);
+
+    if longest >= request_timeout_seconds {
         return Err(format!(
-            "platform_management.operation_timeout_seconds ({}) must be less than \
-             request_timeout_seconds ({request_timeout_seconds}): an operator's disconnect waits \
-             for the operation already in flight, and it must be able to finish inside one request",
+            "platform_management.operation_timeout_seconds ({}) plus git_host.http_timeout_seconds \
+             ({http_timeout_seconds}) must be less than request_timeout_seconds \
+             ({request_timeout_seconds}): an operator's disconnect waits for the operation already \
+             in flight, which runs for the budget plus the one call the budget cannot cut short, \
+             and all of that must finish inside one request",
             config.operation_timeout_seconds
         ));
     }
@@ -133,7 +145,7 @@ mod tests {
             // `err()` rather than `expect_err`: the success type is not
             // `Debug`, and making a composition-root binding printable to
             // please a test would be the wrong way round.
-            let message = establish(Some(&managed(operation)), 30, &clock())
+            let message = establish(Some(&managed(operation)), 10, 30, &clock())
                 .err()
                 .expect("a budget at or over the request timeout must not start");
 
@@ -143,8 +155,24 @@ mod tests {
     }
 
     #[test]
+    fn a_budget_that_fits_alone_but_not_with_one_call_is_refused_at_startup() {
+        // The whole point of the sum. Twenty-five is comfortably inside a
+        // thirty-second request on its own, and an operation that spends it and
+        // then waits out one ten-second call to the host is not — so the
+        // disconnect queued behind it is cut off at thirty having released
+        // nothing, which is exactly the silent failure the check exists for.
+        let message = establish(Some(&managed(25)), 10, 30, &clock())
+            .err()
+            .expect("a budget that only fits without the call it cannot cut short must not start");
+
+        assert!(message.contains("operation_timeout_seconds"), "{message}");
+        assert!(message.contains("http_timeout_seconds"), "{message}");
+        assert!(message.contains("request_timeout_seconds"), "{message}");
+    }
+
+    #[test]
     fn a_zero_budget_is_refused_at_startup() {
-        let message = establish(Some(&managed(0)), 30, &clock())
+        let message = establish(Some(&managed(0)), 10, 30, &clock())
             .err()
             .expect("zero would time every operation out immediately");
 
@@ -153,7 +181,9 @@ mod tests {
 
     #[test]
     fn a_budget_inside_the_request_starts() {
-        assert!(establish(Some(&managed(20)), 30, &clock()).is_ok());
+        // The shipped defaults: fifteen, plus the ten a call may take, inside
+        // thirty with five to spare for the rest of a disconnect.
+        assert!(establish(Some(&managed(15)), 10, 30, &clock()).is_ok());
     }
 
     #[test]
@@ -161,6 +191,8 @@ mod tests {
         // Absent is deliberately unconfigured, not misconfigured. Validating a
         // section nobody wrote would turn "we do no platform management" into a
         // startup failure.
-        assert!(establish(None, 1, &clock()).expect("absent is fine").is_none());
+        assert!(establish(None, 10, 1, &clock())
+            .expect("absent is fine")
+            .is_none());
     }
 }

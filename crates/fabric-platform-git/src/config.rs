@@ -39,6 +39,13 @@ pub struct PlatformRepositoryConfig {
     /// is itself cut off by the API's request timeout long before an unbounded
     /// operation would finish. This is the budget that makes the wait bounded
     /// by construction rather than by hope.
+    ///
+    /// It is a gate on *starting* a request, not a timeout around the
+    /// operation: a request already on the wire runs to its own outcome under
+    /// `http_timeout_seconds`, and the request after it is refused. So the real
+    /// bound on one operation is this value plus one `http_timeout_seconds`,
+    /// which is the sum a deployment's `request_timeout_seconds` is checked
+    /// against at startup.
     pub operation_timeout_seconds: u64,
 }
 

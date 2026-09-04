@@ -22,10 +22,22 @@ impl GitIntegrationService {
     /// a record is a credential nothing accounts for.
     ///
     /// Releasing the binding *waits*, and that is the load-bearing part of
-    /// going first: a sweep already running against the repository finishes
-    /// before this returns, so nothing lands there afterwards. The wait is
-    /// bounded by the adapter's operation budget, which startup has checked is
-    /// shorter than one request.
+    /// going first: every operation already running against the repository has
+    /// an outcome before this returns, and none starts against it afterwards.
+    /// Cancelling this request cannot shorten that wait, because the operations
+    /// run in tasks of their own rather than inside whoever asked for them.
+    ///
+    /// The wait is bounded by the adapter's operation budget plus the one call
+    /// to the Git host the budget cannot cut short, which startup has checked
+    /// together fit inside one request.
+    ///
+    /// # What is still not promised, and cannot be
+    ///
+    /// A request the platform stopped waiting for is not a request the host
+    /// stopped applying. If a call times out on a ref update the host is still
+    /// processing, the platform is told the write failed and the host may
+    /// commit it a moment after this returns. Nothing here can withdraw it, and
+    /// nothing reports it as done — the next read is what sees it.
     ///
     /// # Errors
     ///

@@ -7,14 +7,19 @@ use crate::{ComponentDesired, DesiredRevision, DesiredStateError, Hold, Release}
 /// Implemented by an adapter that knows how the platform repository is laid
 /// out. Nothing here knows which files carry a pin.
 ///
-/// # Every operation must be bounded
+/// # Every operation must be bounded, and never by cancellation
 ///
 /// A contract, not a hope: the platform binding holds a lock across these
 /// calls, so the longest one can take is the longest an operator's disconnect
-/// can wait — and that is cut off by the API's request timeout. Bounding each
-/// request is not enough; an operation is many, and a host answering every one
-/// just inside its limit runs for minutes. Bound the *operation*, and answer
-/// [`Unavailable`](DesiredStateError::Unavailable) when the budget is spent.
+/// can wait, and that is cut off by the API's request timeout. Bounding each
+/// request separately is not enough — an operation is many of them — so bound
+/// the *operation*, answering [`Unavailable`](DesiredStateError::Unavailable)
+/// when the budget is spent. Bound it by refusing to **start** a request it
+/// cannot afford, never by abandoning one already sent: a write dropped
+/// mid-flight releases the binding while it may still land, in a repository
+/// the platform has by then reported it stopped writing to. So an operation
+/// ends within its budget plus the one request it may still have running.
+///
 /// Every write answers [`Conflict`](DesiredStateError::Conflict) if the state
 /// it was decided against has moved since it was read, and the other variants
 /// for what they name — said once here rather than under each method.
@@ -22,10 +27,9 @@ use crate::{ComponentDesired, DesiredRevision, DesiredStateError, Hold, Release}
 pub trait DesiredState: Send + Sync {
     /// Every component an environment describes.
     ///
-    /// Read rather than configured, so adding a component to the platform
-    /// repository is enough to have it reconciled — a second list in Fabric's
-    /// configuration would be a second thing to keep in step, and the failure
-    /// when it drifted would be a component nothing was looking after.
+    /// Read rather than configured, so a component added to the platform
+    /// repository is reconciled without more; a second list in Fabric's
+    /// configuration would drift, into a component nothing was looking after.
     ///
     /// # Errors
     ///
@@ -89,11 +93,10 @@ pub trait DesiredState: Send + Sync {
     ///
     /// # Why the version and the hold are one operation
     ///
-    /// A rollback that wrote the version and then the hold could be
-    /// interrupted between them, and what it would leave is an environment
-    /// moved backwards with automatic advancement still live — so the next
-    /// sweep would undo it, and the operator would watch their rollback
-    /// disappear. One commit or neither.
+    /// A rollback that wrote the version and then the hold could be interrupted
+    /// between them, leaving an environment moved backwards with automatic
+    /// advancement still live — so the next sweep would undo it, and the
+    /// operator would watch their rollback disappear. One commit or neither.
     ///
     /// # Errors
     ///
@@ -113,10 +116,9 @@ pub trait DesiredState: Send + Sync {
     /// # Why this is a separate operation and not an argument to `advance`
     ///
     /// `advance` is what the *selector* calls, and it must remain unable to
-    /// express a hold — that is what guarantees an automatic pass cannot clear
-    /// one in order to succeed. These are what an *operator* calls. Two verbs
-    /// with two callers beats one verb with a flag that only one caller is
-    /// trusted to set.
+    /// express a hold — that is what stops an automatic pass clearing one in
+    /// order to succeed. These are what an *operator* calls. Two verbs with two
+    /// callers beats one verb with a flag only one caller is trusted to set.
     ///
     /// The version is untouched, so no deployment overlay changes: pausing
     /// stops the environment moving, and does not move it.

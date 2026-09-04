@@ -18,7 +18,7 @@ function component(overrides: Partial<PlatformComponent> = {}): PlatformComponen
     newer: null,
     running: 'unknown',
     policy: 'automatic',
-    rollable: true,
+    artifact: 'oci',
     paused: false,
     desiredState: 'current',
     hold: null,
@@ -115,20 +115,56 @@ describe('the brake', () => {
   })
 })
 
-describe('a component whose versions are not immutable', () => {
-  it('is not offered a rollback whose only outcome is a refusal', () => {
-    // A chart repository pins a version, not a digest — the bytes behind it
-    // can be republished, so "put me back on what I was running" is a promise
-    // the platform cannot keep. The control plane refuses it; the console does
-    // not offer it.
-    render(<ComponentBrake component={component({ rollable: false })} />)
+describe('rolling back, for either artifact kind', () => {
+  it('offers rollback for a chart and says what it restores', async () => {
+    // Rolling back means restoring a previously selected desired version, and
+    // a chart supports that as much as an image does. What it does not restore
+    // is the bytes — a chart repository can republish what sits behind a
+    // version — so the operator is told, rather than the button being absent
+    // and the capability with it.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ versions: [{ version: '7.3.0' }], more: false }),
+      }),
+    )
+    vi.stubGlobal('location', { reload: vi.fn() })
 
-    expect(screen.queryByRole('button', { name: 'Roll back' })).not.toBeInTheDocument()
+    render(<ComponentBrake component={component({ artifact: 'helm' })} />)
 
-    // Pausing is still offered: stopping an environment advancing needs no
-    // immutability at all.
+    await userEvent.click(screen.getByRole('button', { name: 'Roll back' }))
+
     expect(
-      screen.getByRole('button', { name: /pause automatic updates/i }),
+      await screen.findByText(/a chart repository can republish the bytes behind a version/i),
     ).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: '7.3.0' })).toBeInTheDocument()
+  })
+
+  it('says nothing about bytes for a component published as images', async () => {
+    // The caveat is true of one kind, so it is shown for one kind. A console
+    // that hedged about every rollback would be teaching an operator to ignore
+    // the line that matters.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: () =>
+          Promise.resolve({
+            versions: [{ version: '0.3.0-preview.2', source_revision: 'b08ba9e' }],
+            more: false,
+          }),
+      }),
+    )
+    vi.stubGlobal('location', { reload: vi.fn() })
+
+    render(<ComponentBrake component={component()} />)
+
+    await userEvent.click(screen.getByRole('button', { name: 'Roll back' }))
+    await screen.findByRole('button', { name: '0.3.0-preview.2' })
+
+    expect(screen.queryByText(/republish the bytes/i)).not.toBeInTheDocument()
   })
 })

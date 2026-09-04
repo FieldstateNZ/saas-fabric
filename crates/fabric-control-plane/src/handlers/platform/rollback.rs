@@ -2,6 +2,7 @@
 
 use axum::extract::{Path, State};
 use axum::Json;
+use fabric_platform_management::Release;
 use serde::{Deserialize, Serialize};
 
 use crate::handlers::platform::body::ComponentRow;
@@ -20,7 +21,13 @@ pub(crate) struct CandidateRow {
     version: String,
 
     /// The commit every one of its images was built from.
-    source_revision: String,
+    ///
+    /// **Absent for a chart, rather than empty.** A chart repository's index
+    /// lists versions and no provenance, so there is no commit to name —
+    /// and `""` or `null` would invite the console to render "built from"
+    /// about something nothing observed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source_revision: Option<String>,
 }
 
 /// What an operator is offered.
@@ -85,16 +92,25 @@ pub(crate) async fn rollback_candidates(
         .await?;
 
     Ok(Json(CandidatesBody {
-        versions: found
-            .units
-            .iter()
-            .map(|unit| CandidateRow {
-                version: unit.version.as_str().to_owned(),
-                source_revision: unit.source_revision.clone(),
-            })
-            .collect(),
+        versions: found.releases.iter().map(CandidateRow::of).collect(),
         more: found.more,
     }))
+}
+
+impl CandidateRow {
+    /// Renders one candidate, saying only what its kind can support.
+    fn of(release: &Release) -> Self {
+        match release {
+            Release::Unit(unit) => Self {
+                version: unit.version.as_str().to_owned(),
+                source_revision: Some(unit.source_revision.clone()),
+            },
+            Release::Chart { version, .. } => Self {
+                version: version.as_str().to_owned(),
+                source_revision: None,
+            },
+        }
+    }
 }
 
 /// `POST /api/platform/components/{component}/rollback`.

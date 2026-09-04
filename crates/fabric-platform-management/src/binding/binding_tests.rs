@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use super::PlatformDesiredState;
-use crate::{ComponentDesired, DesiredRevision, DesiredState, DesiredStateError, Release, ReleaseUnit};
+use crate::{ComponentDesired, DesiredRevision, DesiredState, DesiredStateError, Release};
 
 /// A repository that is reachable, and whose reads fail.
 struct Connected;
@@ -36,7 +36,7 @@ impl DesiredState for Connected {
         &self,
         _: &str,
         _: &str,
-        _: &ReleaseUnit,
+        _: &Release,
         _: &crate::Hold,
         _: &DesiredRevision,
         _: &str,
@@ -60,8 +60,8 @@ impl DesiredState for Connected {
     }
 }
 
-fn unit() -> ReleaseUnit {
-    ReleaseUnit {
+fn unit() -> crate::ReleaseUnit {
+    crate::ReleaseUnit {
         version: crate::Version::parse("0.3.0-preview.1").expect("a version"),
         source_revision: "abc".to_owned(),
         images: BTreeMap::new(),

@@ -2,7 +2,6 @@
 
 use fabric_platform_management::{
     ArtifactSource, ComponentDesired, DesiredRevision, DesiredState, DesiredStateError, Hold, Release,
-    ReleaseUnit,
 };
 
 use crate::PlatformGitRepository;
@@ -10,7 +9,7 @@ use crate::PlatformGitRepository;
 mod errors;
 mod wanted;
 
-use wanted::{unit_from, wanted_from};
+use wanted::wanted_from;
 
 #[async_trait::async_trait]
 impl DesiredState for PlatformGitRepository {
@@ -86,12 +85,12 @@ impl DesiredState for PlatformGitRepository {
         &self,
         environment: &str,
         component: &str,
-        unit: &ReleaseUnit,
+        release: &Release,
         hold: &Hold,
         at: &DesiredRevision,
         message: &str,
     ) -> Result<(), DesiredStateError> {
-        self.roll_back_component(environment, component, &unit_from(unit), hold, at, message)
+        self.roll_back_component(environment, component, &wanted_from(release), hold, at, message)
             .await?;
 
         Ok(())

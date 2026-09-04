@@ -5,8 +5,8 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use crate::{
     ArtifactSource, Channel, ChartIndex, CheckOutcome, ComponentDesired, DesiredRevision, DesiredState,
-    DesiredStateError, PlatformManagement, Provenance, Registry, RegistryError, Release, ReleaseUnit,
-    Resolved, SweepResult, SweepState, Swept, UpdatePolicy, Version,
+    DesiredStateError, PlatformManagement, Provenance, Registry, RegistryError, Release, Resolved,
+    SweepResult, SweepState, Swept, UpdatePolicy, Version,
 };
 
 const RUNTIME: &str = "ghcr.io/fieldstatenz/saas-fabric";
@@ -132,7 +132,7 @@ impl DesiredState for Several {
         &self,
         _: &str,
         _: &str,
-        _: &ReleaseUnit,
+        _: &Release,
         _: &crate::Hold,
         _: &DesiredRevision,
         _: &str,
@@ -366,7 +366,7 @@ impl DesiredState for Gated {
         &self,
         _: &str,
         _: &str,
-        _: &ReleaseUnit,
+        _: &Release,
         _: &crate::Hold,
         _: &DesiredRevision,
         _: &str,
@@ -469,7 +469,7 @@ async fn a_sweep_with_nothing_connected_records_nothing() {
             &self,
             _: &str,
             _: &str,
-            _: &ReleaseUnit,
+            _: &Release,
             _: &crate::Hold,
             _: &DesiredRevision,
             _: &str,

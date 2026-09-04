@@ -35,7 +35,6 @@ impl ControlPlaneError {
             }
             Self::Platform(PlatformError::NotAdvancing { .. }) => "component_not_advancing",
             Self::Platform(PlatformError::NotRollable { .. }) => "version_not_rollable",
-            Self::Platform(PlatformError::RollbackUnsupported { .. }) => "rollback_unsupported",
             Self::Platform(_) => "platform_unavailable",
             Self::GitHostRefused => "git_host_refused",
             Self::IntegrationRefused(_) => "integration_refused",

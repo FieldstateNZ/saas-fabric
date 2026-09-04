@@ -5,8 +5,8 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use super::{PlatformError, PlatformManagement};
 use crate::{
-    ArtifactSource, Channel, ChartIndex, ComponentDesired, DesiredRevision, DesiredState, DesiredStateError,
-    DesiredStateStatus, Hold, Provenance, Registry, RegistryError, Release, ReleaseUnit, Resolved,
+    ArtifactKind, ArtifactSource, Channel, ChartIndex, ComponentDesired, DesiredRevision, DesiredState,
+    DesiredStateError, DesiredStateStatus, Hold, Provenance, Registry, RegistryError, Release, Resolved,
     UpdatePolicy, Version,
 };
 
@@ -100,10 +100,10 @@ struct Recorded {
     /// `writes` because the guarantee under test is that these two paths never
     /// become each other.
     holds: Mutex<Vec<Option<Hold>>>,
-    /// Every rollback written, as the unit and the hold that travelled with
+    /// Every rollback written, as the release and the hold that travelled with
     /// it. A third list, because the guarantee is that these three write paths
     /// never become each other.
-    rollbacks: Mutex<Vec<(ReleaseUnit, Hold)>>,
+    rollbacks: Mutex<Vec<(Release, Hold)>>,
     refuse: Option<DesiredStateError>,
 }
 
@@ -148,7 +148,7 @@ impl Recorded {
         self.writes.lock().unwrap_or_else(PoisonError::into_inner).clone()
     }
 
-    fn rollbacks(&self) -> Vec<(ReleaseUnit, Hold)> {
+    fn rollbacks(&self) -> Vec<(Release, Hold)> {
         self.rollbacks
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
@@ -209,7 +209,7 @@ impl DesiredState for Recorded {
         &self,
         _: &str,
         _: &str,
-        unit: &ReleaseUnit,
+        release: &Release,
         hold: &Hold,
         _: &DesiredRevision,
         _: &str,
@@ -221,10 +221,10 @@ impl DesiredState for Recorded {
         self.rollbacks
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .push((unit.clone(), hold.clone()));
+            .push((release.clone(), hold.clone()));
 
         let mut desired = self.desired.lock().unwrap_or_else(PoisonError::into_inner);
-        desired.version = unit.version.clone();
+        desired.version = release.version().clone();
         desired.hold = Some(hold.clone());
 
         Ok(())
@@ -705,9 +705,9 @@ async fn only_versions_that_were_whole_releases_are_offered() {
 
     assert_eq!(
         found
-            .units
+            .releases
             .iter()
-            .map(|unit| unit.version.as_str().to_owned())
+            .map(|release| release.version().as_str().to_owned())
             .collect::<Vec<_>>(),
         vec!["0.3.0-preview.1".to_owned()],
         "only complete coherent releases below the desired one"
@@ -727,9 +727,9 @@ async fn the_desired_version_is_not_something_to_roll_back_to() {
 
     assert!(
         !found
-            .units
+            .releases
             .iter()
-            .any(|unit| unit.version == version("0.3.0-preview.2")),
+            .any(|release| release.version() == &version("0.3.0-preview.2")),
         "the version already running is not a destination"
     );
 }
@@ -794,7 +794,10 @@ async fn rolling_back_writes_the_digests_the_platform_resolved() {
         .expect("the rollback must succeed");
 
     let written = desired_state.rollbacks();
-    let (unit, hold) = written.first().expect("one rollback was written");
+    let (release, hold) = written.first().expect("one rollback was written");
+    let Release::Unit(unit) = release else {
+        panic!("images roll back as a release unit");
+    };
 
     assert_eq!(unit.version, version("0.3.0-preview.1"));
     assert_eq!(
@@ -895,13 +898,13 @@ async fn a_version_older_than_the_listing_bound_is_still_rollable() {
         .await
         .expect("candidates must be readable");
 
-    assert_eq!(offered.units.len(), 5, "the listing stops at five");
+    assert_eq!(offered.releases.len(), 5, "the listing stops at five");
     assert!(offered.more, "and says there are more");
     assert!(
         !offered
-            .units
+            .releases
             .iter()
-            .any(|unit| unit.version == version("0.3.0-preview.1")),
+            .any(|release| release.version() == &version("0.3.0-preview.1")),
         "preview.1 is past the bound and not offered"
     );
 
@@ -939,6 +942,68 @@ async fn rolling_back_asks_the_registry_about_one_version_and_not_the_whole_hist
         2,
         "one call per image of the one version asked for, and no listing pass"
     );
+}
+
+/// A component published as images and running a *stable* version.
+///
+/// The preview fixture cannot show the defect below: `is_series` is
+/// `core == core`, and two previews of one line share a core, so the rule
+/// looks harmless there.
+fn stable_images(running: &str) -> Arc<Recorded> {
+    let mut fixture = Recorded::at("0.3.0-preview.2", UpdatePolicy::Manual, None);
+    fixture.desired = Mutex::new(ComponentDesired {
+        revision: DesiredRevision::new("read-1"),
+        version: version(running),
+        channel: Channel::Stable,
+        policy: UpdatePolicy::Manual,
+        hold: None,
+        source: ArtifactSource::Oci {
+            repositories: BTreeMap::from([
+                ("console".to_owned(), CONSOLE.to_owned()),
+                ("runtime".to_owned(), RUNTIME.to_owned()),
+            ]),
+        },
+    });
+
+    Arc::new(fixture)
+}
+
+#[tokio::test]
+async fn a_stable_component_can_be_rolled_back_at_all() {
+    // The same defect PR #59 fixed for advancement, on the other side of the
+    // desired version and unfixed for longer. Rolling back passed the desired
+    // version as the series unconditionally, and every stable release changes
+    // the core -- so 7.3.0 was "a different line" from 7.3.1 and a stable
+    // component was offered nowhere to go, however much its registry held.
+    let registries = Arc::new(Registries::default());
+    registries.publish_all("7.3.0", "aaaa");
+    registries.publish_all("7.3.1", "bbbb");
+
+    let desired_state = stable_images("7.3.1");
+    let service = service(&registries, &desired_state);
+
+    let found = service
+        .rollback_candidates("lucentroot", "saas-fabric")
+        .await
+        .expect("candidates must be readable");
+
+    assert_eq!(
+        found
+            .releases
+            .iter()
+            .map(|release| release.version().as_str().to_owned())
+            .collect::<Vec<_>>(),
+        vec!["7.3.0".to_owned()],
+        "7.3.0 is below 7.3.1 and is not a different line"
+    );
+
+    // And is somewhere this component can actually be put.
+    let status = service
+        .roll_back("lucentroot", "saas-fabric", "7.3.0", None)
+        .await
+        .expect("a stable release below the desired one is rollable");
+
+    assert_eq!(status.desired, version("7.3.0"));
 }
 
 // ---------------------------------------------------------------------------
@@ -1042,34 +1107,136 @@ async fn a_stable_component_on_automatic_advances_nothing_and_says_why() {
 }
 
 #[tokio::test]
-async fn a_chart_cannot_be_rolled_back_and_says_why() {
-    // Not "not implemented yet". A chart repository pins a version, and the
-    // bytes behind it can be republished -- so "put me back on what I was
-    // running" is a promise it cannot keep, and offering the control would be
-    // offering a guarantee this platform does not have.
+async fn a_chart_is_offered_the_versions_its_repository_still_publishes_below_the_one_in_use() {
+    // Rolling back means restoring a previously selected desired version, and
+    // that is a real thing to want for either kind. What a chart candidate
+    // does *not* promise is the bytes -- a repository can republish what sits
+    // behind 7.2.0 -- and the console says so rather than the platform
+    // refusing to list anything.
     let charts = Arc::new(Charts::default());
-    charts.publish(HELM, "keycloakx", &["7.2.0", "7.3.0", "7.3.1"]);
+    charts.publish(HELM, "keycloakx", &["7.2.0", "7.2.3", "7.3.0", "7.3.1"]);
 
     let service = charted_service(&charts, &charted(UpdatePolicy::Manual));
 
-    let listing = service.rollback_candidates("lucentroot", "keycloak").await;
-    assert!(
-        matches!(listing, Err(PlatformError::RollbackUnsupported { .. })),
-        "the listing refuses too: an empty list would say there is nowhere to go, \
-         which is a different claim"
-    );
+    let found = service
+        .rollback_candidates("lucentroot", "keycloak")
+        .await
+        .expect("a chart component lists candidates");
 
-    let attempt = service.roll_back("lucentroot", "keycloak", "7.2.0", None).await;
+    assert_eq!(
+        found
+            .releases
+            .iter()
+            .map(|release| release.version().as_str().to_owned())
+            .collect::<Vec<_>>(),
+        vec!["7.2.3".to_owned(), "7.2.0".to_owned()],
+        "everything below the desired version, newest first"
+    );
+    assert!(!found.more, "two candidates is not a truncated list");
     assert!(
-        matches!(attempt, Err(PlatformError::RollbackUnsupported { .. })),
-        "{attempt:?}"
+        !found
+            .releases
+            .iter()
+            .any(|release| release.version() == &version("7.3.1")),
+        "something newer is an advance, not a rollback"
+    );
+}
+
+#[tokio::test]
+async fn rolling_a_chart_back_writes_a_chart_release_and_a_rollback_hold() {
+    // The identity travels with the version, because a number alone is
+    // plausible against the wrong chart -- and the hold travels with both,
+    // because an environment moved backwards under a live automatic policy
+    // would be advanced forward again on the next sweep.
+    let charts = Arc::new(Charts::default());
+    charts.publish(HELM, "keycloakx", &["7.2.0", "7.3.0", "7.3.1"]);
+
+    let desired_state = charted(UpdatePolicy::Automatic);
+    let status = charted_service(&charts, &desired_state)
+        .roll_back("lucentroot", "keycloak", "7.2.0", Some("7.3.0 broke login"))
+        .await
+        .expect("a chart rolls back");
+
+    let written = desired_state.rollbacks();
+    let (release, hold) = written.first().expect("one rollback was written");
+
+    assert_eq!(
+        release,
+        &Release::Chart {
+            repository: HELM.to_owned(),
+            chart: "keycloakx".to_owned(),
+            version: version("7.2.0"),
+        },
+        "the chart and repository it was discovered under travel with the version"
+    );
+    assert_eq!(hold.reason, "rollback", "distinct from a plain pause");
+    assert_eq!(hold.note.as_deref(), Some("7.3.0 broke login"));
+
+    assert_eq!(status.desired, version("7.2.0"));
+    assert_eq!(
+        status.hold.as_ref().map(|hold| hold.reason.as_str()),
+        Some("rollback"),
+        "the status an operator sees reports the hold that stopped it"
+    );
+    assert_eq!(
+        status.policy,
+        UpdatePolicy::Automatic,
+        "rolling back is not a decision to stop advancing forever"
+    );
+}
+
+#[tokio::test]
+async fn a_chart_version_the_repository_no_longer_lists_is_refused() {
+    // The same guarantee the image path gets from re-resolving: a version
+    // withdrawn since it ran is not somewhere to return to, and naming one
+    // writes nothing.
+    let charts = Arc::new(Charts::default());
+    charts.publish(HELM, "keycloakx", &["7.3.0", "7.3.1"]);
+
+    let desired_state = charted(UpdatePolicy::Manual);
+    let service = charted_service(&charts, &desired_state);
+
+    for asked in ["7.2.0", "not-a-version", "7.9.9"] {
+        let outcome = service.roll_back("lucentroot", "keycloak", asked, None).await;
+
+        assert!(
+            matches!(outcome, Err(PlatformError::NotRollable { .. })),
+            "{asked} must not be rollable: {outcome:?}"
+        );
+    }
+
+    assert!(desired_state.rollbacks().is_empty());
+}
+
+#[tokio::test]
+async fn a_chart_rollback_writes_the_version_as_the_index_spells_it() {
+    // Build metadata takes no part in precedence, so `7.2.0` and `7.2.0+evil`
+    // compare equal. A caller naming the second must not have their spelling
+    // written verbatim into the pin -- what gets written is what the platform
+    // observed, exactly as the repository published it.
+    let charts = Arc::new(Charts::default());
+    charts.publish(HELM, "keycloakx", &["7.2.0", "7.3.0"]);
+
+    let desired_state = charted(UpdatePolicy::Manual);
+    charted_service(&charts, &desired_state)
+        .roll_back("lucentroot", "keycloak", "7.2.0+evil", None)
+        .await
+        .expect("a version equal in precedence to a published one resolves");
+
+    let written = desired_state.rollbacks();
+    let (release, _) = written.first().expect("one rollback was written");
+
+    assert_eq!(
+        release.version().as_str(),
+        "7.2.0",
+        "the caller's spelling reached the pin"
     );
 }
 
 #[tokio::test]
 async fn a_chart_can_still_be_paused_and_resumed() {
-    // Stopping an environment advancing needs no immutability at all, so the
-    // brake is offered for both kinds even though rollback is not.
+    // Every operator control is offered for both kinds. Pausing is the one
+    // that needs no artifact guarantee at all -- it moves nothing.
     let charts = Arc::new(Charts::default());
     charts.publish(HELM, "keycloakx", &["7.3.0", "7.3.1"]);
 
@@ -1082,7 +1249,11 @@ async fn a_chart_can_still_be_paused_and_resumed() {
         .expect("a chart pauses");
 
     assert!(paused.is_paused());
-    assert!(!paused.rollable, "and still cannot be rolled back");
+    assert_eq!(
+        paused.artifact,
+        ArtifactKind::Helm,
+        "the console is told what it is published as, so it can word the caveat"
+    );
     assert!(desired_state.writes().is_empty(), "pausing moves no version");
 
     service

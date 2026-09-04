@@ -616,6 +616,24 @@ async fn a_credential_embedded_in_the_repository_address_never_reaches_the_refus
 }
 
 #[tokio::test]
+async fn a_credential_in_a_cannot_be_a_base_address_never_reaches_the_refusal_either() {
+    // `oci:user:secret@registry.example/charts` has no `//` after its scheme,
+    // so `url` parses everything past `oci:` as one opaque blob rather than a
+    // host plus userinfo -- the userinfo check alone would see nothing to
+    // refuse here, even though the credential is sitting right there.
+    let failure = HelmCharts::new(10)
+        .expect("the client builds")
+        .versions("oci:user:secret@registry.example/charts", "keycloakx")
+        .await
+        .expect_err("an address with no hierarchical structure is refused");
+
+    let RegistryError::Refused { detail } = failure else {
+        panic!("expected Refused, got {failure:?}");
+    };
+    assert!(!detail.contains("secret"), "{detail}");
+}
+
+#[tokio::test]
 async fn plain_http_to_loopback_still_refuses_a_non_loopback_host() {
     // No DNS lookup or connection is attempted for a non-loopback plain HTTP
     // host, even under the loopback-tolerant test policy -- `Refused` proves

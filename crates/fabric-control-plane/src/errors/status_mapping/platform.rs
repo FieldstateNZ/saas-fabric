@@ -49,7 +49,6 @@ pub(super) fn status(error: &PlatformError) -> StatusCode {
         // release to return to.
         PlatformError::NotRollable { .. } => StatusCode::UNPROCESSABLE_ENTITY,
 
-
         // Platform Management reached a registry or the platform repository and
         // could not get an answer. 503, not 500: nothing is wrong with the
         // request, desired state is untouched, and the operator's next step is

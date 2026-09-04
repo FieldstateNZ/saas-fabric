@@ -10,7 +10,7 @@ use tokio::sync::Notify;
 use super::PlatformDesiredState;
 use crate::{
     ArtifactSource, Channel, ComponentDesired, DesiredRevision, DesiredState, DesiredStateError, Release,
-    ReleaseUnit, UpdatePolicy,
+    UpdatePolicy,
 };
 
 /// A repository that is reachable, and whose reads fail.

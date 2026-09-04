@@ -77,19 +77,15 @@ pub trait DesiredState: Send + Sync {
     ///
     /// # It takes a whole release, and that is the point
     ///
-    /// Rolling back means restoring a previously selected desired version, and
-    /// it is offered for either kind. What this takes is the whole release, so
+    /// Rolling back means restoring an older published version of the
+    /// component, and it is offered for either kind. What this takes is the whole release, so
     /// nothing can move on its own: for images the version, the source commit
     /// and every digest travel together, resolved from a registry rather than
-    /// supplied, so rolling back to a version with somebody else's digests is
-    /// not a shape that exists. For a chart the version is the whole of it —
-    /// there is no digest to carry, and the repository and chart name travel
-    /// with it so a release discovered against one chart cannot be written
-    /// into a pin for another.
-    ///
-    /// The two restore different amounts, and that is stated to the operator
-    /// rather than enforced here: an image rollback returns the exact bytes,
-    /// a chart rollback the version, which a repository may have republished.
+    /// supplied; for a chart the version is the whole of it, and the repository
+    /// and chart name travel with it so a release discovered against one chart
+    /// cannot be written into a pin for another. The two restore different
+    /// amounts — exact bytes for images, a version a repository may have
+    /// republished for a chart — and that is said to the operator, not enforced.
     ///
     /// # Why the version and the hold are one operation
     ///

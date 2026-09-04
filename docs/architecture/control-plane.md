@@ -275,14 +275,16 @@ not one shape with fields left empty:
 | what deploys | an immutable digest | a version |
 | rollback | offered — restores the version *and* the exact bytes | offered — restores the version, not provably the bytes |
 
-**Rollback means restoring a previously selected desired version.** That is the
-definition, and it is offered for every artifact kind. For images it restores
-the exact bytes as well, because a release unit carries every digest, so the
-environment demonstrably returns to what it ran. For a chart it restores the
-chart *version*: a classic chart repository pins a version rather than a
-digest, so the bytes behind `7.3.0` may have been republished since, and what
-comes back is what the environment was *asked* to run rather than provably what
-it ran.
+**Rollback means restoring an older published version of the component.** That
+is the definition, and it is offered for every artifact kind. It is not a
+history: the platform keeps no record of what an environment selected or ran,
+and offers what the registry or chart repository publishes *now* below the
+desired version, in its channel and — for a prerelease — its line. For images
+the restored version comes with the exact bytes, because a release unit carries
+every digest. For a chart it is the chart *version*: a classic chart repository
+pins a version rather than a digest, so the bytes behind `7.3.0` may have been
+republished since, and what comes back is provably the version and not provably
+the bytes it once represented.
 
 **That difference is stated, not enforced.** The console says it in one line
 beside the candidates — "Restores the chart version. A chart repository can

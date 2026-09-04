@@ -49,7 +49,7 @@ pub struct ComponentRow {
     /// What this component is published as: `oci` or `helm`.
     ///
     /// Not "whether it can be rolled back". Both kinds can — rolling back
-    /// restores a previously selected desired version — and what differs is
+    /// restores an older published version — and what differs is
     /// how much of the old release returns: an image rollback restores the
     /// exact bytes, a chart rollback restores the version, and a chart
     /// repository may have republished the bytes behind it. The console needs

@@ -79,7 +79,7 @@ pub struct ComponentStatus {
     /// What this component is published as.
     ///
     /// Not "whether it can be rolled back": both kinds can, because rolling
-    /// back means restoring a previously selected desired version. What
+    /// back means restoring an older published version. What
     /// differs is how much of the old release comes back — an image rollback
     /// restores the exact bytes, a chart rollback restores the version and a
     /// chart repository may have republished the bytes behind it. The console

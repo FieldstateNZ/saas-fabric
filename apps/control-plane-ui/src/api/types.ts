@@ -197,7 +197,7 @@ export interface PlatformComponent {
    * What this component is published as.
    *
    * Not "whether it can be rolled back": both kinds can, because rolling back
-   * means restoring a previously selected desired version. What differs is how
+   * means restoring an older published version. What differs is how
    * much of the old release comes back — an image rollback restores the exact
    * bytes, a chart rollback restores the version and a chart repository can
    * republish the bytes behind a version. The console needs the kind so it can

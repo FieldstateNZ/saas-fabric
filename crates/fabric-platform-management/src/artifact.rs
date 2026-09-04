@@ -28,9 +28,8 @@ pub enum ArtifactSource {
     /// A classic chart repository pins a *version*, not a digest. The bytes
     /// behind `7.3.0` can be republished, and nothing here would see it. That
     /// is strictly weaker than what the OCI kind gives. It is not a reason to
-    /// refuse an operation: rolling back restores a previously selected
-    /// desired version, and for a chart the version is what there is to
-    /// restore. The difference is *stated* to the operator — see
+    /// refuse an operation: rolling back restores an older published
+    /// version, and for a chart the version is what there is to restore. The difference is *stated* to the operator — see
     /// [`ArtifactKind`] — rather than enforced by declining to act.
     Helm {
         /// The chart repository's base URL.

@@ -92,9 +92,9 @@ impl ControlPlaneError {
             //
             // There is no 501 beside it any more. A `rollback_unsupported`
             // used to answer "this kind of artifact cannot be rolled back at
-            // all", and rolling back now means restoring a previously selected
-            // desired version, which both kinds support. The only thing left
-            // to refuse is the one version named, which is this.
+            // all", and rolling back now means restoring an older published
+            // version, which both kinds support. The only thing left to
+            // refuse is the one version named, which is this.
             Self::Platform(PlatformError::NotRollable { .. }) => StatusCode::UNPROCESSABLE_ENTITY,
 
             Self::Platform(_) => StatusCode::SERVICE_UNAVAILABLE,

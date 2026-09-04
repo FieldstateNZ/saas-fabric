@@ -68,8 +68,8 @@ pub trait DesiredState: Send + Sync {
     ///
     /// # It takes a whole release, and that is the point
     ///
-    /// Rolling back means restoring a previously selected desired version, and
-    /// it is offered for either kind. What this takes is the whole release, so
+    /// Rolling back means restoring an older published version of the
+    /// component, and it is offered for either kind. What this takes is the whole release, so
     /// nothing can move on its own: for images the version, the source commit
     /// and every digest travel together, resolved from a registry rather than
     /// supplied, so rolling back to a version with somebody else's digests is

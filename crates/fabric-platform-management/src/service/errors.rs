@@ -38,8 +38,8 @@ pub enum PlatformError {
     ///
     /// # Not "this kind of component cannot be rolled back"
     ///
-    /// There is no such refusal. Rolling back restores a previously selected
-    /// desired version and is offered for both artifact kinds — what differs
+    /// There is no such refusal. Rolling back restores an older published
+    /// version and is offered for both artifact kinds — what differs
     /// is how much of the old release comes back, and that is said to the
     /// operator rather than enforced by declining. This variant is about the
     /// one version they named.

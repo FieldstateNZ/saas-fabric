@@ -48,7 +48,7 @@ describe('the brake', () => {
   it('offers rollback, and not pause, for a component that does not advance on its own', () => {
     // There is no advancement to stop, and the control plane refuses a pause
     // for it -- a button whose only outcome is a refusal should not exist. But
-    // the component can still be put back on a version it ran before, and a
+    // the component can still be put back on an older published version, and a
     // stable chart on `manual` is exactly the one an operator will need that
     // for, since `manual` is what the platform recommends for it.
     for (const policy of ['manual', 'locked'] as const) {
@@ -131,8 +131,8 @@ describe('the brake', () => {
 
 describe('rolling back, for either artifact kind', () => {
   it('offers rollback for a chart and says what it restores', async () => {
-    // Rolling back means restoring a previously selected desired version, and
-    // a chart supports that as much as an image does. What it does not restore
+    // Rolling back means restoring an older published version, and a chart
+    // supports that as much as an image does. What it does not restore
     // is the bytes — a chart repository can republish what sits behind a
     // version — so the operator is told, rather than the button being absent
     // and the capability with it.

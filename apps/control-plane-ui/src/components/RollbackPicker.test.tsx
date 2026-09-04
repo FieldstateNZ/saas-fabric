@@ -1,5 +1,5 @@
 /**
- * Choosing something the environment ran before.
+ * Choosing an older published version to go back to.
  *
  * The contract under test is what an operator *cannot* do: name a version the
  * platform did not observe, or influence which digests get written.

@@ -1,4 +1,4 @@
-//! Putting an environment back on something it ran before.
+//! Putting an environment back on an older published version.
 
 use axum::extract::{Path, State};
 use axum::Json;

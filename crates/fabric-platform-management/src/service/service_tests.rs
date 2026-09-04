@@ -1114,8 +1114,8 @@ async fn a_stable_component_on_automatic_advances_nothing_and_says_why() {
 
 #[tokio::test]
 async fn a_chart_is_offered_the_versions_its_repository_still_publishes_below_the_one_in_use() {
-    // Rolling back means restoring a previously selected desired version, and
-    // that is a real thing to want for either kind. What a chart candidate
+    // Rolling back means restoring an older published version, and that is
+    // a real thing to want for either kind. What a chart candidate
     // does *not* promise is the bytes -- a repository can republish what sits
     // behind 7.2.0 -- and the console says so rather than the platform
     // refusing to list anything.

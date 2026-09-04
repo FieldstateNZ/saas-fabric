@@ -1,4 +1,4 @@
-//! Putting an environment back on something it ran before.
+//! Putting an environment back on an older published version.
 
 use crate::service::brake::ROLLBACK;
 use crate::service::{backwards, PlatformError, PlatformManagement};
@@ -9,13 +9,17 @@ impl PlatformManagement {
     ///
     /// # What rollback means, and why it is offered for both kinds
     ///
-    /// Rolling back restores a **previously selected desired version**. For
-    /// images it also restores the exact bytes, because a release unit carries
-    /// every digest. For a chart it restores the version, and a chart
-    /// repository can republish the bytes behind a version — so the environment
-    /// comes back to what it was *asked* to run rather than provably to what it
-    /// ran. That difference is stated to the operator, in the console and in
-    /// the architecture doc, rather than being a reason to offer nothing.
+    /// Rolling back restores an **older published version of the component**:
+    /// one the registry or chart repository publishes *now*, below the desired
+    /// version, in its channel and — for a prerelease — its line. It is not a
+    /// history. Nothing here remembers what an environment ever selected or
+    /// ran, so this cannot promise a return to either. For images the version
+    /// comes with the exact bytes, because a release unit carries every
+    /// digest. For a chart it is the version alone, and a chart repository can
+    /// republish the bytes behind a version — so what comes back is provably
+    /// the version and not provably the bytes it once represented. That
+    /// difference is stated to the operator, in the console and in the
+    /// architecture doc, rather than being a reason to offer nothing.
     ///
     /// The alternative definition — rollback requires immutable artifact
     /// identity, so a chart cannot have one — was considered and not taken. It
@@ -24,8 +28,8 @@ impl PlatformManagement {
     /// the break-glass path and not an operator experience.
     ///
     /// Observed, not remembered. The list is what the registry or the chart
-    /// repository holds *now* — so a version withdrawn since it ran is not
-    /// offered, and for images neither is one whose images never agreed.
+    /// repository holds *now* — so a version since withdrawn is not offered,
+    /// and for images neither is one whose images never agreed.
     /// Reading it changes nothing.
     ///
     /// # Errors

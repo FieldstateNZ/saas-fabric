@@ -31,7 +31,7 @@ import { RollbackPicker } from './RollbackPicker'
  *
  * A component on `manual` or `locked` has no advancement to stop, and the
  * control plane refuses a pause for it — so no pause button. It can still be
- * put back on a version it ran before, and that is exactly the component an
+ * put back on an older published version, and that is exactly the component an
  * operator is most likely to need it for: the platform's own guidance is that
  * a stable component stays `manual` until an upgrade policy exists.
  */
@@ -79,8 +79,8 @@ export function ComponentBrake({ component }: ComponentBrakeProps) {
      wrong, and pausing is what they reach for when they want a moment. It is
      offered whatever the policy and whether or not the component is paused —
      an operator who paused *because* a release broke is the one who needs it —
-     and for both artifact kinds: rolling back means restoring a previously
-     selected desired version, which a chart supports as much as an image does.
+     and for both artifact kinds: rolling back means restoring an older
+     published version, which a chart supports as much as an image does.
      What differs is how much of the old release comes back, and the picker
      says so in words rather than this hiding the button. */
   const rollBack = (

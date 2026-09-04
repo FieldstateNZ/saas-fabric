@@ -31,10 +31,18 @@ pub enum PlatformError {
 
     /// The version asked for is not one this component can be rolled back to.
     ///
-    /// It does not exist below the desired one, or its images are incomplete
-    /// or disagree about their source commit. Either way it is not a release
-    /// unit anything ever ran, and deploying it would be deploying a
-    /// composition that never existed.
+    /// It does not exist below the desired one; or, for images, its images are
+    /// incomplete or disagree about their source commit, so it is not a
+    /// release unit anything ever ran; or, for a chart, the repository no
+    /// longer lists it.
+    ///
+    /// # Not "this kind of component cannot be rolled back"
+    ///
+    /// There is no such refusal. Rolling back restores an older published
+    /// version and is offered for both artifact kinds — what differs
+    /// is how much of the old release comes back, and that is said to the
+    /// operator rather than enforced by declining. This variant is about the
+    /// one version they named.
     #[error("{version} is not a version {component} can be rolled back to")]
     NotRollable {
         /// Which component was asked.

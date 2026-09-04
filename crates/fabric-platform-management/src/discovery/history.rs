@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 
 use crate::discovery::unit::{self, Direction};
-use crate::{Channel, Registry, RegistryError, ReleaseUnit, Version};
+use crate::{Channel, Registry, RegistryError, Release, Version};
 
 /// How many versions below the desired one are resolved.
 ///
@@ -20,19 +20,26 @@ use crate::{Channel, Registry, RegistryError, ReleaseUnit, Version};
 /// quietly stopped would read as "this is everything there is", which is
 /// exactly the sort of convenient near-truth the console is not allowed to
 /// tell.
-const EXAMINED: usize = 5;
+///
+/// A chart listing is bounded by the same number, and reports it the same way
+/// — see [`chart_history`](super::chart_history). Reading a chart index costs
+/// almost nothing by comparison, so the bound there is not about latency: it
+/// is so the console meets one shape rather than a long list for one kind of
+/// component and a short one for the other.
+pub(super) const EXAMINED: usize = 5;
 
-/// The versions an operator may roll back to.
+/// The releases an operator may roll back to.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct History {
-    /// Complete, coherent release units below the desired version, newest
-    /// first.
+    /// Releases below the desired version, newest first.
     ///
-    /// Whole units, not bare versions: a rollback moves the version *and*
-    /// every image digest together, so the candidate an operator picks already
-    /// carries what would be written. There is nowhere for a caller to supply
-    /// a digest, and nothing for one to disagree with.
-    pub units: Vec<ReleaseUnit>,
+    /// Whole releases, not bare versions: the candidate an operator picks
+    /// already carries what would be written, so there is nowhere for a caller
+    /// to supply a digest and nothing for one to disagree with. For images
+    /// that is the version, the source commit and every digest; for a chart it
+    /// is the version, together with the repository and chart it is a version
+    /// of.
+    pub releases: Vec<Release>,
 
     /// Whether older versions exist that were not examined.
     pub more: bool,
@@ -66,15 +73,15 @@ pub async fn history(
     let candidates = unit::candidates(registry, roles, channel, series, floor, Direction::Below).await?;
 
     let more = candidates.len() > EXAMINED;
-    let mut units = Vec::new();
+    let mut releases = Vec::new();
 
     for version in candidates.into_iter().take(EXAMINED) {
         if let unit::Assembly::Complete(unit) = unit::assemble(registry, roles, &version).await? {
-            units.push(unit);
+            releases.push(Release::Unit(unit));
         }
     }
 
-    Ok(History { units, more })
+    Ok(History { releases, more })
 }
 
 /// Resolves one version an operator asked to roll back to.
@@ -110,7 +117,7 @@ pub async fn resolve(
     series: Option<&Version>,
     floor: &Version,
     wanted: &str,
-) -> Result<Option<ReleaseUnit>, RegistryError> {
+) -> Result<Option<Release>, RegistryError> {
     let Some(version) = Version::parse(wanted) else {
         return Ok(None);
     };
@@ -125,7 +132,7 @@ pub async fn resolve(
     }
 
     match unit::assemble(registry, roles, &version).await? {
-        unit::Assembly::Complete(unit) => Ok(Some(unit)),
+        unit::Assembly::Complete(unit) => Ok(Some(Release::Unit(unit))),
         // Incomplete or built twice. Not a release this environment ever ran,
         // whatever a tag listing says.
         unit::Assembly::Incomplete | unit::Assembly::Incoherent => Ok(None),

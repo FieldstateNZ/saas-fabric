@@ -2,9 +2,15 @@
 
 use std::collections::BTreeMap;
 
+mod chart_history;
+mod chart_resolve;
+mod charts;
 mod history;
 mod unit;
 
+pub use chart_history::chart_history;
+pub use chart_resolve::resolve_chart;
+pub use charts::discover_chart;
 pub use history::{history, resolve, History};
 
 #[cfg(test)]
@@ -65,7 +71,7 @@ pub struct Discovery {
     /// A `Latest available` worth the name arrives with a versions view, where
     /// Fabric enumerates what exists rather than inferring it from what it
     /// declined to advance to.
-    pub newer: Option<ReleaseUnit>,
+    pub newer: Option<crate::Release>,
 
     /// Newer versions that are still publishing. Transient — retried, never
     /// remembered.
@@ -112,7 +118,7 @@ pub async fn discover(
     for version in candidates {
         match unit::assemble(registry, roles, &version).await? {
             // Newest first, so the first complete one is the highest.
-            unit::Assembly::Complete(release) => discovery.newer.get_or_insert(release),
+            unit::Assembly::Complete(release) => discovery.newer.get_or_insert(crate::Release::Unit(release)),
             unit::Assembly::Incomplete => {
                 discovery.not_yet.push(version);
                 continue;

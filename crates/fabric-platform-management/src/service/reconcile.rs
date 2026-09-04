@@ -1,5 +1,6 @@
 //! Acting on what a component's situation turns out to be.
 
+use crate::Release;
 use crate::{
     decide, ComponentStatus, Decision, DesiredStateStatus, PlatformError, PlatformManagement, Reconciliation,
 };
@@ -27,19 +28,32 @@ impl PlatformManagement {
         let (desired, discovery) = self.look(environment, component).await?;
         let was = desired.version.clone();
 
-        let Decision::Advance(unit) = decide(desired.policy, desired.hold.is_some(), &discovery) else {
+        let Decision::Advance(release) = decide(
+            desired.policy,
+            desired.channel,
+            desired.hold.is_some(),
+            &discovery,
+        ) else {
             return Ok(Reconciliation {
                 was,
                 status: ComponentStatus::assemble(component, &desired, &discovery),
             });
         };
 
-        let message = format!(
-            "Advance {environment} to {component} {}\n\nBuilt from {}.",
-            unit.version, unit.source_revision
-        );
+        // A chart has no commit to name, so the message does not pretend to
+        // one. What a release says about itself is the release's to say.
+        let message = match &release {
+            Release::Unit(unit) => format!(
+                "Advance {environment} to {component} {}\n\nBuilt from {}.",
+                unit.version, unit.source_revision
+            ),
+            Release::Chart { version, .. } => {
+                format!("Advance {environment} to {component} chart {version}")
+            }
+        };
+
         self.desired_state
-            .advance(environment, component, &unit, &message)
+            .advance(environment, component, &release, &desired.revision, &message)
             .await?;
 
         // Reported from what was written rather than by reading again: a
@@ -47,7 +61,7 @@ impl PlatformManagement {
         // and answering "what did I just do" from a fresh query is how a
         // console shows somebody else's change as though it were yours.
         let mut moved = desired.clone();
-        moved.version = unit.version.clone();
+        moved.version = release.version().clone();
 
         Ok(Reconciliation {
             was,

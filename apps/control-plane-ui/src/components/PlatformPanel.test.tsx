@@ -12,6 +12,7 @@ function component(overrides: Partial<PlatformComponent> = {}): PlatformComponen
     newer: 'v0.3.0-preview.3',
     running: 'unknown',
     policy: 'automatic',
+    artifact: 'oci',
     paused: false,
     desiredState: 'update-available',
     hold: null,

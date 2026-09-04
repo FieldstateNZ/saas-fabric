@@ -1,6 +1,10 @@
 //! What the console is told about a component.
 
-use crate::{ComponentDesired, Discovery, Hold, UpdatePolicy, Version};
+mod reconciliation;
+
+pub use reconciliation::Reconciliation;
+
+use crate::{ArtifactKind, ComponentDesired, Discovery, Hold, UpdatePolicy, Version};
 
 /// What is actually serving.
 ///
@@ -72,6 +76,17 @@ pub struct ComponentStatus {
     /// The standing decision about advancement.
     pub policy: UpdatePolicy,
 
+    /// What this component is published as.
+    ///
+    /// Not "whether it can be rolled back": both kinds can, because rolling
+    /// back means restoring an older published version. What
+    /// differs is how much of the old release comes back — an image rollback
+    /// restores the exact bytes, a chart rollback restores the version and a
+    /// chart repository may have republished the bytes behind it. The console
+    /// needs the kind in order to say which, and a boolean had nowhere to say
+    /// it from.
+    pub artifact: ArtifactKind,
+
     /// Present while an operator has paused advancement.
     pub hold: Option<Hold>,
 
@@ -95,11 +110,12 @@ impl ComponentStatus {
 
     /// Assembles what the console is told from desired state and a discovery.
     pub(crate) fn assemble(component: &str, desired: &ComponentDesired, discovery: &Discovery) -> Self {
-        let newer = discovery.newer.as_ref().map(|unit| unit.version.clone());
+        let newer = discovery.newer.as_ref().map(|release| release.version().clone());
 
         Self {
             component: component.to_owned(),
             desired: desired.version.clone(),
+            artifact: desired.source.kind(),
             // Discovery only considers versions above the desired one, so
             // anything it found at all is an upgrade.
             desired_state: if newer.is_some() {
@@ -116,27 +132,5 @@ impl ComponentStatus {
                 incoherent: discovery.incoherent.clone(),
             },
         }
-    }
-}
-
-/// What one reconciliation did.
-///
-/// Carries where the component started as well as where it ended, because
-/// "advanced" and "was already there" produce the same status and are not the
-/// same event. A sweep reports one and stays quiet about the other.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Reconciliation {
-    /// The version desired before this ran.
-    pub was: Version,
-
-    /// The situation afterwards.
-    pub status: ComponentStatus,
-}
-
-impl Reconciliation {
-    /// Whether desired state moved.
-    #[must_use]
-    pub fn advanced(&self) -> bool {
-        self.was != self.status.desired
     }
 }

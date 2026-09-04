@@ -1,16 +1,36 @@
-//! Putting an environment back on something it ran before.
+//! Putting an environment back on an older published version.
 
 use crate::service::brake::ROLLBACK;
-use crate::service::{PlatformError, PlatformManagement};
-use crate::{history, resolve, ComponentStatus, Discovery, History, Hold};
+use crate::service::{backwards, PlatformError, PlatformManagement};
+use crate::{ComponentStatus, Discovery, History, Hold};
 
 impl PlatformManagement {
     /// What this component could be rolled back to.
     ///
-    /// Observed, not remembered. The list is what the registry holds *now*,
-    /// resolved to whole release units — so a version withdrawn since it ran
-    /// is not offered, and neither is one whose images never agreed. Reading
-    /// it changes nothing.
+    /// # What rollback means, and why it is offered for both kinds
+    ///
+    /// Rolling back restores an **older published version of the component**:
+    /// one the registry or chart repository publishes *now*, below the desired
+    /// version, in its channel and — for a prerelease — its line. It is not a
+    /// history. Nothing here remembers what an environment ever selected or
+    /// ran, so this cannot promise a return to either. For images the version
+    /// comes with the exact bytes, because a release unit carries every
+    /// digest. For a chart it is the version alone, and a chart repository can
+    /// republish the bytes behind a version — so what comes back is provably
+    /// the version and not provably the bytes it once represented. That
+    /// difference is stated to the operator, in the console and in the
+    /// architecture doc, rather than being a reason to offer nothing.
+    ///
+    /// The alternative definition — rollback requires immutable artifact
+    /// identity, so a chart cannot have one — was considered and not taken. It
+    /// is coherent, and it leaves an operator whose chart upgrade went wrong
+    /// with no route back but a hand edit of the platform repository, which is
+    /// the break-glass path and not an operator experience.
+    ///
+    /// Observed, not remembered. The list is what the registry or the chart
+    /// repository holds *now* — so a version since withdrawn is not offered,
+    /// and for images neither is one whose images never agreed.
+    /// Reading it changes nothing.
     ///
     /// # Errors
     ///
@@ -24,31 +44,27 @@ impl PlatformManagement {
     ) -> Result<History, PlatformError> {
         let desired = self.desired_state.component(environment, component).await?;
 
-        Ok(history(
-            self.registry.as_ref(),
-            &desired.repositories,
-            desired.channel,
-            Some(&desired.version),
-            &desired.version,
-        )
-        .await?)
+        Ok(backwards::candidates(self.registry.as_ref(), self.charts.as_ref(), &desired).await?)
     }
 
     /// Puts a component back on an older version, and holds it there.
     ///
     /// # The caller names a version and nothing else
     ///
-    /// What gets written is resolved here, from the registry, **on this
-    /// request** — not carried over from whatever the candidates listing
-    /// returned moments ago. The version, the source commit and three image
-    /// digests are assembled together, so a caller cannot supply a digest,
-    /// cannot move one image, and cannot name a version that is not a
-    /// complete coherent release.
+    /// What gets written is resolved here, from the registry or the chart
+    /// index, **on this request** — not carried over from whatever the
+    /// candidates listing returned moments ago. For images the version, the
+    /// source commit and every digest are assembled together, so a caller
+    /// cannot supply a digest, cannot move one image, and cannot name a
+    /// version that is not a complete coherent release. For a chart the
+    /// version travels with the repository and chart name it was discovered
+    /// under, so a number that is plausible against the wrong chart is still
+    /// refused by the write.
     ///
     /// Re-resolving is not redundant with the listing. It is what makes a
     /// version withdrawn between the two requests a refusal rather than a
     /// deployment from a stale candidate object, and it is why the request
-    /// body carries a name instead of a unit.
+    /// body carries a name instead of a release.
     ///
     /// # The hold is not optional
     ///
@@ -76,23 +92,12 @@ impl PlatformManagement {
     ) -> Result<ComponentStatus, PlatformError> {
         let desired = self.desired_state.component(environment, component).await?;
 
-        // Resolved, not looked up in a list. One version costs a fifth of
-        // what re-deriving the whole listing does, and this request also has a
-        // Git write to pay for — doing both is what returned `504` against the
-        // real registry.
-        let unit = resolve(
-            self.registry.as_ref(),
-            &desired.repositories,
-            desired.channel,
-            Some(&desired.version),
-            &desired.version,
-            version,
-        )
-        .await?
-        .ok_or_else(|| PlatformError::NotRollable {
-            component: component.to_owned(),
-            version: version.to_owned(),
-        })?;
+        let release = backwards::one(self.registry.as_ref(), self.charts.as_ref(), &desired, version)
+            .await?
+            .ok_or_else(|| PlatformError::NotRollable {
+                component: component.to_owned(),
+                version: version.to_owned(),
+            })?;
 
         let hold = Hold {
             reason: ROLLBACK.to_owned(),
@@ -104,17 +109,18 @@ impl PlatformManagement {
             .roll_back(
                 environment,
                 component,
-                &unit,
+                &release,
                 &hold,
+                &desired.revision,
                 &format!(
                     "Roll {component} in {environment} back to {}",
-                    unit.version.as_str()
+                    release.version().as_str()
                 ),
             )
             .await?;
 
         let mut settled = desired.clone();
-        settled.version = unit.version.clone();
+        settled.version = release.version().clone();
         settled.hold = Some(hold);
 
         // Discovery is deliberately empty. This pass looked *backwards*; what

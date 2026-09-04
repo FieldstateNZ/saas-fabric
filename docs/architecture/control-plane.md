@@ -262,6 +262,111 @@ Resuming lifts the hold and **does not advance**. What happens next is the next
 sweep's to decide from what it observes then, so nothing here reports a version
 it has not moved to.
 
+#### Two artifact kinds, and what rollback means for each
+
+A component is published either as **container images** or as a **Helm chart**,
+and the two are discovered differently and guarantee different things. They are
+not one shape with fields left empty:
+
+| | images | chart |
+|---|---|---|
+| discovered from | a registry — tags, manifests, config blobs | a chart repository's `index.yaml` |
+| eligibility | every image carries the version and agrees on its source commit | the version is published |
+| what deploys | an immutable digest | a version |
+| rollback | offered — restores the version *and* the exact bytes | offered — restores the version, not provably the bytes |
+
+**Rollback means restoring an older published version of the component.** That
+is the definition, and it is offered for every artifact kind. It is not a
+history: the platform keeps no record of what an environment selected or ran,
+and offers what the registry or chart repository publishes *now* below the
+desired version, in its channel and — for a prerelease — its line. For images
+the restored version comes with the exact bytes, because a release unit carries
+every digest. For a chart it is the chart *version*: a classic chart repository
+pins a version rather than a digest, so the bytes behind `7.3.0` may have been
+republished since, and what comes back is provably the version and not provably
+the bytes it once represented.
+
+**That difference is stated, not enforced.** The console says it in one line
+beside the candidates — "Restores the chart version. A chart repository can
+republish the bytes behind a version, so this is not the byte-for-byte return
+an image rollback is." — and this document says it in the table above. Neither
+half of the platform refuses on the strength of it.
+
+**The alternative definition was considered and not taken.** It is: rollback
+requires immutable artifact identity, so a component without one has no
+rollback — `roll_back` takes a `ReleaseUnit`, the API answers
+`501 rollback_unsupported`, and the console omits the button. That is coherent,
+and it is what this platform did until this decision. What settled it against
+that reading is the operator: someone whose chart upgrade broke login wants the
+version they were on back, and telling them the platform will not do it because
+of a guarantee they were never promised leaves them hand-editing the platform
+repository — which is the break-glass path, not an operator experience. A
+weaker guarantee an operator is told about beats a capability they do not have.
+
+If chart lifecycle is later modelled — an OCI chart registry, or a digest
+recorded at the moment of deployment — a chart rollback gains the byte
+guarantee and the caveat line goes away. The operation does not change.
+
+The shape is in the signatures rather than in a check: `advance` and
+`roll_back` both take a `Release`, which is either kind, and both go through
+the same identity check, which refuses a release shaped for the *other* kind
+before any file is read. What neither can express is moving one image or
+supplying a digest.
+
+Pause and resume are offered for both, and always were. Stopping an environment
+advancing needs no artifact guarantee at all.
+
+#### A chart repository is read over HTTPS, end to end
+
+The index a chart repository serves names the version that gets pinned into
+what Argo deploys, so a byte rewritten on the way from the repository is a byte
+that steers a rollout. The chart reader refuses a repository URL that is not
+`https://`, and refuses to follow a redirect to anything else. An HTTP client's
+default policy follows a `30x` wherever it points, including back down to plain
+HTTP, which would make the first hop's TLS a formality; here every hop is HTTPS
+or the read is refused. A refused redirect is reported as a refusal rather than
+an outage, because retrying it changes nothing.
+
+The reader also trusts only the chart it was asked about. A repository serves
+every chart it holds in one document, and an unrelated chart's malformed entry
+must not make this component undiscoverable — nor may an unrelated entry's YAML
+aliases turn a bounded download into an unbounded allocation. So the requested
+chart's entries are the only ones read into a shape; everything else in the
+index is skipped without being materialised.
+
+#### A decision is applied to the state it was taken against
+
+Every write presents the revision its decision was read at, and desired state
+that moved in between is a conflict rather than an overwrite.
+
+Without it, a sweep reads, decides, and writes — and an operator who adds a
+hold between the read and the write watches it be ignored, because the write
+re-reads and applies a decision taken about something else. The decision was
+right when it was taken and wrong by the time it landed.
+
+The selector's own docs already claimed this. They were describing the
+intended design, not the implemented one: the precondition was the revision the
+*adapter* had just read for itself, which proves only that nothing changed
+during the write.
+
+#### The series only means something for a prerelease
+
+An automatic policy walks forward within the desired version's own line, and a
+line is a `major.minor.patch` core. That is right for a prerelease —
+`0.3.0-preview.9` and `preview.10` are the same line, `0.4.0-preview.1` is a
+different one — and wrong for anything else: **every stable advance changes the
+core**, so applying the rule to a stable component meant it could never advance
+and would report "nothing newer" however much its repository published.
+
+What should bound a stable advance instead is **not settled**, so the
+combination fails closed: a stable component on `automatic` advances nothing
+and reports `UndefinedStablePolicy`. It still shows what is newer, so the
+decision that is owed stays visible rather than looking like an idle component.
+
+Patch and minor upgrades are ordinary; a major is not something to take on a
+sweep. Until that is chosen, a stable component that should move is `manual`,
+where a person chooses.
+
 #### Rolling back
 
 ```text
@@ -269,17 +374,28 @@ GET  /api/platform/components/{component}/versions    what it could go back to
 POST /api/platform/components/{component}/rollback    put it back on one
 ```
 
-An operator names **a version and nothing else**. Every candidate the listing
-offers is one Fabric resolved from the registry to a complete, coherent release
-unit — three images that exist and agree about the commit they were built from.
-A version that never was one is not offered and is refused if asked for
-(`422 version_not_rollable`), because rolling back to it would deploy a
-composition nobody ever ran.
+An operator names **a version and nothing else**. For an image component every
+candidate the listing offers is one Fabric resolved from the registry to a
+complete, coherent release unit — three images that exist and agree about the
+commit they were built from. A version that never was one is not offered and is
+refused if asked for (`422 version_not_rollable`), because rolling back to it
+would deploy a composition nobody ever ran.
 
-What gets written is resolved at the moment of the write: the version, its
-source commit, its three digests, **and the hold**, in one commit. There is no
-request shape carrying a digest, so "roll back to whatever Git used to say" is
-not expressible.
+**A chart's candidates come from the index**, and carry no source revision. A
+chart repository lists versions and no provenance, so there is no commit to
+name: the API omits `source_revision` for those rows rather than sending an
+empty one, and the console lays the row out without the line rather than
+rendering "built from" about something nothing observed. A version the
+repository no longer lists is refused the same way an image version that was
+never a release unit is — `422 version_not_rollable`, decided against the index
+on this request.
+
+What gets written is resolved at the moment of the write, **with the hold**, in
+one commit: for images the version, its source commit and its three digests;
+for a chart the version, together with the repository and chart name it was
+discovered under, so a number that is plausible against the wrong chart is
+still refused. There is no request shape carrying a digest, so "roll back to
+whatever Git used to say" is not expressible.
 
 The hold is not optional. An environment moved backwards under a live automatic
 policy would be advanced forward again by the next sweep, and the operator
@@ -297,6 +413,11 @@ means a manifest and a config blob per image, fetched sequentially — around
 three seconds a version against GHCR — and the listing has to fit inside one
 operator request. Raising it needs concurrency first, not a bigger number.
 
+A chart listing is bounded by the same five and reports it the same way, and
+there the reason is not latency — reading an index costs almost nothing. It is
+so an operator meets one shape whichever kind of component they are looking at,
+rather than a long list for one and a short one for the other.
+
 The picker is navigation; the rollback operation is validation. They must not
 share a hidden "only the first N are legal" rule, which is why the two are
 bounded differently and deliberately.
@@ -312,11 +433,19 @@ sends is the thing that would actually be deployed.
 Rolling back resolves **only the version asked for**, not the whole listing
 again. Membership in the offered list was never the property that mattered:
 what matters is that the version is in this component's channel and series,
-sits strictly below what is desired, and resolves *now* to a complete coherent
-release unit. One consequence is deliberate — a version older than the bound is
-still rollable if a caller names it, because the bound limits what is *offered*
-and it would be a strange safety rule that made a real release unrollable
-because five newer ones existed.
+sits strictly below what is desired, and resolves *now* — to a complete
+coherent release unit for images, or to an entry the chart repository still
+lists. One consequence is deliberate — a version older than the bound is still
+rollable if a caller names it, because the bound limits what is *offered* and
+it would be a strange safety rule that made a real release unrollable because
+five newer ones existed.
+
+**The series only bounds a preview here too**, and for the reason stated above.
+Rolling back used to pass the desired version as the series unconditionally,
+which is the same latent defect advancement had: every stable release changes
+the `major.minor.patch` core, so `7.3.0` counted as a different line from
+`7.3.1` and a stable component was offered nowhere to go, whatever its registry
+or chart repository held. Both directions now read the rule from one place.
 
 #### The component may be named; the environment still may not
 

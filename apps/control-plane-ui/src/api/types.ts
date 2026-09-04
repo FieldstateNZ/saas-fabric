@@ -112,7 +112,15 @@ export type ConnectionState = 'connected' | 'unavailable' | 'not-connected' | 'n
 /** One version a component could be rolled back to. */
 export interface RollbackCandidate {
   readonly version: string
-  readonly source_revision: string
+  /**
+   * The commit every one of its images was built from.
+   *
+   * Absent for a chart, because a chart repository's index lists versions and
+   * no provenance. There is nothing to show, rather than something the API
+   * declined to send — so the row is laid out without the line instead of
+   * rendering "built from" about a commit nobody observed.
+   */
+  readonly source_revision?: string
 }
 
 /**
@@ -184,6 +192,18 @@ export interface PlatformComponent {
   readonly newer: string | null
   readonly running: 'unknown'
   readonly policy: 'automatic' | 'manual' | 'locked'
+
+  /**
+   * What this component is published as.
+   *
+   * Not "whether it can be rolled back": both kinds can, because rolling back
+   * means restoring an older published version. What differs is how
+   * much of the old release comes back — an image rollback restores the exact
+   * bytes, a chart rollback restores the version and a chart repository can
+   * republish the bytes behind a version. The console needs the kind so it can
+   * say which, which the `rollable` boolean this replaces could not.
+   */
+  readonly artifact: 'oci' | 'helm'
   /**
    * Whether an operator has paused an otherwise automatic component.
    *

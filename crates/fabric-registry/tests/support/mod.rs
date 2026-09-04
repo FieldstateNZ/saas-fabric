@@ -20,6 +20,6 @@
 )]
 
 mod fake_registry;
-mod http_server;
+pub mod http_server;
 
 pub use fake_registry::{FakeRegistry, HOST};

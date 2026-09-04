@@ -4,8 +4,10 @@ use std::sync::Arc;
 
 use fabric_core::Clock;
 
+mod backwards;
 mod brake;
 mod errors;
+mod look;
 mod reconcile;
 mod rollback;
 
@@ -14,12 +16,19 @@ mod service_tests;
 
 pub use errors::PlatformError;
 
-use crate::{discover, ComponentDesired, ComponentStatus, DesiredState, Discovery, Registry};
+use crate::{ChartIndex, ComponentStatus, DesiredState, Registry};
 
 /// Platform Management, over whatever implements its two ports.
 pub struct PlatformManagement {
     /// Where published artifacts are looked up.
     registry: Arc<dyn Registry>,
+
+    /// Where chart versions are looked up.
+    ///
+    /// A second port rather than a second implementation of the first: a chart
+    /// repository lists versions and nothing else, and the registry port
+    /// promises a digest and a provenance it cannot supply.
+    charts: Arc<dyn ChartIndex>,
 
     /// Where an environment's desired state is kept.
     desired_state: Arc<dyn DesiredState>,
@@ -33,11 +42,13 @@ impl PlatformManagement {
     #[must_use]
     pub fn new(
         registry: Arc<dyn Registry>,
+        charts: Arc<dyn ChartIndex>,
         desired_state: Arc<dyn DesiredState>,
         clock: Arc<dyn Clock>,
     ) -> Self {
         Self {
             registry,
+            charts,
             desired_state,
             clock,
         }
@@ -95,28 +106,5 @@ impl PlatformManagement {
     /// The port desired state is read and written through.
     pub(crate) fn desired_state(&self) -> &dyn DesiredState {
         self.desired_state.as_ref()
-    }
-
-    /// Reads desired state and asks the registries what exists.
-    async fn look(
-        &self,
-        environment: &str,
-        component: &str,
-    ) -> Result<(ComponentDesired, Discovery), PlatformError> {
-        let desired = self.desired_state.component(environment, component).await?;
-
-        // The series is the desired version's own line. An automatic policy
-        // walks forward within it; moving to a new line is a deliberate act,
-        // not something discovery does on a Tuesday.
-        let discovery = discover(
-            self.registry.as_ref(),
-            &desired.repositories,
-            desired.channel,
-            Some(&desired.version),
-            &desired.version,
-        )
-        .await?;
-
-        Ok((desired, discovery))
     }
 }

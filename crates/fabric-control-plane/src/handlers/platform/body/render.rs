@@ -1,7 +1,7 @@
 //! Turning what the rules know into what the console reads.
 
 use fabric_platform_management::{
-    CheckOutcome, ComponentStatus, DesiredStateStatus, LastCheck, Running, UpdatePolicy,
+    ArtifactKind, CheckOutcome, ComponentStatus, DesiredStateStatus, LastCheck, Running, UpdatePolicy,
 };
 
 use super::{ComponentRow, DiagnosticRow, HoldRow, LastCheckRow, PlatformBody};
@@ -43,6 +43,10 @@ impl ComponentRow {
             component: status.component.clone(),
             desired: status.desired.as_str().to_owned(),
             newer: status.newer.as_ref().map(|version| version.as_str().to_owned()),
+            artifact: match status.artifact {
+                ArtifactKind::Oci => "oci",
+                ArtifactKind::Helm => "helm",
+            },
             running: match status.running {
                 Running::Unknown => "unknown",
             },

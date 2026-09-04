@@ -15,7 +15,9 @@ use fabric_core::Clock;
 use fabric_git_host::GitCredential;
 use fabric_platform_git::{
     ComponentVersion, ImageDigest, PlatformGitError, PlatformGitRepository, PlatformRepositoryConfig,
+    WantedVersion,
 };
+use fabric_platform_management::{DesiredRevision, DesiredState, DesiredStateError, Hold, Release, Version};
 
 mod support;
 
@@ -25,6 +27,77 @@ const MANIFEST: &str = "environments/lucentroot/components.yaml";
 const RUNTIME_OVERLAY: &str = "applications/core/saas-fabric/overlays/lucentroot/kustomization.yaml";
 const OPERATOR_OVERLAY: &str =
     "applications/core/saas-fabric-control-plane/overlays/lucentroot/kustomization.yaml";
+
+const CHART_REPOSITORY: &str = "https://codecentric.github.io/helm-charts";
+const CHART: &str = "keycloakx";
+const APPLICATION: &str = "applications/core/keycloak/application.yaml";
+
+/// A complete Argo Application for a Helm-published component: the chart
+/// source this platform bumps, and the repository holding its values, which
+/// carries a `targetRevision` of its own that a chart pin must never touch.
+const APPLICATION_TEXT: &str = r"apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: keycloak
+  namespace: argocd
+spec:
+  project: default
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: keycloak
+  sources:
+    # The upstream chart. Bumping this is a deliberate act.
+    - repoURL: https://codecentric.github.io/helm-charts
+      chart: keycloakx
+      targetRevision: 7.3.0
+      helm:
+        releaseName: keycloak
+    - repoURL: https://github.com/FieldstateNZ/saas-fabric-platform.git
+      targetRevision: PLACEHOLDER
+      ref: platform
+";
+
+/// The same Application, with two decoy sources added: `postgresql` from the
+/// same repository as the real chart, and `keycloakx` again from a different
+/// one. Neither is what this component publishes.
+///
+/// Without them, a test asserting a mismatched pin is refused cannot tell a
+/// working check from a disabled one -- `retarget` already refuses when no
+/// source matches the pin's identity, so a pin naming a chart or repository
+/// nothing in the file carries would be refused either way. These decoys
+/// give a disabled check something to wrongly succeed against: a source that
+/// *does* match the pin's own (wrong) identity, and would have its revision
+/// silently moved if `render` did not compare that identity to the artifact
+/// first.
+const DECOY_APPLICATION_TEXT: &str = r"apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: keycloak
+  namespace: argocd
+spec:
+  project: default
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: keycloak
+  sources:
+    # The upstream chart. Bumping this is a deliberate act.
+    - repoURL: https://codecentric.github.io/helm-charts
+      chart: keycloakx
+      targetRevision: 7.3.0
+      helm:
+        releaseName: keycloak
+    # A decoy: a different chart, same repository as the real one.
+    - repoURL: https://codecentric.github.io/helm-charts
+      chart: postgresql
+      targetRevision: 16.0.0
+    # A decoy: the same chart, a different repository than the real one.
+    - repoURL: https://charts.example.test
+      chart: keycloakx
+      targetRevision: 1.0.0
+    - repoURL: https://github.com/FieldstateNZ/saas-fabric-platform.git
+      targetRevision: PLACEHOLDER
+      ref: platform
+";
 
 /// The manifest as the platform repository writes it, header and all.
 const MANIFEST_TEXT: &str = r"# What LucentRoot is asked to run, and the policy that moves it.
@@ -148,7 +221,11 @@ async fn host() -> FakePlatformHost {
 }
 
 /// `preview.2`, complete and from one commit.
-fn preview_two() -> ComponentVersion {
+fn preview_two() -> WantedVersion {
+    WantedVersion::Images(preview_two_unit())
+}
+
+fn preview_two_unit() -> ComponentVersion {
     let mut images = BTreeMap::new();
     for (role, repository, digest) in [
         (
@@ -179,13 +256,97 @@ fn preview_two() -> ComponentVersion {
     }
 }
 
+/// The revision the manifest is at, which every write must present.
+///
+/// Read through the port, exactly as a decision would read it — so a test
+/// writes against the state it decided from, and a test that wants a stale
+/// decision has to construct one deliberately.
+fn unread() -> DesiredRevision {
+    // For a manifest this build cannot read at all. The write refuses on the
+    // read long before the revision is compared, so what it says is immaterial
+    // -- and pretending to have read one would be the lie.
+    DesiredRevision::new("never-read")
+}
+
+async fn at(repository: &PlatformGitRepository) -> DesiredRevision {
+    revision_of(repository, "lucentroot", "saas-fabric").await
+}
+
+/// The revision of any component, read through the port. `at` above is the
+/// one every OCI test wants; this is for the Helm component tests, which do
+/// not share its name.
+async fn revision_of(
+    repository: &PlatformGitRepository,
+    environment: &str,
+    component: &str,
+) -> DesiredRevision {
+    repository
+        .component(environment, component)
+        .await
+        .expect("the component reads")
+        .revision
+}
+
+/// A `components.yaml` describing one Helm component: its artifact identity,
+/// its desired version, and every place it is pinned. So a test naming what
+/// it actually varies -- a chart, a repository, a pin -- does not have to
+/// spell out the manifest surrounding it, the way the giant `.replace` calls
+/// on `MANIFEST_TEXT` do for the OCI component.
+fn helm_manifest(
+    component: &str,
+    version: &str,
+    repository: &str,
+    chart: &str,
+    pins: &[(&str, &str, &str)],
+) -> String {
+    use std::fmt::Write as _;
+
+    let pinned_in = if pins.is_empty() {
+        "    pinnedIn: []\n".to_owned()
+    } else {
+        let mut out = "    pinnedIn:\n".to_owned();
+        for (path, pin_repository, pin_chart) in pins {
+            let _ = write!(
+                out,
+                "      - renderer: argo-target-revision\n        path: {path}\n        repository: {pin_repository}\n        chart: {pin_chart}\n"
+            );
+        }
+        out
+    };
+
+    format!(
+        r"schemaVersion: 2
+environment: lucentroot
+managedRoots:
+  - applications/
+components:
+  {component}:
+    artifact:
+      type: helm
+      repository: {repository}
+      chart: {chart}
+    channel: stable
+    update: manual
+    desired:
+      version: {version}
+{pinned_in}    hold: null
+"
+    )
+}
+
 #[tokio::test]
 async fn a_promotion_moves_the_manifest_and_every_pin_in_one_commit() {
     let host = host().await;
     let repository = repository(&host);
 
     repository
-        .set_component_desired_state("lucentroot", "saas-fabric", &preview_two(), "Promote LucentRoot")
+        .set_component_desired_state(
+            "lucentroot",
+            "saas-fabric",
+            &preview_two(),
+            &at(&repository).await,
+            "Promote LucentRoot",
+        )
         .await
         .unwrap();
 
@@ -214,7 +375,13 @@ async fn an_overlay_keeps_everything_that_is_not_the_pin() {
     let repository = repository(&host);
 
     repository
-        .set_component_desired_state("lucentroot", "saas-fabric", &preview_two(), "Promote LucentRoot")
+        .set_component_desired_state(
+            "lucentroot",
+            "saas-fabric",
+            &preview_two(),
+            &at(&repository).await,
+            "Promote LucentRoot",
+        )
         .await
         .unwrap();
 
@@ -240,7 +407,13 @@ async fn the_manifests_header_and_the_platforms_own_settings_survive() {
     let repository = repository(&host);
 
     repository
-        .set_component_desired_state("lucentroot", "saas-fabric", &preview_two(), "Promote LucentRoot")
+        .set_component_desired_state(
+            "lucentroot",
+            "saas-fabric",
+            &preview_two(),
+            &at(&repository).await,
+            "Promote LucentRoot",
+        )
         .await
         .unwrap();
 
@@ -279,7 +452,13 @@ async fn a_hold_is_carried_through_rather_than_cleared() {
     let repository = repository(&host);
 
     repository
-        .set_component_desired_state("lucentroot", "saas-fabric", &preview_two(), "Promote LucentRoot")
+        .set_component_desired_state(
+            "lucentroot",
+            "saas-fabric",
+            &preview_two(),
+            &at(&repository).await,
+            "Promote LucentRoot",
+        )
         .await
         .unwrap();
 
@@ -313,7 +492,13 @@ async fn a_hold_created_after_the_decision_stops_the_write() {
     host.someone_else_commits(&[(MANIFEST, &held)]);
 
     let failure = repository
-        .set_component_desired_state("lucentroot", "saas-fabric", &preview_two(), "Promote LucentRoot")
+        .set_component_desired_state(
+            "lucentroot",
+            "saas-fabric",
+            &preview_two(),
+            &at(&repository).await,
+            "Promote LucentRoot",
+        )
         .await
         .expect_err("a stale policy view must not carry across a concurrent change");
 
@@ -346,11 +531,17 @@ async fn two_thirds_of_a_release_is_refused() {
     let host = host().await;
     let repository = repository(&host);
 
-    let mut partial = preview_two();
+    let mut partial = preview_two_unit();
     partial.images.remove("console");
 
     let failure = repository
-        .set_component_desired_state("lucentroot", "saas-fabric", &partial, "Promote LucentRoot")
+        .set_component_desired_state(
+            "lucentroot",
+            "saas-fabric",
+            &WantedVersion::Images(partial),
+            &at(&repository).await,
+            "Promote LucentRoot",
+        )
         .await
         .expect_err("a component's images move together");
 
@@ -372,11 +563,17 @@ async fn a_version_change_may_not_become_a_registry_change() {
     let host = host().await;
     let repository = repository(&host);
 
-    let mut elsewhere = preview_two();
+    let mut elsewhere = preview_two_unit();
     elsewhere.images.get_mut("runtime").unwrap().repository = "ghcr.io/attacker/saas-fabric".to_owned();
 
     let failure = repository
-        .set_component_desired_state("lucentroot", "saas-fabric", &elsewhere, "Promote LucentRoot")
+        .set_component_desired_state(
+            "lucentroot",
+            "saas-fabric",
+            &WantedVersion::Images(elsewhere),
+            &at(&repository).await,
+            "Promote LucentRoot",
+        )
         .await
         .expect_err("the registry is not a caller's to choose");
 
@@ -406,7 +603,13 @@ async fn a_pin_declared_outside_the_managed_roots_is_refused() {
         let repository = repository(&host);
 
         let failure = repository
-            .set_component_desired_state("lucentroot", "saas-fabric", &preview_two(), "Promote")
+            .set_component_desired_state(
+                "lucentroot",
+                "saas-fabric",
+                &preview_two(),
+                &at(&repository).await,
+                "Promote",
+            )
             .await
             .expect_err("a trusted manifest still does not get to name any file");
 
@@ -436,8 +639,16 @@ async fn a_managed_root_cannot_open_the_whole_filesystem() {
     ])
     .await;
 
-    let failure = repository(&host)
-        .set_component_desired_state("lucentroot", "saas-fabric", &preview_two(), "Promote")
+    let repository = repository(&host);
+
+    let failure = repository
+        .set_component_desired_state(
+            "lucentroot",
+            "saas-fabric",
+            &preview_two(),
+            &at(&repository).await,
+            "Promote",
+        )
         .await
         .expect_err("no manifest may widen this to the filesystem");
 
@@ -470,7 +681,13 @@ async fn a_pin_declared_in_a_file_that_does_not_carry_it_is_refused() {
     let repository = repository(&host);
 
     let failure = repository
-        .set_component_desired_state("lucentroot", "saas-fabric", &preview_two(), "Promote")
+        .set_component_desired_state(
+            "lucentroot",
+            "saas-fabric",
+            &preview_two(),
+            &at(&repository).await,
+            "Promote",
+        )
         .await
         .expect_err("a file that does not pin the image cannot be repinned");
 
@@ -488,7 +705,13 @@ async fn an_unknown_component_or_environment_is_refused() {
 
     for (environment, component) in [("lucentroot", "keycloak"), ("production", "saas-fabric")] {
         let failure = repository
-            .set_component_desired_state(environment, component, &preview_two(), "Promote")
+            .set_component_desired_state(
+                environment,
+                component,
+                &preview_two(),
+                &at(&repository).await,
+                "Promote",
+            )
             .await
             .expect_err("only what the manifest declares may be moved");
 
@@ -514,8 +737,10 @@ async fn a_manifest_from_a_newer_schema_is_refused_rather_than_guessed_at() {
     ])
     .await;
 
-    let failure = repository(&host)
-        .set_component_desired_state("lucentroot", "saas-fabric", &preview_two(), "Promote")
+    let repository = repository(&host);
+
+    let failure = repository
+        .set_component_desired_state("lucentroot", "saas-fabric", &preview_two(), &unread(), "Promote")
         .await
         .expect_err("a shape this was not written against is not read optimistically");
 
@@ -543,8 +768,10 @@ async fn a_kustomize_pin_that_names_no_image_does_not_even_parse() {
     ])
     .await;
 
-    let failure = repository(&host)
-        .set_component_desired_state("lucentroot", "saas-fabric", &preview_two(), "Promote")
+    let repository = repository(&host);
+
+    let failure = repository
+        .set_component_desired_state("lucentroot", "saas-fabric", &preview_two(), &unread(), "Promote")
         .await
         .expect_err("a pin that names no image cannot be written");
 
@@ -567,8 +794,16 @@ async fn a_pin_naming_an_image_the_component_does_not_publish_is_refused() {
     ])
     .await;
 
-    let failure = repository(&host)
-        .set_component_desired_state("lucentroot", "saas-fabric", &preview_two(), "Promote")
+    let repository = repository(&host);
+
+    let failure = repository
+        .set_component_desired_state(
+            "lucentroot",
+            "saas-fabric",
+            &preview_two(),
+            &at(&repository).await,
+            "Promote",
+        )
         .await
         .expect_err("an image the component does not publish cannot be pinned");
 
@@ -593,8 +828,10 @@ async fn an_unknown_renderer_is_refused_rather_than_guessed_at() {
     ])
     .await;
 
-    let failure = repository(&host)
-        .set_component_desired_state("lucentroot", "saas-fabric", &preview_two(), "Promote")
+    let repository = repository(&host);
+
+    let failure = repository
+        .set_component_desired_state("lucentroot", "saas-fabric", &preview_two(), &unread(), "Promote")
         .await
         .expect_err("a renderer this build does not know is not a renderer");
 
@@ -632,5 +869,513 @@ async fn an_older_schema_is_named_as_a_version_rather_than_a_missing_field() {
     assert!(
         detail.contains("schemaVersion 1") && detail.contains("reads 2"),
         "the version is what it names: {detail}"
+    );
+}
+
+#[tokio::test]
+async fn a_decision_taken_against_state_that_has_since_moved_is_refused() {
+    // The gap this closes. A sweep reads desired state, decides, and writes --
+    // and between the read and the write an operator adds a hold. The write
+    // used to re-read and apply the decision to whatever it found, so the hold
+    // was silently ignored: the decision was right when it was taken and wrong
+    // by the time it landed.
+    //
+    // The revision the decision was read at is now the write's precondition,
+    // so state that moved in between is a conflict.
+    let host = host().await;
+    let repository = repository(&host);
+
+    let stale = at(&repository).await;
+
+    // Somebody else writes. Any write moves the manifest's revision.
+    let held = MANIFEST_TEXT.replace(
+        "    hold: null",
+        "    hold:\n      reason: paused\n      since: 2026-09-04T09:00:00Z",
+    );
+    host.someone_else_commits(&[(MANIFEST, &held)]);
+
+    let failure = repository
+        .set_component_desired_state("lucentroot", "saas-fabric", &preview_two(), &stale, "Promote")
+        .await
+        .expect_err("a decision about the old state cannot be applied to the new one");
+
+    assert!(
+        matches!(failure, PlatformGitError::Conflict { .. }),
+        "moved state is a conflict, not an overwrite: {failure:?}"
+    );
+}
+
+#[tokio::test]
+async fn the_same_decision_applies_cleanly_when_nothing_has_moved() {
+    // The other half, and the one that keeps the test above honest: if a
+    // fresh revision were also refused, the check would be rejecting
+    // everything rather than rejecting staleness.
+    let host = host().await;
+    let repository = repository(&host);
+
+    repository
+        .set_component_desired_state(
+            "lucentroot",
+            "saas-fabric",
+            &preview_two(),
+            &at(&repository).await,
+            "Promote",
+        )
+        .await
+        .expect("a decision taken against current state applies");
+}
+
+// `a_chart_release_must_agree_with_the_artifact_and_the_pin` used to live
+// here. It is gone: with `check_release` now exhaustive over every
+// (artifact, release) combination, a release naming another chart is
+// refused before any pin is read -- which is exactly what
+// `a_helm_release_must_name_the_chart_the_component_publishes` proves below.
+// Keeping both meant two tests exercising the same rejection through the
+// same code path, one of them dressed up with a pin that played no part in
+// the result. The two tests below take its place: they exercise the check
+// this one never reached -- `render`'s pin-vs-artifact comparison -- using a
+// release that agrees with the artifact exactly, so the only thing left to
+// disagree is the pin.
+
+#[tokio::test]
+async fn a_pin_naming_a_chart_the_artifact_does_not_publish_is_refused_even_when_a_release_matches_exactly() {
+    // A release of R/keycloakx that agrees with the artifact exactly passes
+    // `check_release` -- it is decided upstream, before any pin is read, and
+    // has nothing to disagree with here. If `render`'s own pin-vs-artifact
+    // comparison did not also run, `retarget` would go looking for a source
+    // named `postgresql` in R -- find the decoy this fixture carries -- and
+    // move *its* revision to keycloakx's new number, silently deploying the
+    // wrong chart's pin.
+    let manifest = helm_manifest(
+        "keycloak",
+        "7.3.0",
+        CHART_REPOSITORY,
+        CHART,
+        &[(APPLICATION, CHART_REPOSITORY, "postgresql")],
+    );
+    let host = FakePlatformHost::start(&[(MANIFEST, &manifest), (APPLICATION, DECOY_APPLICATION_TEXT)]).await;
+    let repository = repository(&host);
+
+    let matching = WantedVersion::Chart {
+        repository: CHART_REPOSITORY.to_owned(),
+        chart: CHART.to_owned(),
+        version: "7.3.1".to_owned(),
+    };
+
+    let failure = repository
+        .set_component_desired_state(
+            "lucentroot",
+            "keycloak",
+            &matching,
+            &revision_of(&repository, "lucentroot", "keycloak").await,
+            "Promote",
+        )
+        .await
+        .expect_err("a pin naming another chart is the manifest disagreeing with itself");
+
+    assert!(
+        matches!(failure, PlatformGitError::Rejected { .. }),
+        "{failure:?}"
+    );
+    assert_eq!(host.ref_updates(), 0);
+    let application = host.current(APPLICATION).unwrap();
+    assert!(
+        application.contains("targetRevision: 7.3.0"),
+        "the real source moved: {application}"
+    );
+    assert!(
+        application.contains("targetRevision: 16.0.0"),
+        "the decoy's revision moved even though the pin was refused: {application}"
+    );
+}
+
+#[tokio::test]
+async fn a_pin_naming_a_repository_the_artifact_does_not_publish_from_is_refused_even_when_a_release_matches_exactly(
+) {
+    // The other half of the same comparison. Same chart name as the
+    // artifact, wrong repository -- if `render` compared only the chart
+    // name, this would pass, and `retarget` would find the decoy naming
+    // keycloakx from the wrong repository and move its revision instead of
+    // refusing.
+    let manifest = helm_manifest(
+        "keycloak",
+        "7.3.0",
+        CHART_REPOSITORY,
+        CHART,
+        &[(APPLICATION, "https://charts.example.test", CHART)],
+    );
+    let host = FakePlatformHost::start(&[(MANIFEST, &manifest), (APPLICATION, DECOY_APPLICATION_TEXT)]).await;
+    let repository = repository(&host);
+
+    let matching = WantedVersion::Chart {
+        repository: CHART_REPOSITORY.to_owned(),
+        chart: CHART.to_owned(),
+        version: "7.3.1".to_owned(),
+    };
+
+    let failure = repository
+        .set_component_desired_state(
+            "lucentroot",
+            "keycloak",
+            &matching,
+            &revision_of(&repository, "lucentroot", "keycloak").await,
+            "Promote",
+        )
+        .await
+        .expect_err("a pin naming another repository is the manifest disagreeing with itself");
+
+    assert!(
+        matches!(failure, PlatformGitError::Rejected { .. }),
+        "{failure:?}"
+    );
+    assert_eq!(host.ref_updates(), 0);
+    let application = host.current(APPLICATION).unwrap();
+    assert!(
+        application.contains("targetRevision: 7.3.0"),
+        "the real source moved: {application}"
+    );
+    assert!(
+        application.contains("targetRevision: 1.0.0"),
+        "the decoy's revision moved even though the pin was refused: {application}"
+    );
+}
+
+#[tokio::test]
+async fn a_chart_version_with_build_metadata_is_read_back_after_being_advanced_to() {
+    // The gap this closes: `component` used to parse every artifact's
+    // `desired.version` with the OCI grammar, which rejects `+`. Discovery
+    // finds a chart's build metadata, `advance` writes it verbatim, and the
+    // very next read of that component refused it -- a version this build had
+    // itself just written became unreadable.
+    let manifest = helm_manifest(
+        "keycloak",
+        "7.3.0",
+        CHART_REPOSITORY,
+        CHART,
+        &[(APPLICATION, CHART_REPOSITORY, CHART)],
+    );
+    let host = FakePlatformHost::start(&[(MANIFEST, &manifest), (APPLICATION, APPLICATION_TEXT)]).await;
+    let repository = repository(&host);
+
+    let release = Release::Chart {
+        repository: CHART_REPOSITORY.to_owned(),
+        chart: CHART.to_owned(),
+        version: Version::parse_chart("7.3.1+build.7").expect("a chart version may carry build metadata"),
+    };
+
+    repository
+        .advance(
+            "lucentroot",
+            "keycloak",
+            &release,
+            &revision_of(&repository, "lucentroot", "keycloak").await,
+            "Promote",
+        )
+        .await
+        .expect("a chart version with build metadata can be advanced to");
+
+    assert_eq!(host.ref_updates(), 1, "one change is one commit");
+
+    let manifest = host.current(MANIFEST).unwrap();
+    assert!(manifest.contains("version: 7.3.1+build.7"), "{manifest}");
+
+    let application = host.current(APPLICATION).unwrap();
+    assert!(
+        application.contains("targetRevision: 7.3.1+build.7"),
+        "{application}"
+    );
+    assert!(
+        application.contains("targetRevision: PLACEHOLDER"),
+        "the platform repository's own source is not a chart and must not move:\n{application}"
+    );
+
+    let read = repository
+        .component("lucentroot", "keycloak")
+        .await
+        .expect("a version this build just wrote is a version it can read back");
+
+    assert_eq!(read.version.as_str(), "7.3.1+build.7");
+}
+
+#[tokio::test]
+async fn an_image_version_with_build_metadata_is_refused_on_read() {
+    // The asymmetry that makes the round trip above meaningful: this is not a
+    // relaxed rule for everyone, it is the artifact's grammar. An OCI tag
+    // cannot carry `+`, so an image component whose `desired.version`
+    // somehow carries build metadata is refused rather than read as if the
+    // `+` were not there.
+    let manifest = MANIFEST_TEXT.replace("version: 0.3.0-preview.1", "version: 0.3.0-preview.1+build");
+    let host = FakePlatformHost::start(&[(MANIFEST, &manifest)]).await;
+    let repository = repository(&host);
+
+    let failure = repository
+        .component("lucentroot", "saas-fabric")
+        .await
+        .expect_err("an image version cannot carry build metadata");
+
+    assert!(
+        matches!(failure, DesiredStateError::Refused { .. }),
+        "{failure:?}"
+    );
+    assert_eq!(host.ref_updates(), 0, "a read must never write");
+}
+
+#[tokio::test]
+async fn a_helm_component_cannot_be_asked_to_accept_container_images() {
+    // Before `check_release` covered every combination, it returned `Ok(())`
+    // for every (artifact, release) pair except (Oci, Images). With
+    // `pinnedIn: []` there was nothing for `rewrite_pins` to disagree with
+    // either, so `apply` would have written the image release's version
+    // string into a Helm component's `desired.version` regardless.
+    let manifest = helm_manifest("keycloak", "7.3.0", CHART_REPOSITORY, CHART, &[]);
+    let host = FakePlatformHost::start(&[(MANIFEST, &manifest)]).await;
+    let repository = repository(&host);
+
+    let failure = repository
+        .set_component_desired_state(
+            "lucentroot",
+            "keycloak",
+            &WantedVersion::Images(preview_two_unit()),
+            &revision_of(&repository, "lucentroot", "keycloak").await,
+            "Promote",
+        )
+        .await
+        .expect_err("a Helm component cannot accept an image release");
+
+    assert!(
+        matches!(failure, PlatformGitError::Rejected { .. }),
+        "{failure:?}"
+    );
+    assert_eq!(host.ref_updates(), 0);
+    assert!(host.current(MANIFEST).unwrap().contains("version: 7.3.0"));
+}
+
+#[tokio::test]
+async fn an_oci_component_cannot_be_asked_to_accept_a_chart_release() {
+    // The other half of the same hole: an OCI component with `pinnedIn: []`
+    // offered a chart release used to reach `apply` unrejected too, and would
+    // have ended up claiming a chart's version with no digest to match it.
+    let manifest = MANIFEST_TEXT.replace(
+        "    pinnedIn:\n      - renderer: kustomize-image\n        path: applications/core/saas-fabric-control-plane/overlays/lucentroot/kustomization.yaml\n        image: console\n      - renderer: kustomize-image\n        path: applications/core/saas-fabric-control-plane/overlays/lucentroot/kustomization.yaml\n        image: controlPlane\n      - renderer: kustomize-image\n        path: applications/core/saas-fabric/overlays/lucentroot/kustomization.yaml\n        image: runtime\n",
+        "    pinnedIn: []\n",
+    );
+    let host = FakePlatformHost::start(&[(MANIFEST, &manifest)]).await;
+    let repository = repository(&host);
+
+    let chart_release = WantedVersion::Chart {
+        repository: CHART_REPOSITORY.to_owned(),
+        chart: CHART.to_owned(),
+        version: "7.3.1".to_owned(),
+    };
+
+    let failure = repository
+        .set_component_desired_state(
+            "lucentroot",
+            "saas-fabric",
+            &chart_release,
+            &at(&repository).await,
+            "Promote",
+        )
+        .await
+        .expect_err("an OCI component cannot accept a chart release");
+
+    assert!(
+        matches!(failure, PlatformGitError::Rejected { .. }),
+        "{failure:?}"
+    );
+    assert_eq!(host.ref_updates(), 0);
+}
+
+#[tokio::test]
+async fn a_helm_release_must_name_the_chart_the_component_publishes() {
+    // A different chart from the same repository. Nothing here pins
+    // anything, so before the exact-identity rule this fell through to
+    // `Ok(())` and `apply` recorded the wrong chart's version as this
+    // component's own.
+    let manifest = helm_manifest("keycloak", "7.3.0", CHART_REPOSITORY, CHART, &[]);
+    let host = FakePlatformHost::start(&[(MANIFEST, &manifest)]).await;
+    let repository = repository(&host);
+
+    let elsewhere = WantedVersion::Chart {
+        repository: CHART_REPOSITORY.to_owned(),
+        chart: "postgresql".to_owned(),
+        version: "16.0.0".to_owned(),
+    };
+
+    let failure = repository
+        .set_component_desired_state(
+            "lucentroot",
+            "keycloak",
+            &elsewhere,
+            &revision_of(&repository, "lucentroot", "keycloak").await,
+            "Promote",
+        )
+        .await
+        .expect_err("a different chart in the same repository is not this component's release");
+
+    assert!(
+        matches!(failure, PlatformGitError::Rejected { .. }),
+        "{failure:?}"
+    );
+    assert_eq!(host.ref_updates(), 0);
+}
+
+#[tokio::test]
+async fn a_helm_release_must_come_from_the_repository_the_component_publishes_from() {
+    // The same chart name, from a different repository. Matching on the
+    // chart name alone would let this through, and the difference between
+    // the two repositories is which software gets deployed.
+    let manifest = helm_manifest("keycloak", "7.3.0", CHART_REPOSITORY, CHART, &[]);
+    let host = FakePlatformHost::start(&[(MANIFEST, &manifest)]).await;
+    let repository = repository(&host);
+
+    let elsewhere = WantedVersion::Chart {
+        repository: "https://charts.example.test".to_owned(),
+        chart: CHART.to_owned(),
+        version: "7.3.1".to_owned(),
+    };
+
+    let failure = repository
+        .set_component_desired_state(
+            "lucentroot",
+            "keycloak",
+            &elsewhere,
+            &revision_of(&repository, "lucentroot", "keycloak").await,
+            "Promote",
+        )
+        .await
+        .expect_err("the same chart name from a different repository is different software");
+
+    assert!(
+        matches!(failure, PlatformGitError::Rejected { .. }),
+        "{failure:?}"
+    );
+    assert_eq!(host.ref_updates(), 0);
+}
+
+#[tokio::test]
+async fn a_helm_release_that_matches_exactly_is_written_even_with_no_pins() {
+    // The two tests above prove the rule rejects a mismatch; this proves it
+    // is not simply rejecting every chart release -- an exact match still
+    // writes, even though there is no pin file for `rewrite_pins` to touch.
+    let manifest = helm_manifest("keycloak", "7.3.0", CHART_REPOSITORY, CHART, &[]);
+    let host = FakePlatformHost::start(&[(MANIFEST, &manifest)]).await;
+    let repository = repository(&host);
+
+    let matching = WantedVersion::Chart {
+        repository: CHART_REPOSITORY.to_owned(),
+        chart: CHART.to_owned(),
+        version: "7.3.1".to_owned(),
+    };
+
+    repository
+        .set_component_desired_state(
+            "lucentroot",
+            "keycloak",
+            &matching,
+            &revision_of(&repository, "lucentroot", "keycloak").await,
+            "Promote",
+        )
+        .await
+        .expect("an exact match is this component's release");
+
+    assert_eq!(host.ref_updates(), 1);
+    assert!(host.current(MANIFEST).unwrap().contains("version: 7.3.1"));
+}
+
+/// The hold a rollback writes, as the service composes it.
+fn rollback_hold() -> Hold {
+    Hold {
+        reason: "rollback".to_owned(),
+        since: "2026-09-04T09:00:00Z".to_owned(),
+        note: None,
+    }
+}
+
+#[tokio::test]
+async fn a_helm_component_cannot_be_rolled_back_to_an_image_release() {
+    // Rolling back is offered for both kinds now, so `roll_back_component`
+    // takes whichever shape a caller brings -- which makes this the same hole
+    // as `advance`, reached from the rollback path. The *shape* is what is
+    // refused, not the kind: an image release is not a version of a Helm
+    // component whatever number it carries.
+    let manifest = helm_manifest("keycloak", "7.3.0", CHART_REPOSITORY, CHART, &[]);
+    let host = FakePlatformHost::start(&[(MANIFEST, &manifest)]).await;
+    let repository = repository(&host);
+
+    let failure = repository
+        .roll_back_component(
+            "lucentroot",
+            "keycloak",
+            &WantedVersion::Images(preview_two_unit()),
+            &rollback_hold(),
+            &revision_of(&repository, "lucentroot", "keycloak").await,
+            "Roll back",
+        )
+        .await
+        .expect_err("a Helm component cannot be rolled back to an image release");
+
+    assert!(
+        matches!(failure, PlatformGitError::Rejected { .. }),
+        "{failure:?}"
+    );
+    assert_eq!(host.ref_updates(), 0);
+}
+
+#[tokio::test]
+async fn a_helm_component_is_rolled_back_to_an_older_chart_version_and_held_there() {
+    // The other half, and the one the decision turns on: an operator whose
+    // chart upgrade went wrong gets a route back through the product rather
+    // than a hand edit of the platform repository. The version moves in the
+    // manifest and in the Argo source the pin names, the hold travels in the
+    // same commit so the next sweep does not undo it, and nothing else in the
+    // file is touched -- including the platform repository's own source, which
+    // is not a chart and carries a `targetRevision` of its own.
+    let manifest = helm_manifest(
+        "keycloak",
+        "7.3.1",
+        CHART_REPOSITORY,
+        CHART,
+        &[(APPLICATION, CHART_REPOSITORY, CHART)],
+    );
+    let application = APPLICATION_TEXT.replace("targetRevision: 7.3.0", "targetRevision: 7.3.1");
+    let host = FakePlatformHost::start(&[(MANIFEST, &manifest), (APPLICATION, &application)]).await;
+    let repository = repository(&host);
+
+    let older = Release::Chart {
+        repository: CHART_REPOSITORY.to_owned(),
+        chart: CHART.to_owned(),
+        version: Version::parse("7.3.0").expect("a chart version"),
+    };
+
+    repository
+        .roll_back(
+            "lucentroot",
+            "keycloak",
+            &older,
+            &rollback_hold(),
+            &revision_of(&repository, "lucentroot", "keycloak").await,
+            "Roll keycloak in lucentroot back to 7.3.0",
+        )
+        .await
+        .expect("a chart component rolls back");
+
+    assert_eq!(host.ref_updates(), 1, "the version and the hold are one commit");
+
+    let manifest = host.current(MANIFEST).unwrap();
+    assert!(manifest.contains("version: 7.3.0"), "{manifest}");
+    assert!(
+        manifest.contains("reason: rollback"),
+        "the hold must travel with the version: {manifest}"
+    );
+
+    let application = host.current(APPLICATION).unwrap();
+    assert!(
+        application.contains("targetRevision: 7.3.0"),
+        "the chart source did not move back: {application}"
+    );
+    assert!(
+        application.contains("targetRevision: PLACEHOLDER"),
+        "the platform repository's own source is not a chart and must not move: {application}"
     );
 }

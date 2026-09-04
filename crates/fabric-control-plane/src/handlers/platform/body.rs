@@ -46,6 +46,17 @@ pub struct ComponentRow {
     /// The standing decision about advancement.
     pub policy: &'static str,
 
+    /// What this component is published as: `oci` or `helm`.
+    ///
+    /// Not "whether it can be rolled back". Both kinds can — rolling back
+    /// restores an older published version — and what differs is
+    /// how much of the old release returns: an image rollback restores the
+    /// exact bytes, a chart rollback restores the version, and a chart
+    /// repository may have republished the bytes behind it. The console needs
+    /// the kind so it can say which, which the `rollable` boolean this
+    /// replaces had nowhere to say from.
+    pub artifact: &'static str,
+
     /// Whether an operator has paused an otherwise automatic component.
     ///
     /// A separate field rather than a third policy value, because the operator

@@ -67,6 +67,14 @@ pub struct ControlPlaneAppConfig {
     /// repository that accepts connections and never answers would hold
     /// operator requests open until the browser gave up, with nothing in the
     /// logs to say why.
+    ///
+    /// It is also the ceiling in a rule startup enforces:
+    /// `git_host.http_timeout_seconds` plus
+    /// `platform_management.operation_timeout_seconds` must be strictly less
+    /// than this. That sum is the longest a disconnect can wait for the
+    /// binding to drain, so the maximum drain time is bounded below this with
+    /// explicit headroom for the rest of the integration operation — the
+    /// deletions after it, and the storing a rebind does before it.
     #[serde(default = "default_request_timeout")]
     pub request_timeout_seconds: u64,
 }

@@ -193,6 +193,53 @@ seconds, and cannot produce a wrong outcome.
 binding. Deleting an organisation's application from a console button would be
 doing more than the button said.
 
+**A transition outlives the request that asked for it.** Settling a repository
+writes two places — the stored record, and the live binding — and pointing the
+binding somewhere new waits for the operations still running against where it
+used to point. Run inside an operator's request, that wait was cancellable, so
+a request timeout or a closed browser could drop the future between the two
+halves: the record naming the repository the operator chose and the platform
+still reading the one they replaced, with nothing to report it. A disconnect had
+the mirror of it — cut off after the drain and before the deletions, it left the
+binding released with the key and the record still there, which is the opposite
+of the "it has done nothing" its own documentation used to claim.
+
+So the whole of each transition — save then rebind, or unbind then delete then
+clear — runs in a task the handler only *awaits*. A caller that goes away
+detaches it rather than stopping it, and the platform converges regardless; the
+operator may see a `504` and find the change already made, and asking again is
+safe rather than the only repair. The transitions are also **ordered** against
+one another, so two overlapping ones cannot interleave into a record naming one
+repository and a binding pointing at another: each applies in full, and the
+platform ends on whichever ran last.
+
+Ordering the writes is not enough on its own, because a request's authority to
+write is what it read. A rebind reads the record and the private key, goes and
+asks the host what the installation reaches, and only then queues — and a
+disconnect taking its turn inside that window would be undone by the rebind
+saving the record again and binding with a key the store no longer has. So the
+order carries a **generation**: a request reads it before it reads anything
+else, hands it back when it queues, and is refused with `409 integration_moved`
+if it moved in between, without writing anything. A disconnect that ran first
+therefore wins, and the operator who asked for the rebind is told to look again
+and ask again. Only the transitions built on such a read check. A disconnect, a
+restore at startup and an application's creation depend on nothing they read
+from the stores, and a creation racing a disconnect is a creation.
+
+This is the same reasoning as the drain itself — an operation the caller cannot
+cancel — applied one level up, to the workflow that changes what is bound rather
+than to the operations running through it. Its residuals are the same two: a
+panic, and a runtime dropped at shutdown. Both leave a transition nobody
+observed to the end, which is logged and answered as unavailable rather than as
+a failure — and both still move the generation, because the bump is a guard
+that runs on unwind and on drop, so nothing prepared before a transition that
+died can be admitted on the strength of what it read.
+
+The order is one control plane's. A second replica shares neither the turn nor
+the generation, and the compare sets a local counter against a record and a key
+read from the secret store — so the rule holds within one process, and rests on
+that store reading its own writes.
+
 ### Where the platform keeps its own state
 
 Two ports, one backing service, and the separation is in the types rather than
@@ -348,6 +395,63 @@ The selector's own docs already claimed this. They were describing the
 intended design, not the implemented one: the precondition was the revision the
 *adapter* had just read for itself, which proves only that nothing changed
 during the write.
+
+The state a decision is taken against includes **which repository was bound**,
+so a disconnect or a rebind between the read and the write is a conflict too —
+and a disconnect completes only once the operations already in flight against
+the old repository have finished, so nothing this platform reports as done was
+done to a repository an operator had already stopped targeting.
+
+That wait is bounded by the adapter's **operation budget**, not by the timeout
+on any one request to the Git host: an operation is around thirty requests, so
+bounding them individually would still let a stalling host hold the binding for
+minutes, and the operator's disconnect would be cut off by the request timeout
+before it could answer them. `platform_management.operation_timeout_seconds` is
+the budget. It is a gate on *starting* a request rather than a timeout around
+the operation — it never abandons a write already sent — so an operation runs
+for at most the budget plus one `git_host.http_timeout_seconds`, and startup
+refuses to run unless that **sum** is shorter than `request_timeout_seconds`.
+
+Cancellation no longer weakens any of this. Three things could once drop an
+operation mid-write and release the lock with its last request possibly already
+sent — a browser disconnecting, the request timeout firing, and the budget
+itself expiring. A caller going away now cancels nothing, because each delegated
+operation runs in a task of its own that owns the read guard; and the budget
+refuses the next request instead of dropping a write in flight. So the invariant
+is unqualified: **a disconnect or a rebind returns only after every request the
+platform started against the old repository has an outcome, and the platform
+never starts one against it afterwards.**
+
+Three residuals remain, and all three are stated rather than hidden. The first
+is inherent to a network: a request the platform gave up on after
+`git_host.http_timeout_seconds` is not a request the host gave up applying, so a
+ref update reported as failed may be committed by the host a moment later.
+Nothing can withdraw it and nothing reports it as done; the next read sees
+whatever landed.
+
+The second is a **panic** inside an operation, which drops the read guard and
+the request in flight together — the caller is told the platform is unavailable,
+and nobody can say whether the host applied the call. The third is **process
+shutdown**: an operation runs detached in a task of its own, and a task does not
+survive the runtime being dropped once graceful shutdown has returned, so
+whatever was still running stops where it stood.
+
+None of the three is a swap returning early — one that has returned has waited —
+and all three collapse into the same caveat as the first: the platform gave up
+on a call the host may still apply, and reports it as failed either way.
+
+What the bound guarantees is the **drain**, and only that. A disconnect spends
+time before it and deletes a key and a record after it; a rebind stores and
+builds before it waits. So the honest statement of the rule is that *the
+maximum drain time is bounded below the API request timeout, leaving explicit
+headroom for the rest of the integration operation* — not that a whole handler
+fits inside one request, which the sum has never shown. The defaults
+(15 + 10 against 30) leave five seconds of that headroom.
+
+And the headroom is a courtesy to the operator rather than a correctness
+requirement, because a request that runs out of it no longer loses the work:
+the integration transition finishes in a task of its own either way. What a
+`504` costs is the answer, not the outcome.
 
 #### The series only means something for a prerelease
 
@@ -616,7 +720,7 @@ console reads on load.
 
 ### Errors
 
-Ten codes, because an operator needs to tell the cases apart (§23):
+Distinct codes, because an operator needs to tell the cases apart (§23); among them:
 `unauthenticated`, `unknown_client`, `invalid_request`, `desired_state_invalid`,
 `revision_required`, `revision_conflict`, `realm_immutable`,
 `repository_unavailable`, `repository_denied`, `repository_rejected`.

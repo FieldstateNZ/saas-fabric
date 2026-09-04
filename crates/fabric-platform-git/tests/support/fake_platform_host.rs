@@ -2,11 +2,12 @@
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine as _;
 
-use crate::support::http_server::{self, RecordedRequest};
+use crate::support::http_server::{self, Delay, RecordedRequest, Traffic};
 
 /// The account the fake repository belongs to.
 pub const OWNER: &str = "fieldstatenz";
@@ -79,13 +80,23 @@ pub struct FakePlatformHost {
     /// Its state.
     state: Arc<Mutex<State>>,
 
-    /// Every request it received.
-    requests: Arc<Mutex<Vec<RecordedRequest>>>,
+    /// What it received, and what it finished answering.
+    traffic: Traffic,
 }
 
 impl FakePlatformHost {
     /// Starts a host whose branch holds the given files.
     pub async fn start(files: &[(&str, &str)]) -> Self {
+        Self::start_delaying(files, Arc::new(|_| Duration::ZERO)).await
+    }
+
+    /// The same, but sitting on chosen requests before answering them.
+    ///
+    /// The delay is per request rather than global so a test can single out one
+    /// call — the ref update, say — and leave the rest prompt. That is what
+    /// separates "the operation gave up on a call already sent" from "the
+    /// operation declined to start the next one".
+    pub async fn start_delaying(files: &[(&str, &str)], delay: Delay) -> Self {
         let snapshot: BTreeMap<String, String> = files
             .iter()
             .map(|(path, text)| ((*path).to_owned(), (*text).to_owned()))
@@ -107,19 +118,20 @@ impl FakePlatformHost {
             ref_update_status: None,
         }));
 
-        let requests = Arc::new(Mutex::new(Vec::new()));
+        let traffic = Traffic::new();
         let responder_state = Arc::clone(&state);
 
-        let base_url = http_server::start(
+        let base_url = http_server::start_delaying(
             Arc::new(move |request| respond(&responder_state, request)),
-            Arc::clone(&requests),
+            traffic.clone(),
+            delay,
         )
         .await;
 
         Self {
             base_url,
             state,
-            requests,
+            traffic,
         }
     }
 
@@ -160,11 +172,32 @@ impl FakePlatformHost {
 
     /// Every path the fake was asked for.
     pub fn paths(&self) -> Vec<String> {
-        self.requests
+        self.traffic
+            .requests
             .lock()
             .unwrap()
             .iter()
             .map(|request| format!("{} {}", request.method, request.path))
+            .collect()
+    }
+
+    /// Every request whose answer the fake wrote in full.
+    ///
+    /// A request that appears in [`paths`](Self::paths) and not here was
+    /// abandoned by the caller partway through, which is precisely what the
+    /// operation budget must never do.
+    pub fn completed(&self) -> Vec<String> {
+        self.traffic.completed.lock().unwrap().clone()
+    }
+
+    /// When each request reached the fake.
+    pub fn request_times(&self) -> Vec<Instant> {
+        self.traffic
+            .requests
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|request| request.at)
             .collect()
     }
 }

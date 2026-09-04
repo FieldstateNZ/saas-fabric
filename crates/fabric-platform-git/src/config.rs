@@ -23,6 +23,31 @@ pub struct PlatformRepositoryConfig {
 
     /// How long any one request may take.
     pub http_timeout_seconds: u64,
+
+    /// How long a whole desired-state operation may take.
+    ///
+    /// # Why one request's timeout is not enough
+    ///
+    /// A single `advance` is around thirty HTTP calls: the manifest, the pins
+    /// it names, their blobs, and then up to four rounds of tree, commit and
+    /// ref update with a re-read between each. `http_timeout_seconds` bounds
+    /// one of those. A host that accepts every connection and answers each one
+    /// just inside the limit can therefore keep the operation going for minutes.
+    ///
+    /// That matters because the platform binding holds a lock across the whole
+    /// call, so an unbind waits for it — and the operator's disconnect request
+    /// is itself cut off by the API's request timeout long before an unbounded
+    /// operation would finish. This is the budget that makes the wait bounded
+    /// by construction rather than by hope.
+    ///
+    /// It is a gate on *starting* a request, not a timeout around the
+    /// operation: a write already on the wire runs to its own outcome under
+    /// `http_timeout_seconds`, and the request after it is refused (only a
+    /// bearer acquisition, which writes nothing, is ever cut short). So the real
+    /// bound on one operation is this value plus one `http_timeout_seconds`,
+    /// which is the sum a deployment's `request_timeout_seconds` is checked
+    /// against at startup.
+    pub operation_timeout_seconds: u64,
 }
 
 impl PlatformRepositoryConfig {
@@ -52,6 +77,10 @@ impl PlatformRepositoryConfig {
             return Err("platform repository: http_timeout_seconds is zero".to_owned());
         }
 
+        if self.operation_timeout_seconds == 0 {
+            return Err("platform repository: operation_timeout_seconds is zero".to_owned());
+        }
+
         Ok(())
     }
 
@@ -72,6 +101,7 @@ mod tests {
             repository: "saas-fabric-platform".to_owned(),
             branch: "main".to_owned(),
             http_timeout_seconds: 10,
+            operation_timeout_seconds: 20,
         }
     }
 
@@ -119,6 +149,21 @@ mod tests {
         config.http_timeout_seconds = 0;
 
         assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn a_zero_operation_budget_is_refused() {
+        // Zero would make every operation time out immediately, which is not
+        // "unbounded" in the other direction so much as "nothing works" -- and
+        // the binding's drain would then be bounded by a repository that never
+        // succeeds. Both readings are wrong, so it is refused.
+        let mut config = valid();
+        config.operation_timeout_seconds = 0;
+
+        let message = config
+            .validate()
+            .expect_err("a zero operation budget should be refused");
+        assert!(message.contains("operation_timeout_seconds"), "{message}");
     }
 
     #[test]

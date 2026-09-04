@@ -29,6 +29,7 @@ fabric-keycloak.workspace = true
 fabric-openbao.workspace = true
 fabric-reconciliation.workspace = true
 
+async-trait.workspace = true
 axum.workspace = true
 figment.workspace = true
 serde.workspace = true

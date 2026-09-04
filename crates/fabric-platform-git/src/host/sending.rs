@@ -55,12 +55,38 @@ impl PlatformGitRepository {
             return Ok(response);
         }
 
-        self.bearers.invalidate().await;
+        // Bounded the same way the acquisition is, because it waits on the
+        // same mutex: a mint stalled ahead of this would otherwise hold the
+        // operation -- and the binding's guard -- for as long as the queue
+        // in front of it. Cut short, the operation ends as unavailable with
+        // the dead token still cached; the next operation forgets it instead.
+        tokio::time::timeout(self.bearer_allowance(), self.bearers.invalidate())
+            .await
+            .map_err(|_expired| self.out_of_budget())?;
 
         self.attempt(operation, method, url, body).await
     }
 
     /// Applies the headers, a current bearer, and sends once.
+    ///
+    /// # The operation's budget is checked here, and only here
+    ///
+    /// This is the one place in the adapter where anything goes on the wire, so
+    /// it is the one place that can decide not to. The budget gates the
+    /// *starting* of a request rather than timing the operation out — see
+    /// [`refuse_if_the_budget_is_spent`](PlatformGitRepository::refuse_if_the_budget_is_spent)
+    /// — which is what keeps a write already sent from being abandoned.
+    ///
+    /// Twice, because obtaining a bearer under the App posture mints one, and a
+    /// mint is a request like any other: checking only at the top would let one
+    /// that consumed the last of the budget be followed by the call itself, and
+    /// the operation would run a second request timeout past its bound.
+    ///
+    /// The acquisition *between* the two checks is bounded rather than gated,
+    /// because neither check sees the queue inside it — see
+    /// [`bearer_allowance`](PlatformGitRepository::bearer_allowance). Cutting a
+    /// mint short is safe where cutting a write short is not: a token exchange
+    /// has no desired-state side effect, which is all that rule protects.
     async fn attempt(
         &self,
         operation: &str,
@@ -68,13 +94,20 @@ impl PlatformGitRepository {
         url: String,
         body: Option<serde_json::Value>,
     ) -> Result<Response, PlatformGitError> {
+        self.refuse_if_the_budget_is_spent()?;
+
         let mut headers = HeaderMap::new();
         headers.insert(ACCEPT, HeaderValue::from_static("application/vnd.github+json"));
         headers.insert(API_VERSION_HEADER, HeaderValue::from_static(API_VERSION));
         // Required by the host, which refuses requests without one.
         headers.insert(USER_AGENT, HeaderValue::from_static("saas-fabric-control-plane"));
 
-        let bearer = self.bearers.bearer(&self.http).await?;
+        let acquired = tokio::time::timeout(self.bearer_allowance(), self.bearers.bearer(&self.http))
+            .await
+            .map_err(|_expired| self.out_of_budget())?;
+        let bearer = acquired?;
+
+        self.refuse_if_the_budget_is_spent()?;
 
         let mut builder = self
             .http

@@ -28,3 +28,4 @@ mod fake_platform_host;
 mod http_server;
 
 pub use fake_platform_host::{FakePlatformHost, BRANCH, OWNER, REPOSITORY};
+pub use http_server::RecordedRequest;

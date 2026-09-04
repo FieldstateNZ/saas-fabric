@@ -2,6 +2,7 @@
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::net::{TcpListener, TcpStream};
@@ -20,13 +21,64 @@ pub struct RecordedRequest {
 
     /// The `Authorization` header, if one was sent.
     pub authorization: Option<String>,
+
+    /// When the server finished reading it, which is as close to "when the
+    /// client sent it" as this side can observe.
+    ///
+    /// Here so a test can assert that no request *started* after an operation's
+    /// budget expired — the property that separates "refused to begin another
+    /// call" from "dropped the call it had already made".
+    pub at: Instant,
 }
 
 /// What a fake answers with.
 pub type Responder = Arc<dyn Fn(&RecordedRequest) -> (u16, String) + Send + Sync>;
 
+/// How long the server sits on a request before answering it.
+///
+/// A slow *answer*, not a dead connection: the request is read, the response is
+/// built, and only the writing of it waits. That is the shape a budget has to
+/// cope with — everything below HTTP is healthy, so nothing errors and nothing
+/// retries, and the call simply takes longer than the caller hoped.
+pub type Delay = Arc<dyn Fn(&RecordedRequest) -> Duration + Send + Sync>;
+
+/// What the server saw, and what it finished.
+#[derive(Clone)]
+pub struct Traffic {
+    /// Every request, in the order they were read.
+    pub requests: Arc<Mutex<Vec<RecordedRequest>>>,
+
+    /// `METHOD path` for each request whose response was written in full.
+    ///
+    /// Separate from `requests` because the difference between the two is the
+    /// whole question: a request that was started and a request that ran to its
+    /// outcome are the same entry in one list and different entries in both.
+    pub completed: Arc<Mutex<Vec<String>>>,
+}
+
+impl Traffic {
+    /// An empty log.
+    pub fn new() -> Self {
+        Self {
+            requests: Arc::new(Mutex::new(Vec::new())),
+            completed: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+}
+
+impl Default for Traffic {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Starts a server on an ephemeral port and returns its base URL.
-pub async fn start(responder: Responder, recorded: Arc<Mutex<Vec<RecordedRequest>>>) -> String {
+pub async fn start(responder: Responder, traffic: Traffic) -> String {
+    start_delaying(responder, traffic, Arc::new(|_| Duration::ZERO)).await
+}
+
+/// The same, with a per-request delay before the answer is written.
+pub async fn start_delaying(responder: Responder, traffic: Traffic, delay: Delay) -> String {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
 
@@ -36,9 +88,10 @@ pub async fn start(responder: Responder, recorded: Arc<Mutex<Vec<RecordedRequest
                 return;
             };
             let responder = Arc::clone(&responder);
-            let recorded = Arc::clone(&recorded);
+            let delay = Arc::clone(&delay);
+            let traffic = traffic.clone();
 
-            tokio::spawn(async move { serve(stream, &responder, &recorded).await });
+            tokio::spawn(async move { serve(stream, &responder, &delay, &traffic).await });
         }
     });
 
@@ -46,14 +99,14 @@ pub async fn start(responder: Responder, recorded: Arc<Mutex<Vec<RecordedRequest
 }
 
 /// Serves every request on one keep-alive connection.
-async fn serve(mut stream: TcpStream, responder: &Responder, recorded: &Arc<Mutex<Vec<RecordedRequest>>>) {
+async fn serve(mut stream: TcpStream, responder: &Responder, delay: &Delay, traffic: &Traffic) {
     let mut buffer = Vec::new();
 
     loop {
         let Some(request) = read_request(&mut stream, &mut buffer).await else {
             return;
         };
-        recorded.lock().unwrap().push(request.clone());
+        traffic.requests.lock().unwrap().push(request.clone());
 
         let (status, body) = responder(&request);
         let response = format!(
@@ -61,9 +114,17 @@ async fn serve(mut stream: TcpStream, responder: &Responder, recorded: &Arc<Mute
             body.len()
         );
 
+        tokio::time::sleep(delay(&request)).await;
+
         if stream.write_all(response.as_bytes()).await.is_err() {
             return;
         }
+
+        traffic
+            .completed
+            .lock()
+            .unwrap()
+            .push(format!("{} {}", request.method, request.path));
     }
 }
 
@@ -115,6 +176,7 @@ async fn read_request(stream: &mut TcpStream, buffer: &mut Vec<u8>) -> Option<Re
         path,
         body,
         authorization: headers.get("authorization").cloned(),
+        at: Instant::now(),
     })
 }
 

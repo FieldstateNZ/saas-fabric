@@ -46,6 +46,11 @@ impl ControlPlaneError {
             Self::Platform(_) => "platform_unavailable",
             Self::GitHostRefused => "git_host_refused",
             Self::IntegrationRefused(_) => "integration_refused",
+            // Its own code beside `revision_conflict` and `platform_state_moved`,
+            // for the reason those two are apart: all three mean "read again and
+            // redo it", and a console that could only see `409` would not know
+            // whether to reload a client, a component, or the integration page.
+            Self::IntegrationMoved => "integration_moved",
             Self::IntegrationNotConfigured => "integration_not_configured",
 
             // Distinct codes for statuses that collide. A console that could

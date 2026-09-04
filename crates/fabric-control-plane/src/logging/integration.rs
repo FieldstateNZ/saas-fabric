@@ -102,6 +102,23 @@ pub(crate) fn integration_transition_unobserved() {
     );
 }
 
+/// A transition was turned away because the integration had moved under it.
+///
+/// Warned rather than errored, beside `operator_refused`: nothing failed and
+/// nothing was written, but somebody's click did not take effect and the only
+/// record of why is here. The operator is named nowhere in it — this is the one
+/// integration event where no change landed, so there is nothing to attribute,
+/// and the request that was turned away is already accounted for by the `409`
+/// its caller received.
+pub(crate) fn integration_transition_moved() {
+    tracing::warn!(
+        event = "control_plane.integration_transition_moved",
+        event_id = event_id(DOMAIN_ID, EventType::Warning, 5),
+        "an integration transition was prepared against state that has since moved; nothing was \
+         written"
+    );
+}
+
 /// A stored integration could not be restored at startup.
 ///
 /// Warned rather than errored, and the process continues. The platform reports

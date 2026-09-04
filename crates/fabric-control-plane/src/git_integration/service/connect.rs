@@ -75,12 +75,19 @@ impl GitIntegrationService {
         // leave a key nothing accounts for, and the code that minted it is
         // spent, so repeating the flow orphans a second application on the
         // host. See `settling.rs`.
+        //
+        // No generation, so nothing can refuse it for one that moved. Creation
+        // depends on nothing it read: what it writes came from the host moments
+        // ago and is the *first* thing this platform knows about the
+        // application. A creation racing a disconnect is a creation -- the
+        // operator is establishing an integration rather than editing the one
+        // being forgotten -- and refusing it strands a key nobody can re-mint.
         let kind = self.kind;
         let secrets = Arc::clone(&self.secrets);
         let store = Arc::clone(&self.store);
         let subject = flow.operator.clone();
 
-        settling(Arc::clone(&self.transitions), async move {
+        settling(Arc::clone(&self.transitions), None, async move {
             secrets
                 .put(&SecretName::new(kind.private_key()), &created.private_key)
                 .await?;

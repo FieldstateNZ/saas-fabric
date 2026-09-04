@@ -35,10 +35,32 @@ struct FakeHost {
 
     /// How many times an installation was inspected.
     inspections: Mutex<usize>,
+
+    /// Where `inspect_installation` waits, when a test wants to hold it there.
+    ///
+    /// Absent for every test that does not care. See [`Gate`], and see
+    /// [`FakeHost::gated`] for why the door is sometimes on the host rather
+    /// than on the target.
+    gate: Option<Arc<Gate>>,
 }
 
 impl FakeHost {
     fn reaching(repositories: &[(&str, &str)]) -> Arc<Self> {
+        Self::behaving(repositories, None)
+    }
+
+    /// A host whose every installation inspection has to get past `gate`.
+    ///
+    /// A request is parked *there* — after it has read the generation, the
+    /// record and the key, and before it queues for its turn. That is the
+    /// window a transition prepared against state that then moves lives in, and
+    /// a door on the target cannot reproduce it: by the time the target is
+    /// reached, the turn has already been taken and the compare already made.
+    fn gated(repositories: &[(&str, &str)], gate: &Arc<Gate>) -> Arc<Self> {
+        Self::behaving(repositories, Some(Arc::clone(gate)))
+    }
+
+    fn behaving(repositories: &[(&str, &str)], gate: Option<Arc<Gate>>) -> Arc<Self> {
         Arc::new(Self {
             behaviour: Mutex::new(Behaviour {
                 repositories: repositories
@@ -52,6 +74,7 @@ impl FakeHost {
                 ..Behaviour::default()
             }),
             inspections: Mutex::new(0),
+            gate,
         })
     }
 
@@ -106,6 +129,12 @@ impl GitAppProvisioning for FakeHost {
         _private_key: &SecretValue,
         _installation_id: &str,
     ) -> Result<InstallationDetail, ProvisioningError> {
+        // Before the counters, and before any lock: a std guard held across the
+        // door's await would be a guard held across an await point.
+        if let Some(gate) = self.gate.as_ref() {
+            gate.pass().await;
+        }
+
         *self.inspections.lock().expect("the fake is not poisoned") += 1;
 
         let behaviour = self.behaviour.lock().expect("the fake is not poisoned");
@@ -649,7 +678,11 @@ impl RecordingTarget {
 /// load-bearing. A door that held every call would serialise transitions all by
 /// itself, and a test over it could not tell the order this service keeps from
 /// the order the fake kept on its behalf — which is exactly the property
-/// `two_overlapping_transitions_each_apply_in_full_and_in_order` is about.
+/// `a_choice_prepared_against_state_that_has_since_moved_is_refused` is about.
+///
+/// Both the target and the host can stand behind one, and which of the two a
+/// test picks decides *where* the request is parked: at the target it has
+/// already taken its turn, at the host it has read everything and taken none.
 struct Gate {
     /// Rung once for every call that reaches the door.
     arrivals: tokio::sync::mpsc::UnboundedSender<()>,
@@ -928,7 +961,9 @@ async fn a_stored_integration_whose_key_is_gone_is_failing_rather_than_absent() 
 // the platform reading another — a split nothing notices until a restart.
 //
 // What these pin is that no request can produce that split any more, however
-// it goes away, and that two of them overlapping cannot either.
+// it goes away; that two of them overlapping cannot either; and that a
+// transition prepared against state that has since moved is turned away rather
+// than applied on authority it captured before it had a turn.
 // ---------------------------------------------------------------------------
 
 /// Waits for the detached transition to reach the target.
@@ -988,6 +1023,41 @@ async fn gated(repositories: &[(&str, &str)], first: &str) -> (Arc<GitIntegratio
     connect(&service, "FieldstateNZ", first).await;
 
     // Connecting went through the gate too, and its bell is still ringing.
+    while arrivals.try_recv().is_ok() {}
+
+    (
+        service,
+        Gated {
+            harness,
+            target,
+            gate,
+            arrivals,
+        },
+    )
+}
+
+/// The same, over a host whose installation inspections a test can park.
+///
+/// The door is on the host rather than on the target, and that is the whole
+/// difference: a request held there has read the generation, the record and the
+/// key, and has not queued for its turn. Held at the target it would already
+/// have taken one.
+async fn prepared_at_the_host(
+    repositories: &[(&str, &str)],
+    first: &str,
+) -> (Arc<GitIntegrationService>, Gated) {
+    let (gate, mut arrivals) = Gate::new();
+    let harness = harness_with(
+        FakeHost::gated(repositories, &gate),
+        Arc::new(InMemorySecretStore::new()),
+    );
+    let target = Arc::new(RecordingTarget::default());
+    let service = Arc::new(platform_flow(&harness, &target));
+
+    connect(&service, "FieldstateNZ", first).await;
+
+    // Connecting inspected the installation twice, and its bell is still
+    // ringing.
     while arrivals.try_recv().is_ok() {}
 
     (
@@ -1091,7 +1161,7 @@ async fn a_cancelled_disconnect_still_clears_the_key_and_the_record() {
 }
 
 #[tokio::test]
-async fn two_overlapping_transitions_each_apply_in_full_and_in_order() {
+async fn a_choice_prepared_against_state_that_has_since_moved_is_refused() {
     let (service, mut gated) = gated(
         &[
             ("FieldstateNZ", "a"),
@@ -1102,10 +1172,9 @@ async fn two_overlapping_transitions_each_apply_in_full_and_in_order() {
     )
     .await;
 
-    // The *first* call into the target and no other. The second transition has
-    // to be free to run straight through to its own bind, because interleaving
-    // is what this test is about: save `b`, save `c`, bind `c`, bind `b` leaves
-    // the record naming `c` and the platform reading `b`.
+    // The *first* call into the target and no other. The second request has to
+    // be free to run as far as it can on its own, because what stops it is the
+    // whole point: the door must not be doing the order's job.
     let door = Arc::clone(&gated.gate.door).lock_owned().await;
     gated.gate.hold(1);
 
@@ -1125,10 +1194,11 @@ async fn two_overlapping_transitions_each_apply_in_full_and_in_order() {
         async move { service.choose_repository(&operator(), "FieldstateNZ", "c").await }
     });
 
-    // Spawned while the first is parked inside the target, so the second is
-    // genuinely overlapping it. Long enough for it to get as far as it is
-    // going to get: past the door if nothing holds it back, and up against the
-    // order if something does.
+    // Spawned while the first is parked inside the target, so the second reads
+    // the same generation the first was prepared against -- two operators, or
+    // one with two tabs, looking at the same page. Long enough for it to get as
+    // far as it is going to get: past the door if nothing holds it back, and up
+    // against the order if something does.
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     // The order is held by a transition at this moment -- the first, parked
@@ -1150,20 +1220,18 @@ async fn two_overlapping_transitions_each_apply_in_full_and_in_order() {
         .await
         .expect("the first request must finish")
         .expect("and be accepted");
-    second
-        .await
-        .expect("the second request must finish")
-        .expect("and be accepted");
+
+    assert_eq!(
+        second.await.expect("the second request must finish"),
+        Err(IntegrationError::Moved),
+        "a choice prepared against a generation the first transition has left must be refused, \
+         and the operator told to look again"
+    );
 
     assert_eq!(
         gated.target.bindings(),
-        vec![
-            "FieldstateNZ/a".to_owned(),
-            "FieldstateNZ/b".to_owned(),
-            "FieldstateNZ/c".to_owned()
-        ],
-        "the order is taken inside the task and held across the whole transition, so each applies \
-         in full and in the order it reached the lock — never a save of `c` settled by a bind of `b`"
+        vec!["FieldstateNZ/a".to_owned(), "FieldstateNZ/b".to_owned()],
+        "the refusal is made before the transition runs, so `c` is never bound"
     );
     assert_eq!(
         service
@@ -1173,7 +1241,170 @@ async fn two_overlapping_transitions_each_apply_in_full_and_in_order() {
             .expect("recorded")
             .repository()
             .map(SelectedRepository::describe),
-        Some("FieldstateNZ/c".to_owned()),
-        "and the record and the binding must agree on whichever reached the order second"
+        Some("FieldstateNZ/b".to_owned()),
+        "and the record must name what is bound, which is the one choice that landed"
+    );
+}
+
+#[tokio::test]
+async fn a_disconnect_always_wins_whatever_landed_before_it() {
+    let (service, mut gated) = gated(&[("FieldstateNZ", "a"), ("FieldstateNZ", "b")], "a").await;
+    let released = gated.target.releases();
+
+    let door = Arc::clone(&gated.gate.door).lock_owned().await;
+    gated.gate.hold(1);
+
+    let rebind = tokio::spawn({
+        let service = Arc::clone(&service);
+        async move { service.choose_repository(&operator(), "FieldstateNZ", "b").await }
+    });
+
+    gated
+        .arrivals
+        .recv()
+        .await
+        .expect("the rebind's bind must be entered");
+
+    // Asked for while the platform is still on the generation the rebind was
+    // prepared against, and queued behind the rebind's turn. There is nothing
+    // for a disconnect to prepare and it passes no generation, so the rebind
+    // landing first -- and moving the generation on -- must not turn it away.
+    // "Forget it all" is what the operator asked for, whatever landed between.
+    let disconnect = tokio::spawn({
+        let service = Arc::clone(&service);
+        async move { service.disconnect(&operator()).await }
+    });
+
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    assert!(
+        service.order_is_held(),
+        "the order must be held across the parked rebind"
+    );
+    assert!(
+        gated.arrivals.try_recv().is_err(),
+        "the disconnect must be held by the order rather than by the door"
+    );
+
+    drop(door);
+
+    rebind.await.expect("the rebind must finish").expect("and land");
+    disconnect
+        .await
+        .expect("the disconnect must finish")
+        .expect("and succeed whatever landed in front of it");
+
+    assert_eq!(
+        gated.target.bindings(),
+        vec!["FieldstateNZ/a".to_owned(), "FieldstateNZ/b".to_owned()],
+        "the rebind did land, in full, before the disconnect took its turn"
+    );
+    assert!(
+        gated
+            .harness
+            .store
+            .load(IntegrationKind::PlatformManagement)
+            .await
+            .expect("readable")
+            .is_none(),
+        "and the disconnect still cleared the record it left behind"
+    );
+    assert!(
+        gated
+            .harness
+            .secrets
+            .get(&SecretName::new(
+                IntegrationKind::PlatformManagement.private_key()
+            ))
+            .await
+            .expect("readable")
+            .is_none(),
+        "and the key with it"
+    );
+    assert_eq!(gated.target.releases(), released + 1);
+}
+
+#[tokio::test]
+async fn a_rebind_prepared_before_a_disconnect_cannot_resurrect_it() {
+    // The window a bare order leaves open. The rebind reads the record and the
+    // key, goes off to ask the host what the installation reaches, and is held
+    // there; the disconnect takes the order, releases the binding, deletes the
+    // key and clears the record, and finishes. The rebind then runs on
+    // authority it captured before the disconnect existed -- and with the order
+    // alone it would save the record again and bind with a key the store no
+    // longer has, leaving the next restart a record it reports as connected and
+    // failing.
+    let (service, mut parked) =
+        prepared_at_the_host(&[("FieldstateNZ", "a"), ("FieldstateNZ", "b")], "a").await;
+
+    let bound = parked.target.bindings();
+    let released = parked.target.releases();
+
+    let door = Arc::clone(&parked.gate.door).lock_owned().await;
+    parked.gate.hold(1);
+
+    let rebind = tokio::spawn({
+        let service = Arc::clone(&service);
+        async move { service.choose_repository(&operator(), "FieldstateNZ", "b").await }
+    });
+
+    parked
+        .arrivals
+        .recv()
+        .await
+        .expect("the rebind must reach the host");
+
+    // Runs to completion while the rebind is held at the host, and takes the
+    // order uncontested: the rebind has not asked for it yet.
+    service
+        .disconnect(&operator())
+        .await
+        .expect("the disconnect must succeed");
+
+    drop(door);
+
+    let outcome = rebind.await.expect("the rebind must finish");
+
+    // The state first, because it is the finding: with the order alone this is
+    // where the test reports a record and a binding that came back from the
+    // dead, rather than only an error code that did not arrive.
+    assert!(
+        parked
+            .harness
+            .store
+            .load(IntegrationKind::PlatformManagement)
+            .await
+            .expect("readable")
+            .is_none(),
+        "the integration must still be disconnected"
+    );
+    assert!(
+        parked
+            .harness
+            .secrets
+            .get(&SecretName::new(
+                IntegrationKind::PlatformManagement.private_key()
+            ))
+            .await
+            .expect("readable")
+            .is_none(),
+        "and its key still gone"
+    );
+    assert_eq!(
+        parked.target.releases(),
+        released + 1,
+        "the binding must have been released once, by the disconnect"
+    );
+    assert_eq!(
+        parked.target.bindings(),
+        bound,
+        "and nothing may have been bound after it"
+    );
+
+    assert_eq!(
+        outcome,
+        Err(IntegrationError::Moved),
+        "a rebind holding a record and a key the disconnect deleted must be told the integration \
+         moved, not allowed to write them back"
     );
 }

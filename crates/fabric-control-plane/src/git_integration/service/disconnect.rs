@@ -50,16 +50,22 @@ impl GitIntegrationService {
     /// a rebind that overlap cannot leave the record and the binding
     /// disagreeing. See `settling.rs`.
     ///
-    /// # What is still not promised, and cannot be
+    /// # A disconnect always wins, and nothing prepared earlier can undo it
     ///
     /// A rebind that read the record and the key *before* this took its turn
-    /// still holds both, and runs after: it saves the record again and binds
-    /// with the key it captured, which the key store no longer has. The record
-    /// and the binding agree, but the disconnect has been undone by a request
-    /// that was already in hand when it arrived, and the next restart finds a
-    /// record with no key and reports the integration connected and failing.
-    /// Two overlapping requests — two operators, or one with two tabs — is
-    /// what that takes.
+    /// still holds both when it runs after. It cannot use them: the order it
+    /// queues in carries a generation, this disconnect moved it, and a
+    /// transition prepared against the generation it left is refused with
+    /// [`IntegrationError::Moved`] before a single write. The operator who
+    /// asked for the rebind is told to look again and ask again, and what they
+    /// see is a platform with nothing connected. See `order.rs`.
+    ///
+    /// This transition passes no generation of its own, and that is the other
+    /// half of the same rule. "Forget it all" is what the operator wants
+    /// whatever landed in between, so a disconnect is never refused for state
+    /// that moved — it is the thing that moves it.
+    ///
+    /// # What is still not promised, and cannot be
     ///
     /// A request the platform stopped waiting for is not a request the host
     /// stopped applying. If a call times out on a ref update the host is still
@@ -82,7 +88,7 @@ impl GitIntegrationService {
         let target = Arc::clone(&self.target);
         let subject = operator.subject().to_owned();
 
-        settling(Arc::clone(&self.transitions), async move {
+        settling(Arc::clone(&self.transitions), None, async move {
             target.unbind().await;
 
             secrets.delete(&SecretName::new(kind.private_key())).await?;

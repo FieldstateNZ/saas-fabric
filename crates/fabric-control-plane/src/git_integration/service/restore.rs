@@ -56,6 +56,12 @@ impl GitIntegrationService {
     /// settled, and one outside the order is one that could land after a
     /// transition asked for later.
     ///
+    /// It passes no generation, so it cannot be refused for one that moved.
+    /// Startup runs before anything else has a turn to take, so there is no
+    /// generation for this to be stale against — and a restore that refused
+    /// itself would leave a perfectly good stored integration unbound with
+    /// nothing to try again.
+    ///
     /// # Errors
     ///
     /// [`IntegrationError::Refused`] if the stored integration cannot be made
@@ -66,7 +72,7 @@ impl GitIntegrationService {
         let integration = integration.clone();
         let key = key.clone();
 
-        settling(Arc::clone(&self.transitions), async move {
+        settling(Arc::clone(&self.transitions), None, async move {
             point(&target, &integration, &key)
                 .await
                 .map_err(IntegrationError::Refused)

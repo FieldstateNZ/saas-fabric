@@ -37,12 +37,13 @@ impl DesiredState for PlatformGitRepository {
 
         // A version the manifest carries that this cannot parse is a refusal,
         // not a default. Guessing would mean deciding what to advance *from*
-        // on the strength of something nobody wrote deliberately.
-        let version =
-            fabric_platform_management::Version::parse(&entry.desired.version).ok_or_else(|| {
-                DesiredStateError::Refused {
-                    detail: format!("{component} in {environment} is at a version this cannot read"),
-                }
+        // on the strength of something nobody wrote deliberately. Which
+        // grammar applies is the artifact's to say — see `Artifact::parse_version`.
+        let version = entry
+            .artifact
+            .parse_version(&entry.desired.version)
+            .ok_or_else(|| DesiredStateError::Refused {
+                detail: format!("{component} in {environment} is at a version this cannot read"),
             })?;
 
         Ok(ComponentDesired {

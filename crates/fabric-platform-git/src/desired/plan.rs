@@ -7,56 +7,6 @@ use crate::desired::{render::render, WantedVersion};
 use crate::host::PlatformGitRepository;
 use crate::{CommitRevision, FileChange, PlatformGitError};
 
-/// Refuses a request that is not this component's release unit.
-///
-/// Two rules, and they are the same rule from two sides: a caller may move a
-/// component to a new *version*, and to nothing else.
-///
-/// # Errors
-///
-/// [`Rejected`](PlatformGitError::Rejected) if the roles do not match what the
-/// manifest declares, or if any role's repository does.
-pub(super) fn check_release_unit(
-    component: &str,
-    entry: &Component,
-    wanted: &WantedVersion,
-) -> Result<(), PlatformGitError> {
-    // Only the image shape has a set of roles to agree about. A chart is one
-    // artifact, so there is nothing here for it to disagree with.
-    let (Artifact::Oci { images, .. }, WantedVersion::Images(wanted)) = (&entry.artifact, wanted) else {
-        return Ok(());
-    };
-    let declared: Vec<&String> = images.keys().collect();
-    let offered: Vec<&String> = wanted.images.keys().collect();
-
-    if declared != offered {
-        return Err(PlatformGitError::Rejected {
-            detail: format!(
-                "{component} publishes {declared:?} and they move together; the request carries {offered:?}"
-            ),
-        });
-    }
-
-    for (role, image) in images {
-        let Some(offered) = wanted.images.get(role) else {
-            continue;
-        };
-
-        // A version change may not become a registry change. Where a component
-        // is published is the platform repository's statement, not a caller's.
-        if offered.repository != image.repository {
-            return Err(PlatformGitError::Rejected {
-                detail: format!(
-                    "{component}/{role} is published to '{}', and the request names '{}'",
-                    image.repository, offered.repository
-                ),
-            });
-        }
-    }
-
-    Ok(())
-}
-
 /// Reads every file a pin lives in and rewrites it.
 ///
 /// Grouped by path, because two roles can share one overlay — the control

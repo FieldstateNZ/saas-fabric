@@ -68,4 +68,17 @@ impl WantedVersion {
             Self::Chart { version, .. } => version,
         }
     }
+
+    /// What shape this request is, for a message an operator reads.
+    ///
+    /// Worded to match [`Artifact::describe`](crate::components::Artifact::describe),
+    /// so a refusal reads as "publishes X, and the request carries Y" rather
+    /// than two unrelated vocabularies describing the same disagreement.
+    #[must_use]
+    pub const fn describe(&self) -> &'static str {
+        match self {
+            Self::Images(_) => "container images",
+            Self::Chart { .. } => "a Helm chart",
+        }
+    }
 }

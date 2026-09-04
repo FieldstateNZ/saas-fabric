@@ -1,5 +1,8 @@
 //! Events about the platform's own Git integration.
 //!
+//! Over the advisory size on purpose: one function per event, all about one
+//! subject, and splitting a list is not a concept.
+//!
 //! Split from the rest because they are about a different subject: everything
 //! else records what happened to a *client*, and these record what happened to
 //! the platform's connection to where clients are kept.
@@ -99,6 +102,23 @@ pub(crate) fn integration_transition_unobserved() {
         event_id = event_id(DOMAIN_ID, EventType::Error, 4),
         "an integration transition was not observed to finish; the stored record and the live \
          binding may not agree"
+    );
+}
+
+/// A transition was turned away because the integration had moved under it.
+///
+/// Warned rather than errored, beside `operator_refused`: nothing failed and
+/// nothing was written, but somebody's click did not take effect and the only
+/// record of why is here. The operator is named nowhere in it — this is the one
+/// integration event where no change landed, so there is nothing to attribute,
+/// and the request that was turned away is already accounted for by the `409`
+/// its caller received.
+pub(crate) fn integration_transition_moved() {
+    tracing::warn!(
+        event = "control_plane.integration_transition_moved",
+        event_id = event_id(DOMAIN_ID, EventType::Warning, 5),
+        "an integration transition was prepared against state that has since moved; nothing was \
+         written"
     );
 }
 

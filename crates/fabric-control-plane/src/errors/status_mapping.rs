@@ -68,7 +68,14 @@ impl ControlPlaneError {
             // read would be 412, but this is a write that was refused because
             // somebody else got there first, and the operator's next step is
             // to redo their edit rather than to correct their header.
-            Self::RevisionConflict => StatusCode::CONFLICT,
+            //
+            // An integration that moved joins it, for the same reason one
+            // level up: a disconnect or another operator's rebind got there
+            // first, so the choice has to be made again against what is there
+            // now. Not a 400 — the request was well-formed and would have been
+            // applied a moment earlier — and not a 503, which would advertise
+            // an immediate retry that would be refused identically.
+            Self::RevisionConflict | Self::IntegrationMoved => StatusCode::CONFLICT,
 
             // A stored document that will not parse is the platform's problem,
             // not the caller's, and no retry fixes it.

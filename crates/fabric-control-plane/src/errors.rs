@@ -154,6 +154,17 @@ pub enum ControlPlaneError {
     #[error("{0}")]
     IntegrationRefused(String),
 
+    /// The integration moved between being read and being written.
+    ///
+    /// The integration's own `revision_conflict`: an operator's
+    /// choice of repository, or an installation callback, was prepared against
+    /// a record and a key that a disconnect or another operator's rebind has
+    /// since replaced. Nothing was written. Kept apart from
+    /// [`Self::IntegrationRefused`] because the request was not wrong, and from
+    /// [`Self::RepositoryUnavailable`] because nothing was unreachable.
+    #[error("the integration changed while this request was being prepared; look again and ask again")]
+    IntegrationMoved,
+
     /// The identity provider refused to redeem an authorization code.
     #[error("the sign-in could not be completed; start again")]
     SignInRefused,

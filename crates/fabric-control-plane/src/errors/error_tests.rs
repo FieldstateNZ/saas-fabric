@@ -31,6 +31,8 @@ fn every_failure_has_its_own_machine_code() {
         ControlPlaneError::RepositoryUnavailable,
         ControlPlaneError::RepositoryDenied,
         ControlPlaneError::RepositoryRejected,
+        ControlPlaneError::IntegrationRefused("no such repository".to_owned()),
+        ControlPlaneError::IntegrationMoved,
     ];
 
     let mut codes: Vec<&str> = errors.iter().map(ControlPlaneError::code).collect();
@@ -120,6 +122,27 @@ fn a_stale_platform_decision_is_not_advertised_as_retryable() {
     assert!(
         response.headers().get(http::header::RETRY_AFTER).is_none(),
         "a decision that has to be retaken is not something to retry unchanged"
+    );
+}
+
+#[test]
+fn an_integration_that_moved_is_a_conflict_rather_than_a_refusal_or_an_outage() {
+    // It reaches an operator from their own click on a repository: a disconnect
+    // or another operator's rebind landed between the page they read and the
+    // choice they made. Not a 400 -- the request was well-formed and would have
+    // been applied a moment earlier -- and not a 503, which would advertise an
+    // immediate retry that would be refused identically.
+    let error = ControlPlaneError::IntegrationMoved;
+
+    assert_eq!(error.status(), StatusCode::CONFLICT);
+    assert_eq!(error.code(), "integration_moved");
+    assert!(
+        error
+            .into_response()
+            .headers()
+            .get(http::header::RETRY_AFTER)
+            .is_none(),
+        "a choice that has to be made again is not something to retry unchanged"
     );
 }
 

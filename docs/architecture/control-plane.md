@@ -213,12 +213,32 @@ one another, so two overlapping ones cannot interleave into a record naming one
 repository and a binding pointing at another: each applies in full, and the
 platform ends on whichever ran last.
 
+Ordering the writes is not enough on its own, because a request's authority to
+write is what it read. A rebind reads the record and the private key, goes and
+asks the host what the installation reaches, and only then queues — and a
+disconnect taking its turn inside that window would be undone by the rebind
+saving the record again and binding with a key the store no longer has. So the
+order carries a **generation**: a request reads it before it reads anything
+else, hands it back when it queues, and is refused with `409 integration_moved`
+if it moved in between, without writing anything. A disconnect that ran first
+therefore wins, and the operator who asked for the rebind is told to look again
+and ask again. Only the transitions built on such a read check. A disconnect, a
+restore at startup and an application's creation depend on nothing they read
+from the stores, and a creation racing a disconnect is a creation.
+
 This is the same reasoning as the drain itself — an operation the caller cannot
 cancel — applied one level up, to the workflow that changes what is bound rather
 than to the operations running through it. Its residuals are the same two: a
 panic, and a runtime dropped at shutdown. Both leave a transition nobody
 observed to the end, which is logged and answered as unavailable rather than as
-a failure.
+a failure — and both still move the generation, because the bump is a guard
+that runs on unwind and on drop, so nothing prepared before a transition that
+died can be admitted on the strength of what it read.
+
+The order is one control plane's. A second replica shares neither the turn nor
+the generation, and the compare sets a local counter against a record and a key
+read from the secret store — so the rule holds within one process, and rests on
+that store reading its own writes.
 
 ### Where the platform keeps its own state
 
@@ -700,7 +720,7 @@ console reads on load.
 
 ### Errors
 
-Ten codes, because an operator needs to tell the cases apart (§23):
+Distinct codes, because an operator needs to tell the cases apart (§23); among them:
 `unauthenticated`, `unknown_client`, `invalid_request`, `desired_state_invalid`,
 `revision_required`, `revision_conflict`, `realm_immutable`,
 `repository_unavailable`, `repository_denied`, `repository_rejected`.

@@ -17,10 +17,12 @@
 
 mod binding;
 mod candidates;
+mod choose;
 mod connect;
 mod disconnect;
 mod errors;
 mod install;
+mod order;
 mod restore;
 mod settling;
 mod stored;
@@ -29,6 +31,7 @@ use std::sync::Arc;
 
 use fabric_core::Clock;
 
+use self::order::Order;
 use crate::git_integration::{
     GitAppProvisioning, IntegrationKind, IntegrationStore, IntegrationTarget, PendingFlows, SecretStore,
 };
@@ -63,25 +66,28 @@ pub struct GitIntegrationService {
     /// Stamps flow expiry.
     clock: Arc<dyn Clock>,
 
-    /// One transition at a time.
+    /// One transition at a time, and each against the state it prepared for.
     ///
     /// A transition records what the operator settled on and points the live
     /// binding at it — one change written to two places. Two overlapping could
     /// interleave into a record naming one repository and a binding pointing
     /// at another; held across the whole of each, the platform ends on
-    /// whichever ran last instead of half of each. See `settling.rs`.
-    transitions: Arc<tokio::sync::Mutex<()>>,
+    /// whichever ran last instead of half of each. And the generation it
+    /// carries is what stops a transition prepared before a disconnect from
+    /// running on the record and key that disconnect has since forgotten. See
+    /// `settling.rs`.
+    transitions: Arc<Order>,
 }
 
 impl GitIntegrationService {
     /// Whether a transition holds the order right now.
     ///
-    /// For tests only: the one thing a test about ordering has to see is
-    /// that the order is engaged while a transition is parked, and nothing
-    /// in production has a reason to ask.
+    /// For tests only, and answered by [`Order`] itself: a test about
+    /// ordering has to see the order engaged while a transition is parked,
+    /// and nothing in production has a reason to ask.
     #[cfg(test)]
     pub(super) fn order_is_held(&self) -> bool {
-        self.transitions.try_lock().is_err()
+        self.transitions.is_held()
     }
 
     /// Assembles the service.
@@ -102,7 +108,7 @@ impl GitIntegrationService {
             flows: Arc::new(PendingFlows::new()),
             target,
             clock,
-            transitions: Arc::new(tokio::sync::Mutex::new(())),
+            transitions: Arc::new(Order::default()),
         }
     }
 }

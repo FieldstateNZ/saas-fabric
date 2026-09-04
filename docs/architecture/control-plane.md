@@ -294,6 +294,24 @@ images produce. There is nothing to forget to check.
 Pause and resume are offered for both. Stopping an environment advancing needs
 no immutability at all.
 
+#### A chart repository is read over HTTPS, end to end
+
+The index a chart repository serves names the version that gets pinned into
+what Argo deploys, so a byte rewritten on the way from the repository is a byte
+that steers a rollout. The chart reader refuses a repository URL that is not
+`https://`, and refuses to follow a redirect to anything else. An HTTP client's
+default policy follows a `30x` wherever it points, including back down to plain
+HTTP, which would make the first hop's TLS a formality; here every hop is HTTPS
+or the read is refused. A refused redirect is reported as a refusal rather than
+an outage, because retrying it changes nothing.
+
+The reader also trusts only the chart it was asked about. A repository serves
+every chart it holds in one document, and an unrelated chart's malformed entry
+must not make this component undiscoverable — nor may an unrelated entry's YAML
+aliases turn a bounded download into an unbounded allocation. So the requested
+chart's entries are the only ones read into a shape; everything else in the
+index is skipped without being materialised.
+
 #### A decision is applied to the state it was taken against
 
 Every write presents the revision its decision was read at, and desired state

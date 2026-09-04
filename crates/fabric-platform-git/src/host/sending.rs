@@ -58,8 +58,8 @@ impl PlatformGitRepository {
         // Bounded the same way the acquisition is, because it waits on the
         // same mutex: a mint stalled ahead of this would otherwise hold the
         // operation -- and the binding's guard -- for as long as the queue
-        // in front of it. Cutting it short costs a retry that presents the
-        // dead token once more and is refused again, which is an outcome.
+        // in front of it. Cut short, the operation ends as unavailable with
+        // the dead token still cached; the next operation forgets it instead.
         tokio::time::timeout(self.bearer_allowance(), self.bearers.invalidate())
             .await
             .map_err(|_expired| self.out_of_budget())?;

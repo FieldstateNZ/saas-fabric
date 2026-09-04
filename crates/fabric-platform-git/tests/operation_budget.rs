@@ -400,21 +400,24 @@ async fn a_stalled_token_endpoint_cannot_stretch_an_operation_past_its_bound() {
         );
     }
 
+    // The bound is four seconds exactly -- a one-second budget plus one
+    // three-second request -- and it is timer-driven, so the ceiling sits
+    // close enough to catch an overrun of under a second.
     for took in [first_took, second_took] {
         assert!(
-            took < Duration::from_secs(5),
+            took < Duration::from_millis(4750),
             "each operation ended inside its one-second budget plus one three-second \
              request; they took {first_took:?} and {second_took:?}"
         );
     }
 
     // The floor is what proves the second operation genuinely queued behind
-    // the first's stalled mint rather than failing fast for some other reason;
-    // and the mint has to have been reached at all, or the queue this bounds
-    // was never exercised.
+    // the first's stalled mint rather than minting alongside it or failing
+    // fast for some other reason; and the mint has to have been reached at
+    // all, or the queue this bounds was never exercised.
     assert!(
-        second_took >= Duration::from_secs(3),
-        "the second operation waited out the first's request timeout, not {second_took:?}"
+        second_took > first_took && second_took >= Duration::from_millis(3500),
+        "the second operation waited behind the first's stalled mint: {first_took:?} then {second_took:?}"
     );
     assert!(
         host.paths().iter().any(|path| path.contains("/access_tokens")),

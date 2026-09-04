@@ -43,7 +43,7 @@ impl PlatformManagement {
     ) -> Result<(ComponentDesired, Discovery), PlatformError> {
         let desired = self.desired_state.component(environment, component).await?;
         let series = series_of(&desired);
-        //
+
         // Two searches, not one generalised one. A chart repository answers a
         // different question with a weaker answer, and squeezing it through
         // the registry port would have meant a digest nobody has and a

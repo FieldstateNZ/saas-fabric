@@ -26,6 +26,14 @@ import { RollbackPicker } from './RollbackPicker'
  * Lifting a hold says "you may move again". What happens next is the next
  * sweep's to decide, from what it observes then — so this reloads rather than
  * rendering a version nothing has actually moved to.
+ *
+ * # Rollback is offered to every component; pause only to one that moves
+ *
+ * A component on `manual` or `locked` has no advancement to stop, and the
+ * control plane refuses a pause for it — so no pause button. It can still be
+ * put back on a version it ran before, and that is exactly the component an
+ * operator is most likely to need it for: the platform's own guidance is that
+ * a stable component stays `manual` until an upgrade policy exists.
  */
 interface ComponentBrakeProps {
   readonly component: PlatformComponent
@@ -38,12 +46,7 @@ export function ComponentBrake({ component }: ComponentBrakeProps) {
   const [pausing, setPausing] = useState(false)
   const [rollingBack, setRollingBack] = useState(false)
 
-  // Nothing to pause. A component that does not advance on its own has no
-  // advancement to stop, and the control plane refuses it — so the console
-  // does not offer a button whose only outcome is that refusal.
-  if (component.policy !== 'automatic') {
-    return null
-  }
+  const advances = component.policy === 'automatic'
 
   async function act(work: Promise<void>): Promise<void> {
     setBusy(true)
@@ -60,22 +63,6 @@ export function ComponentBrake({ component }: ComponentBrakeProps) {
     }
   }
 
-  if (component.paused) {
-    return (
-      <div className="brake">
-        {error !== null && <p className="error">{error}</p>}
-        <button
-          type="button"
-          className="brake__action"
-          disabled={busy}
-          onClick={() => void act(resumeComponent(component.component))}
-        >
-          {busy ? 'Resuming…' : 'Resume automatic updates'}
-        </button>
-      </div>
-    )
-  }
-
   if (rollingBack) {
     return (
       <RollbackPicker
@@ -85,6 +72,44 @@ export function ComponentBrake({ component }: ComponentBrakeProps) {
           setRollingBack(false)
         }}
       />
+    )
+  }
+
+  /* Rollback first: it is what an operator reaches for when something is
+     wrong, and pausing is what they reach for when they want a moment. It is
+     offered whatever the policy and whether or not the component is paused —
+     an operator who paused *because* a release broke is the one who needs it —
+     and for both artifact kinds: rolling back means restoring a previously
+     selected desired version, which a chart supports as much as an image does.
+     What differs is how much of the old release comes back, and the picker
+     says so in words rather than this hiding the button. */
+  const rollBack = (
+    <button
+      type="button"
+      className="brake__action"
+      disabled={busy}
+      onClick={() => {
+        setRollingBack(true)
+      }}
+    >
+      Roll back
+    </button>
+  )
+
+  if (component.paused) {
+    return (
+      <div className="brake">
+        {error !== null && <p className="error">{error}</p>}
+        {rollBack}
+        <button
+          type="button"
+          className="brake__action"
+          disabled={busy}
+          onClick={() => void act(resumeComponent(component.component))}
+        >
+          {busy ? 'Resuming…' : 'Resume automatic updates'}
+        </button>
+      </div>
     )
   }
 
@@ -120,33 +145,18 @@ export function ComponentBrake({ component }: ComponentBrakeProps) {
         </>
       ) : (
         <>
-          {/* Rollback first: it is what an operator reaches for when something
-              is wrong, and pausing is what they reach for when they want a
-              moment.
-
-              Offered for both artifact kinds. Rolling back means restoring a
-              previously selected desired version, which a chart supports as
-              much as an image does — what differs is how much of the old
-              release comes back, and the picker says so in words rather than
-              this hiding the button. */}
-          <button
-            type="button"
-            className="brake__action"
-            onClick={() => {
-              setRollingBack(true)
-            }}
-          >
-            Roll back
-          </button>
-          <button
-            type="button"
-            className="brake__action"
-            onClick={() => {
-              setPausing(true)
-            }}
-          >
-            Pause automatic updates
-          </button>
+          {rollBack}
+          {advances && (
+            <button
+              type="button"
+              className="brake__action"
+              onClick={() => {
+                setPausing(true)
+              }}
+            >
+              Pause automatic updates
+            </button>
+          )}
         </>
       )}
     </div>

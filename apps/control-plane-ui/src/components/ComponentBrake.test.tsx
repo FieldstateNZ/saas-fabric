@@ -45,12 +45,22 @@ afterEach(() => {
 })
 
 describe('the brake', () => {
-  it('offers nothing for a component that does not advance on its own', () => {
-    // There is no advancement to stop, and the control plane refuses it. A
-    // button whose only outcome is a refusal is a button that should not exist.
-    const { container } = render(<ComponentBrake component={component({ policy: 'manual' })} />)
+  it('offers rollback, and not pause, for a component that does not advance on its own', () => {
+    // There is no advancement to stop, and the control plane refuses a pause
+    // for it -- a button whose only outcome is a refusal should not exist. But
+    // the component can still be put back on a version it ran before, and a
+    // stable chart on `manual` is exactly the one an operator will need that
+    // for, since `manual` is what the platform recommends for it.
+    for (const policy of ['manual', 'locked'] as const) {
+      const { unmount } = render(<ComponentBrake component={component({ policy, artifact: 'helm' })} />)
 
-    expect(container).toBeEmptyDOMElement()
+      expect(screen.getByRole('button', { name: 'Roll back' })).toBeInTheDocument()
+      expect(
+        screen.queryByRole('button', { name: /pause automatic updates/i }),
+      ).not.toBeInTheDocument()
+
+      unmount()
+    }
   })
 
   it('pauses through the hold, carrying the note and never a version', async () => {
@@ -74,7 +84,7 @@ describe('the brake', () => {
     expect(Object.keys(body)).toEqual(['note'])
   })
 
-  it('offers resume, and only resume, once it is paused', async () => {
+  it('offers resume and rollback, and not pause, once it is paused', async () => {
     const fetched = accepted()
 
     render(<ComponentBrake component={component({ paused: true })} />)
@@ -82,6 +92,10 @@ describe('the brake', () => {
     expect(
       screen.queryByRole('button', { name: /pause automatic updates/i }),
     ).not.toBeInTheDocument()
+    // An operator who paused because a release broke is the one who needs to
+    // go back; hiding rollback behind the pause would send them to the
+    // repository by hand.
+    expect(screen.getByRole('button', { name: 'Roll back' })).toBeInTheDocument()
 
     await userEvent.click(screen.getByRole('button', { name: /resume automatic updates/i }))
 

@@ -306,7 +306,13 @@ impl Charts {
             .unwrap_or_else(PoisonError::into_inner)
             .insert(
                 (repository.to_owned(), chart.to_owned()),
-                versions.iter().map(|text| version(text)).collect(),
+                // The chart grammar, not the image one: an index may publish
+                // build metadata, and a fake that could not would leave the
+                // spelling half of `resolve_chart` untestable.
+                versions
+                    .iter()
+                    .map(|text| Version::parse_chart(text).unwrap_or_else(|| panic!("{text} should parse")))
+                    .collect(),
             );
     }
 }
@@ -1231,6 +1237,67 @@ async fn a_chart_rollback_writes_the_version_as_the_index_spells_it() {
         "7.2.0",
         "the caller's spelling reached the pin"
     );
+}
+
+#[tokio::test]
+async fn a_chart_rollback_writes_build_metadata_the_index_published() {
+    // The other direction of the spelling rule. The index says `7.2.0+build.7`
+    // and the operator says `7.2.0`; they are one version by precedence, and
+    // what reaches the pin is the index's spelling, because that is the string
+    // Argo will be asked to resolve.
+    let charts = Arc::new(Charts::default());
+    charts.publish(HELM, "keycloakx", &["7.2.0+build.7", "7.3.0"]);
+
+    let desired_state = charted(UpdatePolicy::Manual);
+    charted_service(&charts, &desired_state)
+        .roll_back("lucentroot", "keycloak", "7.2.0", None)
+        .await
+        .expect("a version the index spells with build metadata resolves");
+
+    let written = desired_state.rollbacks();
+    let (release, _) = written.first().expect("one rollback was written");
+
+    assert_eq!(release.version().as_str(), "7.2.0+build.7");
+}
+
+#[tokio::test]
+async fn a_preview_is_rolled_back_within_its_own_line_only() {
+    // The half of the series rule a stable component cannot exercise. A
+    // prerelease stays in its `major.minor.patch` line in both directions:
+    // `0.3.0-preview.2` may go back to `preview.1`, and not to another line's
+    // `0.2.9-preview.4`, however real a release that was. Without this a
+    // rollback search with no series at all would pass every other test here.
+    let registries = registries_with_history();
+    registries.publish_all("0.2.9-preview.4", "dddd");
+
+    let desired_state = Arc::new(Recorded::new(UpdatePolicy::Automatic, None));
+    let service = service(&registries, &desired_state);
+
+    let offered: Vec<String> = service
+        .rollback_candidates("lucentroot", "saas-fabric")
+        .await
+        .expect("the listing reads")
+        .releases
+        .iter()
+        .map(|release| release.version().as_str().to_owned())
+        .collect();
+
+    assert_eq!(
+        offered,
+        vec!["0.3.0-preview.1"],
+        "another line is not somewhere to go back to"
+    );
+
+    let failure = service
+        .roll_back("lucentroot", "saas-fabric", "0.2.9-preview.4", None)
+        .await
+        .expect_err("naming the other line is refused, not honoured");
+
+    assert!(
+        matches!(failure, PlatformError::NotRollable { .. }),
+        "{failure:?}"
+    );
+    assert!(desired_state.rollbacks().is_empty(), "nothing was written");
 }
 
 #[tokio::test]

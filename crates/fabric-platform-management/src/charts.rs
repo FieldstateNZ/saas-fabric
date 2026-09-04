@@ -18,7 +18,11 @@ pub trait ChartIndex: Send + Sync {
     ///
     /// Unordered, and not filtered: which of them a component may move to is
     /// the caller's question, and it depends on a channel and a floor this
-    /// port knows nothing about.
+    /// port knows nothing about. **Distinct by precedence**, though: two
+    /// entries that compare equal — the same version twice, or two differing
+    /// only in build metadata — are one an implementation must refuse rather
+    /// than return, because a caller choosing the newest has no way to choose
+    /// between them, and the searches built on this count on it.
     ///
     /// # Errors
     ///

@@ -153,6 +153,18 @@ fn a_prerelease_and_its_build_metadata_are_both_validated() {
 
     assert_eq!(version.as_str(), "1.2.4-rc.1+foo.bar");
     assert_eq!(version.channel(), Channel::Preview);
+
+    // A legal build does not excuse an illegal prerelease, and a legal
+    // prerelease does not excuse an illegal build -- each half is checked on
+    // its own, so a version cannot buy a pass on one grammar with the other.
+    assert!(
+        Version::parse_chart("1.2.4-01+foo").is_none(),
+        "a leading-zero prerelease is still refused despite a legal build"
+    );
+    assert!(
+        Version::parse_chart("1.2.4-rc.1+foo.").is_none(),
+        "a trailing-dot build is still refused despite a legal prerelease"
+    );
 }
 
 #[test]

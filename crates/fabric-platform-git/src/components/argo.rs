@@ -16,9 +16,8 @@ use crate::PlatformGitError;
 /// Why an Application is one this cannot edit, as a clause with no subject.
 ///
 /// The modules below say what was wrong; this file says which chart and which
-/// repository it was wrong about. Naming in one place is what makes every
-/// refusal sound like the same renderer — and `retarget` is not told the path,
-/// so that identity is all it has to offer.
+/// repository it was wrong about, so every refusal sounds like the same
+/// renderer. `retarget` is not told the path, so that identity is all it has.
 pub(super) type Refusal = String;
 
 /// Rewrites the `targetRevision` of the source naming this chart.
@@ -45,10 +44,9 @@ pub(super) type Refusal = String;
 /// identity the manifest declares must match, and the trusted values come from
 /// `pinnedIn`, not from the file being edited.
 ///
-/// The match is also structural, not textual. The list must be the `sources:`
-/// directly under the document's top-level `spec:`, the entry must be one of
-/// its own, and the revision must be that entry's own key — see
-/// [`position`] and [`entry`] for what each of those rules out.
+/// The match is also structural, not textual: the list must be the `sources:`
+/// directly under the document's top-level `spec:`, the entry one of its own,
+/// the revision that entry's own key. See [`position`] and [`entry`].
 ///
 /// # Edited as lines, not parsed and re-serialised
 ///
@@ -57,9 +55,9 @@ pub(super) type Refusal = String;
 /// every one of them and attach the damage to a routine version bump.
 ///
 /// Byte preservation is held to the same standard: the only bytes that differ
-/// between the file that goes in and the file that comes out are the version
-/// token itself. Line endings, the final newline or its absence, indentation,
-/// the spacing after the colon, the author's quoting and any trailing comment
+/// between the file that goes in and the one that comes out are the version
+/// token. Line endings, the final newline or its absence, indentation, the
+/// separation after the colon, the author's quoting and any trailing comment
 /// all come back untouched.
 ///
 /// # Errors
@@ -68,7 +66,10 @@ pub(super) type Refusal = String;
 /// and declares exactly one revision of its own. None means the manifest's
 /// `pinnedIn` is wrong about this file; more than one means the file is
 /// ambiguous, and choosing between them is how the wrong chart gets deployed. A
-/// shape this cannot read is refused for the same reason, not guessed at.
+/// shape this cannot read is refused for the same reason, not guessed at — and
+/// some of those are valid YAML: a space before the colon (`chart : x`), an
+/// explicit `? key`, a flow entry inside a block list, lone-CR line endings.
+/// Each is reported as naming no source rather than read, never half-edited.
 pub(crate) fn retarget(
     text: &str,
     repository: &str,
@@ -90,12 +91,13 @@ pub(crate) fn retarget(
 
     let matched: Vec<&Entry<'_>> = sources.iter().filter(|s| s.names(repository, chart)).collect();
     let [source] = matched.as_slice() else {
-        return Err(PlatformGitError::Rejected {
-            detail: match matched.len() {
-                0 => format!("no source names chart '{chart}' from {repository}"),
-                found => format!("{found} sources name chart '{chart}' from {repository}"),
-            },
-        });
+        return Err(refuse(match matched.len() {
+            0 => "has no source naming it".to_owned(),
+            found => format!(
+                "has {found} sources naming it, and choosing between them is how the \
+                 wrong chart gets deployed"
+            ),
+        }));
     };
 
     let Some((pinned, revision)) = source.target() else {
@@ -107,12 +109,8 @@ pub(crate) fn retarget(
 
     let mut out = String::with_capacity(text.len() + version.len());
     for (index, line) in lines.iter().enumerate() {
-        let content = if index == *pinned {
-            rewritten.as_str()
-        } else {
-            line.content
-        };
-        out.push_str(content);
+        let moved = (index == *pinned).then_some(rewritten.as_str());
+        out.push_str(moved.unwrap_or(line.content));
         out.push_str(line.terminator);
     }
 

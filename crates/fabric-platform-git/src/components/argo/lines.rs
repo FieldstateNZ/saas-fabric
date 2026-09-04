@@ -1,4 +1,4 @@
-//! One line of an Argo Application, kept exactly as it was read.
+//! A line of an Argo Application, kept exactly as it was read.
 
 use super::Refusal;
 
@@ -12,11 +12,8 @@ use super::Refusal;
 /// file ended with one at all, so writing the lines back with a `\n` apiece
 /// quietly converts a CRLF file to LF and adds a final newline its author left
 /// off — a whole file rewritten, attached to a routine bump, in a repository
-/// where every commit is desired state.
-///
-/// So each line keeps its own ending and the walk puts it back untouched.
-/// [`str::split_inclusive`] is what makes that free: it leaves the newline
-/// attached to the line it ended.
+/// where every commit is desired state. So each line keeps its own ending, which
+/// [`str::split_inclusive`] leaves attached to the line it ended.
 pub(super) struct Line<'a> {
     /// The line without its terminator.
     pub(super) content: &'a str,
@@ -33,25 +30,44 @@ pub(super) struct Line<'a> {
 }
 
 impl<'a> Line<'a> {
-    /// Splits a document into lines, or refuses one this cannot measure.
+    /// Splits a document into lines.
+    ///
+    /// # Errors
+    ///
+    /// A clause saying why, if a line's indentation cannot be told from its
+    /// content. Refusing beats guessing: a fallback here would hand back a line
+    /// shorter than the one that went in.
     pub(super) fn split(text: &'a str) -> Result<Vec<Self>, Refusal> {
         text.split_inclusive('\n').map(Self::read).collect()
     }
 
-    /// How deep the line sits, in spaces.
-    ///
-    /// Depth is the only measurement this renderer takes of a line's shape,
-    /// because every question it asks — is this list `spec.sources`, is this
-    /// key the entry's own — is a question about depth.
+    /// How deep the line sits, in spaces. Depth is the only measurement this
+    /// renderer takes of a line's shape, because every question it asks — is
+    /// this list `spec.sources`, is this key the entry's own — is about depth.
     pub(super) const fn indent(&self) -> usize {
         self.spaces.len()
     }
 
-    /// Whether the line says anything. Blank lines and whole-line comments
-    /// change no structure, so the walk steps over them rather than letting
-    /// them set an indent.
+    /// Whether the line is empty or only whitespace.
+    pub(super) fn is_blank(&self) -> bool {
+        self.rest.trim_start().is_empty()
+    }
+
+    /// Whether the line says anything structural. Blank lines and whole-line
+    /// comments are stepped over rather than allowed to set an indent, which is
+    /// also why neither is ever measured — or refused for how it is indented.
     pub(super) fn is_significant(&self) -> bool {
-        !self.rest.is_empty() && !self.rest.starts_with('#')
+        let bare = self.rest.trim_start();
+        !bare.is_empty() && !bare.starts_with('#')
+    }
+
+    /// Whether a tab stands in this line's indentation.
+    ///
+    /// Only where indentation is what the tab is doing. A tab *within* a line —
+    /// separating a comment, or inside a block scalar's text — is content that
+    /// YAML and this renderer both leave alone.
+    pub(super) fn is_tab_indented(&self) -> bool {
+        self.rest.starts_with('\t')
     }
 
     /// Whether this is a `---` document marker, which starts a fresh document
@@ -79,17 +95,13 @@ impl<'a> Line<'a> {
     fn read(raw: &'a str) -> Result<Self, Refusal> {
         let (content, terminator) = Self::unterminate(raw);
         let rest = content.trim_start_matches(' ');
-
-        if rest.starts_with('\t') {
-            return Err("is indented with a tab, whose width is nobody's to assume, \
-                        so how deep its lines sit cannot be said"
-                .to_owned());
-        }
+        let spaces = content
+            .strip_suffix(rest)
+            .ok_or_else(|| "has a line whose indentation could not be told from its content".to_owned())?;
 
         Ok(Self {
             content,
-            // `indent` counts ASCII spaces, so it is always a char boundary.
-            spaces: content.get(..content.len() - rest.len()).unwrap_or_default(),
+            spaces,
             rest,
             terminator,
         })

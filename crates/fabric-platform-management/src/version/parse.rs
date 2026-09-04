@@ -57,9 +57,7 @@ impl Version {
             None => Vec::new(),
             Some(pre) => {
                 let parts: Vec<String> = pre.split('.').map(ToOwned::to_owned).collect();
-                if parts.iter().any(|part| {
-                    part.is_empty() || !part.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
-                }) {
+                if parts.iter().any(|part| !legal_prerelease_identifier(part)) {
                     return None;
                 }
                 parts
@@ -80,11 +78,44 @@ impl Version {
     }
 }
 
+/// Whether `text` is a canonical run of digits: non-empty, all ASCII
+/// digits, and no leading zero unless it is exactly `0`.
+///
+/// `SemVer` requires this both for a version-core component (§2) and a
+/// purely numeric prerelease identifier (§9). One function is the single
+/// source of truth for it: `numeric` calls it before parsing, and
+/// `legal_prerelease_identifier` calls it directly, since an identifier is
+/// never parsed as a number — `SemVer` puts no bound on its size.
+fn is_canonical_digits(text: &str) -> bool {
+    !text.is_empty()
+        && text.chars().all(|c| c.is_ascii_digit())
+        && (text.len() == 1 || !text.starts_with('0'))
+}
+
 /// A version-core component: digits, and no leading zero unless it is zero.
 fn numeric(text: &str) -> Option<u64> {
-    if text.is_empty() || (text.len() > 1 && text.starts_with('0')) {
+    if !is_canonical_digits(text) {
         return None;
     }
 
     text.parse().ok()
+}
+
+/// Whether a prerelease identifier is legal under `SemVer` §9.
+///
+/// Any non-empty run of `[0-9A-Za-z-]` is legal on its own; a *purely
+/// numeric* one is stricter, via the same canonical-digits rule as a
+/// version-core component. It is never parsed as a number — `SemVer` puts
+/// no bound on one, and `ordering.rs` compares numeric identifiers by digit
+/// count and text instead.
+fn legal_prerelease_identifier(part: &str) -> bool {
+    if part.is_empty() || !part.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+        return false;
+    }
+
+    if part.chars().all(|c| c.is_ascii_digit()) {
+        return is_canonical_digits(part);
+    }
+
+    true
 }

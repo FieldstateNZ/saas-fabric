@@ -112,3 +112,55 @@ fn empty_or_illegal_build_metadata_is_not_a_version() {
         assert!(Version::parse_chart(text).is_none(), "{text}");
     }
 }
+
+#[test]
+fn a_numeric_prerelease_identifier_may_not_carry_a_leading_zero() {
+    for text in [
+        "1.0.0-01",
+        "1.0.0-alpha.01",
+        "1.0.0-0.01",
+        "1.0.0-00",
+        // `parse_chart` runs the same prerelease grammar as `parse`, whether
+        // or not the version also carries build metadata.
+        "1.0.0-01+build",
+    ] {
+        assert!(Version::parse_chart(text).is_none(), "{text} should be refused");
+    }
+}
+
+#[test]
+fn a_numeric_prerelease_identifier_without_a_leading_zero_still_parses() {
+    for text in [
+        "1.0.0-0",
+        "1.0.0-01a",
+        "1.0.0-0a",
+        "1.0.0-alpha.0",
+        "1.0.0-10",
+        "1.0.0-1.0.0",
+        "0.3.0-preview.20260831.9",
+    ] {
+        assert!(Version::parse(text).is_some(), "{text} should parse");
+        assert!(
+            Version::parse_chart(text).is_some(),
+            "{text} should parse as a chart version"
+        );
+    }
+}
+
+#[test]
+fn a_numeric_prerelease_identifier_larger_than_a_u64_still_orders_by_number() {
+    // `SemVer` puts no upper bound on a numeric prerelease identifier, so
+    // this must parse and order correctly even past `u64::MAX`
+    // (18446744073709551615). An earlier implementation compared numeric
+    // identifiers by parsing them as `u64` and fell back to string order on
+    // overflow — which would have put this identifier below "9999" instead
+    // of above it.
+    assert!(Version::parse("1.0.0-18446744073709551616").is_some());
+    assert!(Version::parse_chart("1.0.0-18446744073709551616").is_some());
+
+    assert!(version("1.0.0-9999") < version("1.0.0-18446744073709551615"));
+    assert!(version("1.0.0-18446744073709551615") < version("1.0.0-18446744073709551616"));
+
+    // Numeric identifiers still rank below alphanumeric ones, however large.
+    assert!(version("1.0.0-18446744073709551616") < version("1.0.0-a"));
+}

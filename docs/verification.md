@@ -94,7 +94,7 @@ survives in this commit.
 
 | # | Mutation | File | Test(s) that failed | First failure line |
 | --- | --- | --- | --- | --- |
-| 1a | Both tenants' discriminator value zeroed to `""` via the shared `GLOBEX_DISCRIMINATOR_VALUE` constant | `tests/support/fixtures.rs` | **none — 13/13 passed** | — |
+| 1a | Globex's discriminator value zeroed to `""` via the `GLOBEX_DISCRIMINATOR_VALUE` constant | `tests/support/fixtures.rs` | 7 of 13 composed tests, incl. `two_tenants_sharing_one_data_source_each_receive_only_their_own_row` (at `9e7c83b` this left 13/13 green — see below) | `assertion \`left == right\` failed` on the captured predicate |
 | 1b | Globex's discriminator value changed to `""` at the binding call site only, constant left alone | `tests/support/fixtures.rs` | 9 of 13 composed tests, incl. `two_tenants_sharing_one_data_source_each_receive_only_their_own_row`, `each_call_reaches_the_connector_carrying_only_its_own_tenant_predicate` | `assertion \`left == right\` failed`<br>`left: Some(Compare { … value: String("") })`<br>`right: Some(Compare { … value: String("tenant-globex-915") })` |
 | 2 | Both tenants given the same discriminator value | `tests/support/fixtures.rs` | 6 of 13 composed tests, incl. both named above | `assertion \`left == right\` failed`<br>`left: Some(Compare { … value: String("tenant-acme-482") })`<br>`right: Some(Compare { … value: String("tenant-globex-915") })` |
 | 3 | Recording connector ignores the predicate, always returns the whole corpus | `tests/support/connector.rs` | 4 of 13 composed tests, incl. `two_tenants_sharing_one_data_source_each_receive_only_their_own_row` (`each_call_reaches_…_tenant_predicate` still passed — it inspects the captured predicate, not the connector's answer) | `assertion \`left == right\` failed: {"data":[{"id":"1","title":"Acme Handbook"},{"id":"1","title":"Globex Playbook"}],…}`<br>`left: 2 right: 1` |
@@ -106,32 +106,26 @@ survives in this commit.
 | 9 | A held tenants manifest with a lost payload parses as empty again | `src/filesystem/parse.rs` | both `..._when_the_held_tenants_payload_is_lost` tests, plus a `filesystem::parse::tests` unit test | `called \`Result::unwrap_err()\` on an \`Ok\` value: []` |
 | 10 | `rename` replaced with a direct write to the target | `src/filesystem/atomic_write.rs` | `the_temp_file_never_survives_a_publish_call_success_or_failure`, `a_publication_that_failed_between_documents_is_completed_by_the_next_one`, `the_manifest_is_written_after_the_payload_it_describes` | `called \`Result::unwrap_err()\` on an \`Ok\` value: PublicationReport { tenants: Written, data_sources: Written, catalog: Written }` |
 
-Two rows are findings rather than confirmations:
+Two rows were findings at `9e7c83b`, and both are closed by follow-up commits
+on the same branch:
 
-- **Row 1a leaves everything green**, and it is the same class of mistake
-  `docs/delivery.md` names ("a mixed-case fixture, absent, made a
-  `to_lowercase()` bug invisible"): `GLOBEX_DISCRIMINATOR_VALUE` feeds both
-  the published binding (`tests/support/fixtures.rs`) and the recording
-  connector's corpus (`tests/support/connector.rs`). Zeroing the shared
-  constant moves both sides together, so isolation still holds — trivially,
-  because there is nothing left for it to fail against. Row 1b is the same
-  mutation with the coupling broken (the value is changed only at the
-  binding call site, the constant and the corpus left alone), and it fails 9
-  of 13 tests. The fixture's own doc comment already names the reason
-  (`tests/support/connector.rs`: *"a connector that ignored the predicate …
-  would make every isolation assertion in this suite pass whether or not the
-  platform ever built a predicate at all"*), but the same coupling risk
-  exists on the fixture's own side and is not currently called out there.
-- **Row 6 shows the adapter-level integration suite has no direct coverage
-  of `EmptyingNotIntended`.** Its two tests with "emptying" in the name
-  (`an_emptying_publication_is_refused_when_the_held_tenants_payload_is_lost`,
-  `retiring_a_data_source_is_refused_when_the_held_tenants_payload_is_lost`)
-  both remove the held tenants payload first, so `parse_held_tenants` returns
-  `HeldPayloadLost` before `validate_snapshot`'s emptying guard is ever
-  reached — disabling that guard cannot touch them. Only the unit test in
-  `src/validate_tests.rs` and the composed acceptance test exercise the
-  plain "non-empty document offered empty, no `Emptying::Intended`, payload
-  intact" path against a real adapter and a real filesystem.
+- **Row 1a left everything green at `9e7c83b`**, the same class of mistake
+  `docs/delivery.md` names: `GLOBEX_DISCRIMINATOR_VALUE` fed both the
+  published binding (`tests/support/fixtures.rs`) and the recording
+  connector's corpus (`tests/support/connector.rs`), so zeroing the constant
+  moved both sides together and isolation held trivially. The corpus is now
+  written as literals — the database's own truth, which must not follow the
+  fixture — and the same mutation fails 7 of 13 (the row above records the
+  rerun). Row 1b is the earlier form of the same mutation with the coupling
+  broken by hand.
+- **Row 6 showed the adapter-level suite had no direct coverage of
+  `EmptyingNotIntended`**: its emptying-named tests removed the held payload
+  first, so `HeldPayloadLost` fired before the guard was reached. The suite
+  now has `a_populated_tenants_payload_with_no_manifest_still_guards_against_emptying`,
+  which seeds a populated payload with no manifest, offers an empty tenants
+  document without intent, and asserts the refusal and six unchanged files —
+  the state the shipped `examples/` are in, and the one a first regression of
+  the held-content reading had reopened.
 
 Row 10 is the one decision 22 (ADR 0018, part 5) predicted might leave
 nothing failing — atomicity was argued to remove "a spurious alarm and a

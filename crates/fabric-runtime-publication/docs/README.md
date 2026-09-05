@@ -111,15 +111,19 @@ A publication is refused, in whole, before a single byte is written, if:
 - a tenant binding's `data` map has no entries (`EmptyTenantData`) — reachable
   only through `Deserialize`, since construction refuses one, but the
   consumer would drop such a binding on arrival and keep whatever was held;
-- the held tenants document's manifest exists but its payload does not
+- a held tenants or data-sources manifest exists but its payload does not
   (`HeldPayloadLost`) — a held manifest proves something was published, and
-  guessing "empty" for a payload that is merely lost would disarm the two
-  guards above that read the held tenants document. Restoring the payload
-  file, or removing the manifest, is the way out. The held tenants document
-  is read fresh off disk on every publication for exactly these guards:
-  absent (no manifest at all) means nothing was ever published and imposes
-  no constraint; present and parseable is read and checked; present but
-  unparseable is refused as `Unreadable`, never guessed at.
+  guessing "empty" for a payload that is merely lost would disarm the guards
+  above that read held content. Restoring the payload file, or removing the
+  manifest, is the way out. The held tenants and data-sources documents are
+  read fresh off disk on every publication for exactly these guards, and
+  what is held is decided by the payload, not the manifest: neither present
+  means nothing was ever published and imposes no constraint; a payload
+  present — with or without a manifest beside it — is parsed and checked;
+  a payload present but unparseable is refused as `Unreadable`, never
+  guessed at. Only the divergence check is manifest-gated. The catalogue is
+  never parsed for a guard, only byte-compared, so a lost catalogue payload
+  stays republishable at its held revision.
 
 A publication that changes nothing writes nothing, not even a manifest whose
 revision did not move.

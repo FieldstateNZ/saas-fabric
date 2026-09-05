@@ -173,9 +173,10 @@ not build.
   each document's presence as a `verdict::Held`; `read_manifest` also checks a
   manifest's own `document` field against the file it was read from), `parse`
   (`parse_documents`: turns a held payload into a typed `Vec<T>`, absent → `vec![]`,
-  unparseable → `PublicationError::Unreadable`; `parse_held_tenants`: the fail-closed
-  sibling for the held *tenants* document alone, which additionally distinguishes a
-  lost payload from one never published — see `PublicationError::HeldPayloadLost`),
+  unparseable → `PublicationError::Unreadable`; `parse_held_documents`: the fail-closed
+  reading the guards use for tenants and data sources — a payload present, with or
+  without a manifest, is parsed as held content; a manifest without its payload is
+  `HeldPayloadLost`; neither present is nothing held — see `PublicationError::HeldPayloadLost`),
   `plan` (`PublishPlan`: canonical bytes + resolved verdict
   for all three documents, computed before any write), `write` (`write_if_needed`: payload
   then manifest, skipped entirely on `Verdict::Unchanged`), `atomic_write` (temp-file +
@@ -222,7 +223,8 @@ exists for (`docs/delivery.md`): it publishes a fixture — one shared
 DataSource, two tenants isolated by different values in the same
 discriminator column, and a one-resource `articles` catalogue — through the
 real `FilesystemRuntimePublication`, then builds the real
-`fabric_tenant_runtime::build_runtime` over the real `JsonFileSource` and the
+`fabric_tenant_runtime::build_runtime` over the real `JsonFileSource` (behind a
+counting decorator that only delegates, so a refresh can be observed) and the
 real `fabric_data_api::build_data_api` over the real `ResourceCatalog`
 (deserialised straight from the published `catalog.json`, since
 `fabric-api`'s own `startup::catalog::load` is `pub(super)`), and drives the

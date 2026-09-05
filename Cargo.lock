@@ -534,11 +534,14 @@ dependencies = [
 name = "fabric-runtime-publication"
 version = "0.3.0"
 dependencies = [
+ "async-trait",
  "fabric-core",
  "fabric-data-api",
  "fabric-tenant-runtime",
  "serde",
  "serde_json",
+ "thiserror",
+ "tokio",
 ]
 
 [[package]]

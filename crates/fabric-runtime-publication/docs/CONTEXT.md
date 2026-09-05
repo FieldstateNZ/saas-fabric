@@ -1,8 +1,10 @@
 # fabric-runtime-publication — LLM context
 
-The wire contract for the runtime's three published files. In neither plane;
-non-dev dependency is `fabric-core` only. No port, no filesystem adapter — a
-later slice. No production caller yet.
+The wire contract for the runtime's three published files, plus the port and
+filesystem adapter that write them. In neither plane; non-dev dependencies
+are `fabric-core`, `async-trait`, `serde`, `serde_json`, `thiserror` only. No
+production caller yet — that is a control-plane crate ADR 0018 names but does
+not build.
 
 ## Public surface (all re-exported from `lib.rs`)
 
@@ -87,6 +89,29 @@ later slice. No production caller yet.
   — sort by key (`tenant` / `id`), then render as canonical JSON.
   `CatalogDocument::canonical_json(&self)` needs no sort: `BTreeMap` already
   orders by key.
+- `RuntimePublication` — `#[async_trait]` port: `current() -> Result<PublishedRevisions,
+  PublicationError>`, `publish(&RuntimeSnapshot) -> Result<PublicationReport, PublicationError>`,
+  `describe() -> String` (never a credential).
+- `RuntimeSnapshot` — `tenants: DocumentInput<Vec<TenantBindingDocument>>`,
+  `data_sources: DocumentInput<Vec<DataSourceDocument>>`, `catalog: DocumentInput<CatalogDocument>`.
+  All three on every call; no partial-publish path.
+- `DocumentInput<T>` — `revision: DocumentRevision`, `payload: T`, `emptying: Emptying`.
+  `new(revision, payload)` defaults `emptying` to `NotIntended`; `.emptying_intended()` opts in.
+- `Emptying` — `NotIntended` (default) | `Intended`. Per-document opt-in for taking a
+  currently non-empty document to empty (ADR 0018 part 6). Ignored by the catalogue's own
+  empty-check, which refuses unconditionally regardless of this value.
+- `PublishedRevisions` — `tenants`, `data_sources`, `catalog`: each `Option<DocumentRevision>`,
+  `None` where no manifest has ever been published.
+- `PublicationReport` — `tenants`, `data_sources`, `catalog`: each a `DocumentOutcome`.
+- `DocumentOutcome` — `Written | Unchanged`. `From<Verdict>` (internal) maps `Write` →
+  `Written`, `Unchanged` → `Unchanged`.
+- `PublicationError` — `thiserror` enum: `StaleRevision { document, held, offered }`,
+  `DivergentPayload { document, revision }`, `DanglingDataSource { tenant, logical,
+  data_source }`, `RetiredDataSourceStillBound { data_source, tenant }`,
+  `EmptyingNotIntended { document }`, `EmptyCatalogue`, `Unreadable { document, cause:
+  Box<dyn Error + Send + Sync> }`, `Unwritable { document, cause }`.
+- `FilesystemRuntimePublication` — the adapter. `new(tenants_path, data_sources_path,
+  catalog_path)` (each `impl Into<PathBuf>`); implements `RuntimePublication`.
 
 ## Internal modules
 
@@ -100,6 +125,30 @@ later slice. No production caller yet.
 - `document_revision` — `DocumentRevision` alone, kept separate from
   `manifest` because it is a distinct concept from the envelope that carries
   it.
+- `port` — the `RuntimePublication` trait alone.
+- `snapshot` — `RuntimeSnapshot`, `DocumentInput<T>`, `Emptying`.
+- `published_revisions` — `PublishedRevisions` alone.
+- `report` — `PublicationReport`, `DocumentOutcome`, and `From<Verdict> for DocumentOutcome`.
+- `errors` — `PublicationError` alone (121-150 line band: one enum, every variant's
+  rustdoc names the ADR 0018 rule it enforces).
+- `verdict` (`pub(crate)` only, not re-exported) — `Verdict { Write, Unchanged }`,
+  `Held<'a> { revision, payload: Option<&'a [u8]> }`, `Incoming<'a> { document, revision,
+  payload }`, and `verdict(held: Option<Held>, incoming: &Incoming) -> Result<Verdict,
+  PublicationError>` — ADR 0018's presence table and revision table, verbatim, as one pure
+  function. Paired with `verdict_tests.rs` (one test per table row).
+- `validate` (`pub(crate)` only) — `validate_snapshot(&RuntimeSnapshot, held_tenants:
+  &[TenantBindingDocument], held_data_sources: &[DataSourceDocument]) -> Result<(),
+  PublicationError>` plus four private guard functions (empty catalogue, dangling data
+  source, retired-data-source-still-bound, unintended emptying), all pure — no filesystem.
+  Paired with `validate_tests.rs`.
+- `filesystem` — the adapter, split into `paths` (`DocumentPaths`: payload + derived
+  manifest path), `held` (`HeldState`: reads all six files once per call; `parse_documents`
+  turns held bytes into a typed `Vec<T>`, absent → `vec![]`, unparseable →
+  `PublicationError::Unreadable`), `plan` (`PublishPlan`: canonical bytes + resolved verdict
+  for all three documents, computed before any write), `write` (`write_if_needed`: payload
+  then manifest, skipped entirely on `Verdict::Unchanged`), `atomic_write` (temp-file +
+  `fsync` + `rename`, sibling to the target, removed on every failure path), and `adapter`
+  (`FilesystemRuntimePublication`'s `impl RuntimePublication`).
 
 ## Identifier reuse map
 
@@ -146,5 +195,22 @@ plain `String`, not a checked newtype. Two different reasons:
   exact mistake the consumer's own rustdoc documents fixing.
 - Canonical serialisation only ever adds a trailing newline and two-space
   indentation — do not add a digest, a hash, or any other derived field.
-  Divergence detection (a later slice) is a byte comparison; anything that
-  makes two semantically-identical documents serialise differently breaks it.
+  Divergence detection is a byte comparison; anything that makes two
+  semantically-identical documents serialise differently breaks it.
+- `validate_snapshot` runs, and every document's verdict is resolved,
+  *before* `FilesystemRuntimePublication::publish` writes anything. Do not
+  interleave a write between them — a refused publication must never leave a
+  partially-applied set.
+- Write order is data sources, then catalogue, then tenants. Do not reorder:
+  additions must land before a tenant binding can reference them.
+- The retirement check (`RetiredDataSourceStillBound`) reads the *held*
+  tenants document, never the one inside the incoming `RuntimeSnapshot`. Held
+  absent → no constraint (nothing was ever bound); held present but
+  unparseable → refuse via `Unreadable`, never guess.
+- `verdict` and `validate_snapshot` take no `Path`, open no file, and must
+  stay that way — they are what makes the presence/revision tables and the
+  emptying guard testable without a temporary directory.
+- `atomic_write`'s temporary file is always a sibling of its target, in the
+  same directory (`rename` is atomic only within a filesystem), and is
+  always cleaned up on a failed create/write/`fsync`/rename — never left for
+  a later call to trip over.

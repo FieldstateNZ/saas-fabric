@@ -27,12 +27,14 @@
 //! are what pin that guarantee down in code rather than leaving it as an
 //! assertion in a doc comment.
 //!
-//! # What this crate does not own
+//! # What this crate owns
 //!
-//! Only the wire contract: the document types, [`DocumentManifest`], and
-//! canonical serialisation. It has no port and no filesystem adapter — those
-//! belong to a later slice. There is, on purpose, no production caller of
-//! anything here yet.
+//! The wire contract (the document types, [`DocumentManifest`], and
+//! canonical serialisation), the [`RuntimePublication`] port, the pure
+//! verdict a publication is decided by, and [`FilesystemRuntimePublication`],
+//! the adapter that writes it to a local disk. There is, on purpose, still
+//! no production *caller* of any of it — that is the control-plane crate
+//! named in ADR 0018, "The production owner", and it does not exist yet.
 //!
 //! # No field anywhere can hold a secret value
 //!
@@ -46,8 +48,20 @@
 mod canonical;
 mod document;
 mod document_revision;
+mod errors;
+mod filesystem;
 mod ids;
 mod manifest;
+mod port;
+mod published_revisions;
+mod report;
+mod snapshot;
+mod validate;
+#[cfg(test)]
+mod validate_tests;
+mod verdict;
+#[cfg(test)]
+mod verdict_tests;
 
 pub use document::{
     data_sources_canonical_json, tenants_canonical_json, CatalogDocument, ConfigurationBindingDocument,
@@ -56,11 +70,17 @@ pub use document::{
     StorageBindingDocument, TenantBindingDocument, TenantDataBindingDocument,
 };
 pub use document_revision::DocumentRevision;
+pub use errors::PublicationError;
+pub use filesystem::FilesystemRuntimePublication;
 pub use ids::{ConnectionName, ConnectorId, FieldName};
 pub use manifest::{
     DocumentKind, DocumentManifest, CATALOG_FILE, CATALOG_MANIFEST_FILE, CONTRACT_VERSION, DATA_SOURCES_FILE,
     DATA_SOURCES_MANIFEST_FILE, TENANTS_FILE, TENANTS_MANIFEST_FILE,
 };
+pub use port::RuntimePublication;
+pub use published_revisions::PublishedRevisions;
+pub use report::{DocumentOutcome, PublicationReport};
+pub use snapshot::{DocumentInput, Emptying, RuntimeSnapshot};
 
 #[cfg(test)]
 mod tests {

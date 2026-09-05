@@ -96,6 +96,12 @@ GIT_CRATE = "fabric-client-git"
 # never the platform's public contract.
 NDC_CRATE = "fabric-connector-ndc"
 
+# The crate that owns the wire contract for runtime publication. In neither
+# plane, like fabric-core (ADR 0018) -- and the crate ADR 0018 adds two checks
+# for, below, to keep that way: the runtime plane must never gain a path to
+# the one crate that could make it a second writer of the files it reads.
+RUNTIME_PUBLICATION_CRATE = "fabric-runtime-publication"
+
 # What the host is permitted to name from the NDC crate. These two are
 # deployment wiring -- choosing a connector process and building it at
 # startup -- not request-path vocabulary. Anything else appearing here would
@@ -221,6 +227,21 @@ class Graph:
             for package in metadata["packages"]
             if package["name"] in self._members
         }
+        # The same table, minus dev-dependencies. `cargo metadata` reports a
+        # dependency's kind as `null` for a normal dependency, `"dev"`, or
+        # `"build"`. A dev edge only ever reaches this crate's own test
+        # binaries -- never a binary any production caller links -- so a
+        # check that cares what a production build can reach needs this set
+        # instead of `_direct`.
+        self._non_dev = {
+            package["name"]: {
+                dependency["name"]
+                for dependency in package["dependencies"]
+                if dependency.get("kind") != "dev"
+            }
+            for package in metadata["packages"]
+            if package["name"] in self._members
+        }
         # Everything cargo resolved, workspace crates included. This is what
         # makes "no driver is linked anywhere" a claim about the built binary
         # rather than about what someone remembered to write down.
@@ -235,9 +256,24 @@ class Graph:
         """Everything a crate declares, across normal, dev and build tables."""
         return self._direct.get(crate, set())
 
+    def non_dev_dependencies(self, crate: str) -> set[str]:
+        """Everything a crate declares, across normal and build tables only.
+
+        `direct_dependencies` stays dev-inclusive -- every existing check
+        relies on that, most importantly `check_the_planes_do_not_meet`. This
+        is the narrower set the plane-reachability checks below need: walking
+        a dev edge would treat a bridge that only ever reaches a test binary
+        as if it reached a production one.
+        """
+        return self._non_dev.get(crate, set())
+
     def internal_dependencies(self, crate: str) -> set[str]:
         """The workspace crates a crate depends on."""
         return self.direct_dependencies(crate) & self._members
+
+    def internal_non_dev_dependencies(self, crate: str) -> set[str]:
+        """The workspace crates a crate depends on, dev-dependencies excluded."""
+        return self.non_dev_dependencies(crate) & self._members
 
     def resolved_contains(self, names) -> set[str]:
         """Which of `names` cargo resolved into the graph at all."""
@@ -637,6 +673,140 @@ def check_the_planes_do_not_meet(graph: Graph) -> list[Failure]:
     return failures
 
 
+def _internal_closure(graph: Graph, start: str, *, non_dev_only: bool) -> dict[str, str | None]:
+    """Every workspace crate reachable from `start`, transitively.
+
+    Returns a map from each reached crate to the crate it was first reached
+    from, with `start` itself mapping to `None`. That predecessor chain is
+    what lets a failure show the actual dependency path rather than just the
+    two ends of it -- see `_chain_to`.
+
+    `non_dev_only` picks which of the two questions this closure answers:
+    whether a *production* build can reach a crate (dev-dependencies
+    excluded, for `check_plane_reachability_is_transitive`), or whether the
+    crate is reachable at all, dev included (for
+    `check_runtime_plane_cannot_reach_the_publisher`, which must catch a
+    test-only bridge too).
+    """
+    edges = graph.internal_non_dev_dependencies if non_dev_only else graph.internal_dependencies
+    predecessor: dict[str, str | None] = {start: None}
+    frontier = [start]
+    while frontier:
+        current = frontier.pop(0)
+        for dependency in sorted(edges(current)):
+            if dependency not in predecessor:
+                predecessor[dependency] = current
+                frontier.append(dependency)
+    return predecessor
+
+
+def _chain_to(predecessor: dict[str, str | None], target: str) -> list[str]:
+    """Reconstructs the dependency chain `_internal_closure` found to `target`."""
+    chain = [target]
+    while predecessor[chain[-1]] is not None:
+        chain.append(predecessor[chain[-1]])
+    return list(reversed(chain))
+
+
+def check_plane_reachability_is_transitive(graph: Graph) -> list[Failure]:
+    """A crate's non-dev dependency closure touches at most one plane.
+
+    Invariant: for every workspace crate, the plane it belongs to (if any),
+    together with every `RUNTIME_PLANE` or `CONTROL_PLANE` crate reachable
+    over non-dev internal edges, transitively, lies within a single plane --
+    or is empty.
+
+    Source: ADR 0018, Consequences ("A crate in neither plane is not a new
+    category ... but it does need a new invariant").
+
+    `check_the_planes_do_not_meet` only looks at a crate's direct
+    dependencies. A crate in neither plane that depends on one plane while
+    something in the other plane depends on *it* would pass that check at
+    every single edge along the way -- a direct check never looks two hops
+    ahead -- and would still bridge the planes through a production
+    dependency chain that nothing else sees, even if `expected` in
+    `check_dependency_direction` is kept perfectly up to date. Computing the
+    closure straight from the plane sets, independent of `expected`, is what
+    catches that.
+    """
+    failures = []
+
+    for crate in graph.crates:
+        predecessor = _internal_closure(graph, crate, non_dev_only=True)
+        own_plane = RUNTIME_PLANE if crate in RUNTIME_PLANE else CONTROL_PLANE if crate in CONTROL_PLANE else None
+
+        runtime_hits = [name for name in predecessor if name != crate and name in RUNTIME_PLANE]
+        control_hits = [name for name in predecessor if name != crate and name in CONTROL_PLANE]
+
+        touches_runtime = own_plane is RUNTIME_PLANE or bool(runtime_hits)
+        touches_control = own_plane is CONTROL_PLANE or bool(control_hits)
+
+        if touches_runtime and touches_control:
+            runtime_chain = [crate] if own_plane is RUNTIME_PLANE else _chain_to(predecessor, runtime_hits[0])
+            control_chain = [crate] if own_plane is CONTROL_PLANE else _chain_to(predecessor, control_hits[0])
+            failures.append(
+                Failure(
+                    "Plane reachability stays within one plane (ADR 0018)",
+                    f"{crate}'s non-dev dependency closure touches both: "
+                    f"{' -> '.join(runtime_chain)} (runtime plane) and "
+                    f"{' -> '.join(control_chain)} (control plane)",
+                    "A crate in neither plane could otherwise bridge the two "
+                    "through a production dependency chain that no direct "
+                    "edge check, and no update to the hand-maintained "
+                    "`expected` table, would ever see cross the line.",
+                )
+            )
+
+    return failures
+
+
+def check_runtime_plane_cannot_reach_the_publisher(graph: Graph) -> list[Failure]:
+    """No crate in `RUNTIME_PLANE` can reach `fabric-runtime-publication`.
+
+    Invariant: no crate in `RUNTIME_PLANE` may name
+    `fabric-runtime-publication` in any dependency table -- normal, dev or
+    build -- directly or transitively.
+
+    Source: ADR 0018, Consequences ("no crate in RUNTIME_PLANE may name
+    fabric-runtime-publication in **any** table, dev included -- a runtime
+    binary can never link a writer of the files it reads").
+
+    "Exactly one writer" is enforced today by RBAC scoping the production
+    caller, but that is an operational guarantee, not a structural one. A
+    runtime-plane crate that can *name* the publisher is a runtime-plane
+    crate one edit away from calling it, which would make "exactly one
+    writer" false the moment somebody wrote that edit rather than the moment
+    somebody reviewed it. Dev tables are included on purpose: a runtime
+    crate's test binary linking the publisher is the same coupling with a
+    slower fuse, not a different one.
+    """
+    failures = []
+
+    if RUNTIME_PUBLICATION_CRATE not in graph.crates:
+        return failures
+
+    for crate in sorted(RUNTIME_PLANE):
+        if crate not in graph.crates:
+            continue
+
+        predecessor = _internal_closure(graph, crate, non_dev_only=False)
+        if RUNTIME_PUBLICATION_CRATE in predecessor:
+            chain = _chain_to(predecessor, RUNTIME_PUBLICATION_CRATE)
+            failures.append(
+                Failure(
+                    "No runtime-plane crate can reach fabric-runtime-publication (ADR 0018)",
+                    f"{crate} reaches {RUNTIME_PUBLICATION_CRATE} via {' -> '.join(chain)}",
+                    "The runtime plane must never link a writer of the files "
+                    "it reads. A crate that can name the publisher at all "
+                    "needs only a call site, not a new dependency, to become "
+                    "a second writer -- which is exactly the failure "
+                    "'exactly one writer' is supposed to rule out.",
+                )
+            )
+
+    return failures
+
+
 def check_adapter_containment(graph: Graph) -> list[Failure]:
     """Platform-service vocabulary stays inside its adapter crate.
 
@@ -837,6 +1007,8 @@ CHECKS = (
     ("NDC containment", check_ndc_containment),
     ("Platform-service adapter containment", check_adapter_containment),
     ("The planes do not meet", check_the_planes_do_not_meet),
+    ("Plane reachability is transitive", check_plane_reachability_is_transitive),
+    ("No runtime-plane crate can reach the publisher", check_runtime_plane_cannot_reach_the_publisher),
     ("Transport stays out of the domain", check_domain_crates_have_no_transport),
     ("No drivers, no control-plane clients", check_no_forbidden_dependencies),
     ("X-Tenant-Id is never an identity source", check_tenant_header_is_never_a_source),

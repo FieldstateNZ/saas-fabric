@@ -209,11 +209,15 @@ That last sentence is doing real work, and it is worth being honest about its
 limit: `Graph.direct_dependencies` in `scripts/check_architecture.py` reads
 every dependency table, dev included, so `check_dependency_direction` treats
 this crate's dev edges to two runtime-plane crates exactly like production
-edges for the purpose of the table above. What it does not yet check is
-`check_the_planes_do_not_meet`'s complementary claim -- that no runtime-plane
-crate can reach *this* crate, over any table -- because that check currently
-skips any crate in neither plane outright. Closing that gap is a structural
-invariant of its own, tracked separately from this slice.
+edges for the purpose of the table above. `check_the_planes_do_not_meet`'s
+complementary claim -- that no runtime-plane crate can reach *this* crate,
+over any table -- is not that check's job either, because it skips any crate
+in neither plane outright. ADR 0018 closes both gaps with two checks of their
+own, computed straight from the plane sets rather than from `expected`:
+`check_plane_reachability_is_transitive` catches a *production* dependency
+chain that bridges the planes through a crate in neither one, and
+`check_runtime_plane_cannot_reach_the_publisher` refuses this crate
+specifically to every runtime-plane crate, dev tables included.
 
 ## The rules behind it
 
@@ -280,6 +284,12 @@ requires editing a `Cargo.toml`, which is visible in review. Beyond that:
   crate in one plane depends on the other, and that no Git or Kubernetes client
   exists **anywhere in the workspace** — including the control plane, which
   reaches its Git host over HTTPS rather than by linking a Git library.
+- It also asserts, per ADR 0018, that no workspace crate's non-dev dependency
+  closure touches both planes -- catching a bridge through a crate in neither
+  one that a direct-edge check, and even an up-to-date `expected` table, would
+  miss -- and that no runtime-plane crate can reach
+  `fabric-runtime-publication` over any dependency table, so the runtime plane
+  can never link a writer of the files it reads.
 - CI runs `cargo deny check` including a `[bans]` section, so a surprise
   transitive dependency is visible.
 

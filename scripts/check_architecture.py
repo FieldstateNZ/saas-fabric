@@ -453,6 +453,19 @@ def check_dependency_direction(graph: Graph) -> list[Failure]:
     """The graph in docs/architecture/crate-dependencies.md is the real one."""
     expected = {
         "fabric-core": set(),
+        # In neither plane, like fabric-core: its only non-dev dependency is
+        # fabric-core. The dev-dependencies below are deliberately wider than
+        # what this crate's own tests use today -- a later slice adds the
+        # composed acceptance test, which dev-depends on fabric-identity and
+        # fabric-connector too, and pre-declaring all four now means that
+        # slice never has to touch this choke-point file.
+        "fabric-runtime-publication": {
+            "fabric-core",
+            "fabric-tenant-runtime",
+            "fabric-data-api",
+            "fabric-identity",
+            "fabric-connector",
+        },
         "fabric-identity": {"fabric-core"},
         "fabric-connector": {"fabric-core"},
         "fabric-tenant-runtime": {"fabric-core", "fabric-connector"},

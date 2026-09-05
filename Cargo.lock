@@ -531,6 +531,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "fabric-runtime-publication"
+version = "0.3.0"
+dependencies = [
+ "fabric-core",
+ "fabric-data-api",
+ "fabric-tenant-runtime",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "fabric-tenant-runtime"
 version = "0.3.0"
 dependencies = [

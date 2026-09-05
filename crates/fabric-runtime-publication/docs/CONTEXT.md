@@ -1,0 +1,150 @@
+# fabric-runtime-publication — LLM context
+
+The wire contract for the runtime's three published files. In neither plane;
+non-dev dependency is `fabric-core` only. No port, no filesystem adapter — a
+later slice. No production caller yet.
+
+## Public surface (all re-exported from `lib.rs`)
+
+- `TenantBindingDocument` — one element of `tenants.json`. Fields: `tenant:
+  TenantId`, `revision: BindingRevision`, `data:
+  BTreeMap<LogicalDataSourceName, TenantDataBindingDocument>`,
+  `configuration: Option<ConfigurationBindingDocument>`, `secrets:
+  Option<String>` (reference path only), `features: BTreeMap<String, bool>`,
+  `storage: BTreeMap<String, StorageBindingDocument>`. Mirrors
+  `fabric_tenant_runtime::TenantRuntimeBinding` field for field, as a
+  separate declaration.
+- `TenantDataBindingDocument` — `data_source: DataSourceId`, `isolation:
+  IsolationModelDocument`. Mirrors `TenantDataBinding`.
+- `ConfigurationBindingDocument` — `store: String`, `profile:
+  Option<String>`. Mirrors `ConfigurationBinding`.
+- `StorageBindingDocument` — `provider`, `container`: `String`; `prefix`,
+  `credentials`: `Option<String>` (credentials is a reference path only).
+  Mirrors `StorageBinding`.
+- `IsolationModelDocument` — `Database {}` | `Schema { schema: String }` |
+  `Discriminator { column: FieldName, value: String }`. Internally tagged on
+  `kind`, `deny_unknown_fields`. Every variant is struct-shaped — including
+  the empty `Database {}` — because an internally tagged *unit* variant has
+  no field list for `deny_unknown_fields` to check a surplus against; see the
+  rustdoc on this type for the exact bug that gap once caused on the consumer
+  side. Mirrors `fabric_connector::IsolationModel`.
+- `DataSourceDocument` — one element of `data-sources.json`. Fields: `id:
+  DataSourceId`, `revision: BindingRevision`, `connector: ConnectorId`,
+  `connection: ConnectionSelectorDocument` (**required, no default**),
+  `placement: PlacementClassDocument`, `residency: DataResidencyDocument`,
+  `pool: PoolSettingsDocument` (`#[serde(default)]`), `capabilities:
+  DataSourceCapabilitiesDocument` (`#[serde(default)]`, closed), `labels:
+  BTreeMap<String, String>`. Mirrors `fabric_tenant_runtime::DataSource`.
+- `ConnectionSelectorDocument` — `Default {}` | `Named { name:
+  ConnectionName }` | `Secret { reference: String }` (reference path only).
+  Same struct-shaped-variant reasoning as `IsolationModelDocument`. Mirrors
+  `ConnectionSelector`.
+- `PlacementClassDocument` — `Shared | Dedicated | HighAvailability |
+  Regulated | Development | Ephemeral`, `rename_all = "snake_case"`. Mirrors
+  `PlacementClass`. Descriptive only; nothing branches on it.
+- `DataResidencyDocument` — `region: String`, `jurisdiction:
+  Option<String>`. Mirrors `DataResidency`.
+- `PoolSettingsDocument` — `max_connections: u32`, `idle_timeout_seconds:
+  u64`, `acquire_timeout_seconds: u64`. `Copy`. Struct-level
+  `#[serde(default)]`; `Default` matches the consumer's numbers (20 / 300 /
+  5) exactly. Mirrors `PoolSettings`.
+- `DataSourceCapabilitiesDocument` — `writable: bool`, `accepts_new_tenants:
+  bool`. `Copy`. Struct-level `#[serde(default)]`; `Default` is
+  `false`/`false` (fail closed). Mirrors `DataSourceCapabilities`.
+- `CatalogDocument` — `catalog.json` as a whole: `#[serde(transparent)]` over
+  `BTreeMap<LogicalResourceName, ResourceDefinitionDocument>`. `new`, `len`,
+  `is_empty`, `canonical_json`. Mirrors `fabric_data_api::ResourceCatalog`,
+  which is `Deserialize`-only — this is the type that closes the "nothing can
+  write a catalogue" gap.
+- `ResourceDefinitionDocument` — `data_source: LogicalDataSourceName`,
+  `collection: String`, `key_field: FieldName` (`#[serde(default =
+  "default_key_field")]`, defaults to `"id"`), `operations:
+  Vec<OperationKind>` (`fabric_core::OperationKind`, reused directly;
+  `#[serde(default = "default_operations")]`, defaults to `[Read, List]`),
+  `queryable_fields: Vec<FieldName>` — **not** `Option`, always emitted, even
+  empty; `#[serde(default)]` only affects deserialisation of documents that
+  omitted the key (e.g. the shipped examples). Mirrors `ResourceDefinition`.
+- `DocumentManifest` — `contract_version: u32`, `document: DocumentKind`,
+  `revision: DocumentRevision`. Three fields, no timestamp.
+  `deny_unknown_fields`.
+- `DocumentKind` — `Tenants | DataSources | Catalog`, `rename_all =
+  "kebab-case"` → `"tenants" | "data-sources" | "catalog"`.
+- `DocumentRevision` — newtype over `u64`, `#[serde(transparent)]`, `Ord`.
+  **A document's revision, never a resource's** — `fabric_core::BindingRevision`
+  is the resource revision, reused directly on `TenantBindingDocument.revision`
+  and `DataSourceDocument.revision`. Do not conflate the two; see the type's
+  own rustdoc.
+- `CONTRACT_VERSION: u32 = 1`.
+- File name constants: `TENANTS_FILE`, `TENANTS_MANIFEST_FILE`,
+  `DATA_SOURCES_FILE`, `DATA_SOURCES_MANIFEST_FILE`, `CATALOG_FILE`,
+  `CATALOG_MANIFEST_FILE`. Each matches the ConfigMap data-key character set
+  `[-._a-zA-Z0-9]+`.
+- `ConnectorId`, `ConnectionName`, `FieldName` — re-declared newtypes over
+  `fabric_core::naming::parse_identifier`, because the canonical types live in
+  `fabric-connector` (runtime plane) and this crate may not depend on it.
+- `tenants_canonical_json(&[TenantBindingDocument]) -> Result<Vec<u8>, serde_json::Error>`
+  and `data_sources_canonical_json(&[DataSourceDocument]) -> Result<Vec<u8>, serde_json::Error>`
+  — sort by key (`tenant` / `id`), then render as canonical JSON.
+  `CatalogDocument::canonical_json(&self)` needs no sort: `BTreeMap` already
+  orders by key.
+
+## Internal modules
+
+- `canonical` — `pub(crate) fn to_canonical_bytes` — two-space pretty JSON
+  plus a trailing newline. The one formatting decision every document shares;
+  every `canonical_json`-shaped function delegates to it.
+- `document` — every wire type, one per file under `src/document/`.
+- `ids` — the three re-declared identifier newtypes.
+- `manifest` — `DocumentManifest`, `DocumentKind`, `CONTRACT_VERSION`, the six
+  file-name constants.
+- `document_revision` — `DocumentRevision` alone, kept separate from
+  `manifest` because it is a distinct concept from the envelope that carries
+  it.
+
+## Identifier reuse map
+
+| Field | Type | Source |
+|---|---|---|
+| `tenant` | `TenantId` | `fabric-core`, reused |
+| `data_source` (on a binding or a catalogue entry) | `DataSourceId` / `LogicalDataSourceName` | `fabric-core`, reused |
+| a catalogue's map key | `LogicalResourceName` | `fabric-core`, reused |
+| `connector` | `ConnectorId` | **this crate**, re-declared |
+| `connection`'s `name` | `ConnectionName` | **this crate**, re-declared |
+| `key_field`, discriminator `column`, `queryable_fields` entries | `FieldName` | **this crate**, re-declared |
+| `collection`, `schema` (Isolation::Schema), `secrets`, `credentials`, `reference` | `String` | not a validated newtype — see "Deliberately unvalidated" below |
+
+## Deliberately unvalidated fields
+
+`collection`, `schema`, `secrets`, `credentials`, and `Secret::reference` are
+plain `String`, not a checked newtype. Two different reasons:
+
+- `collection` and `schema` are runtime-plane identifiers
+  (`fabric_connector::CollectionName`, `SchemaName`) that were **not** named
+  in the decision to re-declare identifiers here — only `ConnectorId`,
+  `ConnectionName`, and `FieldName` were. The consumer still validates them on
+  its own deserialisation.
+- `secrets`, `credentials`, and `Secret::reference` are reference *paths*.
+  `fabric_connector::SecretRef`, the consumer's own equivalent, has no
+  checked constructor either (`#[serde(transparent)]` over a bare `String`)
+  — there is no character-set rule to mirror.
+
+## Invariants to preserve
+
+- No dependency beyond `fabric-core` in `[dependencies]`. Dev-dependencies on
+  `fabric-tenant-runtime`, `fabric-data-api`, `fabric-identity`, and
+  `fabric-connector` are expected and already pre-declared in
+  `scripts/check_architecture.py`'s `expected` table — do not treat adding
+  the latter two as a reason to edit that file.
+- Every document type derives both `Serialize` and `Deserialize`. The
+  consumer's own types are asymmetric (`ResourceCatalog` /
+  `ResourceDefinition` are `Deserialize`-only) precisely because nothing
+  before this crate could write one.
+- `queryable_fields` stays non-`Option`. Making it optional would silently
+  reintroduce the "omission means unrestricted" ambiguity this type exists to
+  remove.
+- `connection` on `DataSourceDocument` stays required. A default here is the
+  exact mistake the consumer's own rustdoc documents fixing.
+- Canonical serialisation only ever adds a trailing newline and two-space
+  indentation — do not add a digest, a hash, or any other derived field.
+  Divergence detection (a later slice) is a byte comparison; anything that
+  makes two semantically-identical documents serialise differently breaks it.

@@ -31,6 +31,31 @@ pub struct PlatformManagementConfig {
     /// slower elsewhere is a change to a manifest, not to a release.
     #[serde(default = "default_interval")]
     pub reconciliation_interval_seconds: u64,
+
+    /// The budget for one whole desired-state operation, in seconds.
+    ///
+    /// # Why this is separate from the per-request timeout
+    ///
+    /// One `advance` is around thirty calls to the Git host, each bounded by
+    /// `git_host.http_timeout_seconds`. A host that answers every one of them
+    /// just inside that limit keeps the operation running for minutes, and the
+    /// platform binding holds a lock for the whole of it — so an operator's
+    /// disconnect queues behind it and `request_timeout_seconds` fires first.
+    /// The disconnect itself still finishes, in a task of its own; what the
+    /// operator gets is a `504` and no way to tell a platform that took a
+    /// while from one that never let go.
+    ///
+    /// # What it actually bounds, which is a little more than itself
+    ///
+    /// The budget stops the adapter *starting* a call it cannot afford. It
+    /// never abandons a write already sent, because a write abandoned
+    /// mid-flight would release the binding while it might still land. So one
+    /// operation can run for this long plus one `git_host.http_timeout_seconds`,
+    /// and it is that **sum** — the longest a drain can take — that startup
+    /// requires to be strictly less than `request_timeout_seconds`, leaving
+    /// headroom for the rest of the operation: see `startup::platform`.
+    #[serde(default = "default_operation_timeout")]
+    pub operation_timeout_seconds: u64,
 }
 
 /// Where published artifacts are looked up.
@@ -80,4 +105,12 @@ fn default_registry_host() -> String {
 /// Ten seconds, matching the other platform clients.
 const fn default_timeout() -> u64 {
     10
+}
+
+/// Fifteen seconds: comfortably more than a healthy operation needs, and — with
+/// the other defaults, a ten-second call timeout and a thirty-second request —
+/// leaving five seconds spare once the one call the budget cannot cut short is
+/// counted too. Twenty used to fit when the budget cancelled; it no longer does.
+const fn default_operation_timeout() -> u64 {
+    15
 }

@@ -29,6 +29,16 @@ pub struct PlatformManagementTarget {
     /// How long a call to it may take.
     http_timeout_seconds: u64,
 
+    /// How long a whole desired-state operation may take.
+    ///
+    /// Separate from the above because an operation is many calls. Startup has
+    /// already checked this *plus* one of the above is shorter than one
+    /// request — the budget declines to start a call it cannot afford and never
+    /// abandons a write already sent — so the binding's drain is bounded below
+    /// the API request timeout, with headroom left for the rest of an
+    /// operator's disconnect rather than a promise the whole of it fits.
+    operation_timeout_seconds: u64,
+
     /// Stamps installation tokens.
     clock: Arc<dyn Clock>,
 
@@ -42,20 +52,23 @@ impl PlatformManagementTarget {
     pub fn new(
         api_base_url: String,
         http_timeout_seconds: u64,
+        operation_timeout_seconds: u64,
         clock: Arc<dyn Clock>,
         binding: Arc<PlatformDesiredState>,
     ) -> Self {
         Self {
             api_base_url,
             http_timeout_seconds,
+            operation_timeout_seconds,
             clock,
             binding,
         }
     }
 }
 
+#[async_trait::async_trait]
 impl IntegrationTarget for PlatformManagementTarget {
-    fn bind(&self, integration: &GitIntegration, private_key: &SecretValue) -> Result<(), String> {
+    async fn bind(&self, integration: &GitIntegration, private_key: &SecretValue) -> Result<(), String> {
         let repository = integration
             .repository()
             .ok_or_else(|| "the integration has not settled on a repository".to_owned())?;
@@ -78,21 +91,27 @@ impl IntegrationTarget for PlatformManagementTarget {
                 repository: repository.name.clone(),
                 branch: repository.branch.clone(),
                 http_timeout_seconds: self.http_timeout_seconds,
+                operation_timeout_seconds: self.operation_timeout_seconds,
             },
             credential,
             Arc::clone(&self.clock),
         )?;
 
-        self.binding.connect(Arc::new(platform) as Arc<dyn DesiredState>);
+        // Awaited, and that is the point of the whole signature: the binding
+        // does not swap until every operation already running against the
+        // repository it is replacing has finished.
+        self.binding
+            .connect(Arc::new(platform) as Arc<dyn DesiredState>)
+            .await;
 
         Ok(())
     }
 
-    fn unbind(&self) {
-        self.binding.disconnect();
+    async fn unbind(&self) {
+        self.binding.disconnect().await;
     }
 
-    fn unusable(&self, detail: &str) {
-        self.binding.unusable(detail);
+    async fn unusable(&self, detail: &str) {
+        self.binding.unusable(detail).await;
     }
 }

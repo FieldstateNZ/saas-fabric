@@ -76,8 +76,18 @@ pub(super) async fn establish(
         integrations.clients = Some(services::clients(config, desired_state, &secrets, &store, clock)?);
     }
 
-    if let Some(binding) = platform {
-        integrations.platform = Some(services::platform(config, binding, &secrets, &store, clock)?);
+    // Both or neither: the binding exists exactly when the section does, and
+    // taking the budget from the section rather than defaulting it here keeps
+    // the value startup validated as the value that is used.
+    if let (Some(binding), Some(managed)) = (platform, config.platform_management.as_ref()) {
+        integrations.platform = Some(services::platform(
+            config,
+            binding,
+            managed.operation_timeout_seconds,
+            &secrets,
+            &store,
+            clock,
+        )?);
     }
 
     // Picks up whatever an operator connected before the last restart. Fails

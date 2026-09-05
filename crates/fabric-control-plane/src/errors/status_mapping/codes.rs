@@ -34,10 +34,25 @@ impl ControlPlaneError {
                 "component_unknown"
             }
             Self::Platform(PlatformError::NotAdvancing { .. }) => "component_not_advancing",
+            // Its own code beside `revision_conflict`, because they are not the
+            // same event to a console: that one is a client's desired state
+            // moving, this one is a platform component's. Both mean "read again
+            // and redo it", and a console that could only see `409` would not
+            // know which page to reload.
+            Self::Platform(PlatformError::DesiredState(DesiredStateError::Conflict)) => {
+                "platform_state_moved"
+            }
             Self::Platform(PlatformError::NotRollable { .. }) => "version_not_rollable",
             Self::Platform(_) => "platform_unavailable",
             Self::GitHostRefused => "git_host_refused",
             Self::IntegrationRefused(_) => "integration_refused",
+            // Its own code beside `revision_conflict` and `platform_state_moved`,
+            // for the reason those two are apart: all three mean "read again and
+            // redo it", and a caller that could only see `409` would not know
+            // whether it was a client, a component, or the integration page that
+            // moved. Today that caller is a log reader or an API client; the
+            // console shows the message and does not yet reload on it.
+            Self::IntegrationMoved => "integration_moved",
             Self::IntegrationNotConfigured => "integration_not_configured",
 
             // Distinct codes for statuses that collide. A console that could

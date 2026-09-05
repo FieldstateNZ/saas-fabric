@@ -34,14 +34,12 @@ pub struct Application {
 ///    could reach Keycloak, which is the structural form of ADR 0008.
 /// 5. The Git connection flows, each given the binding it drives so that an
 ///    operator connecting a repository takes effect without a restart. There
-///    are two, and they are separate all the way down: two applications on
-///    the host, two records in the store, two things an operator may connect
-///    or forget without touching the other.
+///    are two, separate all the way down: two applications on the host, two
+///    records in the store, two an operator may connect or forget separately.
 ///
 /// There is no sixth step for *clients* any more. A reconciliation loop used to
-/// be spawned here, holding a service account's credential; ADR 0012 removed
-/// that credential, so convergence happens when an operator asks and carries
-/// their authority rather than the platform's.
+/// be spawned here holding a service account's credential; ADR 0012 removed it,
+/// so convergence happens when an operator asks, carrying their authority.
 ///
 /// 6. Platform Management, when this deployment manages a platform repository,
 ///    and the sweep that advances it. This one *is* unattended, and
@@ -77,7 +75,13 @@ pub async fn build(config: &ControlPlaneAppConfig) -> Result<Application, String
     let (keys, sign_in) = operator_keys::establish(&config.control_plane.operator)?;
 
     // Before the flows, because one of them connects it.
-    let platform_management = platform::establish(config.platform_management.as_ref(), &clock)?;
+    // Plus the host's call timeout: that sum is what a disconnect must fit in.
+    let platform_management = platform::establish(
+        config.platform_management.as_ref(),
+        config.git_host.http_timeout_seconds,
+        config.request_timeout_seconds,
+        &clock,
+    )?;
 
     let integrations =
         integration::establish(config, &repository, platform_management.as_ref(), &clock).await?;

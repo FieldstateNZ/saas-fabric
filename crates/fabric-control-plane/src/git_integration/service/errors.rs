@@ -30,6 +30,21 @@ pub enum IntegrationError {
     /// The operator asked for something the platform cannot do.
     #[error("{0}")]
     Refused(String),
+
+    /// The integration changed while this request was being prepared.
+    ///
+    /// A request reads the record and the private key, goes and asks the Git
+    /// host something, and only then queues to write. Anything that landed in
+    /// that window — a disconnect, another operator's rebind — makes what it
+    /// read no longer true, so it is turned away without writing.
+    ///
+    /// Neither of the two it sits between. Not [`Self::Refused`]: the request
+    /// was well-formed and would have been applied a moment earlier, and
+    /// nobody did anything wrong. Not [`Self::Unavailable`]: everything was
+    /// reachable and nothing failed. What happened is that the state moved,
+    /// and the only sensible next step is to look at it again.
+    #[error("the integration changed while this request was being prepared; look again and ask again")]
+    Moved,
 }
 
 impl From<ProvisioningError> for IntegrationError {
@@ -68,6 +83,7 @@ impl From<IntegrationError> for ControlPlaneError {
             IntegrationError::HostRefused => Self::GitHostRefused,
             IntegrationError::Unavailable => Self::RepositoryUnavailable,
             IntegrationError::Refused(detail) => Self::IntegrationRefused(detail),
+            IntegrationError::Moved => Self::IntegrationMoved,
         }
     }
 }

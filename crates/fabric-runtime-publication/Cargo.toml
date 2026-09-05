@@ -7,13 +7,16 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+async-trait.workspace = true
 fabric-core.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+thiserror.workspace = true
 
 [dev-dependencies]
 fabric-data-api.workspace = true
 fabric-tenant-runtime.workspace = true
+tokio.workspace = true
 
 [lints]
 workspace = true

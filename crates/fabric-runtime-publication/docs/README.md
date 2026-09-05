@@ -1,9 +1,9 @@
 # fabric-runtime-publication
 
-The wire contract for the three files the runtime already reads:
-`tenants.json`, `data-sources.json`, and `catalog.json`. Nothing writes them
-yet — this crate is the contract a future publisher will write against, and
-the crate that proves the runtime can read what it produces.
+The wire contract for the three files the runtime already reads —
+`tenants.json`, `data-sources.json`, and `catalog.json` — plus the port and
+filesystem adapter that write them. There is still no production *caller*:
+that is a control-plane crate ADR 0018 names but does not build.
 
 ## Why this crate exists
 
@@ -74,6 +74,60 @@ area's `credentials` field, are base paths — `vault/tenants/acme` — never
 values. Nothing in this crate is handed a secret resolver, and it depends on
 no crate that has one.
 
+## The publication port
+
+`RuntimePublication` is the seam a producer writes through: `current()`
+reports the revision held for each document (`None` where nothing has ever
+been published), `publish(&RuntimeSnapshot)` offers a complete replacement of
+all three, and `describe()` gives a log-safe description. A `RuntimeSnapshot`
+carries all three documents on every call, each with the revision the caller
+asserts it moves that document to and an `Emptying` intent — see the crate's
+module docs for why there is no partial-publish method.
+
+A publication is refused, in whole, before a single byte is written, if:
+
+- a document's offered revision is older than what is held (`StaleRevision`),
+  or repeats the held revision with different bytes (`DivergentPayload`);
+- a tenant binding names a `DataSourceId` this same publication does not
+  include (`DanglingDataSource`);
+- the data-sources document drops an id the *held* tenants document — read
+  fresh off disk, parsed, absent treated as empty, unparseable refused
+  outright — still references (`RetiredDataSourceStillBound`);
+- a document would go from non-empty to empty without `Emptying::Intended`
+  (`EmptyingNotIntended`);
+- the catalogue document has no entries at all (`EmptyCatalogue`, refused
+  whatever the `Emptying` intent says — there is no bootstrap value for an
+  empty catalogue).
+
+A publication that changes nothing writes nothing, not even a manifest whose
+revision did not move.
+
+## The filesystem adapter
+
+`FilesystemRuntimePublication` implements the port over three payload paths —
+the runtime's own `tenants_path`, `data_sources_path`, `catalog_path` — each
+with a manifest beside it, named from this crate's own constants rather than
+derived from whatever the payload file happens to be called. Write order is
+data sources, then the catalogue, then tenants (ADR 0018 part 3): additions
+must land before anything can reference them; removals are made safe by the
+retirement check above, not by ordering.
+
+Each file is written to a sibling temporary file in the same directory,
+`fsync`ed, and `rename`d over its target — the target path is therefore only
+ever created by that rename, never opened directly. Within one document, the
+payload is replaced before its manifest, so a crash between the two always
+leaves the manifest one revision *behind* the payload: a retry at the
+crashed revision compares newer-than-held and writes; a republication at the
+held revision compares bytes against what the crash actually left on disk
+and is refused as divergent. Neither outcome is a data-loss risk — the
+consumer already survives a torn read — so what atomicity buys here is a
+clean failure mode, not a rescue from one.
+
+Implemented with `std::fs`, not `tokio::fs`: this crate's `tokio` dependency
+does not carry the `fs` feature, and this adapter is called at most on a
+scheduler's poll interval, not on a request path — see `src/filesystem.rs`
+for the full reasoning.
+
 ## Gotchas
 
 - The crate is `fabric-runtime-publication` (hyphen), the Rust identifier is
@@ -88,5 +142,11 @@ no crate that has one.
   exactly. Two DataSources that both said nothing about their connection used
   to mean "the connector's one database" for both — two ids, one physical
   database.
-- This crate has no port and no filesystem adapter. There is, on purpose, no
-  production caller of anything here yet.
+- `DocumentRevision` (the file's own revision) and `BindingRevision` (a
+  resource's revision, carried inside the payload) are different types on
+  purpose. The port's guards compare the former; nothing in this crate
+  compares the latter.
+- There is, on purpose, still no production caller of any of this. The
+  scheduler that would call `publish()` on an interval belongs to a
+  control-plane crate that does not exist yet (ADR 0018, "The production
+  owner").

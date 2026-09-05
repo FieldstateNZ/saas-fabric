@@ -48,14 +48,25 @@ it as a change to both.
 | `DocumentManifest` | The sidecar published beside every document: `contract_version`, `document`, `revision`. No timestamp. |
 | `DocumentRevision` | A document's own revision. **Never** a resource's — see its rustdoc for why the two must stay separate types. |
 
-Every identifier is validated at construction, through
-`fabric_core::naming::{parse_dns_label, parse_identifier}`. Where the
-consumer's own id type already lives in `fabric-core` (`TenantId`,
-`DataSourceId`, `LogicalDataSourceName`, `LogicalResourceName`), this crate
-reuses it directly. Where it lives in the runtime plane instead
-(`ConnectorId`, `ConnectionName`, `FieldName`, all `fabric-connector`), this
-crate re-declares a newtype of the same name over the same parse function —
-so a value either side accepts is a value the other accepts too.
+Not every field is validated, and the ones that are do not all go through the
+same function. Where the consumer's own id type already lives in
+`fabric-core` (`TenantId`, `DataSourceId`, `LogicalDataSourceName`,
+`LogicalResourceName`), this crate reuses that type directly, and validation
+happens inside `fabric-core` itself before this crate ever sees a value:
+`TenantId` through `fabric_core::naming::parse_dns_label`, the other three
+through `fabric_core::naming::parse_identifier`. This crate never calls
+`parse_dns_label` itself. Where the canonical type lives in the runtime plane
+instead (`ConnectorId`, `ConnectionName`, `FieldName`, `CollectionName`,
+`SchemaName`, all `fabric-connector`), this crate re-declares a newtype of
+the same name and calls `fabric_core::naming::parse_identifier` directly — so
+a value either side accepts is a value the other accepts too.
+
+What is **not** validated: a tenant's `secrets` field, a storage area's
+`credentials` field, and a `Secret` connection's `reference` are reference
+*paths*, carried as plain `String`. The consumer's own equivalent,
+`fabric_connector::SecretRef`, has no checked constructor either
+(`#[serde(transparent)]` over a bare `String`), so there is no character-set
+rule for this crate to mirror.
 
 ## Canonical serialisation
 
@@ -113,8 +124,10 @@ must land before anything can reference them; removals are made safe by the
 retirement check above, not by ordering.
 
 Each file is written to a sibling temporary file in the same directory,
-`fsync`ed, and `rename`d over its target — the target path is therefore only
-ever created by that rename, never opened directly. Within one document, the
+`fsync`ed, `rename`d over its target, and the containing directory is
+`fsync`ed once more after the rename — the target path is therefore only
+ever created by that rename, never opened directly, and the rename itself is
+durable rather than merely atomic. Within one document, the
 payload is replaced before its manifest, so a crash between the two always
 leaves the manifest one revision *behind* the payload: a retry at the
 crashed revision compares newer-than-held and writes; a republication at the

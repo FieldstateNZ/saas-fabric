@@ -19,8 +19,7 @@ use super::write::write_if_needed;
 use crate::validate::validate_snapshot;
 use crate::{
     DataSourceDocument, DocumentKind, PublicationError, PublicationReport, PublishedRevisions,
-    RuntimePublication, RuntimeSnapshot, TenantBindingDocument, CATALOG_MANIFEST_FILE,
-    DATA_SOURCES_MANIFEST_FILE, TENANTS_MANIFEST_FILE,
+    RuntimePublication, RuntimeSnapshot, TenantBindingDocument,
 };
 
 /// Publishes the runtime's three documents to a local filesystem, matching
@@ -49,13 +48,9 @@ impl FilesystemRuntimePublication {
         catalog_path: impl Into<PathBuf>,
     ) -> Self {
         Self {
-            tenants: DocumentPaths::new(DocumentKind::Tenants, tenants_path.into(), TENANTS_MANIFEST_FILE),
-            data_sources: DocumentPaths::new(
-                DocumentKind::DataSources,
-                data_sources_path.into(),
-                DATA_SOURCES_MANIFEST_FILE,
-            ),
-            catalog: DocumentPaths::new(DocumentKind::Catalog, catalog_path.into(), CATALOG_MANIFEST_FILE),
+            tenants: DocumentPaths::new(DocumentKind::Tenants, tenants_path.into()),
+            data_sources: DocumentPaths::new(DocumentKind::DataSources, data_sources_path.into()),
+            catalog: DocumentPaths::new(DocumentKind::Catalog, catalog_path.into()),
         }
     }
 }

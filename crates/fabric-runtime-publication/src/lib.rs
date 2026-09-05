@@ -66,13 +66,14 @@ mod verdict_tests;
 pub use document::{
     data_sources_canonical_json, tenants_canonical_json, CatalogDocument, ConfigurationBindingDocument,
     ConnectionSelectorDocument, DataResidencyDocument, DataSourceCapabilitiesDocument, DataSourceDocument,
-    IsolationModelDocument, PlacementClassDocument, PoolSettingsDocument, ResourceDefinitionDocument,
-    StorageBindingDocument, TenantBindingDocument, TenantDataBindingDocument,
+    EmptyTenantDataBindingsError, IsolationModelDocument, PlacementClassDocument, PoolSettingsDocument,
+    ResourceDefinitionDocument, StorageBindingDocument, TenantBindingDocument, TenantDataBindingDocument,
+    TenantDataBindings,
 };
 pub use document_revision::DocumentRevision;
 pub use errors::PublicationError;
 pub use filesystem::FilesystemRuntimePublication;
-pub use ids::{ConnectionName, ConnectorId, FieldName};
+pub use ids::{CollectionName, ConnectionName, ConnectorId, FieldName, SchemaName};
 pub use manifest::{
     DocumentKind, DocumentManifest, CATALOG_FILE, CATALOG_MANIFEST_FILE, CONTRACT_VERSION, DATA_SOURCES_FILE,
     DATA_SOURCES_MANIFEST_FILE, TENANTS_FILE, TENANTS_MANIFEST_FILE,
@@ -102,6 +103,33 @@ mod tests {
         assert!(!tenants.is_empty());
         assert!(!data_sources.is_empty());
         assert!(!catalog.is_empty());
+    }
+
+    #[test]
+    fn the_shipped_example_documents_survive_the_whole_fidelity_path() {
+        // The test above stops at the producer's own read. This one carries
+        // the shipped corpus the rest of the way: re-render every document
+        // through the canonical serialiser this crate would actually publish
+        // with, then re-parse the result as the consumer's own types -- the
+        // same round trip a real publication takes.
+        let tenants: Vec<TenantBindingDocument> = serde_json::from_str(TENANTS_JSON).unwrap();
+        let data_sources: Vec<DataSourceDocument> = serde_json::from_str(DATA_SOURCES_JSON).unwrap();
+        let catalog: CatalogDocument = serde_json::from_str(CATALOG_JSON).unwrap();
+
+        let tenants_bytes = tenants_canonical_json(&tenants).unwrap();
+        let data_sources_bytes = data_sources_canonical_json(&data_sources).unwrap();
+        let catalog_bytes = catalog.canonical_json().unwrap();
+
+        let runtime_tenants: Vec<fabric_tenant_runtime::TenantRuntimeBinding> =
+            serde_json::from_slice(&tenants_bytes).unwrap();
+        let runtime_data_sources: Vec<fabric_tenant_runtime::DataSource> =
+            serde_json::from_slice(&data_sources_bytes).unwrap();
+        let runtime_catalog: fabric_data_api::ResourceCatalog =
+            serde_json::from_slice(&catalog_bytes).unwrap();
+
+        assert_eq!(runtime_tenants.len(), tenants.len());
+        assert_eq!(runtime_data_sources.len(), data_sources.len());
+        assert!(!runtime_catalog.is_empty());
     }
 
     #[test]

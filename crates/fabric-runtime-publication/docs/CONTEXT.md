@@ -9,13 +9,19 @@ not build.
 ## Public surface (all re-exported from `lib.rs`)
 
 - `TenantBindingDocument` — one element of `tenants.json`. Fields: `tenant:
-  TenantId`, `revision: BindingRevision`, `data:
-  BTreeMap<LogicalDataSourceName, TenantDataBindingDocument>`,
-  `configuration: Option<ConfigurationBindingDocument>`, `secrets:
-  Option<String>` (reference path only), `features: BTreeMap<String, bool>`,
-  `storage: BTreeMap<String, StorageBindingDocument>`. Mirrors
-  `fabric_tenant_runtime::TenantRuntimeBinding` field for field, as a
-  separate declaration.
+  TenantId`, `revision: BindingRevision`, `data: TenantDataBindings`
+  (non-empty whenever this crate builds one; `#[serde(default =
+  "TenantDataBindings::empty_for_deserialisation")]` still lets an absent key
+  parse, matching the consumer), `configuration:
+  Option<ConfigurationBindingDocument>`, `secrets: Option<String>` (reference
+  path only), `features: BTreeMap<String, bool>`, `storage: BTreeMap<String,
+  StorageBindingDocument>`. Mirrors `fabric_tenant_runtime::TenantRuntimeBinding`
+  field for field, as a separate declaration.
+- `TenantDataBindings` — the non-empty wrapper around `BTreeMap<LogicalDataSourceName,
+  TenantDataBindingDocument>`. `try_new` refuses an empty map; `values()` and
+  `IntoIterator for &TenantDataBindings` cover the ways the rest of the crate
+  reads one. See its own rustdoc for why deserialisation stays permissive of
+  an empty map while construction does not.
 - `TenantDataBindingDocument` — `data_source: DataSourceId`, `isolation:
   IsolationModelDocument`. Mirrors `TenantDataBinding`.
 - `ConfigurationBindingDocument` — `store: String`, `profile:
@@ -23,7 +29,7 @@ not build.
 - `StorageBindingDocument` — `provider`, `container`: `String`; `prefix`,
   `credentials`: `Option<String>` (credentials is a reference path only).
   Mirrors `StorageBinding`.
-- `IsolationModelDocument` — `Database {}` | `Schema { schema: String }` |
+- `IsolationModelDocument` — `Database {}` | `Schema { schema: SchemaName }` |
   `Discriminator { column: FieldName, value: String }`. Internally tagged on
   `kind`, `deny_unknown_fields`. Every variant is struct-shaped — including
   the empty `Database {}` — because an internally tagged *unit* variant has
@@ -55,11 +61,13 @@ not build.
   `false`/`false` (fail closed). Mirrors `DataSourceCapabilities`.
 - `CatalogDocument` — `catalog.json` as a whole: `#[serde(transparent)]` over
   `BTreeMap<LogicalResourceName, ResourceDefinitionDocument>`. `new`, `len`,
-  `is_empty`, `canonical_json`. Mirrors `fabric_data_api::ResourceCatalog`,
-  which is `Deserialize`-only — this is the type that closes the "nothing can
-  write a catalogue" gap.
+  `is_empty`, `resources()` (iterates `(&LogicalResourceName,
+  &ResourceDefinitionDocument)`), `get(&LogicalResourceName)`,
+  `canonical_json`. Mirrors `fabric_data_api::ResourceCatalog`, which is
+  `Deserialize`-only — this is the type that closes the "nothing can write a
+  catalogue" gap.
 - `ResourceDefinitionDocument` — `data_source: LogicalDataSourceName`,
-  `collection: String`, `key_field: FieldName` (`#[serde(default =
+  `collection: CollectionName`, `key_field: FieldName` (`#[serde(default =
   "default_key_field")]`, defaults to `"id"`), `operations:
   Vec<OperationKind>` (`fabric_core::OperationKind`, reused directly;
   `#[serde(default = "default_operations")]`, defaults to `[Read, List]`),
@@ -68,9 +76,14 @@ not build.
   omitted the key (e.g. the shipped examples). Mirrors `ResourceDefinition`.
 - `DocumentManifest` — `contract_version: u32`, `document: DocumentKind`,
   `revision: DocumentRevision`. Three fields, no timestamp.
-  `deny_unknown_fields`.
+  `deny_unknown_fields`. `new(document, revision)` stamps `CONTRACT_VERSION`
+  so nothing builds one under the wrong version by hand; `canonical_json`
+  (`pub`) renders it the same way every other document is rendered.
 - `DocumentKind` — `Tenants | DataSources | Catalog`, `rename_all =
-  "kebab-case"` → `"tenants" | "data-sources" | "catalog"`.
+  "kebab-case"` → `"tenants" | "data-sources" | "catalog"`. `payload_file()`
+  and `manifest_file()` return this crate's own file-name constants for that
+  kind — the filesystem adapter builds every path from these, never from a
+  literal.
 - `DocumentRevision` — newtype over `u64`, `#[serde(transparent)]`, `Ord`.
   **A document's revision, never a resource's** — `fabric_core::BindingRevision`
   is the resource revision, reused directly on `TenantBindingDocument.revision`
@@ -81,9 +94,11 @@ not build.
   `DATA_SOURCES_FILE`, `DATA_SOURCES_MANIFEST_FILE`, `CATALOG_FILE`,
   `CATALOG_MANIFEST_FILE`. Each matches the ConfigMap data-key character set
   `[-._a-zA-Z0-9]+`.
-- `ConnectorId`, `ConnectionName`, `FieldName` — re-declared newtypes over
-  `fabric_core::naming::parse_identifier`, because the canonical types live in
-  `fabric-connector` (runtime plane) and this crate may not depend on it.
+- `ConnectorId`, `ConnectionName`, `FieldName`, `CollectionName`, `SchemaName`
+  — re-declared newtypes over `fabric_core::naming::parse_identifier`,
+  because the canonical types live in `fabric-connector` (runtime plane) and
+  this crate may not depend on it. ADR 0018, Decision part 1 names all five
+  explicitly.
 - `tenants_canonical_json(&[TenantBindingDocument]) -> Result<Vec<u8>, serde_json::Error>`
   and `data_sources_canonical_json(&[DataSourceDocument]) -> Result<Vec<u8>, serde_json::Error>`
   — sort by key (`tenant` / `id`), then render as canonical JSON.
@@ -119,7 +134,7 @@ not build.
   plus a trailing newline. The one formatting decision every document shares;
   every `canonical_json`-shaped function delegates to it.
 - `document` — every wire type, one per file under `src/document/`.
-- `ids` — the three re-declared identifier newtypes.
+- `ids` — the five re-declared identifier newtypes.
 - `manifest` — `DocumentManifest`, `DocumentKind`, `CONTRACT_VERSION`, the six
   file-name constants.
 - `document_revision` — `DocumentRevision` alone, kept separate from
@@ -147,7 +162,8 @@ not build.
   `PublicationError::Unreadable`), `plan` (`PublishPlan`: canonical bytes + resolved verdict
   for all three documents, computed before any write), `write` (`write_if_needed`: payload
   then manifest, skipped entirely on `Verdict::Unchanged`), `atomic_write` (temp-file +
-  `fsync` + `rename`, sibling to the target, removed on every failure path), and `adapter`
+  `fsync` + `rename` + a directory `fsync` to make the rename itself durable, sibling to
+  the target, removed on every failure path), and `adapter`
   (`FilesystemRuntimePublication`'s `impl RuntimePublication`).
 
 ## Identifier reuse map
@@ -160,30 +176,34 @@ not build.
 | `connector` | `ConnectorId` | **this crate**, re-declared |
 | `connection`'s `name` | `ConnectionName` | **this crate**, re-declared |
 | `key_field`, discriminator `column`, `queryable_fields` entries | `FieldName` | **this crate**, re-declared |
-| `collection`, `schema` (Isolation::Schema), `secrets`, `credentials`, `reference` | `String` | not a validated newtype — see "Deliberately unvalidated" below |
+| `collection` | `CollectionName` | **this crate**, re-declared |
+| `schema` (Isolation::Schema) | `SchemaName` | **this crate**, re-declared |
+| `secrets`, `credentials`, `reference` | `String` | not a validated newtype — see "Deliberately unvalidated" below |
 
 ## Deliberately unvalidated fields
 
-`collection`, `schema`, `secrets`, `credentials`, and `Secret::reference` are
-plain `String`, not a checked newtype. Two different reasons:
+`secrets`, `credentials`, and `Secret::reference` are plain `String`, not a
+checked newtype: they are reference *paths*. `fabric_connector::SecretRef`,
+the consumer's own equivalent, has no checked constructor either
+(`#[serde(transparent)]` over a bare `String`) — there is no character-set
+rule to mirror.
 
-- `collection` and `schema` are runtime-plane identifiers
-  (`fabric_connector::CollectionName`, `SchemaName`) that were **not** named
-  in the decision to re-declare identifiers here — only `ConnectorId`,
-  `ConnectionName`, and `FieldName` were. The consumer still validates them on
-  its own deserialisation.
-- `secrets`, `credentials`, and `Secret::reference` are reference *paths*.
-  `fabric_connector::SecretRef`, the consumer's own equivalent, has no
-  checked constructor either (`#[serde(transparent)]` over a bare `String`)
-  — there is no character-set rule to mirror.
+`collection` and `schema` are **not** in this list. ADR 0018, Decision part 1
+names `CollectionName` explicitly alongside `ConnectorId`, `ConnectionName`,
+and `FieldName` as an identifier the producer must re-declare and validate
+itself; `SchemaName` follows the same identifier-newtype shape as the
+consumer's own `fabric_connector::SchemaName`. Both are re-declared newtypes
+here (`CollectionName`, `SchemaName`), not bare `String`s — a value either
+side accepts is a value the other accepts too, and an invalid `collection` or
+`schema` fails at construction rather than at the consumer's own startup or
+refresh parse.
 
 ## Invariants to preserve
 
-- No dependency beyond `fabric-core` in `[dependencies]`. Dev-dependencies on
-  `fabric-tenant-runtime`, `fabric-data-api`, `fabric-identity`, and
-  `fabric-connector` are expected and already pre-declared in
-  `scripts/check_architecture.py`'s `expected` table — do not treat adding
-  the latter two as a reason to edit that file.
+- No dependency beyond `fabric-core` in `[dependencies]`. Dev-dependencies are
+  `fabric-tenant-runtime` and `fabric-data-api`, for the round-trip tests
+  beside each document type; both are already pre-declared in
+  `scripts/check_architecture.py`'s `expected` table.
 - Every document type derives both `Serialize` and `Deserialize`. The
   consumer's own types are asymmetric (`ResourceCatalog` /
   `ResourceDefinition` are `Deserialize`-only) precisely because nothing
@@ -212,5 +232,11 @@ plain `String`, not a checked newtype. Two different reasons:
   emptying guard testable without a temporary directory.
 - `atomic_write`'s temporary file is always a sibling of its target, in the
   same directory (`rename` is atomic only within a filesystem), and is
-  always cleaned up on a failed create/write/`fsync`/rename — never left for
-  a later call to trip over.
+  always cleaned up on a failed create/write/`fsync`/rename/directory-`fsync`
+  — never left for a later call to trip over. The directory containing the
+  target is `fsync`ed after every rename, so the rename itself survives a
+  crash, not just the bytes it points at.
+- `TenantDataBindings::try_new` refuses an empty map. `empty_for_deserialisation`
+  is `pub(crate)`, not `Default`, and used only by `#[serde(default = "...")]`
+  on `TenantBindingDocument::data` — the only other way to reach an empty
+  value is deserialising a document that omits or empties `data`.

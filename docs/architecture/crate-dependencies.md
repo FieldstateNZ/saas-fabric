@@ -171,10 +171,13 @@ What is *not* shared, despite looking shareable:
 
 ## `fabric-runtime-publication` sits in neither plane
 
-`fabric-core` was, until now, the only crate that answered to neither the
-runtime plane nor the control plane. `fabric-runtime-publication` is the
-second, and deliberately on the same footing: its only non-dev internal
-dependency is `fabric-core`.
+`fabric-core` was never the only crate that answered to neither the runtime
+plane nor the control plane. `fabric-git-host`, `fabric-platform-git`,
+`fabric-platform-management`, and `fabric-registry` all sit there too, and
+`fabric-git-host` does network I/O — so "neither plane" has never been the
+same claim as "does no I/O." `fabric-runtime-publication` is the sixth crate
+in neither plane, and deliberately on the same footing as `fabric-core`
+specifically: its only non-dev internal dependency is `fabric-core`.
 
 It owns the *wire contract* for the three documents the runtime already
 consumes -- `tenants.json`, `data-sources.json`, `catalog.json` -- plus the
@@ -195,15 +198,18 @@ this crate's canonical JSON as the consumer's type -- never by a shared
 `struct`.
 
 **Its dev-dependencies are wider than its production ones, on purpose.** The
-`expected` entry in `scripts/check_architecture.py` pre-declares dev edges to
-`fabric-tenant-runtime`, `fabric-data-api`, `fabric-identity`, and
-`fabric-connector` now, even though this slice's own tests exercise only the
-first two. A later slice's composed acceptance test needs all four to publish
-through the real port and drive the real `fabric-data-api` router over the
-result, and pre-declaring them here means that slice never has to edit this
-choke-point file. This is safe *because* they are dev-only: a `[dev-dependencies]`
-edge cannot reach the binary any production caller links, only the test
-binaries this crate builds for itself.
+`expected` entry in `scripts/check_architecture.py` declares dev edges to
+`fabric-tenant-runtime` and `fabric-data-api`, for the round-trip tests
+beside each document type. A later slice's composed acceptance test will
+need `fabric-identity` and `fabric-connector` too, to publish through the
+real port and drive the real `fabric-data-api` router over the result — that
+slice adds them to `expected` itself, at the time it adds the dependency,
+rather than this decision pre-authorising edges nobody needs yet. The check
+is subset-based, so an edge declared here that the crate does not actually
+have would pass silently; keeping the table to exactly the real edges is what
+keeps it worth reading. Dev edges are safe in the meantime *because* they are
+dev-only: a `[dev-dependencies]` edge cannot reach the binary any production
+caller links, only the test binaries this crate builds for itself.
 
 That last sentence is doing real work, and it is worth being honest about its
 limit: `Graph.direct_dependencies` in `scripts/check_architecture.py` reads

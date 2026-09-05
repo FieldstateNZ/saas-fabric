@@ -2,7 +2,7 @@
 
 use fabric_core::{LogicalDataSourceName, OperationKind};
 
-use crate::FieldName;
+use crate::{CollectionName, FieldName};
 
 /// The publisher's own declaration of one catalogue entry.
 ///
@@ -27,7 +27,7 @@ pub struct ResourceDefinitionDocument {
     pub data_source: LogicalDataSourceName,
 
     /// The physical collection name the connector knows.
-    pub collection: String,
+    pub collection: CollectionName,
 
     /// The field identifying a single row, for `/{id}` routes.
     #[serde(default = "default_key_field")]
@@ -61,7 +61,7 @@ mod tests {
     fn customers() -> ResourceDefinitionDocument {
         ResourceDefinitionDocument {
             data_source: LogicalDataSourceName::try_new("primary").unwrap(),
-            collection: "customers".to_owned(),
+            collection: CollectionName::try_new("customers").unwrap(),
             key_field: FieldName::try_new("id").unwrap(),
             operations: vec![OperationKind::Read],
             queryable_fields: Vec::new(),

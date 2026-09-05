@@ -2,10 +2,10 @@
 
 use std::collections::BTreeMap;
 
-use fabric_core::{BindingRevision, LogicalDataSourceName, TenantId};
+use fabric_core::{BindingRevision, TenantId};
 
 use crate::canonical::to_canonical_bytes;
-use crate::{ConfigurationBindingDocument, StorageBindingDocument, TenantDataBindingDocument};
+use crate::{ConfigurationBindingDocument, StorageBindingDocument, TenantDataBindings};
 
 /// The publisher's own declaration of one tenant's runtime binding.
 ///
@@ -27,8 +27,12 @@ pub struct TenantBindingDocument {
     pub revision: BindingRevision,
 
     /// Logical data source name to the DataSource this tenant is bound to.
-    #[serde(default)]
-    pub data: BTreeMap<LogicalDataSourceName, TenantDataBindingDocument>,
+    ///
+    /// Non-empty whenever this crate builds one — see
+    /// [`TenantDataBindings`] for why an empty map is still accepted here on
+    /// the way in.
+    #[serde(default = "TenantDataBindings::empty_for_deserialisation")]
+    pub data: TenantDataBindings,
 
     /// Where this tenant's configuration lives.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -65,25 +69,26 @@ pub fn tenants_canonical_json(bindings: &[TenantBindingDocument]) -> Result<Vec<
 
 #[cfg(test)]
 mod tests {
+    use fabric_core::LogicalDataSourceName;
     use fabric_tenant_runtime::TenantRuntimeBinding;
 
     use super::*;
-    use crate::IsolationModelDocument;
+    use crate::{IsolationModelDocument, TenantDataBindingDocument};
 
-    fn acme() -> TenantBindingDocument {
+    fn acme_isolated_by(isolation: IsolationModelDocument) -> TenantBindingDocument {
         let mut data = BTreeMap::new();
         data.insert(
             LogicalDataSourceName::try_new("primary").unwrap(),
             TenantDataBindingDocument {
                 data_source: fabric_core::DataSourceId::try_new("sql-au-east-03").unwrap(),
-                isolation: IsolationModelDocument::Database {},
+                isolation,
             },
         );
 
         TenantBindingDocument {
             tenant: TenantId::try_new("acme").unwrap(),
             revision: BindingRevision::new(42),
-            data,
+            data: TenantDataBindings::try_new(data).unwrap(),
             configuration: None,
             secrets: Some("vault/tenants/acme".to_owned()),
             features: BTreeMap::from([("invoicing".to_owned(), true)]),
@@ -91,14 +96,34 @@ mod tests {
         }
     }
 
+    fn acme() -> TenantBindingDocument {
+        acme_isolated_by(IsolationModelDocument::Database {})
+    }
+
     #[test]
     fn a_published_tenant_document_deserialises_as_the_runtimes_own_binding() {
-        let bytes = tenants_canonical_json(std::slice::from_ref(&acme())).unwrap();
+        // Every isolation variant, not just the one `Database` happens to
+        // cover -- a discriminator's `column`/`value` and a schema's
+        // `schema` are exactly the fields most likely to drift from the
+        // consumer's own shape.
+        for isolation in [
+            IsolationModelDocument::Database {},
+            IsolationModelDocument::Schema {
+                schema: crate::SchemaName::try_new("acme").unwrap(),
+            },
+            IsolationModelDocument::Discriminator {
+                column: crate::FieldName::try_new("tenant_key").unwrap(),
+                value: "tenant-482".to_owned(),
+            },
+        ] {
+            let binding = acme_isolated_by(isolation.clone());
+            let bytes = tenants_canonical_json(std::slice::from_ref(&binding)).unwrap();
 
-        let bindings: Vec<TenantRuntimeBinding> = serde_json::from_slice(&bytes).unwrap();
+            let bindings: Vec<TenantRuntimeBinding> = serde_json::from_slice(&bytes).unwrap();
 
-        assert_eq!(bindings.len(), 1);
-        assert_eq!(bindings[0].tenant.as_str(), "acme");
+            assert_eq!(bindings.len(), 1, "{isolation:?}");
+            assert_eq!(bindings[0].tenant.as_str(), "acme", "{isolation:?}");
+        }
     }
 
     #[test]

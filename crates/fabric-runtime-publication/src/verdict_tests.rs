@@ -35,6 +35,34 @@ fn a_held_manifest_without_its_payload_is_republishable_at_the_same_revision() {
 }
 
 #[test]
+fn a_held_manifest_without_its_payload_still_writes_at_a_newer_revision() {
+    let held = Held {
+        revision: DocumentRevision::new(3),
+        payload: None,
+    };
+
+    assert_eq!(verdict(Some(held), &incoming(4, b"[]")).unwrap(), Verdict::Write);
+}
+
+#[test]
+fn a_held_manifest_without_its_payload_still_refuses_an_older_revision() {
+    // The byte comparison has nothing to run against with the payload gone,
+    // but the manifest still states a revision -- an offered revision older
+    // than *that* is stale regardless of what the payload would have said.
+    let held = Held {
+        revision: DocumentRevision::new(3),
+        payload: None,
+    };
+
+    let error = verdict(Some(held), &incoming(2, b"[]")).unwrap_err();
+
+    assert!(
+        matches!(error, PublicationError::StaleRevision { held, offered, .. }
+        if held == DocumentRevision::new(3) && offered == DocumentRevision::new(2))
+    );
+}
+
+#[test]
 fn an_older_revision_against_a_held_manifest_and_payload_is_refused() {
     let held = Held {
         revision: DocumentRevision::new(5),

@@ -3,7 +3,7 @@
 use super::atomic_write::atomic_write;
 use super::paths::DocumentPaths;
 use crate::verdict::Verdict;
-use crate::{DocumentKind, DocumentManifest, DocumentRevision, PublicationError, CONTRACT_VERSION};
+use crate::{DocumentKind, DocumentManifest, DocumentRevision, PublicationError};
 
 /// Writes one document's payload, then its manifest, unless its verdict says
 /// nothing changed.
@@ -23,13 +23,10 @@ pub(super) fn write_if_needed(
 
     atomic_write(&paths.payload, bytes).map_err(|cause| unwritable(paths.kind, cause))?;
 
-    let manifest = DocumentManifest {
-        contract_version: CONTRACT_VERSION,
-        document: paths.kind,
-        revision,
-    };
-    let manifest_bytes =
-        crate::canonical::to_canonical_bytes(&manifest).map_err(|cause| unwritable(paths.kind, cause))?;
+    let manifest = DocumentManifest::new(paths.kind, revision);
+    let manifest_bytes = manifest
+        .canonical_json()
+        .map_err(|cause| unwritable(paths.kind, cause))?;
 
     atomic_write(&paths.manifest, &manifest_bytes).map_err(|cause| unwritable(paths.kind, cause))
 }

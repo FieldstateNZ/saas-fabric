@@ -198,18 +198,27 @@ this crate's canonical JSON as the consumer's type -- never by a shared
 `struct`.
 
 **Its dev-dependencies are wider than its production ones, on purpose.** The
-`expected` entry in `scripts/check_architecture.py` declares dev edges to
-`fabric-tenant-runtime` and `fabric-data-api`, for the round-trip tests
-beside each document type. A later slice's composed acceptance test will
-need `fabric-identity` and `fabric-connector` too, to publish through the
-real port and drive the real `fabric-data-api` router over the result — that
-slice adds them to `expected` itself, at the time it adds the dependency,
-rather than this decision pre-authorising edges nobody needs yet. The check
-is subset-based, so an edge declared here that the crate does not actually
-have would pass silently; keeping the table to exactly the real edges is what
-keeps it worth reading. Dev edges are safe in the meantime *because* they are
-dev-only: a `[dev-dependencies]` edge cannot reach the binary any production
-caller links, only the test binaries this crate builds for itself.
+`expected` entry in `scripts/check_architecture.py` declares four dev edges,
+each earning its place for a different test:
+
+| Dev-dependency | Why |
+|---|---|
+| `fabric-tenant-runtime` | the round-trip tests beside `TenantBindingDocument` and `DataSourceDocument` deserialise this crate's canonical JSON as the consumer's own `TenantRuntimeBinding` / `DataSource`, and the composed acceptance test builds the real `fabric_tenant_runtime::build_runtime` over the real `JsonFileSource` |
+| `fabric-data-api` | the round-trip test beside `CatalogDocument` deserialises as the consumer's `ResourceCatalog`, and the composed acceptance test builds the real `fabric_data_api::build_data_api` router over it |
+| `fabric-identity` | the composed acceptance test mints bearer tokens and builds the real identity extractor stack, so a request reaching the assembled router carries the tenant identity the way a real one would |
+| `fabric-connector` | the composed acceptance test's recording connector (`tests/support/connector.rs`) implements the real `DataConnector` trait and captures the real `Filter`/`QuerySpec` the platform builds, so the isolation assertions are checked against the actual predicate rather than a stand-in |
+
+`fabric-tenant-runtime` and `fabric-data-api` arrived with this crate itself,
+for the round-trip tests; `fabric-identity` and `fabric-connector` arrived
+with the composed acceptance test
+(`tests/published_state_serves_two_tenants.rs`), added to `expected` at the
+same time the dependency was added — never pre-authorised ahead of a test
+that needed it. The check is subset-based, so an edge declared here that the
+crate does not actually have would pass silently; keeping the table to
+exactly the real edges is what keeps it worth reading. Dev edges are safe
+*because* they are dev-only: a `[dev-dependencies]` edge cannot reach the
+binary any production caller links, only the test binaries this crate builds
+for itself.
 
 That last sentence is doing real work, and it is worth being honest about its
 limit: `Graph.direct_dependencies` in `scripts/check_architecture.py` reads

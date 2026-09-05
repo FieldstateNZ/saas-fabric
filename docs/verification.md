@@ -33,15 +33,15 @@ is at the end, under "The control plane, end to end".
 | --- | --- | --- |
 | Formatting | `cargo fmt --all --check` | clean |
 | Lints | `cargo clippy --workspace --all-targets -- -D warnings` | 0 findings |
-| Tests | `cargo test --workspace` | 1256 passing, 0 failing, 0 ignored |
+| Tests | `cargo test --workspace` | 1745 passing, 0 failing, 1 ignored |
 | Docs | `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps` | 0 warnings |
 | Dependencies | `cargo deny check` | advisories, bans, licences, sources — all ok |
-| File sizes | `python3 scripts/check_file_sizes.py` | 0 over the 150-line limit |
-| Architecture | `python3 scripts/check_architecture.py` | 8 invariants hold across 14 crates |
+| File sizes | `python3 scripts/check_file_sizes.py` | 0 over the 150-line limit (2 exempted, both explained) |
+| Architecture | `python3 scripts/check_architecture.py` | 11 invariants hold across 21 crates |
 | Console lint | `npm run lint` | 0 findings |
 | Console types | `npm run typecheck` | 0 errors |
-| Console tests | `npm test` | 35 passing, 0 failing |
-| Console build | `npm run build` | 210 kB, 65 kB gzipped |
+| Console tests | `npm test` | 81 passing, 0 failing |
+| Console build | `npm run build` | 228 kB, 70 kB gzipped |
 
 All eleven run in CI on every push and pull request
 (`.github/workflows/ci.yml`); the four Rust gates and the architecture check as
@@ -49,6 +49,100 @@ parallel jobs, the four console checks as steps of one job because `npm ci`
 dominates each of them.
 
 Nothing is ignored.
+
+The numbers in this table are from a run in the M1 worktree at `9e7c83b`
+("Fail closed when a held manifest outlives its payload"), the commit that
+adds `fabric-runtime-publication` and the two architecture invariants it
+brings (see "Runtime publication (M1)" below) — newer than the
+`claude/split-issuer-from-endpoints` run the rest of this document otherwise
+describes. That is also why every count grew: 11 invariants across 21 crates,
+not 8 across 14; 1745 Rust tests, not 1256; 81 console tests, not 35. None of
+the growth outside `fabric-runtime-publication` is this slice's work — it is
+the accumulated increments between the two runs — and none of it is
+re-narrated here; only the table above and the new section below reflect the
+later commit.
+
+## Runtime publication (M1)
+
+`fabric-runtime-publication` is new at `9e7c83b` (ADR 0018): the wire
+contract for `tenants.json`, `data-sources.json` and `catalog.json`, the
+`RuntimePublication` port, and the filesystem adapter that writes all three
+atomically. It has no production caller yet — that is a control-plane crate
+this decision names but does not build — so what is verified here is the
+producer and its guards in isolation, plus one seam that proves the producer
+and the existing runtime plane agree on the wire.
+
+**The composed test.** `tests/published_state_serves_two_tenants.rs` is the
+test `docs/delivery.md`'s rule exists for: it publishes a fixture — one
+shared DataSource, two tenants isolated by different values in the same
+discriminator column, a one-resource `articles` catalogue — through the real
+`FilesystemRuntimePublication`, then builds the real
+`fabric_tenant_runtime::build_runtime` over the real `JsonFileSource` and the
+real `fabric_data_api::build_data_api` over the real `ResourceCatalog`
+(deserialised straight from the published `catalog.json`), and drives the
+assembled router with bearer tokens for both tenants. What it proves is the
+vertical slice, not a layer: isolation is enforced by the predicate the
+platform builds, not by which rows a fake happens to return, because the
+recording connector in `tests/support/connector.rs` applies that predicate
+to a small shared corpus instead of dispatching on tenant identity.
+
+**The mutation experiments.** Ten mutations were run against this crate in
+this worktree, following the standard above: mutate, run the named test
+binary, record what failed, `git checkout --` the file, confirm
+`git status --short` is clean, move on. No code change from this exercise
+survives in this commit.
+
+| # | Mutation | File | Test(s) that failed | First failure line |
+| --- | --- | --- | --- | --- |
+| 1a | Both tenants' discriminator value zeroed to `""` via the shared `GLOBEX_DISCRIMINATOR_VALUE` constant | `tests/support/fixtures.rs` | **none — 13/13 passed** | — |
+| 1b | Globex's discriminator value changed to `""` at the binding call site only, constant left alone | `tests/support/fixtures.rs` | 9 of 13 composed tests, incl. `two_tenants_sharing_one_data_source_each_receive_only_their_own_row`, `each_call_reaches_the_connector_carrying_only_its_own_tenant_predicate` | `assertion \`left == right\` failed`<br>`left: Some(Compare { … value: String("") })`<br>`right: Some(Compare { … value: String("tenant-globex-915") })` |
+| 2 | Both tenants given the same discriminator value | `tests/support/fixtures.rs` | 6 of 13 composed tests, incl. both named above | `assertion \`left == right\` failed`<br>`left: Some(Compare { … value: String("tenant-acme-482") })`<br>`right: Some(Compare { … value: String("tenant-globex-915") })` |
+| 3 | Recording connector ignores the predicate, always returns the whole corpus | `tests/support/connector.rs` | 4 of 13 composed tests, incl. `two_tenants_sharing_one_data_source_each_receive_only_their_own_row` (`each_call_reaches_…_tenant_predicate` still passed — it inspects the captured predicate, not the connector's answer) | `assertion \`left == right\` failed: {"data":[{"id":"1","title":"Acme Handbook"},{"id":"1","title":"Globex Playbook"}],…}`<br>`left: 2 right: 1` |
+| 4 | Stale-revision compare inverted (`<` → `>`) | `src/verdict.rs` | `a_stale_revision_publication_is_refused_and_the_last_good_files_remain` in **both** integration binaries, plus `a_refused_publication_writes_nothing_at_all`, `an_emptying_publication_is_refused_unless_it_is_intended`, and 4 `verdict_tests` unit tests | `called \`Result::unwrap_err()\` on an \`Ok\` value: PublicationReport { tenants: Unchanged, data_sources: Unchanged, catalog: Unchanged }` |
+| 5 | Divergent-payload compare bypassed (`held_payload == incoming.payload` → `true`) | `src/verdict.rs` | `a_same_revision_publication_with_a_different_payload_is_refused` in **both** integration binaries, plus `verdict_tests::the_same_revision_with_different_bytes_is_refused_as_divergent` | `called \`Result::unwrap_err()\` on an \`Ok\` value: PublicationReport { tenants: Unchanged, data_sources: Unchanged, catalog: Unchanged }` |
+| 6 | Emptying guard disabled | `src/validate.rs` | `an_emptying_publication_is_refused_unless_it_is_intended` (composed) and `validate_tests::taking_tenants_from_non_empty_to_empty_without_intent_is_refused` (unit) — **the adapter's own integration suite (`tests/filesystem_runtime_publication.rs`) stayed fully green** | `called \`Result::unwrap_err()\` on an \`Ok\` value: ()` |
+| 7 | Referential-integrity (dangling DataSource) guard disabled | `src/validate.rs` | `a_publication_naming_a_data_source_it_does_not_publish_is_refused_before_any_write` in **both** integration binaries, plus a `validate_tests` unit test | `called \`Result::unwrap_err()\` on an \`Ok\` value: PublicationReport { tenants: Written, data_sources: Written, catalog: Written }` |
+| 8 | Write order reversed: tenants before data sources | `src/filesystem/adapter.rs` | `a_data_source_is_written_before_the_tenant_that_references_it`, `a_publication_that_failed_between_documents_is_completed_by_the_next_one`, `the_temp_file_never_survives_a_publish_call_success_or_failure` | `assertion failed: !dir.path().join("tenants.json").exists()` |
+| 9 | A held tenants manifest with a lost payload parses as empty again | `src/filesystem/parse.rs` | both `..._when_the_held_tenants_payload_is_lost` tests, plus a `filesystem::parse::tests` unit test | `called \`Result::unwrap_err()\` on an \`Ok\` value: []` |
+| 10 | `rename` replaced with a direct write to the target | `src/filesystem/atomic_write.rs` | `the_temp_file_never_survives_a_publish_call_success_or_failure`, `a_publication_that_failed_between_documents_is_completed_by_the_next_one`, `the_manifest_is_written_after_the_payload_it_describes` | `called \`Result::unwrap_err()\` on an \`Ok\` value: PublicationReport { tenants: Written, data_sources: Written, catalog: Written }` |
+
+Two rows are findings rather than confirmations:
+
+- **Row 1a leaves everything green**, and it is the same class of mistake
+  `docs/delivery.md` names ("a mixed-case fixture, absent, made a
+  `to_lowercase()` bug invisible"): `GLOBEX_DISCRIMINATOR_VALUE` feeds both
+  the published binding (`tests/support/fixtures.rs`) and the recording
+  connector's corpus (`tests/support/connector.rs`). Zeroing the shared
+  constant moves both sides together, so isolation still holds — trivially,
+  because there is nothing left for it to fail against. Row 1b is the same
+  mutation with the coupling broken (the value is changed only at the
+  binding call site, the constant and the corpus left alone), and it fails 9
+  of 13 tests. The fixture's own doc comment already names the reason
+  (`tests/support/connector.rs`: *"a connector that ignored the predicate …
+  would make every isolation assertion in this suite pass whether or not the
+  platform ever built a predicate at all"*), but the same coupling risk
+  exists on the fixture's own side and is not currently called out there.
+- **Row 6 shows the adapter-level integration suite has no direct coverage
+  of `EmptyingNotIntended`.** Its two tests with "emptying" in the name
+  (`an_emptying_publication_is_refused_when_the_held_tenants_payload_is_lost`,
+  `retiring_a_data_source_is_refused_when_the_held_tenants_payload_is_lost`)
+  both remove the held tenants payload first, so `parse_held_tenants` returns
+  `HeldPayloadLost` before `validate_snapshot`'s emptying guard is ever
+  reached — disabling that guard cannot touch them. Only the unit test in
+  `src/validate_tests.rs` and the composed acceptance test exercise the
+  plain "non-empty document offered empty, no `Emptying::Intended`, payload
+  intact" path against a real adapter and a real filesystem.
+
+Row 10 is the one decision 22 (ADR 0018, part 5) predicted might leave
+nothing failing — atomicity was argued to remove "a spurious alarm and a
+stale window, not a data-loss risk". It did not: three tests still catch it,
+because the fixture obstructs a *sibling temp-file path* to force a write
+failure, and removing the temp-file stage removes the obstruction's effect
+along with it — the write that used to fail now succeeds outright, which
+`the_manifest_is_written_after_the_payload_it_describes` and the other two
+are built to notice. The prediction would only be borne out by a mutation
+that leaves the temp-file staging in place and only removes the final
+`rename`, which was not tried here.
 
 ## Acting on Keycloak as the operator
 

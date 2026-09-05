@@ -828,7 +828,9 @@ Every credential either of them handles is a redacting newtype with no
 
 ## Runtime publication boundary
 
-This is the seam this increment deliberately **documents rather than builds**.
+[ADR 0018](../decisions/0018-runtime-state-is-published-as-three-versioned-documents.md)
+builds the producer half of this seam; this section is corrected in part by
+that decision — see "The production owner" below for what it supersedes.
 
 ```text
 Git desired state
@@ -838,21 +840,77 @@ reconciliation
       ├── Envoy               ← not built
       ├── OpenBao             ← not built
       ├── OpenFGA             ← not built
-      └── runtime bindings    ← not built
+      └── runtime bindings    ← producer built (ADR 0018); no caller yet
 ```
 
-The runtime plane reads tenant bindings and DataSources from files a controller
-writes, and resolves them in memory with no control-plane dependency (§6, §7).
-That must not change: publishing a binding is another reconciliation target, on
-the same footing as Keycloak, and **not** a control-plane mutation reaching into
-a runtime registry.
+The runtime plane reads tenant bindings, DataSources and the resource
+catalogue from files a controller writes, and resolves them in memory with no
+control-plane dependency (§6, §7). That must not change: publishing a binding
+is another reconciliation target, on the same footing as Keycloak, and
+**not** a control-plane mutation reaching into a runtime registry.
 
-Concretely, when it is built:
+**What is built.** `fabric-runtime-publication` — a crate in **neither**
+plane, exactly as `fabric-core` is — owns the wire contract for the three
+documents (`tenants.json`, `data-sources.json`, `catalog.json`) and the
+sidecar manifest published beside each one, the `RuntimePublication` port
+(`current`, `publish`, `describe`), and a filesystem adapter that writes all
+three atomically (temp file, `fsync`, `rename`, payload before manifest). The
+port's guards refuse a whole publication before any byte is written: a stale
+or same-revision-divergent document, a tenant naming a DataSource this same
+publication does not include, a data-sources document dropping an id the
+*held* tenants document still references, and a non-empty document going
+empty without the caller stating that intent. A composed acceptance test,
+`fabric-runtime-publication/tests/published_state_serves_two_tenants.rs`,
+publishes a fixture through the real port and then drives the real
+`fabric_tenant_runtime::build_runtime` and the real `fabric_data_api::build_data_api`
+router over the result — the proof that the producer and the runtime plane
+agree on the wire without sharing a Rust type.
 
-- it belongs in `fabric-reconciliation` or a sibling, behind a port of its own;
-- it writes what `fabric_tenant_runtime::ResourceSource` reads;
+**What it is consumed by.** Nothing in production yet. The consumer side —
+`fabric_tenant_runtime::ResourceSource` / `JsonFileSource` reading
+`tenants.json` and `data-sources.json`, and `fabric_data_api`'s startup path
+reading `catalog.json` into a `ResourceCatalog` — already exists and is
+unchanged; ADR 0018 states it as frozen. Only the composed test above and a
+developer running the filesystem adapter by hand exercise that seam today.
+
+**What is still not built:**
+
+- **The Kubernetes adapter.** The one this crate's filesystem adapter stands
+  in for in production — three ConfigMaps in `platform-system`, written by a
+  least-privileged controller, mounted as whole volumes (never `subPath`) into
+  the runtime's existing `tenants_path` / `data_sources_path` / `catalog_path`.
+  Specified in ADR 0018, "The Kubernetes adapter", not built here.
+- **A scheduled caller.** Something that reads `current()`, decides a
+  revision, and calls `publish()` on an interval. Publication writes with the
+  controller's own ServiceAccount, so — unlike Keycloak reconciliation
+  (ADR 0012) — nothing is borrowed and a poll is both safe and correct; there
+  is simply nothing polling yet.
+- **The provisioner input.** A published `DataSource` needs a connector, a
+  connection selector, residency and pool settings; a published tenant
+  binding needs a DataSource id and, on a shared DataSource, a discriminator
+  column and *this tenant's actual value in it*. None of that is derivable
+  from a client's desired-state document (`spec.data.primary: {class,
+  provider, region}` is intent, not placement), and inventing it would be
+  exactly what [ADR 0007](../decisions/0007-isolation-is-checked-against-an-observed-fact-not-a-label.md)
+  forbids — a tenant boundary that looks configured and is not. ADR 0018 names
+  the missing input (`ProvisionedPlacement`) without designing it.
+
+**Where the future caller lives.** Concretely, when a caller is built:
+
+- it does **not** belong in `fabric-reconciliation` or an unnamed sibling, as
+  an earlier draft of this section said — ADR 0018 supersedes that sentence.
+  The caller lives in a **control-plane crate**, which may depend on
+  `fabric-runtime-publication` (an `expected` entry `scripts/check_architecture.py`
+  adds when that crate exists, the same way `fabric-reconciliation` already
+  depends on `fabric-client-model`);
+- it publishes complete replacements of the three documents, every time —
+  there is no incremental path;
 - it does **not** give `fabric-control-plane` a dependency on
-  `fabric-tenant-runtime`, and the architecture check will refuse one.
+  `fabric-tenant-runtime`, and the architecture check refuses one already —
+  `check_runtime_plane_cannot_reach_the_publisher` additionally refuses the
+  runtime plane a dependency on `fabric-runtime-publication` itself, dev
+  tables included, so the runtime can never link a writer of the files it
+  reads.
 
 ## Auditability
 
@@ -873,5 +931,11 @@ Nothing in the audit module is handed a value that could contain one.
 ## What this increment does not include
 
 Client creation, deletion of anything, OpenFGA/OpenBao/Grafana/Envoy
-reconciliation, database provisioning, runtime-binding publication, a workflow
-engine, and provisioning the realm's own console client and operator role.
+reconciliation, database provisioning, a workflow engine, and provisioning the
+realm's own console client and operator role.
+
+Runtime-binding publication is now split rather than wholly absent: ADR 0018
+builds the producer (`fabric-runtime-publication`, its port, its filesystem
+adapter and guards), and this increment still does not build the Kubernetes
+adapter, a scheduled caller, or the provisioner input those three documents
+need — see "Runtime publication boundary" above.

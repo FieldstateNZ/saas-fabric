@@ -11,6 +11,7 @@ use crate::{
     CatalogDocument, ConnectionSelectorDocument, DataResidencyDocument, DataSourceDocument, DocumentInput,
     DocumentRevision, IsolationModelDocument, PlacementClassDocument, PublicationError,
     ResourceDefinitionDocument, RuntimeSnapshot, TenantBindingDocument, TenantDataBindingDocument,
+    TenantDataBindings,
 };
 
 fn data_source(id: &str) -> DataSourceDocument {
@@ -43,7 +44,7 @@ fn tenant(name: &str, bound_to: &str) -> TenantBindingDocument {
     TenantBindingDocument {
         tenant: TenantId::try_new(name).unwrap(),
         revision: fabric_core::BindingRevision::new(1),
-        data,
+        data: TenantDataBindings::try_new(data).unwrap(),
         configuration: None,
         secrets: None,
         features: BTreeMap::new(),
@@ -57,7 +58,7 @@ fn catalog() -> CatalogDocument {
         LogicalResourceName::try_new("customers").unwrap(),
         ResourceDefinitionDocument {
             data_source: LogicalDataSourceName::try_new("primary").unwrap(),
-            collection: "customers".to_owned(),
+            collection: crate::CollectionName::try_new("customers").unwrap(),
             key_field: crate::FieldName::try_new("id").unwrap(),
             operations: vec![fabric_core::OperationKind::Read],
             queryable_fields: Vec::new(),

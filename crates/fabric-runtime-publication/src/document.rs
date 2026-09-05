@@ -21,6 +21,7 @@ mod resource_definition;
 mod storage_binding;
 mod tenant_binding;
 mod tenant_data_binding;
+mod tenant_data_bindings;
 
 pub use capabilities::DataSourceCapabilitiesDocument;
 pub use catalog::CatalogDocument;
@@ -35,3 +36,4 @@ pub use resource_definition::ResourceDefinitionDocument;
 pub use storage_binding::StorageBindingDocument;
 pub use tenant_binding::{tenants_canonical_json, TenantBindingDocument};
 pub use tenant_data_binding::TenantDataBindingDocument;
+pub use tenant_data_bindings::{EmptyTenantDataBindingsError, TenantDataBindings};

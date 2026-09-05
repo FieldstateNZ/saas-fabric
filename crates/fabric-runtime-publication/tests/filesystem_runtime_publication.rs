@@ -17,11 +17,11 @@ use fabric_core::{
     BindingRevision, DataSourceId, LogicalDataSourceName, LogicalResourceName, OperationKind, TenantId,
 };
 use fabric_runtime_publication::{
-    CatalogDocument, ConnectionSelectorDocument, ConnectorId, DataResidencyDocument,
+    CatalogDocument, CollectionName, ConnectionSelectorDocument, ConnectorId, DataResidencyDocument,
     DataSourceCapabilitiesDocument, DataSourceDocument, DocumentInput, DocumentOutcome, DocumentRevision,
     FieldName, FilesystemRuntimePublication, IsolationModelDocument, PlacementClassDocument,
     PoolSettingsDocument, PublicationError, ResourceDefinitionDocument, RuntimePublication, RuntimeSnapshot,
-    TenantBindingDocument, TenantDataBindingDocument,
+    TenantBindingDocument, TenantDataBindingDocument, TenantDataBindings,
 };
 use fabric_tenant_runtime::{
     DataSource as RuntimeDataSource, JsonFileSource, ResourceSource, TenantRuntimeBinding,
@@ -98,7 +98,7 @@ fn tenant(name: &str, bound_to: &str, revision: u64) -> TenantBindingDocument {
     TenantBindingDocument {
         tenant: TenantId::try_new(name).unwrap(),
         revision: BindingRevision::new(revision),
-        data,
+        data: TenantDataBindings::try_new(data).unwrap(),
         configuration: None,
         secrets: None,
         features: BTreeMap::new(),
@@ -112,7 +112,7 @@ fn catalog() -> CatalogDocument {
         LogicalResourceName::try_new("customers").unwrap(),
         ResourceDefinitionDocument {
             data_source: LogicalDataSourceName::try_new("primary").unwrap(),
-            collection: "customers".to_owned(),
+            collection: CollectionName::try_new("customers").unwrap(),
             key_field: FieldName::try_new("id").unwrap(),
             operations: vec![OperationKind::Read],
             queryable_fields: Vec::new(),

@@ -490,17 +490,16 @@ def check_dependency_direction(graph: Graph) -> list[Failure]:
     expected = {
         "fabric-core": set(),
         # In neither plane, like fabric-core: its only non-dev dependency is
-        # fabric-core. The dev-dependencies below are deliberately wider than
-        # what this crate's own tests use today -- a later slice adds the
-        # composed acceptance test, which dev-depends on fabric-identity and
-        # fabric-connector too, and pre-declaring all four now means that
-        # slice never has to touch this choke-point file.
+        # fabric-core. Its dev-dependencies are fabric-tenant-runtime and
+        # fabric-data-api, for the round-trip tests beside each document
+        # type. A later slice's composed acceptance test will need
+        # fabric-identity and fabric-connector too, at which point it adds
+        # them here -- this table stays a record of the real edges, not a
+        # pre-authorisation for edges nobody needs yet.
         "fabric-runtime-publication": {
             "fabric-core",
             "fabric-tenant-runtime",
             "fabric-data-api",
-            "fabric-identity",
-            "fabric-connector",
         },
         "fabric-identity": {"fabric-core"},
         "fabric-connector": {"fabric-core"},

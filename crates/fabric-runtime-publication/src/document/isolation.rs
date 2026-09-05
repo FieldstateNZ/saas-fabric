@@ -1,7 +1,7 @@
 //! How one tenant's rows are kept apart from another's, as the publisher
 //! declares it.
 
-use crate::FieldName;
+use crate::{FieldName, SchemaName};
 
 /// The publisher's own declaration of a tenant data binding's isolation
 /// model.
@@ -29,7 +29,7 @@ pub enum IsolationModelDocument {
     /// Tenants share a database; each has its own schema.
     Schema {
         /// The tenant's schema.
-        schema: String,
+        schema: SchemaName,
     },
 
     /// Tenants share tables; rows carry a discriminator column.
@@ -50,7 +50,7 @@ mod tests {
         for model in [
             IsolationModelDocument::Database {},
             IsolationModelDocument::Schema {
-                schema: "acme".to_owned(),
+                schema: SchemaName::try_new("acme").unwrap(),
             },
             IsolationModelDocument::Discriminator {
                 column: FieldName::try_new("tenant_key").unwrap(),

@@ -33,7 +33,10 @@ pub(crate) struct Held<'a> {
     /// The held payload's raw bytes, if the payload file exists. `None`
     /// here is the presence table's "manifest held, payload absent" row —
     /// there is nothing to diverge from, so a publication at the held
-    /// revision is a republication, not a divergence.
+    /// revision is a republication, not a divergence. The held *revision* is
+    /// unaffected by this: an offered revision older than it is still
+    /// refused, because the manifest is what states the revision, not the
+    /// payload.
     pub(crate) payload: Option<&'a [u8]>,
 }
 
@@ -66,12 +69,12 @@ pub(crate) fn verdict(held: Option<Held<'_>>, incoming: &Incoming<'_>) -> Result
         return Ok(Verdict::Write);
     };
 
-    let Some(held_payload) = held.payload else {
-        // Manifest held, payload missing: nothing to diverge from, so this
-        // is a republication rather than a divergence.
-        return Ok(Verdict::Write);
-    };
-
+    // A held manifest always states a revision, whether or not its payload
+    // is still on disk, so staleness is checked here -- before the missing-
+    // payload branch below -- rather than being skipped along with the byte
+    // comparison. An offered revision older than the held one is refused
+    // either way; only the *byte* comparison has nothing to run against when
+    // the payload is gone.
     if incoming.revision < held.revision {
         return Err(PublicationError::StaleRevision {
             document: incoming.document,
@@ -79,6 +82,14 @@ pub(crate) fn verdict(held: Option<Held<'_>>, incoming: &Incoming<'_>) -> Result
             offered: incoming.revision,
         });
     }
+
+    let Some(held_payload) = held.payload else {
+        // Manifest held, payload missing: nothing to diverge from, and the
+        // revision is already known to be at least the held one (checked
+        // above), so this is a republication (equal) or an ordinary advance
+        // (newer) rather than a divergence.
+        return Ok(Verdict::Write);
+    };
 
     if incoming.revision > held.revision {
         return Ok(Verdict::Write);

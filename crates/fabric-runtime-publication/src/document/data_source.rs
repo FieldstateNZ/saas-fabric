@@ -79,13 +79,20 @@ mod tests {
     use super::*;
 
     fn postgres(id: &str) -> DataSourceDocument {
+        postgres_connected_by(
+            id,
+            ConnectionSelectorDocument::Named {
+                name: crate::ConnectionName::try_new("acme-prod").unwrap(),
+            },
+        )
+    }
+
+    fn postgres_connected_by(id: &str, connection: ConnectionSelectorDocument) -> DataSourceDocument {
         DataSourceDocument {
             id: DataSourceId::try_new(id).unwrap(),
             revision: BindingRevision::new(4),
             connector: ConnectorId::try_new("postgres-au-east").unwrap(),
-            connection: ConnectionSelectorDocument::Named {
-                name: crate::ConnectionName::try_new("acme-prod").unwrap(),
-            },
+            connection,
             placement: PlacementClassDocument::Dedicated,
             residency: DataResidencyDocument {
                 region: "au-east".to_owned(),
@@ -102,12 +109,27 @@ mod tests {
 
     #[test]
     fn a_published_data_source_document_deserialises_as_the_runtimes_own_data_source() {
-        let bytes = data_sources_canonical_json(&[postgres("sql-au-east-03")]).unwrap();
+        // Every connection selector variant, not just `Named` -- `Default`
+        // and `Secret` are exactly the shapes most likely to drift from the
+        // consumer's own shape, since each is struct-shaped for a different
+        // reason (see `ConnectionSelectorDocument`'s own rustdoc).
+        for connection in [
+            ConnectionSelectorDocument::Default {},
+            ConnectionSelectorDocument::Named {
+                name: crate::ConnectionName::try_new("acme-prod").unwrap(),
+            },
+            ConnectionSelectorDocument::Secret {
+                reference: "tenant/acme/data-primary".to_owned(),
+            },
+        ] {
+            let document = postgres_connected_by("sql-au-east-03", connection.clone());
+            let bytes = data_sources_canonical_json(&[document]).unwrap();
 
-        let data_sources: Vec<DataSource> = serde_json::from_slice(&bytes).unwrap();
+            let data_sources: Vec<DataSource> = serde_json::from_slice(&bytes).unwrap();
 
-        assert_eq!(data_sources.len(), 1);
-        assert_eq!(data_sources[0].id.as_str(), "sql-au-east-03");
+            assert_eq!(data_sources.len(), 1, "{connection:?}");
+            assert_eq!(data_sources[0].id.as_str(), "sql-au-east-03", "{connection:?}");
+        }
     }
 
     #[test]

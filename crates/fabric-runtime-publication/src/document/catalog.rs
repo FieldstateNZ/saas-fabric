@@ -38,6 +38,17 @@ impl CatalogDocument {
         self.0.is_empty()
     }
 
+    /// Iterates over every catalogued resource, keyed by its logical name.
+    pub fn resources(&self) -> impl Iterator<Item = (&LogicalResourceName, &ResourceDefinitionDocument)> {
+        self.0.iter()
+    }
+
+    /// Looks up one resource by its logical name.
+    #[must_use]
+    pub fn get(&self, name: &LogicalResourceName) -> Option<&ResourceDefinitionDocument> {
+        self.0.get(name)
+    }
+
     /// Renders this catalogue as canonical JSON (two-space indentation, a
     /// trailing newline, UTF-8).
     ///
@@ -60,7 +71,7 @@ mod tests {
     use fabric_data_api::ResourceCatalog;
 
     use super::*;
-    use crate::FieldName;
+    use crate::{CollectionName, FieldName};
 
     fn catalog() -> CatalogDocument {
         let mut resources = BTreeMap::new();
@@ -68,7 +79,7 @@ mod tests {
             LogicalResourceName::try_new("customers").unwrap(),
             ResourceDefinitionDocument {
                 data_source: LogicalDataSourceName::try_new("primary").unwrap(),
-                collection: "customers".to_owned(),
+                collection: CollectionName::try_new("customers").unwrap(),
                 key_field: FieldName::try_new("id").unwrap(),
                 operations: vec![OperationKind::Read, OperationKind::List],
                 queryable_fields: Vec::new(),
@@ -88,5 +99,25 @@ mod tests {
         assert!(parsed
             .resolve(&LogicalResourceName::try_new("customers").unwrap())
             .is_ok());
+    }
+
+    #[test]
+    fn resources_iterates_every_catalogued_entry() {
+        let catalog = catalog();
+        let names: Vec<&str> = catalog.resources().map(|(name, _)| name.as_str()).collect();
+
+        assert_eq!(names, ["customers"]);
+    }
+
+    #[test]
+    fn get_looks_up_one_resource_by_its_logical_name() {
+        let catalog = catalog();
+
+        assert!(catalog
+            .get(&LogicalResourceName::try_new("customers").unwrap())
+            .is_some());
+        assert!(catalog
+            .get(&LogicalResourceName::try_new("unknown").unwrap())
+            .is_none());
     }
 }

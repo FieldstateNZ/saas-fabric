@@ -198,11 +198,38 @@ side accepts is a value the other accepts too, and an invalid `collection` or
 `schema` fails at construction rather than at the consumer's own startup or
 refresh parse.
 
+## The composed acceptance test
+
+`tests/published_state_serves_two_tenants.rs` is the test the milestone
+exists for (`docs/delivery.md`): it publishes a fixture — one shared
+DataSource, two tenants isolated by different values in the same
+discriminator column, and a one-resource `articles` catalogue — through the
+real `FilesystemRuntimePublication`, then builds the real
+`fabric_tenant_runtime::build_runtime` over the real `JsonFileSource` and the
+real `fabric_data_api::build_data_api` over the real `ResourceCatalog`
+(deserialised straight from the published `catalog.json`, since
+`fabric-api`'s own `startup::catalog::load` is `pub(super)`), and drives the
+assembled router with bearer tokens for both tenants. `tests/support/`
+carries the fixture, a recording connector that applies the captured
+predicate to a small shared corpus instead of dispatching on tenant identity
+(so a missing or wrong predicate actually breaks a test rather than passing
+by coincidence), and a stack builder every test in the file shares. It also
+covers the producer-side refusals — stale revision, divergent payload at an
+unchanged revision, a dangling DataSource reference, and an unintended
+emptying — and the consumer-side survival guarantees a malformed published
+document must not disturb, polling a bounded, real window rather than a
+single sleep wherever a background refresh has to be observed taking effect.
+This is why the crate's dev-dependencies grew to include `fabric-identity`
+and `fabric-connector` alongside `fabric-tenant-runtime` and
+`fabric-data-api` (see "Invariants to preserve" below).
+
 ## Invariants to preserve
 
 - No dependency beyond `fabric-core` in `[dependencies]`. Dev-dependencies are
   `fabric-tenant-runtime` and `fabric-data-api`, for the round-trip tests
-  beside each document type; both are already pre-declared in
+  beside each document type, plus `fabric-identity` and `fabric-connector`,
+  for the composed acceptance test's bearer-token minting and recording
+  connector. All four are already pre-declared in
   `scripts/check_architecture.py`'s `expected` table.
 - Every document type derives both `Serialize` and `Deserialize`. The
   consumer's own types are asymmetric (`ResourceCatalog` /

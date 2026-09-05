@@ -14,9 +14,14 @@ serde_json.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+axum.workspace = true
+fabric-connector.workspace = true
 fabric-data-api.workspace = true
+fabric-identity.workspace = true
 fabric-tenant-runtime.workspace = true
+http.workspace = true
 tokio.workspace = true
+tower.workspace = true
 
 [lints]
 workspace = true

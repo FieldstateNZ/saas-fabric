@@ -492,14 +492,17 @@ def check_dependency_direction(graph: Graph) -> list[Failure]:
         # In neither plane, like fabric-core: its only non-dev dependency is
         # fabric-core. Its dev-dependencies are fabric-tenant-runtime and
         # fabric-data-api, for the round-trip tests beside each document
-        # type. A later slice's composed acceptance test will need
-        # fabric-identity and fabric-connector too, at which point it adds
-        # them here -- this table stays a record of the real edges, not a
-        # pre-authorisation for edges nobody needs yet.
+        # type, plus fabric-identity and fabric-connector for the composed
+        # acceptance test (`tests/published_state_serves_two_tenants.rs`),
+        # which mints bearer tokens and drives a recording connector the way
+        # the Data API's own composed tests do. This table stays a record of
+        # the real edges, not a pre-authorisation for edges nobody needs yet.
         "fabric-runtime-publication": {
             "fabric-core",
             "fabric-tenant-runtime",
             "fabric-data-api",
+            "fabric-identity",
+            "fabric-connector",
         },
         "fabric-identity": {"fabric-core"},
         "fabric-connector": {"fabric-core"},

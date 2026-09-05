@@ -35,6 +35,9 @@
 //! the adapter that writes it to a local disk. There is, on purpose, still
 //! no production *caller* of any of it — that is the control-plane crate
 //! named in ADR 0018, "The production owner", and it does not exist yet.
+//! A composed acceptance test driving this crate's output through the real
+//! runtime and Data API lives under `tests/`, alongside the filesystem
+//! adapter's own integration tests.
 //!
 //! # No field anywhere can hold a secret value
 //!

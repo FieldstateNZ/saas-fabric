@@ -14,13 +14,9 @@ use crate::{DocumentKind, DocumentRevision};
 /// Why [`crate::RuntimePublication::publish`] refused a publication, or
 /// [`crate::RuntimePublication::current`] could not read what is held.
 ///
-/// # Refused, never partially applied
-///
-/// Every variant here means the whole publication was refused before the
-/// first byte was written (ADR 0018 parts 4-6). There is no variant for "two
-/// of three documents were written and the third failed", because that state
-/// is unreachable by construction: every document's verdict is resolved
-/// before any of them is written.
+/// Every variant but [`Self::Unwritable`] guarantees nothing was written —
+/// see [`crate::PublicationReport`]'s rustdoc for what a partial write under
+/// [`Self::Unwritable`] means and how the next publication recovers.
 #[derive(Debug, thiserror::Error)]
 pub enum PublicationError {
     /// The offered revision is older than the one already held.
@@ -38,11 +34,9 @@ pub enum PublicationError {
 
     /// The offered revision matches what is held, but the bytes differ.
     ///
-    /// Refused rather than accepted, deliberately: accepting the newer bytes
-    /// at an unchanged revision would make the revision meaningless, and two
-    /// writers racing at the same revision would have their outcome decided
-    /// by arrival order (ADR 0018 part 6, mirroring the runtime's own
-    /// `ApplyReport::divergent_payload`).
+    /// Refused rather than accepted: accepting the newer bytes would make
+    /// the revision meaningless, and two racing writers would have their
+    /// outcome decided by arrival order (ADR 0018 part 6).
     #[error("{document:?} at revision {revision} was offered with different bytes than are held")]
     DivergentPayload {
         /// Which document diverged.
@@ -55,8 +49,8 @@ pub enum PublicationError {
     /// data-sources document does not contain.
     ///
     /// Guaranteed to produce a 500 on the request path for that tenant
-    /// (`ResolveError::MissingDataSource`) — cheap to catch here instead of
-    /// on a live request (ADR 0018 part 4).
+    /// (`ResolveError::MissingDataSource`) — cheap to catch here (ADR 0018
+    /// part 4).
     #[error(
         "tenant {tenant}'s {logical} binding names data source {data_source}, which this \
          publication does not include"
@@ -71,12 +65,11 @@ pub enum PublicationError {
     },
 
     /// The data-sources document drops a `DataSourceId` the *held* tenants
-    /// document — the one currently on disk, not the one in this
-    /// publication — still references.
+    /// document — not the one in this publication — still references.
     ///
     /// Retiring a DataSource is therefore two publications: one that unbinds
-    /// every tenant from it, then a second, once the first is held, that
-    /// drops the DataSource itself (ADR 0018 part 3).
+    /// every tenant, then a second, once the first is held, that drops the
+    /// DataSource itself (ADR 0018 part 3).
     #[error(
         "data source {data_source} was dropped, but the held tenants document still binds it to \
          tenant {tenant}"
@@ -88,13 +81,12 @@ pub enum PublicationError {
         tenant: TenantId,
     },
 
-    /// This publication would take a currently non-empty document to empty,
-    /// and the caller did not state that intent.
+    /// This publication would take a currently non-empty document to empty
+    /// without the caller stating that intent.
     ///
     /// Prevents a scheduled publication whose input query returned zero rows
     /// from silently deprovisioning every tenant (ADR 0018 part 6). State
-    /// [`crate::Emptying::Intended`] for this document if that is really
-    /// what is meant.
+    /// [`crate::Emptying::Intended`] if that is really what is meant.
     #[error("{document:?} would become empty, and Emptying::Intended was not given for it")]
     EmptyingNotIntended {
         /// The document that would have been emptied.
@@ -103,20 +95,44 @@ pub enum PublicationError {
 
     /// The catalogue document has no entries.
     ///
-    /// There is no bootstrap value for an empty catalogue — unlike tenants
-    /// and data sources, `[]` is never legitimate here, because
-    /// `build_data_api` refuses to start against one (ADR 0018 part 2).
-    /// Refused unconditionally, whatever the [`crate::Emptying`] intent says.
+    /// There is no bootstrap value for an empty catalogue — `build_data_api`
+    /// refuses to start against one (ADR 0018 part 2). Refused
+    /// unconditionally, whatever the [`crate::Emptying`] intent says.
     #[error("the catalogue document has no entries")]
     EmptyCatalogue,
+
+    /// A tenant binding's `data` map has no entries.
+    ///
+    /// Reachable only through `Deserialize` — construction refuses one, but
+    /// the consumer drops such a binding on arrival and keeps what was held.
+    /// Symmetric with [`Self::EmptyCatalogue`].
+    #[error("tenant {tenant}'s data map has no entries, and would be dropped on arrival")]
+    EmptyTenantData {
+        /// The tenant whose binding has no data source bindings.
+        tenant: TenantId,
+    },
+
+    /// The tenants document's manifest is held, but its payload is gone.
+    ///
+    /// A held manifest proves something was published; an absent payload
+    /// means the content is lost. Guessing "empty" would disarm the
+    /// retirement guard and this document's own emptying guard, both of
+    /// which read this document's held state.
+    #[error(
+        "{document:?}'s manifest is held, but its payload is gone -- restore the payload file or \
+         remove the manifest before publishing again"
+    )]
+    HeldPayloadLost {
+        /// The document whose payload is missing while its manifest remains.
+        document: DocumentKind,
+    },
 
     /// A document or its manifest could not be read.
     #[error("{document:?} could not be read: {cause}")]
     Unreadable {
         /// The document that could not be read.
         document: DocumentKind,
-        /// What went wrong. Never a credential — this is a filesystem or
-        /// parse failure.
+        /// What went wrong. Never a credential — a filesystem or parse failure.
         #[source]
         cause: Box<dyn std::error::Error + Send + Sync>,
     },

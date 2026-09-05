@@ -1,9 +1,13 @@
 //! Reads whatever is currently on disk, before any write is attempted.
+//!
+//! This file is in the 121-150 line band the file-size policy asks a reason
+//! for: `HeldState` and the three small `read_*` functions it is built from
+//! are one concept -- what does the filesystem currently hold, read once,
+//! before any write is planned. Turning held bytes into typed documents is a
+//! separate concept and lives in `super::parse` instead.
 
 use std::io;
 use std::path::Path;
-
-use serde::de::DeserializeOwned;
 
 use super::paths::DocumentPaths;
 use crate::verdict::Held;
@@ -66,7 +70,7 @@ impl HeldState {
 /// `verdict` compares bytes against.
 fn held_of<'a>(manifest: Option<&DocumentManifest>, payload: Option<&'a [u8]>) -> Option<Held<'a>> {
     manifest.map(|manifest| Held {
-        revision: manifest.revision,
+        revision: manifest.revision(),
         payload,
     })
 }
@@ -85,45 +89,48 @@ fn read_optional(path: &Path, document: DocumentKind) -> Result<Option<Vec<u8>>,
 }
 
 /// Reads and parses a document's manifest, if it exists.
+///
+/// Also checks the manifest's own `document` field against `document` --
+/// the kind of the file it was read from. A manifest naming a different
+/// document is refused as [`PublicationError::Unreadable`] rather than
+/// trusted: it can only mean the file was copied or hand-edited into the
+/// wrong place, and using it as-is would attribute the wrong document's
+/// revision to this one.
 fn read_manifest(path: &Path, document: DocumentKind) -> Result<Option<DocumentManifest>, PublicationError> {
     let Some(bytes) = read_optional(path, document)? else {
         return Ok(None);
     };
 
-    serde_json::from_slice(&bytes)
-        .map(Some)
-        .map_err(|error| unreadable(document, error))
-}
+    let manifest: DocumentManifest =
+        serde_json::from_slice(&bytes).map_err(|error| unreadable(document, error))?;
 
-/// Parses a held payload as a JSON array of `T`, treating an absent payload
-/// as an empty set.
-///
-/// # Absent versus unparseable
-///
-/// Absent means nothing has been published yet — for the tenants document
-/// specifically, read here to check ADR 0018 part 3's retirement rule, that
-/// means no tenant has ever been bound, so there is nothing a data-sources
-/// publication could possibly be retiring underneath. An empty set is the
-/// correct and safe answer.
-///
-/// Unparseable is different, and is refused rather than guessed at: a held
-/// file this producer wrote should always parse, so one that does not is
-/// either corrupted or hand-edited into a state this code cannot vouch for.
-/// Guessing "empty" would let a retirement past whatever it actually holds;
-/// guessing "non-empty" would refuse forever. Both are wrong, so this
-/// returns [`PublicationError::Unreadable`] and leaves the decision to an
-/// operator before the next publication is attempted.
-pub(super) fn parse_documents<T: DeserializeOwned>(
-    payload: Option<&[u8]>,
-    document: DocumentKind,
-) -> Result<Vec<T>, PublicationError> {
-    match payload {
-        None => Ok(Vec::new()),
-        Some(bytes) => serde_json::from_slice(bytes).map_err(|error| unreadable(document, error)),
+    if manifest.document() == document {
+        Ok(Some(manifest))
+    } else {
+        Err(unreadable(
+            document,
+            ManifestKindMismatch {
+                expected: document,
+                found: manifest.document(),
+            },
+        ))
     }
 }
 
-fn unreadable(
+/// A manifest's own `document` field does not match the file it sits beside.
+#[derive(Debug, thiserror::Error)]
+#[error("manifest claims to describe {found:?}, but was read as {expected:?}")]
+struct ManifestKindMismatch {
+    expected: DocumentKind,
+    found: DocumentKind,
+}
+
+/// Wraps a read or parse failure as [`PublicationError::Unreadable`].
+///
+/// `pub(super)` because [`super::parse`] raises the same error for a
+/// payload that reads fine as bytes but does not parse as the document it
+/// claims to be.
+pub(super) fn unreadable(
     document: DocumentKind,
     cause: impl std::error::Error + Send + Sync + 'static,
 ) -> PublicationError {

@@ -13,7 +13,9 @@ use crate::{DocumentKind, DocumentRevision, PublicationError};
 /// What must happen to one document, once its verdict is resolved.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Verdict {
-    /// The payload — and, when it changes, the manifest — must be written.
+    /// The payload and its manifest must both be written, unconditionally —
+    /// see `filesystem::write::write_if_needed`, which never writes one
+    /// without the other.
     Write,
     /// Nothing changed. Nothing is written, not even the manifest.
     Unchanged,

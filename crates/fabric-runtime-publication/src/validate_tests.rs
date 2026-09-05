@@ -120,6 +120,21 @@ fn an_already_empty_document_staying_empty_is_not_an_emptying() {
 }
 
 #[test]
+fn a_tenant_with_an_empty_data_map_is_refused_even_though_deserialise_allows_it() {
+    // `TenantDataBindings::try_new` refuses an empty map at construction --
+    // this is the way one is reachable anyway.
+    let empty: TenantDataBindings = serde_json::from_str("{}").unwrap();
+    let mut binding = tenant("acme", "sql-01");
+    binding.data = empty;
+
+    let offered = snapshot(vec![binding], vec![data_source("sql-01")]);
+
+    let error = validate_snapshot(&offered, &[], &[]).unwrap_err();
+
+    assert!(matches!(error, PublicationError::EmptyTenantData { .. }));
+}
+
+#[test]
 fn a_tenant_naming_a_data_source_this_publication_does_not_include_is_refused() {
     let offered = snapshot(vec![tenant("acme", "sql-01")], vec![]);
 

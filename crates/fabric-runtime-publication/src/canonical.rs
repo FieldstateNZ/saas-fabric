@@ -6,8 +6,9 @@ use serde::Serialize;
 /// UTF-8, and a trailing newline.
 ///
 /// This is load-bearing rather than cosmetic. The publisher's own
-/// divergent-payload guard (a future slice) refuses a same-revision
-/// publication by **comparing bytes** against what is already on disk. Two
+/// divergent-payload guard (`crate::verdict::verdict`) refuses a
+/// same-revision publication by **comparing bytes** against what is already
+/// on disk. Two
 /// callers publishing an identical snapshot must therefore produce
 /// byte-identical output regardless of field order or whitespace, or the
 /// guard would see a difference that means nothing — this function is the

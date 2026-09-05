@@ -194,25 +194,10 @@ async fn a_data_source_is_written_before_the_tenant_that_references_it() {
     assert!(!dir.path().join("catalog.json").exists());
 }
 
-#[tokio::test]
-async fn a_document_whose_revision_did_not_advance_is_not_rewritten() {
-    let dir = TempDir::new("no-advance");
-    let publisher = adapter(&dir);
-    publisher.publish(&snapshot(1, "acme", "sql-01")).await.unwrap();
-
-    let payload_before = identity(&dir.path().join("tenants.json"));
-    let manifest_before = identity(&dir.path().join("tenants.manifest.json"));
-
-    let report = publisher.publish(&snapshot(1, "acme", "sql-01")).await.unwrap();
-
-    assert_eq!(report.tenants, DocumentOutcome::Unchanged);
-    assert_eq!(identity(&dir.path().join("tenants.json")), payload_before);
-    assert_eq!(
-        identity(&dir.path().join("tenants.manifest.json")),
-        manifest_before
-    );
-}
-
+/// Three overlapping no-op properties, proved together rather than in three
+/// separate tests: a revision that did not advance is not rewritten, a
+/// republication with identical bytes at the same revision writes nothing,
+/// and "nothing" includes the manifest — not just the payload.
 #[tokio::test]
 async fn a_republication_at_the_same_revision_with_the_same_payload_writes_nothing() {
     let dir = TempDir::new("same-revision-same-bytes");
@@ -249,21 +234,6 @@ async fn a_republication_at_the_same_revision_with_the_same_payload_writes_nothi
     .map(|name| identity(&dir.path().join(name)))
     .collect();
     assert_eq!(identities_before, identities_after);
-}
-
-#[tokio::test]
-async fn a_no_op_publication_writes_nothing_including_the_manifest() {
-    let dir = TempDir::new("no-op-manifest");
-    let publisher = adapter(&dir);
-    publisher.publish(&snapshot(1, "acme", "sql-01")).await.unwrap();
-
-    let manifest_before = identity(&dir.path().join("tenants.manifest.json"));
-    publisher.publish(&snapshot(1, "acme", "sql-01")).await.unwrap();
-
-    assert_eq!(
-        identity(&dir.path().join("tenants.manifest.json")),
-        manifest_before
-    );
 }
 
 #[tokio::test]
@@ -395,6 +365,129 @@ async fn a_held_manifest_without_its_payload_is_republishable_at_the_same_revisi
     assert!(dir.path().join("data-sources.json").exists());
 }
 
+/// The same row as the test above, for the catalogue: its held state gates
+/// no other document's guard the way the held tenants document does (B1),
+/// so a lost payload with its manifest intact is still just a republication,
+/// not something the fix for that finding has any reason to touch.
+#[tokio::test]
+async fn a_held_catalogue_manifest_without_its_payload_is_republishable_at_the_same_revision() {
+    let dir = TempDir::new("catalog-payload-lost");
+    let publisher = adapter(&dir);
+    publisher.publish(&snapshot(1, "acme", "sql-01")).await.unwrap();
+
+    std::fs::remove_file(dir.path().join("catalog.json")).unwrap();
+
+    let report = publisher.publish(&snapshot(1, "acme", "sql-01")).await.unwrap();
+
+    assert_eq!(report.catalog, DocumentOutcome::Written);
+    assert!(dir.path().join("catalog.json").exists());
+}
+
+/// A held tenants manifest whose payload is gone must refuse the whole
+/// publication rather than silently treat the held document as empty (B1) --
+/// here, via the emptying guard: an empty offering with no
+/// `Emptying::Intended` would, before the fix, have gone through because
+/// the held length was wrongly read as zero.
+#[tokio::test]
+async fn an_emptying_publication_is_refused_when_the_held_tenants_payload_is_lost() {
+    let dir = TempDir::new("tenants-payload-lost-emptying");
+    let publisher = adapter(&dir);
+    publisher.publish(&snapshot(1, "acme", "sql-01")).await.unwrap();
+
+    std::fs::remove_file(dir.path().join("tenants.json")).unwrap();
+
+    let emptying = RuntimeSnapshot {
+        tenants: DocumentInput::new(DocumentRevision::new(1), vec![]),
+        data_sources: DocumentInput::new(DocumentRevision::new(1), vec![data_source("sql-01", 1)]),
+        catalog: DocumentInput::new(DocumentRevision::new(1), catalog()),
+    };
+
+    let error = publisher.publish(&emptying).await.unwrap_err();
+
+    assert!(matches!(
+        error,
+        PublicationError::HeldPayloadLost {
+            document: fabric_runtime_publication::DocumentKind::Tenants
+        }
+    ));
+    assert!(!dir.path().join("tenants.json").exists());
+}
+
+/// The retirement guard reads the held tenants document too (B1): dropping
+/// "sql-01" while the held tenants payload is lost must be refused, not
+/// silently accepted because the held tenant count was wrongly read as zero.
+#[tokio::test]
+async fn retiring_a_data_source_is_refused_when_the_held_tenants_payload_is_lost() {
+    let dir = TempDir::new("tenants-payload-lost-retirement");
+    let publisher = adapter(&dir);
+    publisher.publish(&snapshot(1, "acme", "sql-01")).await.unwrap();
+
+    std::fs::remove_file(dir.path().join("tenants.json")).unwrap();
+
+    let retiring = RuntimeSnapshot {
+        tenants: DocumentInput::new(DocumentRevision::new(2), vec![]).emptying_intended(),
+        data_sources: DocumentInput::new(DocumentRevision::new(2), vec![]).emptying_intended(),
+        catalog: DocumentInput::new(DocumentRevision::new(1), catalog()),
+    };
+
+    let error = publisher.publish(&retiring).await.unwrap_err();
+
+    assert!(matches!(
+        error,
+        PublicationError::HeldPayloadLost {
+            document: fabric_runtime_publication::DocumentKind::Tenants
+        }
+    ));
+    assert!(dir.path().join("data-sources.json").exists());
+}
+
+#[tokio::test]
+async fn a_manifest_naming_the_wrong_document_kind_is_refused() {
+    let dir = TempDir::new("manifest-kind-mismatch");
+    adapter(&dir)
+        .publish(&snapshot(1, "acme", "sql-01"))
+        .await
+        .unwrap();
+
+    // The manifest's own `document` field no longer matches the file it
+    // sits beside -- as if it had been copied from a different document's
+    // manifest by hand.
+    let manifest_path = dir.path().join("tenants.manifest.json");
+    let manifest = std::fs::read_to_string(&manifest_path).unwrap();
+    std::fs::write(&manifest_path, manifest.replace("\"tenants\"", "\"catalog\"")).unwrap();
+
+    let error = adapter(&dir).current().await.unwrap_err();
+
+    assert!(matches!(error, PublicationError::Unreadable { .. }));
+}
+
+#[tokio::test]
+async fn current_reports_the_held_manifests_revision_regardless_of_payload_presence() {
+    let dir = TempDir::new("current-presence-states");
+    let publisher = adapter(&dir);
+
+    // No manifest published yet: every document reports unpublished.
+    let unpublished = publisher.current().await.unwrap();
+    assert_eq!(unpublished.tenants, None);
+    assert_eq!(unpublished.data_sources, None);
+    assert_eq!(unpublished.catalog, None);
+
+    publisher.publish(&snapshot(3, "acme", "sql-01")).await.unwrap();
+
+    // Manifest and payload both held: current() reports the published
+    // revision.
+    let held = publisher.current().await.unwrap();
+    assert_eq!(held.tenants, Some(DocumentRevision::new(3)));
+    assert_eq!(held.data_sources, Some(DocumentRevision::new(3)));
+    assert_eq!(held.catalog, Some(DocumentRevision::new(3)));
+
+    // Manifest held, payload lost: current() still reports the manifest's
+    // own revision -- it never reads the payload.
+    std::fs::remove_file(dir.path().join("tenants.json")).unwrap();
+    let payload_lost = publisher.current().await.unwrap();
+    assert_eq!(payload_lost.tenants, Some(DocumentRevision::new(3)));
+}
+
 #[tokio::test]
 async fn a_payload_without_a_manifest_is_treated_as_a_first_publication() {
     let dir = TempDir::new("orphaned-payload");
@@ -445,8 +538,47 @@ async fn the_manifest_is_written_after_the_payload_it_describes() {
     assert!(!dir.path().join("data-sources.manifest.json").exists());
 }
 
+/// B2: an I/O failure between two documents' writes is not a refusal --
+/// `errors.rs` and `report.rs` are explicit that this is the one case where
+/// earlier documents stay written. Obstruct the catalogue's own payload
+/// write so data sources land and the catalogue fails before tenants is
+/// even attempted, then republish unobstructed at the same revisions and
+/// confirm the second call finishes what the first left half-done.
 #[tokio::test]
-async fn the_target_path_is_only_ever_created_by_rename_and_the_temp_file_is_a_sibling() {
+async fn a_publication_that_failed_between_documents_is_completed_by_the_next_one() {
+    let dir = TempDir::new("recovers-after-partial-write");
+    obstruct_temp_file_for(&dir, "catalog.json");
+
+    let error = adapter(&dir)
+        .publish(&snapshot(1, "acme", "sql-01"))
+        .await
+        .unwrap_err();
+
+    assert!(matches!(error, PublicationError::Unwritable { .. }));
+    assert!(dir.path().join("data-sources.json").exists());
+    assert!(dir.path().join("data-sources.manifest.json").exists());
+    assert!(!dir.path().join("catalog.json").exists());
+    assert!(!dir.path().join("tenants.json").exists());
+
+    std::fs::remove_dir(dir.path().join(".catalog.json.tmp")).unwrap();
+
+    let report = adapter(&dir)
+        .publish(&snapshot(1, "acme", "sql-01"))
+        .await
+        .unwrap();
+
+    assert_eq!(report.data_sources, DocumentOutcome::Unchanged);
+    assert_eq!(report.catalog, DocumentOutcome::Written);
+    assert_eq!(report.tenants, DocumentOutcome::Written);
+}
+
+/// Proves temp-file cleanup, not sibling placement or rename-only creation
+/// (both already exercised, without a dedicated assertion, by every other
+/// test in this file that publishes into a directory and checks what is in
+/// it): the sibling temp file used to stage a write is gone afterwards,
+/// whether that write succeeded or failed.
+#[tokio::test]
+async fn the_temp_file_never_survives_a_publish_call_success_or_failure() {
     let dir = TempDir::new("rename-only");
 
     adapter(&dir)

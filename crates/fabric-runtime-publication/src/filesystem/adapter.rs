@@ -4,15 +4,16 @@
 //! This file is a single `impl RuntimePublication`, and `publish` alone
 //! touches all three documents in a fixed order — splitting `current` or
 //! `publish` out of this `impl` block would separate the trait's methods
-//! from each other for no reason a reader could act on. The read, validate,
-//! plan, and write steps each already have their own file (`held`,
-//! `validate`, `plan`, `write`, `atomic_write`).
+//! from each other for no reason a reader could act on. The read, parse,
+//! validate, plan, and write steps each already have their own file
+//! (`held`, `parse`, `validate`, `plan`, `write`, `atomic_write`).
 
 use std::path::PathBuf;
 
 use async_trait::async_trait;
 
-use super::held::{parse_documents, HeldState};
+use super::held::HeldState;
+use super::parse::{parse_documents, parse_held_tenants};
 use super::paths::DocumentPaths;
 use super::plan::PublishPlan;
 use super::write::write_if_needed;
@@ -73,8 +74,11 @@ impl RuntimePublication for FilesystemRuntimePublication {
         // against what is currently on disk.
         let held = HeldState::read(&self.tenants, &self.data_sources, &self.catalog)?;
 
-        let held_tenants: Vec<TenantBindingDocument> =
-            parse_documents(held.tenants_payload.as_deref(), self.tenants.kind)?;
+        let held_tenants: Vec<TenantBindingDocument> = parse_held_tenants(
+            held.tenants_manifest.as_ref(),
+            held.tenants_payload.as_deref(),
+            self.tenants.kind,
+        )?;
         let held_data_sources: Vec<DataSourceDocument> =
             parse_documents(held.data_sources_payload.as_deref(), self.data_sources.kind)?;
         validate_snapshot(snapshot, &held_tenants, &held_data_sources)?;

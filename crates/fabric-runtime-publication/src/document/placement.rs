@@ -28,9 +28,27 @@ mod tests {
     use super::*;
 
     #[test]
-    fn deserialises_from_snake_case() {
-        let class: PlacementClassDocument = serde_json::from_str(r#""high_availability""#).unwrap();
+    fn every_variant_round_trips_through_the_runtimes_own_placement_class() {
+        // Not just `HighAvailability` against itself -- every variant,
+        // against the consumer's `fabric_tenant_runtime::PlacementClass`,
+        // the same fidelity check every other document type gets. Compared
+        // by re-serialising rather than `PlacementClass::as_str()`, which is
+        // a telemetry label in a different convention (hyphens, not the
+        // wire format's snake_case) and proves nothing about the wire shape.
+        for document in [
+            PlacementClassDocument::Shared,
+            PlacementClassDocument::Dedicated,
+            PlacementClassDocument::HighAvailability,
+            PlacementClassDocument::Regulated,
+            PlacementClassDocument::Development,
+            PlacementClassDocument::Ephemeral,
+        ] {
+            let json = serde_json::to_string(&document).unwrap();
 
-        assert_eq!(class, PlacementClassDocument::HighAvailability);
+            let parsed: fabric_tenant_runtime::PlacementClass = serde_json::from_str(&json).unwrap();
+            let round_tripped = serde_json::to_string(&parsed).unwrap();
+
+            assert_eq!(round_tripped, json, "{document:?}");
+        }
     }
 }

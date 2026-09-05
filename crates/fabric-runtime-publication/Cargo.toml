@@ -1,0 +1,27 @@
+[package]
+name = "fabric-runtime-publication"
+description = "The runtime state wire contract: three independently versioned documents, owned by neither plane."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+fabric-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+axum.workspace = true
+fabric-connector.workspace = true
+fabric-data-api.workspace = true
+fabric-identity.workspace = true
+fabric-tenant-runtime.workspace = true
+http.workspace = true
+tokio.workspace = true
+tower.workspace = true
+
+[lints]
+workspace = true

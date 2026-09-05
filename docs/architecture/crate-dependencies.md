@@ -169,6 +169,71 @@ What is *not* shared, despite looking shareable:
 | `BindingRevision` | `ClientRevision` | A counter you can order, and a content hash you cannot. |
 | `telemetry::init` | `telemetry::init` | Fifteen lines, no invariant riding on them being identical. |
 
+## `fabric-runtime-publication` sits in neither plane
+
+`fabric-core` was never the only crate that answered to neither the runtime
+plane nor the control plane. `fabric-git-host`, `fabric-platform-git`,
+`fabric-platform-management`, and `fabric-registry` all sit there too, and
+`fabric-git-host` does network I/O — so "neither plane" has never been the
+same claim as "does no I/O." `fabric-runtime-publication` is the sixth crate
+in neither plane, and deliberately on the same footing as `fabric-core`
+specifically: its only non-dev internal dependency is `fabric-core`.
+
+It owns the *wire contract* for the three documents the runtime already
+consumes -- `tenants.json`, `data-sources.json`, `catalog.json` -- plus the
+sidecar manifest each one is published beside. It does not, and structurally
+cannot, depend on `fabric-tenant-runtime`, `fabric-connector`, or
+`fabric-data-api`: those are the runtime-plane crates that own the types this
+contract mirrors, and a future control-plane publisher must never gain a path
+to them. `fabric-control-plane` therefore still gains no dependency on
+`fabric-tenant-runtime` -- the claim the runtime plane's table above already
+makes -- and that stays true with this crate in the graph, not despite it.
+
+Because the producer cannot share a Rust type with the consumer without
+recreating exactly the edge this document forbids, it declares its own copy
+of every wire shape. Fidelity between the two copies is enforced by
+`#[serde(deny_unknown_fields)]` on the consumer's own types (a field either
+side adds or drops fails loudly) and by round-trip tests that deserialise
+this crate's canonical JSON as the consumer's type -- never by a shared
+`struct`.
+
+**Its dev-dependencies are wider than its production ones, on purpose.** The
+`expected` entry in `scripts/check_architecture.py` declares four dev edges,
+each earning its place for a different test:
+
+| Dev-dependency | Why |
+|---|---|
+| `fabric-tenant-runtime` | the round-trip tests beside `TenantBindingDocument` and `DataSourceDocument` deserialise this crate's canonical JSON as the consumer's own `TenantRuntimeBinding` / `DataSource`, and the composed acceptance test builds the real `fabric_tenant_runtime::build_runtime` over the real `JsonFileSource` |
+| `fabric-data-api` | the round-trip test beside `CatalogDocument` deserialises as the consumer's `ResourceCatalog`, and the composed acceptance test builds the real `fabric_data_api::build_data_api` router over it |
+| `fabric-identity` | the composed acceptance test mints bearer tokens and builds the real identity extractor stack, so a request reaching the assembled router carries the tenant identity the way a real one would |
+| `fabric-connector` | the composed acceptance test's recording connector (`tests/support/connector.rs`) implements the real `DataConnector` trait and captures the real `Filter`/`QuerySpec` the platform builds, so the isolation assertions are checked against the actual predicate rather than a stand-in |
+
+`fabric-tenant-runtime` and `fabric-data-api` arrived with this crate itself,
+for the round-trip tests; `fabric-identity` and `fabric-connector` arrived
+with the composed acceptance test
+(`tests/published_state_serves_two_tenants.rs`), added to `expected` at the
+same time the dependency was added — never pre-authorised ahead of a test
+that needed it. The check is subset-based, so an edge declared here that the
+crate does not actually have would pass silently; keeping the table to
+exactly the real edges is what keeps it worth reading. Dev edges are safe
+*because* they are dev-only: a `[dev-dependencies]` edge cannot reach the
+binary any production caller links, only the test binaries this crate builds
+for itself.
+
+That last sentence is doing real work, and it is worth being honest about its
+limit: `Graph.direct_dependencies` in `scripts/check_architecture.py` reads
+every dependency table, dev included, so `check_dependency_direction` treats
+this crate's dev edges to two runtime-plane crates exactly like production
+edges for the purpose of the table above. `check_the_planes_do_not_meet`'s
+complementary claim -- that no runtime-plane crate can reach *this* crate,
+over any table -- is not that check's job either, because it skips any crate
+in neither plane outright. ADR 0018 closes both gaps with two checks of their
+own, computed straight from the plane sets rather than from `expected`:
+`check_plane_reachability_is_transitive` catches a *production* dependency
+chain that bridges the planes through a crate in neither one, and
+`check_runtime_plane_cannot_reach_the_publisher` refuses this crate
+specifically to every runtime-plane crate, dev tables included.
+
 ## The rules behind it
 
 **`fabric-core` knows nothing about anything.** No Axum, no NDC, no runtime, no
@@ -234,6 +299,12 @@ requires editing a `Cargo.toml`, which is visible in review. Beyond that:
   crate in one plane depends on the other, and that no Git or Kubernetes client
   exists **anywhere in the workspace** — including the control plane, which
   reaches its Git host over HTTPS rather than by linking a Git library.
+- It also asserts, per ADR 0018, that no workspace crate's non-dev dependency
+  closure touches both planes -- catching a bridge through a crate in neither
+  one that a direct-edge check, and even an up-to-date `expected` table, would
+  miss -- and that no runtime-plane crate can reach
+  `fabric-runtime-publication` over any dependency table, so the runtime plane
+  can never link a writer of the files it reads.
 - CI runs `cargo deny check` including a `[bans]` section, so a surprise
   transitive dependency is visible.
 

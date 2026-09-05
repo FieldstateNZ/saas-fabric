@@ -50,6 +50,12 @@ fabric-core = { path = "crates/fabric-core" }
 fabric-fga-auth = { path = "crates/fabric-fga-auth" }
 fabric-fga-auth-api = { path = "crates/fabric-fga-auth-api" }
 
+# In neither plane, on the same footing as fabric-core: its only non-dev
+# dependency is fabric-core. See docs/architecture/crate-dependencies.md for
+# why the producer of the runtime's published state cannot live in either
+# plane's graph.
+fabric-runtime-publication = { path = "crates/fabric-runtime-publication" }
+
 # Internal crates -- runtime plane
 fabric-connector = { path = "crates/fabric-connector" }
 fabric-connector-ndc = { path = "crates/fabric-connector-ndc" }

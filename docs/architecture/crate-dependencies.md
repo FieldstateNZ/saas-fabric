@@ -169,6 +169,52 @@ What is *not* shared, despite looking shareable:
 | `BindingRevision` | `ClientRevision` | A counter you can order, and a content hash you cannot. |
 | `telemetry::init` | `telemetry::init` | Fifteen lines, no invariant riding on them being identical. |
 
+## `fabric-runtime-publication` sits in neither plane
+
+`fabric-core` was, until now, the only crate that answered to neither the
+runtime plane nor the control plane. `fabric-runtime-publication` is the
+second, and deliberately on the same footing: its only non-dev internal
+dependency is `fabric-core`.
+
+It owns the *wire contract* for the three documents the runtime already
+consumes -- `tenants.json`, `data-sources.json`, `catalog.json` -- plus the
+sidecar manifest each one is published beside. It does not, and structurally
+cannot, depend on `fabric-tenant-runtime`, `fabric-connector`, or
+`fabric-data-api`: those are the runtime-plane crates that own the types this
+contract mirrors, and a future control-plane publisher must never gain a path
+to them. `fabric-control-plane` therefore still gains no dependency on
+`fabric-tenant-runtime` -- the claim the runtime plane's table above already
+makes -- and that stays true with this crate in the graph, not despite it.
+
+Because the producer cannot share a Rust type with the consumer without
+recreating exactly the edge this document forbids, it declares its own copy
+of every wire shape. Fidelity between the two copies is enforced by
+`#[serde(deny_unknown_fields)]` on the consumer's own types (a field either
+side adds or drops fails loudly) and by round-trip tests that deserialise
+this crate's canonical JSON as the consumer's type -- never by a shared
+`struct`.
+
+**Its dev-dependencies are wider than its production ones, on purpose.** The
+`expected` entry in `scripts/check_architecture.py` pre-declares dev edges to
+`fabric-tenant-runtime`, `fabric-data-api`, `fabric-identity`, and
+`fabric-connector` now, even though this slice's own tests exercise only the
+first two. A later slice's composed acceptance test needs all four to publish
+through the real port and drive the real `fabric-data-api` router over the
+result, and pre-declaring them here means that slice never has to edit this
+choke-point file. This is safe *because* they are dev-only: a `[dev-dependencies]`
+edge cannot reach the binary any production caller links, only the test
+binaries this crate builds for itself.
+
+That last sentence is doing real work, and it is worth being honest about its
+limit: `Graph.direct_dependencies` in `scripts/check_architecture.py` reads
+every dependency table, dev included, so `check_dependency_direction` treats
+this crate's dev edges to two runtime-plane crates exactly like production
+edges for the purpose of the table above. What it does not yet check is
+`check_the_planes_do_not_meet`'s complementary claim -- that no runtime-plane
+crate can reach *this* crate, over any table -- because that check currently
+skips any crate in neither plane outright. Closing that gap is a structural
+invariant of its own, tracked separately from this slice.
+
 ## The rules behind it
 
 **`fabric-core` knows nothing about anything.** No Axum, no NDC, no runtime, no

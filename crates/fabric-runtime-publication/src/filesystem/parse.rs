@@ -76,9 +76,8 @@ pub(super) fn parse_held_documents<T: DeserializeOwned>(
     document: DocumentKind,
 ) -> Result<Vec<T>, PublicationError> {
     match (manifest, payload) {
-        (None, payload) => parse_documents(payload, document),
-        (Some(_), Some(bytes)) => serde_json::from_slice(bytes).map_err(|error| unreadable(document, error)),
         (Some(_), None) => Err(PublicationError::HeldPayloadLost { document }),
+        (_, payload) => parse_documents(payload, document),
     }
 }
 

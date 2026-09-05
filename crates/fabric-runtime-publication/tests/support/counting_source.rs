@@ -16,9 +16,10 @@ use async_trait::async_trait;
 use fabric_tenant_runtime::{JsonFileSource, RegistryResource, ResourceSource, SourceError};
 use serde::de::DeserializeOwned;
 
-/// Wraps a real [`JsonFileSource`], counting every call to `load()` -- the
-/// `Err` path included, since a failed load is exactly what these tests need
-/// to observe.
+/// Wraps a real [`JsonFileSource`], counting every `load()` once it has
+/// *completed* -- `Err` included, since a failed load is exactly what these
+/// tests need to observe, and counting at entry would let a poll return while
+/// the load was still in flight.
 pub struct CountingSource<T> {
     inner: JsonFileSource<T>,
     loads: Arc<AtomicUsize>,
@@ -44,8 +45,9 @@ where
     T: RegistryResource + DeserializeOwned,
 {
     async fn load(&self) -> Result<Vec<T>, SourceError> {
+        let result = self.inner.load().await;
         self.loads.fetch_add(1, Ordering::SeqCst);
-        self.inner.load().await
+        result
     }
 
     fn describe(&self) -> String {

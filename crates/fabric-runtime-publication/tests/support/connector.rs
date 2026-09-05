@@ -21,7 +21,6 @@ use fabric_connector::{
 use serde_json::Value;
 
 use crate::support::field;
-use crate::support::fixtures::CONNECTOR_ID;
 
 /// Two rows under the same logical key (`id: "1"`), one per tenant --
 /// exactly what a shared table with a discriminator column looks like on
@@ -43,6 +42,8 @@ fn corpus() -> Vec<Row> {
         Row::new()
             .with(field("id"), Value::String("1".to_owned()))
             .with(field("title"), Value::String("Globex Playbook".to_owned()))
+            // Literal for the same reason as acme's: this is the row mutation 1a
+            // targets, and it must not follow the fixture.
             .with(field("tenant_key"), Value::String("tenant-globex-915".to_owned())),
     ]
 }
@@ -97,7 +98,10 @@ impl RecordingConnector {
         )]);
 
         Arc::new(Self {
-            id: ConnectorId::try_new(CONNECTOR_ID).unwrap(),
+            // Literal, not the fixture's `CONNECTOR_ID`: the connector answers to the
+            // id it was deployed under, and a published DataSource that named a
+            // different one must fail to reach it rather than drag it along.
+            id: ConnectorId::try_new("shared-postgres").unwrap(),
             capabilities: ConnectorCapabilities::baseline(),
             schema,
             rows: corpus(),

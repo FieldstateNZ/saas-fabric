@@ -121,9 +121,14 @@ A publication is refused, in whole, before a single byte is written, if:
   means nothing was ever published and imposes no constraint; a payload
   present — with or without a manifest beside it — is parsed and checked;
   a payload present but unparseable is refused as `Unreadable`, never
-  guessed at. Only the divergence check is manifest-gated. The catalogue is
-  never parsed for a guard, only byte-compared, so a lost catalogue payload
-  stays republishable at its held revision.
+  guessed at. The staleness and divergence checks, by contrast, are
+  manifest-gated: a payload with no manifest is a first publication. The
+  catalogue is never parsed for a guard, only byte-compared, so a lost
+  catalogue payload stays republishable at its held revision. One consequence
+  worth knowing before the first publication over a directory that already
+  holds documents (the shipped `examples/`, say): the retirement guard reads
+  those tenants, so a data-sources document that drops an id they still bind
+  is refused — the runtime really is serving them.
 
 A publication that changes nothing writes nothing, not even a manifest whose
 revision did not move.

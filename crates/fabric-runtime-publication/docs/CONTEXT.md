@@ -80,10 +80,15 @@ not build.
   so nothing builds one under the wrong version by hand; `canonical_json`
   (`pub`) renders it the same way every other document is rendered.
 - `DocumentKind` — `Tenants | DataSources | Catalog`, `rename_all =
-  "kebab-case"` → `"tenants" | "data-sources" | "catalog"`. `payload_file()`
-  and `manifest_file()` return this crate's own file-name constants for that
-  kind — the filesystem adapter builds every path from these, never from a
-  literal.
+  "kebab-case"` → `"tenants" | "data-sources" | "catalog"`. `manifest_file()`
+  returns this crate's own manifest file-name constant for that kind — the
+  filesystem adapter derives every manifest path from this, never from a
+  literal. There is no `payload_file()`: the payload path is always the one
+  the caller supplied to `FilesystemRuntimePublication::new` (the runtime's
+  own `tenants_path` / `data_sources_path` / `catalog_path`), so this crate
+  has no fixed payload file name to return — only `TENANTS_FILE`,
+  `DATA_SOURCES_FILE` and `CATALOG_FILE` as the constants a caller may use to
+  name that path.
 - `DocumentRevision` — newtype over `u64`, `#[serde(transparent)]`, `Ord`.
   **A document's revision, never a resource's** — `fabric_core::BindingRevision`
   is the resource revision, reused directly on `TenantBindingDocument.revision`
@@ -123,8 +128,14 @@ not build.
 - `PublicationError` — `thiserror` enum: `StaleRevision { document, held, offered }`,
   `DivergentPayload { document, revision }`, `DanglingDataSource { tenant, logical,
   data_source }`, `RetiredDataSourceStillBound { data_source, tenant }`,
-  `EmptyingNotIntended { document }`, `EmptyCatalogue`, `Unreadable { document, cause:
-  Box<dyn Error + Send + Sync> }`, `Unwritable { document, cause }`.
+  `EmptyingNotIntended { document }`, `EmptyCatalogue`, `EmptyTenantData { tenant }`
+  (reachable only through `Deserialize` — construction refuses an empty `data` map,
+  but the consumer would drop such a binding on arrival and keep whatever was held),
+  `HeldPayloadLost { document }` (the held tenants document's manifest is present but
+  its payload is gone — refused rather than read as empty, because guessing "empty"
+  would disarm the retirement guard and the emptying guard, both of which read the
+  held tenants document), `Unreadable { document, cause: Box<dyn Error + Send + Sync> }`,
+  `Unwritable { document, cause }`.
 - `FilesystemRuntimePublication` — the adapter. `new(tenants_path, data_sources_path,
   catalog_path)` (each `impl Into<PathBuf>`); implements `RuntimePublication`.
 
@@ -153,13 +164,19 @@ not build.
   function. Paired with `verdict_tests.rs` (one test per table row).
 - `validate` (`pub(crate)` only) — `validate_snapshot(&RuntimeSnapshot, held_tenants:
   &[TenantBindingDocument], held_data_sources: &[DataSourceDocument]) -> Result<(),
-  PublicationError>` plus four private guard functions (empty catalogue, dangling data
-  source, retired-data-source-still-bound, unintended emptying), all pure — no filesystem.
+  PublicationError>` plus five private guard functions (empty catalogue, empty tenant
+  data, dangling data source, retired-data-source-still-bound, unintended emptying —
+  the last runs once for tenants and once for data sources), all pure — no filesystem.
   Paired with `validate_tests.rs`.
 - `filesystem` — the adapter, split into `paths` (`DocumentPaths`: payload + derived
-  manifest path), `held` (`HeldState`: reads all six files once per call; `parse_documents`
-  turns held bytes into a typed `Vec<T>`, absent → `vec![]`, unparseable →
-  `PublicationError::Unreadable`), `plan` (`PublishPlan`: canonical bytes + resolved verdict
+  manifest path), `held` (`HeldState`: reads all six files once per call and exposes
+  each document's presence as a `verdict::Held`; `read_manifest` also checks a
+  manifest's own `document` field against the file it was read from), `parse`
+  (`parse_documents`: turns a held payload into a typed `Vec<T>`, absent → `vec![]`,
+  unparseable → `PublicationError::Unreadable`; `parse_held_tenants`: the fail-closed
+  sibling for the held *tenants* document alone, which additionally distinguishes a
+  lost payload from one never published — see `PublicationError::HeldPayloadLost`),
+  `plan` (`PublishPlan`: canonical bytes + resolved verdict
   for all three documents, computed before any write), `write` (`write_if_needed`: payload
   then manifest, skipped entirely on `Verdict::Unchanged`), `atomic_write` (temp-file +
   `fsync` + `rename` + a directory `fsync` to make the rename itself durable, sibling to

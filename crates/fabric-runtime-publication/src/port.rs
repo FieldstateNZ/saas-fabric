@@ -51,7 +51,9 @@ pub trait RuntimePublication: Send + Sync {
     /// `DataSourceId` this same snapshot does not publish, if the data
     /// sources document drops an id the held tenants document still
     /// references, if a document would go from non-empty to empty without
-    /// stating that intent, or if the catalogue document is empty.
+    /// stating that intent, if the catalogue document is empty, if a tenant
+    /// binding's `data` map is empty, or if the tenants or data-sources
+    /// document's held payload is lost while its manifest survives.
     ///
     /// A publication that changes nothing writes nothing — not even a
     /// manifest whose revision did not move.

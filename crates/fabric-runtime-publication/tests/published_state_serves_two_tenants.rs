@@ -13,6 +13,9 @@
 //! tenant identity -- see `tests/support/connector.rs` for why that
 //! distinction is load-bearing.
 
+// This file's `support` module is Unix-only (`std::os::unix::fs::MetadataExt`),
+// so this whole suite is too.
+#![cfg(unix)]
 // Clippy's `allow-unwrap-in-tests` only covers `#[test]` functions
 // themselves, not the fixture helpers every test here calls into -- an
 // integration test file states it once here, as every other one in this
@@ -21,6 +24,7 @@
 
 mod support;
 
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use fabric_connector::{ComparisonOperator, Filter};
@@ -192,7 +196,9 @@ async fn the_same_logical_article_key_reaches_a_different_predicate_for_each_ten
     };
 
     assert!(acme_clauses.contains(&tenant_predicate(support::ACME_DISCRIMINATOR_VALUE)));
+    assert!(!acme_clauses.contains(&tenant_predicate(support::GLOBEX_DISCRIMINATOR_VALUE)));
     assert!(globex_clauses.contains(&tenant_predicate(support::GLOBEX_DISCRIMINATOR_VALUE)));
+    assert!(!globex_clauses.contains(&tenant_predicate(support::ACME_DISCRIMINATOR_VALUE)));
     assert_ne!(acme_clauses, globex_clauses);
 }
 
@@ -383,27 +389,30 @@ async fn a_failed_refresh_leaves_the_runtime_serving_the_last_good_snapshot() {
     // publication -- a torn mount, not a publisher that would have refused
     // this. `refresh_now` only notifies; the loop's own next iteration is
     // what actually re-reads the file.
+    let loads_before = stack.tenant_loads.load(Ordering::SeqCst);
     stack.dir.write_raw("tenants.json", b"not json at all");
     stack.handles.tenants.refresh_now();
 
-    support::hold_across(Duration::from_millis(500), || async {
-        for (tenant, title) in [("acme", "Acme Handbook"), ("globex", "Globex Playbook")] {
-            let response = stack
-                .app
-                .clone()
-                .oneshot(support::request(
-                    "GET",
-                    "/articles/1",
-                    &support::claims_for(tenant),
-                ))
-                .await
-                .unwrap();
-            assert_eq!(response.status(), StatusCode::OK, "{tenant}");
-            let body = support::body_json(response).await;
-            assert_eq!(body["title"], title, "{tenant}");
-        }
-    })
-    .await;
+    // Wait for the load count to advance -- proof the refresher actually
+    // reached the malformed bytes and ran the guard that refuses them, not
+    // just that the assertions below happened to hold for a while.
+    support::poll_for_load_count_above(&stack.tenant_loads, loads_before, Duration::from_secs(2)).await;
+
+    for (tenant, title) in [("acme", "Acme Handbook"), ("globex", "Globex Playbook")] {
+        let response = stack
+            .app
+            .clone()
+            .oneshot(support::request(
+                "GET",
+                "/articles/1",
+                &support::claims_for(tenant),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK, "{tenant}");
+        let body = support::body_json(response).await;
+        assert_eq!(body["title"], title, "{tenant}");
+    }
 }
 
 #[tokio::test]
@@ -424,32 +433,48 @@ async fn a_malformed_published_document_does_not_deprovision_the_tenants_already
         assert_eq!(response.status(), StatusCode::OK, "{tenant}");
     }
 
+    let loads_before = stack.data_source_loads.load(Ordering::SeqCst);
     stack.dir.write_raw("data-sources.json", b"{not even an array}");
     stack.handles.data_sources.refresh_now();
 
-    support::hold_across(Duration::from_millis(500), || async {
-        for (tenant, title) in [("acme", "Acme Handbook"), ("globex", "Globex Playbook")] {
-            let response = stack
-                .app
-                .clone()
-                .oneshot(support::request(
-                    "GET",
-                    "/articles/1",
-                    &support::claims_for(tenant),
-                ))
-                .await
-                .unwrap();
-            assert_eq!(response.status(), StatusCode::OK, "{tenant}");
-            let body = support::body_json(response).await;
-            assert_eq!(body["title"], title, "{tenant}");
-        }
-    })
-    .await;
+    // Wait for the load count to advance -- proof the refresher actually
+    // reached the malformed bytes and ran the guard that refuses them, not
+    // just that the assertions below happened to hold for a while.
+    support::poll_for_load_count_above(&stack.data_source_loads, loads_before, Duration::from_secs(2)).await;
+
+    for (tenant, title) in [("acme", "Acme Handbook"), ("globex", "Globex Playbook")] {
+        let response = stack
+            .app
+            .clone()
+            .oneshot(support::request(
+                "GET",
+                "/articles/1",
+                &support::claims_for(tenant),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK, "{tenant}");
+        let body = support::body_json(response).await;
+        assert_eq!(body["title"], title, "{tenant}");
+    }
 }
 
 #[tokio::test]
 async fn an_emptying_publication_is_refused_unless_it_is_intended() {
     let stack = support::build_stack(&support::base_snapshot(1)).await;
+
+    let names = [
+        "tenants.json",
+        "tenants.manifest.json",
+        "data-sources.json",
+        "data-sources.manifest.json",
+        "catalog.json",
+        "catalog.manifest.json",
+    ];
+    let before: Vec<(u64, i64)> = names
+        .iter()
+        .map(|name| support::file_identity(&stack.dir.path().join(name)))
+        .collect();
 
     let mut refused = support::base_snapshot(1);
     refused.tenants = DocumentInput::new(DocumentRevision::new(2), vec![]);
@@ -460,7 +485,15 @@ async fn an_emptying_publication_is_refused_unless_it_is_intended() {
         "{error}"
     );
 
-    // The guard, not luck, is what kept both tenants published.
+    // The guard, not luck, is what kept both tenants published -- proved by
+    // the files themselves being byte- and inode-identical, not merely by
+    // the runtime still answering as it did before.
+    let after: Vec<(u64, i64)> = names
+        .iter()
+        .map(|name| support::file_identity(&stack.dir.path().join(name)))
+        .collect();
+    assert_eq!(before, after);
+
     for tenant in ["acme", "globex"] {
         let response = stack
             .app

@@ -7,6 +7,8 @@
 //! site -- the same convention `fabric-data-api`'s own `tests/support/mod.rs`
 //! uses.
 
+// The crate's atomic-write guarantee is Unix-only, and so is this proof of it.
+#![cfg(unix)]
 #![allow(
     dead_code,
     unused_imports,
@@ -16,19 +18,21 @@
 )]
 
 mod connector;
+mod counting_source;
 mod fixtures;
 mod requests;
 
 pub use connector::RecordingConnector;
+pub use counting_source::CountingSource;
 pub use fixtures::{
     articles_catalog, base_snapshot, data_source_id, shared_data_source, tenant_binding,
     ACME_DISCRIMINATOR_VALUE, CONNECTOR_ID, DATA_SOURCE_ID, DISCRIMINATOR_COLUMN, GLOBEX_DISCRIMINATOR_VALUE,
 };
 pub use requests::{body_json, claims_for, request, request_with_tenant_header};
 
-use std::future::Future;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -38,7 +42,10 @@ use axum::Router;
 use fabric_data_api::{build_data_api, DataApiConfig, ResourceCatalog, ResourcePermissions};
 use fabric_identity::{build_identity, IdentityConfig, TrustedIngressReader};
 use fabric_runtime_publication::{FilesystemRuntimePublication, RuntimePublication as _, RuntimeSnapshot};
-use fabric_tenant_runtime::{build_runtime, JsonFileSource, RuntimeConfig, RuntimeHandles, RuntimeResolver};
+use fabric_tenant_runtime::{
+    build_runtime, DataSource as RuntimeDataSource, RuntimeConfig, RuntimeHandles, RuntimeResolver,
+    TenantRuntimeBinding,
+};
 use http::Request;
 use tower::ServiceExt as _;
 
@@ -192,14 +199,21 @@ pub struct Stack {
     pub handles: RuntimeHandles,
     pub connector: Arc<RecordingConnector>,
     pub dir: TempDir,
+    /// How many times the tenants source's `load()` has been called --
+    /// counted through [`CountingSource`], so a test can prove a refresh
+    /// actually ran rather than only that assertions held across a window.
+    pub tenant_loads: Arc<AtomicUsize>,
+    /// The data-sources twin of `tenant_loads`.
+    pub data_source_loads: Arc<AtomicUsize>,
 }
 
 /// Publishes `snapshot` through the real [`FilesystemRuntimePublication`]
 /// into a fresh temporary directory, then builds the real
-/// `fabric_tenant_runtime::build_runtime` (over the real
-/// `fabric_tenant_runtime::JsonFileSource`) and the real
-/// `fabric_data_api::build_data_api` router over exactly the files that
-/// publication wrote -- the composed stack every test in this suite drives.
+/// `fabric_tenant_runtime::build_runtime` (over [`CountingSource`], which
+/// delegates every call to a real `fabric_tenant_runtime::JsonFileSource`)
+/// and the real `fabric_data_api::build_data_api` router over exactly the
+/// files that publication wrote -- the composed stack every test in this
+/// suite drives.
 ///
 /// The catalogue leg cannot reuse `fabric-api`'s own `startup::catalog::load`
 /// (it is `pub(super)`, per ADR 0018's Consequences), so this reads
@@ -211,10 +225,14 @@ pub async fn build_stack(snapshot: &RuntimeSnapshot) -> Stack {
     let dir = TempDir::new();
     dir.publisher().publish(snapshot).await.unwrap();
 
+    let (tenant_source, tenant_loads) = CountingSource::<TenantRuntimeBinding>::new(dir.tenants_path());
+    let (data_source_source, data_source_loads) =
+        CountingSource::<RuntimeDataSource>::new(dir.data_sources_path());
+
     let (resolver, handles) = build_runtime(
         &runtime_config(),
-        Arc::new(JsonFileSource::new(dir.tenants_path())),
-        Arc::new(JsonFileSource::new(dir.data_sources_path())),
+        Arc::new(tenant_source),
+        Arc::new(data_source_source),
     )
     .await
     .unwrap();
@@ -247,30 +265,29 @@ pub async fn build_stack(snapshot: &RuntimeSnapshot) -> Stack {
         handles,
         connector,
         dir,
+        tenant_loads,
+        data_source_loads,
     }
 }
 
-/// Repeatedly runs `assertion` across a real, bounded window, sleeping
-/// briefly between samples.
+/// Polls `count` until it advances past `baseline`, or fails the test once
+/// `deadline` has elapsed without that happening.
 ///
-/// A failed refresh leaves nothing to await: `refresh_now` only notifies the
-/// background task, and a load that errors never touches the registry, so
-/// there is no positive signal a test could wait *for*. Sampling repeatedly
-/// stands in for that. The background task gets ample opportunity to run
-/// within the window (each sample yields at an `.await` point), and once a
-/// guard is bypassed the damage does not self-heal, so any sample taken
-/// after the bad load runs would catch it.
-pub async fn hold_across<F, Fut>(deadline: Duration, mut assertion: F)
-where
-    F: FnMut() -> Fut,
-    Fut: Future<Output = ()>,
-{
+/// `refresh_now` only notifies the background refresher; a failed load never
+/// touches the registry either, so there is no positive signal to await
+/// beyond the source having actually been asked to load again. This is that
+/// signal -- proof a refresh ran, not just that assertions held across a
+/// wall-clock window.
+pub async fn poll_for_load_count_above(count: &AtomicUsize, baseline: usize, deadline: Duration) {
     let start = Instant::now();
     loop {
-        assertion().await;
-        if start.elapsed() >= deadline {
+        if count.load(Ordering::SeqCst) > baseline {
             return;
         }
+        assert!(
+            start.elapsed() < deadline,
+            "load count did not advance past {baseline} within {deadline:?}"
+        );
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
 }

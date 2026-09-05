@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use async_trait::async_trait;
 
 use super::held::HeldState;
-use super::parse::{parse_documents, parse_held_tenants};
+use super::parse::parse_held_documents;
 use super::paths::DocumentPaths;
 use super::plan::PublishPlan;
 use super::write::write_if_needed;
@@ -74,13 +74,16 @@ impl RuntimePublication for FilesystemRuntimePublication {
         // against what is currently on disk.
         let held = HeldState::read(&self.tenants, &self.data_sources, &self.catalog)?;
 
-        let held_tenants: Vec<TenantBindingDocument> = parse_held_tenants(
+        let held_tenants: Vec<TenantBindingDocument> = parse_held_documents(
             held.tenants_manifest.as_ref(),
             held.tenants_payload.as_deref(),
             self.tenants.kind,
         )?;
-        let held_data_sources: Vec<DataSourceDocument> =
-            parse_documents(held.data_sources_payload.as_deref(), self.data_sources.kind)?;
+        let held_data_sources: Vec<DataSourceDocument> = parse_held_documents(
+            held.data_sources_manifest.as_ref(),
+            held.data_sources_payload.as_deref(),
+            self.data_sources.kind,
+        )?;
         validate_snapshot(snapshot, &held_tenants, &held_data_sources)?;
 
         let plan = PublishPlan::build(snapshot, &held)?;

@@ -3,6 +3,8 @@
 //! Every test below owns its own [`TempDir`], never a shared fixture, so
 //! tests may run in any order without interfering with each other.
 
+// The crate's atomic-write guarantee is Unix-only, and so is this proof of it.
+#![cfg(unix)]
 // Clippy's `allow-unwrap-in-tests` only covers `#[test]` functions
 // themselves, not the fixture helpers every test here calls into -- an
 // integration test file states it once here, as every other one in this
@@ -143,6 +145,16 @@ fn snapshot(revision: u64, tenant_name: &str, data_source_id: &str) -> RuntimeSn
 fn identity(path: &Path) -> (u64, i64) {
     let metadata = std::fs::metadata(path).unwrap();
     (metadata.ino(), metadata.mtime_nsec())
+}
+
+/// Like [`identity`], but `None` for a file that does not exist -- for
+/// asserting a whole set of the six canonical files is untouched when some
+/// of them are expected to stay absent both before and after the call under
+/// test.
+fn existing_identity(path: &Path) -> Option<(u64, i64)> {
+    std::fs::metadata(path)
+        .ok()
+        .map(|metadata| (metadata.ino(), metadata.mtime_nsec()))
 }
 
 fn temp_files_in(dir: &Path) -> Vec<PathBuf> {
@@ -351,24 +363,38 @@ async fn retiring_a_data_source_the_held_tenants_still_bind_is_refused() {
     assert_eq!(identity(&dir.path().join("data-sources.json")), before);
 }
 
+/// A held data-sources manifest whose payload is gone must refuse the whole
+/// publication now, the same way a lost tenants payload already did: the
+/// data-sources document feeds its own emptying guard exactly as tenants
+/// does, so a lost payload can no longer be silently read as "empty" and
+/// republished over. See the catalogue test below for the one document this
+/// does *not* apply to, and why.
 #[tokio::test]
-async fn a_held_manifest_without_its_payload_is_republishable_at_the_same_revision() {
-    let dir = TempDir::new("payload-lost");
+async fn a_held_data_sources_manifest_without_its_payload_is_refused_as_held_payload_lost() {
+    let dir = TempDir::new("data-sources-payload-lost");
     let publisher = adapter(&dir);
     publisher.publish(&snapshot(1, "acme", "sql-01")).await.unwrap();
 
     std::fs::remove_file(dir.path().join("data-sources.json")).unwrap();
 
-    let report = publisher.publish(&snapshot(1, "acme", "sql-01")).await.unwrap();
+    let error = publisher
+        .publish(&snapshot(1, "acme", "sql-01"))
+        .await
+        .unwrap_err();
 
-    assert_eq!(report.data_sources, DocumentOutcome::Written);
-    assert!(dir.path().join("data-sources.json").exists());
+    assert!(matches!(
+        error,
+        PublicationError::HeldPayloadLost {
+            document: fabric_runtime_publication::DocumentKind::DataSources
+        }
+    ));
+    assert!(!dir.path().join("data-sources.json").exists());
 }
 
-/// The same row as the test above, for the catalogue: its held state gates
-/// no other document's guard the way the held tenants document does (B1),
-/// so a lost payload with its manifest intact is still just a republication,
-/// not something the fix for that finding has any reason to touch.
+/// Unlike data sources (above) and tenants, the catalogue's held state gates
+/// no guard at all -- it is only ever byte-compared inside `verdict`, never
+/// parsed for a guard -- so a lost payload with its manifest intact is still
+/// just a republication for this one document.
 #[tokio::test]
 async fn a_held_catalogue_manifest_without_its_payload_is_republishable_at_the_same_revision() {
     let dir = TempDir::new("catalog-payload-lost");
@@ -381,6 +407,37 @@ async fn a_held_catalogue_manifest_without_its_payload_is_republishable_at_the_s
 
     assert_eq!(report.catalog, DocumentOutcome::Written);
     assert!(dir.path().join("catalog.json").exists());
+}
+
+/// The data-sources twin of
+/// `an_emptying_publication_is_refused_when_the_held_tenants_payload_is_lost`
+/// below: a held data-sources manifest whose payload is gone refuses an
+/// emptying publication too, and unconditionally -- `Emptying::Intended` is
+/// stated here and still never gets considered, because the held payload is
+/// unreadable before that guard, or any other, ever runs.
+#[tokio::test]
+async fn an_emptying_publication_is_refused_when_the_held_data_sources_payload_is_lost() {
+    let dir = TempDir::new("data-sources-payload-lost-emptying");
+    let publisher = adapter(&dir);
+    publisher.publish(&snapshot(1, "acme", "sql-01")).await.unwrap();
+
+    std::fs::remove_file(dir.path().join("data-sources.json")).unwrap();
+
+    let emptying = RuntimeSnapshot {
+        tenants: DocumentInput::new(DocumentRevision::new(1), vec![tenant("acme", "sql-01", 1)]),
+        data_sources: DocumentInput::new(DocumentRevision::new(1), vec![]).emptying_intended(),
+        catalog: DocumentInput::new(DocumentRevision::new(1), catalog()),
+    };
+
+    let error = publisher.publish(&emptying).await.unwrap_err();
+
+    assert!(matches!(
+        error,
+        PublicationError::HeldPayloadLost {
+            document: fabric_runtime_publication::DocumentKind::DataSources
+        }
+    ));
+    assert!(!dir.path().join("data-sources.json").exists());
 }
 
 /// A held tenants manifest whose payload is gone must refuse the whole
@@ -509,6 +566,64 @@ async fn a_payload_without_a_manifest_is_treated_as_a_first_publication() {
     assert!(
         written.contains("sql-01") && !written.contains("sql-99"),
         "{written}"
+    );
+}
+
+/// The fix for the tenants half of the orphaned-payload state above: a
+/// populated tenants payload with no manifest beside it is held content,
+/// not an assumed-empty set, so its own emptying guard still fires. Before
+/// the fix, `held_tenants.len()` read as zero here and an offered
+/// `tenants: []` at `Emptying::NotIntended` would have been accepted and
+/// written straight over a populated file.
+#[tokio::test]
+async fn a_populated_tenants_payload_with_no_manifest_still_guards_against_emptying() {
+    let dir = TempDir::new("orphaned-tenants-payload-emptying");
+
+    // Seeded directly, the way the shipped `examples/*.json` ship today: a
+    // populated tenants payload, no manifest beside it.
+    let seeded_tenants = vec![tenant("acme", "sql-01", 1)];
+    let seeded_bytes = fabric_runtime_publication::tenants_canonical_json(&seeded_tenants).unwrap();
+    std::fs::write(dir.path().join("tenants.json"), &seeded_bytes).unwrap();
+
+    let names = [
+        "tenants.json",
+        "tenants.manifest.json",
+        "data-sources.json",
+        "data-sources.manifest.json",
+        "catalog.json",
+        "catalog.manifest.json",
+    ];
+    let before: Vec<Option<(u64, i64)>> = names
+        .iter()
+        .map(|name| existing_identity(&dir.path().join(name)))
+        .collect();
+
+    // Data sources still names "sql-01" so the retirement guard has nothing
+    // to say -- the only guard that can fire here is the tenants document's
+    // own emptying guard.
+    let refused = RuntimeSnapshot {
+        tenants: DocumentInput::new(DocumentRevision::new(1), vec![]),
+        data_sources: DocumentInput::new(DocumentRevision::new(1), vec![data_source("sql-01", 1)]),
+        catalog: DocumentInput::new(DocumentRevision::new(1), catalog()),
+    };
+
+    let error = adapter(&dir).publish(&refused).await.unwrap_err();
+
+    assert!(matches!(
+        error,
+        PublicationError::EmptyingNotIntended {
+            document: fabric_runtime_publication::DocumentKind::Tenants
+        }
+    ));
+
+    let after: Vec<Option<(u64, i64)>> = names
+        .iter()
+        .map(|name| existing_identity(&dir.path().join(name)))
+        .collect();
+    assert_eq!(before, after);
+    assert_eq!(
+        std::fs::read(dir.path().join("tenants.json")).unwrap(),
+        seeded_bytes
     );
 }
 

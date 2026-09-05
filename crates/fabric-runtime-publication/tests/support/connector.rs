@@ -21,7 +21,7 @@ use fabric_connector::{
 use serde_json::Value;
 
 use crate::support::field;
-use crate::support::fixtures::{ACME_DISCRIMINATOR_VALUE, CONNECTOR_ID, GLOBEX_DISCRIMINATOR_VALUE};
+use crate::support::fixtures::CONNECTOR_ID;
 
 /// Two rows under the same logical key (`id: "1"`), one per tenant --
 /// exactly what a shared table with a discriminator column looks like on
@@ -34,15 +34,16 @@ fn corpus() -> Vec<Row> {
             .with(field("title"), Value::String("Acme Handbook".to_owned()))
             .with(
                 field("tenant_key"),
-                Value::String(ACME_DISCRIMINATOR_VALUE.to_owned()),
+                // Literal, not the fixture's constant: the corpus is the database's own
+                // truth, and it must not move when a binding is mutated -- otherwise
+                // zeroing the published discriminator moves both sides together and
+                // the isolation tests stay green over a broken binding.
+                Value::String("tenant-acme-482".to_owned()),
             ),
         Row::new()
             .with(field("id"), Value::String("1".to_owned()))
             .with(field("title"), Value::String("Globex Playbook".to_owned()))
-            .with(
-                field("tenant_key"),
-                Value::String(GLOBEX_DISCRIMINATOR_VALUE.to_owned()),
-            ),
+            .with(field("tenant_key"), Value::String("tenant-globex-915".to_owned())),
     ]
 }
 

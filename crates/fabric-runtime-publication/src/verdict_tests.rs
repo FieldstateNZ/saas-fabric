@@ -13,14 +13,14 @@ fn incoming(revision: u64, payload: &[u8]) -> Incoming<'_> {
 
 #[test]
 fn no_manifest_and_no_payload_is_a_first_publication_that_writes() {
-    assert_eq!(verdict(None, &incoming(1, b"[]")).unwrap(), Verdict::Write);
-}
-
-#[test]
-fn no_manifest_but_an_orphaned_payload_still_writes_with_the_guard_off() {
-    // The shipped `examples/*.json` today: a payload ships with no manifest
-    // beside it. Whatever that file already contains is irrelevant here --
-    // there is no held revision to compare against.
+    // This function only ever sees `None` for "no manifest held" -- it
+    // cannot itself distinguish an orphaned payload file (the shipped
+    // `examples/*.json`, where a payload ships with no manifest beside it)
+    // from no file at all, because that distinction lives in `HeldState`,
+    // not here. See
+    // `a_payload_without_a_manifest_is_treated_as_a_first_publication` in
+    // `tests/filesystem_runtime_publication.rs` for that row proved against
+    // a real file.
     assert_eq!(verdict(None, &incoming(1, b"[]")).unwrap(), Verdict::Write);
 }
 

@@ -5,16 +5,16 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 /// Writes `bytes` to `target` by writing a sibling temporary file, `fsync`ing
-/// it, renaming it over `target`, and `fsync`ing the directory the rename
-/// happened in.
+/// it, renaming it over `target`, and, on Unix, `fsync`ing the directory the
+/// rename happened in.
 ///
 /// `rename` is atomic only within a filesystem, which is why the temporary
 /// file is a sibling rather than living under a system temp directory (ADR
 /// 0018 part 5). The target path is therefore only ever created by this
 /// `rename` — a reader can see the old complete content or the new complete
-/// content, and nothing in between.
+/// content, and nothing in between, on every platform.
 ///
-/// # Why the directory is `fsync`ed too
+/// # Why the directory is `fsync`ed too, and only on Unix
 ///
 /// A `rename` is atomic the instant it happens, but on most filesystems the
 /// *directory entry* update it makes is not guaranteed durable until the
@@ -23,7 +23,8 @@ use std::path::{Path, PathBuf};
 /// even though the new file's own bytes were already synced by
 /// [`write_and_sync`]. Opening the parent directory and calling
 /// [`std::fs::File::sync_all`] on it is the standard way to make the rename
-/// itself, not just the content it points at, survive a crash.
+/// itself, not just the content it points at, survive a crash. See
+/// [`sync_directory`] for why this is a no-op off Unix.
 ///
 /// The temporary file never survives a call to this function: it becomes
 /// `target` on success, and is removed on any failure path, so it is gone
@@ -54,9 +55,24 @@ pub(super) fn atomic_write(target: &Path, bytes: &[u8]) -> io::Result<()> {
 
 /// `fsync`s the directory containing `target`, making a preceding `rename`
 /// into that directory durable rather than merely atomic.
+///
+/// Unix only: opening a directory with [`std::fs::File::open`] is not
+/// portable, and fails outright on Windows. The non-Unix version below is a
+/// documented no-op, so the rename itself stays atomic everywhere but this
+/// extra durability against a crash between the rename and the next `fsync`
+/// is Unix only — see `docs/README.md`.
+#[cfg(unix)]
 fn sync_directory(target: &Path) -> io::Result<()> {
     let directory = target.parent().unwrap_or_else(|| Path::new("."));
     std::fs::File::open(directory)?.sync_all()
+}
+
+/// The non-Unix half of [`sync_directory`] above: a no-op, since there is no
+/// portable way to `fsync` a directory outside Unix. The rename this follows
+/// is still atomic; only the extra durability is unavailable here.
+#[cfg(not(unix))]
+fn sync_directory(_target: &Path) -> io::Result<()> {
+    Ok(())
 }
 
 /// Builds the sibling temporary path [`atomic_write`] stages its bytes

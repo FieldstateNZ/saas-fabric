@@ -6,6 +6,14 @@
 //! an adapter has already read and parsed. That is what makes the emptying
 //! guard and the empty-catalogue refusal unit-testable the same way the
 //! crate's internal verdict computation is.
+//!
+//! This file is in the 121-150 line band the file-size policy asks a reason
+//! for: it is six small, independently-testable guard functions plus the one
+//! function that runs them in order, and every guard's rustdoc names the ADR
+//! 0018 rule it enforces. Splitting the guards into their own files would
+//! scatter `validate_snapshot`'s reading order across the module tree for no
+//! reader's benefit -- the whole point of this file is that the order is
+//! visible in one place.
 
 use crate::{
     CatalogDocument, DataSourceDocument, DocumentKind, Emptying, PublicationError, RuntimeSnapshot,
@@ -13,8 +21,8 @@ use crate::{
 };
 
 /// Runs every whole-snapshot rule, in the order a reader would want to know
-/// about a problem: an unusable catalogue first, then the two referential
-/// checks, then the two emptying guards.
+/// about a problem: the two unusable-shape checks first, then the two
+/// referential checks, then the two emptying guards.
 ///
 /// `held_tenants` and `held_data_sources` are the *held* documents — what an
 /// adapter read off disk before this publication was offered — never the
@@ -29,6 +37,7 @@ pub(crate) fn validate_snapshot(
     held_data_sources: &[DataSourceDocument],
 ) -> Result<(), PublicationError> {
     refuse_empty_catalogue(&snapshot.catalog.payload)?;
+    refuse_empty_tenant_data(&snapshot.tenants.payload)?;
     refuse_dangling_data_sources(&snapshot.tenants.payload, &snapshot.data_sources.payload)?;
     refuse_retired_data_source_still_bound(held_tenants, &snapshot.data_sources.payload)?;
     refuse_unintended_emptying(
@@ -50,6 +59,25 @@ pub(crate) fn validate_snapshot(
 fn refuse_empty_catalogue(catalog: &CatalogDocument) -> Result<(), PublicationError> {
     if catalog.is_empty() {
         return Err(PublicationError::EmptyCatalogue);
+    }
+    Ok(())
+}
+
+/// Symmetric with `refuse_empty_catalogue`: a tenant whose `data` map is
+/// empty is reachable only through `Deserialize`
+/// (`TenantDataBindings::try_new` refuses one at construction), but nothing
+/// here would otherwise stop it from being published. The consumer's own
+/// `TenantRuntimeBinding::validate` makes the same refusal, but only after
+/// `ResourceRegistry::apply_all` has already dropped the whole binding and
+/// kept whatever was held before — a publication that looked like it changed
+/// something, silently discarded on arrival. Refused here instead.
+fn refuse_empty_tenant_data(tenants: &[TenantBindingDocument]) -> Result<(), PublicationError> {
+    for tenant in tenants {
+        if tenant.data.is_empty() {
+            return Err(PublicationError::EmptyTenantData {
+                tenant: tenant.tenant.clone(),
+            });
+        }
     }
     Ok(())
 }

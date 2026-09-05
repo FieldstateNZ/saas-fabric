@@ -13,8 +13,7 @@ use std::fmt;
 /// that one resource. `DocumentRevision` is a different number entirely: it
 /// is the version of the *file*, stated by the caller on every publish call,
 /// and it is what the publisher's monotonic and divergent-payload guards
-/// compare against the manifest already on disk (a future slice's job, not
-/// this one's).
+/// (`crate::verdict::verdict`) compare against the manifest already on disk.
 ///
 /// Conflating the two would be a real hazard in both directions: a single
 /// tenant's edit could look like it changed the whole document, or a real

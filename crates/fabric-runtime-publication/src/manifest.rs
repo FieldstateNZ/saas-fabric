@@ -1,5 +1,11 @@
 //! The sidecar manifest published beside every document, and the file names
 //! both halves are written under.
+//!
+//! This file is in the 121-150 line band the file-size policy asks a reason
+//! for: `DocumentManifest`, `DocumentKind`, and the six file-name constants
+//! are one small, cohesive wire-format concept -- the envelope every
+//! document travels in -- and `DocumentManifest`'s private fields need their
+//! own accessors right beside `Self::new`, the only place that stamps them.
 
 use crate::canonical::to_canonical_bytes;
 use crate::DocumentRevision;
@@ -18,7 +24,8 @@ pub const CONTRACT_VERSION: u32 = 1;
 ///
 /// Serialised as the document's own name, so the value in
 /// [`DocumentManifest::document`] and the file the manifest sits beside
-/// always say the same thing.
+/// always say the same thing — checked on every read, not just assumed (see
+/// `filesystem::held::read_manifest`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum DocumentKind {
@@ -31,21 +38,11 @@ pub enum DocumentKind {
 }
 
 impl DocumentKind {
-    /// This document's payload file name, such as `tenants.json`.
+    /// This document's manifest file name, such as `tenants.manifest.json`.
     ///
     /// The one place either the filesystem adapter or a caller building path
     /// names should reach for this — never a hand-written literal, so a
-    /// document and the file it is written under cannot drift apart.
-    #[must_use]
-    pub const fn payload_file(self) -> &'static str {
-        match self {
-            Self::Tenants => TENANTS_FILE,
-            Self::DataSources => DATA_SOURCES_FILE,
-            Self::Catalog => CATALOG_FILE,
-        }
-    }
-
-    /// This document's manifest file name, such as `tenants.manifest.json`.
+    /// document and the manifest it is written under cannot drift apart.
     #[must_use]
     pub const fn manifest_file(self) -> &'static str {
         match self {
@@ -61,16 +58,19 @@ impl DocumentKind {
 /// Deliberately three fields and no more — in particular, no timestamp:
 /// nothing branches on one, and a timestamp in a ConfigMap is a diff that
 /// churns on every publication for no reader's benefit.
+///
+/// Fields are private, reachable only through [`Self::new`] and the
+/// accessors below: a `pub` `contract_version` would let a caller build a
+/// manifest under a version other than [`CONTRACT_VERSION`] by writing a
+/// literal, which [`Self::new`] exists specifically to prevent. `serde`
+/// still reads and writes these fields directly through the derive, which
+/// does not require `pub`.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DocumentManifest {
-    /// The contract version this manifest was written under.
-    pub contract_version: u32,
-    /// Which document this manifest describes.
-    pub document: DocumentKind,
-    /// The document's own revision — see [`DocumentRevision`] for why this is
-    /// never a resource's revision.
-    pub revision: DocumentRevision,
+    contract_version: u32,
+    document: DocumentKind,
+    revision: DocumentRevision,
 }
 
 impl DocumentManifest {
@@ -84,6 +84,25 @@ impl DocumentManifest {
             document,
             revision,
         }
+    }
+
+    /// The contract version this manifest was written under.
+    #[must_use]
+    pub const fn contract_version(&self) -> u32 {
+        self.contract_version
+    }
+
+    /// Which document this manifest describes.
+    #[must_use]
+    pub const fn document(&self) -> DocumentKind {
+        self.document
+    }
+
+    /// The document's own revision — see [`DocumentRevision`] for why this is
+    /// never a resource's revision.
+    #[must_use]
+    pub const fn revision(&self) -> DocumentRevision {
+        self.revision
     }
 
     /// Renders this manifest as canonical JSON (two-space indentation, a
@@ -153,19 +172,16 @@ mod tests {
     fn new_stamps_the_current_contract_version() {
         let manifest = DocumentManifest::new(DocumentKind::Catalog, DocumentRevision::new(1));
 
-        assert_eq!(manifest.contract_version, CONTRACT_VERSION);
+        assert_eq!(manifest.contract_version(), CONTRACT_VERSION);
     }
 
     #[test]
-    fn each_kind_names_its_own_payload_and_manifest_files() {
-        assert_eq!(DocumentKind::Tenants.payload_file(), TENANTS_FILE);
+    fn each_kind_names_its_own_manifest_file() {
         assert_eq!(DocumentKind::Tenants.manifest_file(), TENANTS_MANIFEST_FILE);
-        assert_eq!(DocumentKind::DataSources.payload_file(), DATA_SOURCES_FILE);
         assert_eq!(
             DocumentKind::DataSources.manifest_file(),
             DATA_SOURCES_MANIFEST_FILE
         );
-        assert_eq!(DocumentKind::Catalog.payload_file(), CATALOG_FILE);
         assert_eq!(DocumentKind::Catalog.manifest_file(), CATALOG_MANIFEST_FILE);
     }
 
@@ -176,5 +192,13 @@ mod tests {
         let bytes = manifest.canonical_json().unwrap();
 
         assert!(bytes.ends_with(b"\n"), "{}", String::from_utf8_lossy(&bytes));
+    }
+
+    #[test]
+    fn accessors_return_what_new_was_given() {
+        let manifest = DocumentManifest::new(DocumentKind::Tenants, DocumentRevision::new(7));
+
+        assert_eq!(manifest.document(), DocumentKind::Tenants);
+        assert_eq!(manifest.revision(), DocumentRevision::new(7));
     }
 }

@@ -74,7 +74,7 @@ Every document is rendered through `crate::canonical::to_canonical_bytes`:
 two-space indentation, UTF-8, a trailing newline, `BTreeMap` throughout, and
 resource arrays (`tenants_canonical_json`, `data_sources_canonical_json`)
 sorted by key before serialising. Publishing the same snapshot twice produces
-byte-identical output — load-bearing, because a future publisher's
+byte-identical output — load-bearing, because the publisher's own
 divergent-payload guard is a byte comparison, not a semantic diff.
 
 ## No field anywhere can hold a secret value
@@ -101,14 +101,25 @@ A publication is refused, in whole, before a single byte is written, if:
   or repeats the held revision with different bytes (`DivergentPayload`);
 - a tenant binding names a `DataSourceId` this same publication does not
   include (`DanglingDataSource`);
-- the data-sources document drops an id the *held* tenants document — read
-  fresh off disk, parsed, absent treated as empty, unparseable refused
-  outright — still references (`RetiredDataSourceStillBound`);
+- the data-sources document drops an id the *held* tenants document still
+  references (`RetiredDataSourceStillBound`);
 - a document would go from non-empty to empty without `Emptying::Intended`
   (`EmptyingNotIntended`);
 - the catalogue document has no entries at all (`EmptyCatalogue`, refused
   whatever the `Emptying` intent says — there is no bootstrap value for an
-  empty catalogue).
+  empty catalogue);
+- a tenant binding's `data` map has no entries (`EmptyTenantData`) — reachable
+  only through `Deserialize`, since construction refuses one, but the
+  consumer would drop such a binding on arrival and keep whatever was held;
+- the held tenants document's manifest exists but its payload does not
+  (`HeldPayloadLost`) — a held manifest proves something was published, and
+  guessing "empty" for a payload that is merely lost would disarm the two
+  guards above that read the held tenants document. Restoring the payload
+  file, or removing the manifest, is the way out. The held tenants document
+  is read fresh off disk on every publication for exactly these guards:
+  absent (no manifest at all) means nothing was ever published and imposes
+  no constraint; present and parseable is read and checked; present but
+  unparseable is refused as `Unreadable`, never guessed at.
 
 A publication that changes nothing writes nothing, not even a manifest whose
 revision did not move.
@@ -124,22 +135,46 @@ must land before anything can reference them; removals are made safe by the
 retirement check above, not by ordering.
 
 Each file is written to a sibling temporary file in the same directory,
-`fsync`ed, `rename`d over its target, and the containing directory is
-`fsync`ed once more after the rename — the target path is therefore only
-ever created by that rename, never opened directly, and the rename itself is
-durable rather than merely atomic. Within one document, the
-payload is replaced before its manifest, so a crash between the two always
-leaves the manifest one revision *behind* the payload: a retry at the
-crashed revision compares newer-than-held and writes; a republication at the
-held revision compares bytes against what the crash actually left on disk
-and is refused as divergent. Neither outcome is a data-loss risk — the
-consumer already survives a torn read — so what atomicity buys here is a
-clean failure mode, not a rescue from one.
+`fsync`ed, `rename`d over its target, and, **on Unix**, the containing
+directory is `fsync`ed once more after the rename — the target path is
+therefore only ever created by that rename, never opened directly, on every
+platform, and the rename itself is durable rather than merely atomic on
+Unix specifically. Opening a directory to `fsync` it is not portable; off
+Unix, that extra step is a documented no-op, and only the atomicity
+guarantee (not the extra crash-durability of the rename itself) applies.
+Within one document, the payload is replaced before its manifest, so a crash
+between the two always leaves the manifest one revision *behind* the
+payload: a retry at the crashed revision compares newer-than-held and
+writes; a republication at the held revision compares bytes against what the
+crash actually left on disk and is refused as divergent. Neither outcome is
+a data-loss risk — the consumer already survives a torn read — so what
+atomicity buys here is a clean failure mode, not a rescue from one.
 
 Implemented with `std::fs`, not `tokio::fs`: this crate's `tokio` dependency
 does not carry the `fs` feature, and this adapter is called at most on a
 scheduler's poll interval, not on a request path — see `src/filesystem.rs`
 for the full reasoning.
+
+### Partial writes across documents
+
+`publish` writes data sources, then the catalogue, then tenants (ADR 0018
+part 3), each as two sequential file operations. An I/O failure between two
+of those writes — a full disk partway through, an obstructed path — surfaces
+as `PublicationError::Unwritable`, and unlike every other `PublicationError`
+variant, this one does **not** guarantee nothing was written: whichever
+documents landed before the failure stay exactly as written, and the rest
+are untouched. This is a real, reachable state, not a theoretical one — see
+`a_publication_that_failed_between_documents_is_completed_by_the_next_one` in
+`tests/filesystem_runtime_publication.rs`, which obstructs the catalogue's
+write so data sources land and the catalogue fails before tenants is even
+attempted.
+
+Recovery needs nothing special: retrying the identical publication at the
+same revisions resolves each already-written document to `Unchanged` (same
+revision, identical bytes) and each remaining one to `Write`, exactly as if
+nothing had gone wrong. A caller that always publishes at `current() + 1`
+converges the same way without ever needing to know a prior call was
+interrupted.
 
 ## Gotchas
 

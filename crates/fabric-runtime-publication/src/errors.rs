@@ -6,6 +6,8 @@
 //! which ADR 0018 rule it enforces and why that rule refuses rather than
 //! degrades. Splitting the enum from any of its variants' documentation
 //! would separate a refusal from the reasoning a caller needs to act on it.
+//! One variant from the ceiling: trim rustdoc to what a caller acts on, or
+//! find a real second concept -- never ask for an exemption.
 
 use fabric_core::{DataSourceId, LogicalDataSourceName, TenantId};
 
@@ -14,9 +16,8 @@ use crate::{DocumentKind, DocumentRevision};
 /// Why [`crate::RuntimePublication::publish`] refused a publication, or
 /// [`crate::RuntimePublication::current`] could not read what is held.
 ///
-/// Every variant but [`Self::Unwritable`] guarantees nothing was written —
-/// see [`crate::PublicationReport`]'s rustdoc for what a partial write under
-/// [`Self::Unwritable`] means and how the next publication recovers.
+/// Every variant but [`Self::Unwritable`] guarantees nothing was written --
+/// see [`crate::PublicationReport`] for what a partial write there means.
 #[derive(Debug, thiserror::Error)]
 pub enum PublicationError {
     /// The offered revision is older than the one already held.
@@ -96,28 +97,27 @@ pub enum PublicationError {
     /// The catalogue document has no entries.
     ///
     /// There is no bootstrap value for an empty catalogue — `build_data_api`
-    /// refuses to start against one (ADR 0018 part 2). Refused
-    /// unconditionally, whatever the [`crate::Emptying`] intent says.
+    /// refuses to start against one (ADR 0018 part 2), whatever the [`crate::Emptying`] intent says.
     #[error("the catalogue document has no entries")]
     EmptyCatalogue,
 
     /// A tenant binding's `data` map has no entries.
     ///
     /// Reachable only through `Deserialize` — construction refuses one, but
-    /// the consumer drops such a binding on arrival and keeps what was held.
-    /// Symmetric with [`Self::EmptyCatalogue`].
+    /// the consumer drops such a binding on arrival and keeps what was held,
+    /// symmetric with [`Self::EmptyCatalogue`].
     #[error("tenant {tenant}'s data map has no entries, and would be dropped on arrival")]
     EmptyTenantData {
         /// The tenant whose binding has no data source bindings.
         tenant: TenantId,
     },
 
-    /// The tenants document's manifest is held, but its payload is gone.
+    /// A document's manifest is held, but its payload is gone -- tenants or
+    /// data sources; the catalogue is never parsed for a guard, so it is
+    /// never lost this way.
     ///
     /// A held manifest proves something was published; an absent payload
-    /// means the content is lost. Guessing "empty" would disarm the
-    /// retirement guard and this document's own emptying guard, both of
-    /// which read this document's held state.
+    /// means the content is lost, disarming whichever guard reads it.
     #[error(
         "{document:?}'s manifest is held, but its payload is gone -- restore the payload file or \
          remove the manifest before publishing again"

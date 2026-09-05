@@ -9,10 +9,17 @@
 use serde::de::DeserializeOwned;
 
 use super::held::unreadable;
-use crate::{DocumentKind, DocumentManifest, PublicationError, TenantBindingDocument};
+use crate::{DocumentKind, DocumentManifest, PublicationError};
 
-/// Parses a held payload as a JSON array of `T`, treating an absent payload
-/// as an empty set.
+/// Parses a payload as a JSON array of `T`, treating an absent payload as an
+/// empty set.
+///
+/// Safe to call directly only when there is no manifest to consult at all —
+/// the catalogue document, whose held state is only ever byte-compared
+/// inside `verdict` and never parsed for a guard, so it has no caller of
+/// [`parse_held_documents`]. For tenants and data sources, go through that
+/// function instead: with a manifest in hand, an absent payload can mean
+/// "never published" or "lost", and those are not the same thing.
 ///
 /// # Absent versus unparseable
 ///
@@ -25,21 +32,6 @@ use crate::{DocumentKind, DocumentManifest, PublicationError, TenantBindingDocum
 /// either corrupted or hand-edited into a state this code cannot vouch for.
 /// This returns [`PublicationError::Unreadable`] and leaves the decision to
 /// an operator before the next publication is attempted.
-///
-/// # Why the held tenants document does not use this function
-///
-/// This function cannot tell "never published" apart from "published, then
-/// the payload was lost while its manifest survived" — both look like
-/// `payload: None` here, because it is never told whether a manifest exists.
-/// That collapse is harmless for data sources: their held payload feeds only
-/// their own emptying guard, and a lost payload's own verdict is an
-/// unconditional `Write` regardless (ADR 0018 part 6's "manifest held,
-/// payload absent" row), so any publication rewrites it. The held *tenants*
-/// document also gates the retirement guard on a *different* document (data
-/// sources), where a wrongly-assumed "empty" could let a live DataSource be
-/// retired out from under a tenant that never stopped using it, with no
-/// later write to undo the mistake. [`parse_held_tenants`] is the
-/// fail-closed sibling that exists for that reason.
 pub(super) fn parse_documents<T: DeserializeOwned>(
     payload: Option<&[u8]>,
     document: DocumentKind,
@@ -50,33 +42,41 @@ pub(super) fn parse_documents<T: DeserializeOwned>(
     }
 }
 
-/// Parses the held *tenants* document, distinguishing all three states a
-/// held document can be in rather than collapsing two of them into "empty"
-/// the way [`parse_documents`] safely can for other documents.
+/// Parses a held document, distinguishing all three states a held document
+/// can be in rather than collapsing two of them into "empty" the way
+/// [`parse_documents`] alone would.
 ///
 /// | Manifest | Payload | Result |
 /// |---|---|---|
-/// | absent | either | never published — `vec![]`, no constraint |
+/// | absent | absent | never published — `vec![]` |
+/// | absent | present | a payload shipped with no manifest beside it (the shipped `examples/*.json` today) is held content all the same, not "never published" — parsed and returned |
 /// | present | present | parse and check |
 /// | present | absent | held content unknown — refuse the whole publication |
 ///
 /// A held manifest proves something was published; an absent payload means
 /// that content is lost, not that nothing was ever published. See
 /// [`PublicationError::HeldPayloadLost`] for why guessing "empty" is unsafe
-/// here specifically, and for the operator's way out.
+/// here, and for the operator's way out.
+///
+/// Used for both the tenants and data-sources documents: each feeds its own
+/// emptying guard, and the tenants document additionally gates the
+/// data-sources retirement guard, so both need their *actual* held content
+/// rather than a manifest-shaped guess at it. The catalogue document has no
+/// such guard and so has no caller of this function — see
+/// [`parse_documents`]'s own rustdoc.
 ///
 /// # Errors
 ///
 /// [`PublicationError::Unreadable`] if the payload does not parse.
 /// [`PublicationError::HeldPayloadLost`] if the manifest is held but the
 /// payload is gone.
-pub(super) fn parse_held_tenants(
+pub(super) fn parse_held_documents<T: DeserializeOwned>(
     manifest: Option<&DocumentManifest>,
     payload: Option<&[u8]>,
     document: DocumentKind,
-) -> Result<Vec<TenantBindingDocument>, PublicationError> {
+) -> Result<Vec<T>, PublicationError> {
     match (manifest, payload) {
-        (None, _) => Ok(Vec::new()),
+        (None, payload) => parse_documents(payload, document),
         (Some(_), Some(bytes)) => serde_json::from_slice(bytes).map_err(|error| unreadable(document, error)),
         (Some(_), None) => Err(PublicationError::HeldPayloadLost { document }),
     }
@@ -85,7 +85,7 @@ pub(super) fn parse_held_tenants(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::DocumentRevision;
+    use crate::{DocumentRevision, TenantBindingDocument};
 
     #[test]
     fn an_absent_payload_parses_as_an_empty_set() {
@@ -103,20 +103,32 @@ mod tests {
     }
 
     #[test]
-    fn no_manifest_for_tenants_is_never_published_regardless_of_any_payload() {
-        assert!(parse_held_tenants(None, None, DocumentKind::Tenants)
-            .unwrap()
-            .is_empty());
-        assert!(parse_held_tenants(None, Some(b"[]"), DocumentKind::Tenants)
-            .unwrap()
-            .is_empty());
+    fn no_manifest_and_no_payload_is_never_published() {
+        let parsed: Vec<TenantBindingDocument> =
+            parse_held_documents(None, None, DocumentKind::Tenants).unwrap();
+
+        assert!(parsed.is_empty());
     }
 
     #[test]
-    fn a_tenants_manifest_without_a_payload_is_refused_as_held_payload_lost() {
+    fn no_manifest_but_a_present_payload_is_parsed_as_held_content() {
+        // The fix this test pins down: a payload with no manifest beside it
+        // (the shipped `examples/*.json` shape) is held content, not an
+        // assumed-empty set -- `T = u64` here only to prove the bytes are
+        // actually parsed rather than discarded, independent of what type
+        // of document they represent.
+        let parsed: Vec<u64> = parse_held_documents(None, Some(b"[1,2,3]"), DocumentKind::Tenants).unwrap();
+
+        assert_eq!(parsed, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn a_manifest_without_a_payload_is_refused_as_held_payload_lost() {
         let manifest = DocumentManifest::new(DocumentKind::Tenants, DocumentRevision::new(1));
 
-        let error = parse_held_tenants(Some(&manifest), None, DocumentKind::Tenants).unwrap_err();
+        let error =
+            parse_held_documents::<TenantBindingDocument>(Some(&manifest), None, DocumentKind::Tenants)
+                .unwrap_err();
 
         assert!(matches!(
             error,
@@ -127,10 +139,11 @@ mod tests {
     }
 
     #[test]
-    fn a_tenants_manifest_with_a_payload_parses_it() {
+    fn a_manifest_with_a_payload_parses_it() {
         let manifest = DocumentManifest::new(DocumentKind::Tenants, DocumentRevision::new(1));
 
-        let parsed = parse_held_tenants(Some(&manifest), Some(b"[]"), DocumentKind::Tenants).unwrap();
+        let parsed: Vec<TenantBindingDocument> =
+            parse_held_documents(Some(&manifest), Some(b"[]"), DocumentKind::Tenants).unwrap();
 
         assert!(parsed.is_empty());
     }

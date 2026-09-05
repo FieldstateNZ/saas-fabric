@@ -8,7 +8,7 @@
 //! crate's internal verdict computation is.
 //!
 //! This file is in the 121-150 line band the file-size policy asks a reason
-//! for: it is six small, independently-testable guard functions plus the one
+//! for: it is five small, independently-testable guard functions plus the one
 //! function that runs them in order, and every guard's rustdoc names the ADR
 //! 0018 rule it enforces. Splitting the guards into their own files would
 //! scatter `validate_snapshot`'s reading order across the module tree for no

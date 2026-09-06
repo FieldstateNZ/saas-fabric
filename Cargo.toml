@@ -56,6 +56,13 @@ fabric-fga-auth-api = { path = "crates/fabric-fga-auth-api" }
 # plane's graph.
 fabric-runtime-publication = { path = "crates/fabric-runtime-publication" }
 
+# Also in neither plane, and test-only: no [dependencies], dev-dependencies
+# only. Neither the publisher's crate nor any runtime-plane crate can host
+# the composed NDC connector acceptance test without failing an architecture
+# check -- see docs/architecture/crate-dependencies.md and the
+# NDC_ACCEPTANCE_CRATE allowlist in scripts/check_architecture.py.
+fabric-ndc-acceptance = { path = "crates/fabric-ndc-acceptance" }
+
 # Internal crates -- runtime plane
 fabric-connector = { path = "crates/fabric-connector" }
 fabric-connector-ndc = { path = "crates/fabric-connector-ndc" }

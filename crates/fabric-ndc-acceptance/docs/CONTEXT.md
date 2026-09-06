@@ -81,13 +81,17 @@ before touching `tests/support/`:
 ## `tests/support/` layout
 
 - `docker/` -- `process.rs` (drives the `docker` binary, knows nothing about
-  containers or networks), `containers.rs`, `image_reference.rs` (what
-  string a container start actually passes to `docker run`: presence
-  checks, pulling a pinned digest that is absent locally, and the
-  required-mode-versus-fallback policy), `networks.rs`, `polling.rs`
-  (deadline-bounded, never a bare sleep). `docker.rs` is a thin facade
-  re-exporting all five, so every other file's `docker::foo(...)` calls are
-  unaffected by which file `foo` actually lives in.
+  containers or networks), `containers.rs`, `image_reference.rs` (checks
+  whether a pinned digest is already present locally, pulls it only when it
+  is absent, and holds the required-mode-versus-fallback policy for the one
+  string that check, that pull, and `docker run` all share), `networks.rs`,
+  `polling.rs` (deadline-bounded, never a bare sleep). `docker.rs` is a
+  facade re-exporting from `process`, `containers`, `networks`, and
+  `polling`; `image_reference` itself is not re-exported -- `containers::run`
+  is its only caller and reaches it directly as
+  `image_reference::resolve_runnable_reference`, not through the facade. So
+  every other file's `docker::foo(...)` calls are unaffected by which of
+  those four files `foo` actually lives in.
 - `gate.rs` -- `docker_available_or_skip` and `REQUIRE_ENV`
   (`FABRIC_REQUIRE_CONNECTOR_ACCEPTANCE`). Also gates the pull-failure
   fallback in `docker/image_reference.rs`: set to `1`, a pinned image whose
@@ -97,8 +101,15 @@ before touching `tests/support/`:
 - `names.rs` -- `RunId` (per-run container/network naming) and
   `sweep_stale` (removes a prior hard-killed run's leftovers by the
   `fabric-ndc-acc-` prefix, skipping anything carrying this process's own
-  pid or younger than ten minutes, so two runs in flight at once cannot
-  sweep each other's still-live resources).
+  pid or younger than `STALE_AFTER_SECS`, thirty minutes -- longer than the
+  `connector-acceptance` CI job's own twenty-minute timeout, so no CI run can
+  still be in flight when its resources become sweep-eligible; a local run
+  left going longer than that alongside a fresh one is not protected -- see
+  the module's own doc comment for why that residual gap is accepted).
+- `go_timestamp.rs` -- parses Docker's `{{.CreatedAt}}` format (Go's
+  `time.Time.String()`, a fixed layout) into Unix epoch seconds for
+  `names.rs`'s freshness check; hand-rolled rather than a date/time
+  dependency, since the layout is fixed by Go, not by the host.
 - `postgres.rs` -- starts postgres, seeds `SEED_SQL` (the shared `articles`
   table, as SQL literals).
 - `connector.rs` -- starts `ndc-postgres` in `ConnectorMode::Static` or

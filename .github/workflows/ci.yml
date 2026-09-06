@@ -142,10 +142,20 @@ jobs:
       # after this step succeeds), so this step is an optimisation and a
       # clearer log, not a change to what the suite itself guarantees.
       - name: Pull the pinned connector-acceptance images
+        # The repository@digest form, with no tag -- the exact reduction
+        # `tests/support/docker/image_reference.rs::repository_digest_form`
+        # produces for every pinned reference before inspecting, pulling, or
+        # returning it, and the exact string its own test
+        # `ci_pre_pulls_exactly_the_pinned_images` asserts this step's
+        # `docker pull` lines against, verbatim. The tag half was never
+        # load-bearing to `docker pull` -- Docker resolves a
+        # `name:tag@digest` reference by its digest alone -- so pulling the
+        # reduced form here is what lets that test hold this step to the
+        # pins byte-for-byte.
         run: |
-          docker pull ghcr.io/hasura/ndc-postgres:v3.1.0@sha256:f91910ef5107aa80d31d82639e149b7f41f4a5bb3af9a369397d7d5965d79a57
-          docker pull postgres:16-alpine@sha256:e013e867e712fec275706a6c51c966f0bb0c93cfa8f51000f85a15f9865a28cb
-          docker pull nginx:1.27-alpine@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10
+          docker pull ghcr.io/hasura/ndc-postgres@sha256:f91910ef5107aa80d31d82639e149b7f41f4a5bb3af9a369397d7d5965d79a57
+          docker pull postgres@sha256:e013e867e712fec275706a6c51c966f0bb0c93cfa8f51000f85a15f9865a28cb
+          docker pull nginx@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10
       # Required mode turns "no Docker" and "the pinned image isn't the one
       # that ran" from a silent skip into a failure naming what was missing
       # (tests/support/gate.rs, tests/support/docker/image_reference.rs).

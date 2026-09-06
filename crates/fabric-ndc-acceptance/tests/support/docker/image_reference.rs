@@ -3,32 +3,47 @@
 //!
 //! Split out of `containers.rs` (`docs/architecture/file-size-policy.md`'s
 //! "one concept per file" convention, which reviewers hold test support to
-//! as well): this is a self-contained policy -- pull the pin before giving
-//! up on it, and only fall back to an unpinned tag outside the required mode
-//! -- worth reading and reviewing on its own rather than folded into
-//! container start/stop/exec plumbing.
+//! as well): this is a self-contained policy -- check whether the pin is
+//! already present before ever pulling, pull it only on absence, and only
+//! fall back to an unpinned tag outside the required mode when that pull
+//! itself fails -- worth reading and reviewing on its own rather than
+//! folded into container start/stop/exec plumbing.
 
 use crate::support::gate;
 
 use super::process::{self, DockerError};
 
-/// Strips a trailing `:tag` from the repository half of a digest-qualified
-/// reference, leaving `name@sha256:...` -- the unambiguous form
-/// `docker image inspect` matches a local image's own `RepoDigests` against.
+/// Reduces `reference` to the one string this module inspects, pulls, and
+/// hands to `docker run`: `repository@sha256:...` when `reference` carries a
+/// digest, or `reference` unchanged when it does not.
 ///
-/// Docker's reference grammar accepts the combined `name:tag@digest` form
-/// for `pull` and `run`, but a pulled image's `RepoDigests` entry never
-/// carries the tag -- only `name@digest`. Inspecting by the combined form
-/// can therefore report an image absent that is genuinely present under its
-/// digest, which is why [`image_present`] normalises through here first.
+/// Docker resolves a `name:tag@digest` reference by its digest alone -- the
+/// tag half is never load-bearing to `pull`, `run`, or `image inspect` -- and
+/// a pulled image's own `RepoDigests` entry never carries a tag either, only
+/// `name@digest`. Inspecting the combined `name:tag@digest` form can
+/// therefore report an image absent that is genuinely present under its
+/// digest. Routing every digest-qualified reference through this one
+/// reduction before it is inspected, pulled, or returned is what makes "the
+/// image proven present is the image that runs" a property of this code,
+/// rather than a fact that merely happens to be true of Docker's reference
+/// grammar today.
 ///
-/// `None` if `reference` carries no `@digest` suffix at all.
-fn repository_digest_form(reference: &str) -> Option<String> {
-    let (name_and_tag, digest) = reference.split_once('@')?;
-    let repository = name_and_tag
+/// A colon is stripped only from the final `/`-separated segment: the
+/// repository name can itself carry a registry host with a port
+/// (`localhost:5000/foo`), and stripping after the *last* colon anywhere in
+/// the string would truncate the registry host instead of the tag.
+fn repository_digest_form(reference: &str) -> String {
+    let Some((name_and_tag, digest)) = reference.split_once('@') else {
+        return reference.to_owned();
+    };
+
+    let last_segment_start = name_and_tag.rfind('/').map_or(0, |index| index + 1);
+    let (prefix, last_segment) = name_and_tag.split_at(last_segment_start);
+    let last_segment = last_segment
         .rsplit_once(':')
-        .map_or(name_and_tag, |(repo, _tag)| repo);
-    Some(format!("{repository}@{digest}"))
+        .map_or(last_segment, |(repo, _tag)| repo);
+
+    format!("{prefix}{last_segment}@{digest}")
 }
 
 /// Whether `reference` is present locally.
@@ -45,7 +60,7 @@ fn repository_digest_form(reference: &str) -> Option<String> {
 ///
 /// A [`DockerError`] only if `docker` itself could not be started.
 pub fn image_present(reference: &str) -> Result<bool, DockerError> {
-    let inspected = repository_digest_form(reference).unwrap_or_else(|| reference.to_owned());
+    let inspected = repository_digest_form(reference);
     let output = process::spawn(&["image".to_owned(), "inspect".to_owned(), inspected])?;
     Ok(output.status.success())
 }
@@ -54,18 +69,33 @@ pub fn image_present(reference: &str) -> Result<bool, DockerError> {
 /// should actually pass to `docker run`.
 ///
 /// Checks locally first ([`image_present`]): most runs already have the pin,
-/// and a pull is not free. Only when it is absent does this pull `reference`
-/// itself -- its full pinned digest form -- so a networked machine (CI
-/// always is one) resolves precisely the pin, the same bytes `docker run`
-/// would fetch on its own.
+/// and a pull is not free. Only when it is absent does this pull
+/// [`repository_digest_form`]'s reduction of `reference` -- the exact same
+/// string [`image_present`] inspected, and the exact same string this
+/// returns on success. Inspecting, pulling, and returning one shared
+/// reduction (rather than the combined `name:tag@digest` form) is what
+/// closes the gap between "the image this proved present" and "the image
+/// `docker run` receives": there is only the one string, so the two cannot
+/// drift apart.
 ///
 /// Only once that pull itself fails does this fall back at all: in the
 /// required mode, to an outright error naming the digest and the pull's own
-/// failure; otherwise, loudly, to the bare tag, if that is present locally --
-/// the situation this repository is in on at least one development machine
+/// failure; otherwise, to the bare tag, if that is present locally -- the
+/// situation this repository is in on at least one development machine
 /// (see [`images::NDC_POSTGRES`](super::super::images::NDC_POSTGRES)'s doc
 /// comment): a sandboxed daemon that cannot pull, with the tag loaded by
-/// hand under a different digest than the pinned index.
+/// hand under a different digest than the pinned index. That fallback is
+/// announced with an `eprintln!`, but the announcement is not itself the
+/// guarantee anyone will see it: like `gate.rs`'s skip line, it appears only
+/// under `--nocapture` or on failure, because libtest captures a passing
+/// test's stderr otherwise and prints none of it in the ordinary summary.
+/// [`gate::REQUIRE_ENV`] is the guarantee that governs whether the fallback
+/// can happen at all, not this line.
+///
+/// If neither the pull nor the bare-tag fallback succeeds, this returns the
+/// pull's own error rather than pressing on to a `docker run` that would
+/// only fail again, less specifically: the pull failure already names the
+/// digest and the registry's own complaint about it.
 ///
 /// # The required mode disables the fallback
 ///
@@ -83,39 +113,44 @@ pub fn image_present(reference: &str) -> Result<bool, DockerError> {
 ///
 /// # Errors
 ///
-/// A [`DockerError`] only if `docker` itself could not be started, or if
+/// A [`DockerError`] if `docker` itself could not be started; if
 /// [`gate::REQUIRE_ENV`] is `1` and `reference`'s pinned digest could not be
-/// pulled.
+/// pulled; or, outside the required mode, if the pull failed and the bare
+/// tag is not present locally either -- in which case this returns the
+/// pull's own error, since a `docker run` failure moments later would say
+/// less than the pull failure already does.
 pub(super) fn resolve_runnable_reference(reference: &str) -> Result<String, DockerError> {
+    let digest_form = repository_digest_form(reference);
+
     if image_present(reference)? {
-        return Ok(reference.to_owned());
+        return Ok(digest_form);
     }
 
-    let Some((tag, digest)) = reference.split_once('@') else {
-        return Ok(reference.to_owned());
+    let Some((name_and_tag, digest)) = reference.split_once('@') else {
+        return Ok(digest_form);
     };
 
-    let Err(pull_error) = process::run_checked(&["pull".to_owned(), reference.to_owned()]) else {
-        return Ok(reference.to_owned());
+    let Err(pull_error) = process::run_checked(&["pull".to_owned(), digest_form.clone()]) else {
+        return Ok(digest_form);
     };
 
     if std::env::var(gate::REQUIRE_ENV).as_deref() == Ok("1") {
         return Err(DockerError::required_digest_missing(
-            reference,
+            &digest_form,
             digest,
             &pull_error,
         ));
     }
 
-    if image_present(tag)? {
+    if image_present(name_and_tag)? {
         eprintln!(
-            "fabric-ndc-acceptance: {reference} could not be pulled ({pull_error}); falling back \
-             to the bare tag {tag} (see images.rs for why)"
+            "fabric-ndc-acceptance: {digest_form} could not be pulled ({pull_error}); falling back \
+             to the bare tag {name_and_tag} (see images.rs for why)"
         );
-        return Ok(tag.to_owned());
+        return Ok(name_and_tag.to_owned());
     }
 
-    Ok(reference.to_owned())
+    Err(pull_error)
 }
 
 impl DockerError {
@@ -145,12 +180,73 @@ mod tests {
     fn a_digest_qualified_reference_drops_its_tag() {
         assert_eq!(
             repository_digest_form("ghcr.io/hasura/ndc-postgres:v3.1.0@sha256:abc"),
-            Some("ghcr.io/hasura/ndc-postgres@sha256:abc".to_owned())
+            "ghcr.io/hasura/ndc-postgres@sha256:abc"
         );
     }
 
     #[test]
-    fn a_bare_tag_has_no_digest_form() {
-        assert_eq!(repository_digest_form("postgres:16-alpine"), None);
+    fn a_bare_tag_is_returned_unchanged() {
+        assert_eq!(repository_digest_form("postgres:16-alpine"), "postgres:16-alpine");
+    }
+
+    /// A registry host can itself carry a port (`localhost:5000/...`), so a
+    /// colon before the final `/`-separated segment is a registry port, not
+    /// a tag separator. Stripping after the last colon in the whole string
+    /// would truncate the registry host out of the repository name
+    /// entirely, leaving `localhost@sha256:x` instead of the correct
+    /// `localhost:5000/foo@sha256:x`.
+    #[test]
+    fn a_registry_port_is_not_mistaken_for_a_tag() {
+        assert_eq!(
+            repository_digest_form("localhost:5000/foo@sha256:x"),
+            "localhost:5000/foo@sha256:x"
+        );
+    }
+
+    /// `resolve_runnable_reference` inspects, pulls, and returns
+    /// [`repository_digest_form`]'s reduction of a digest-qualified
+    /// reference -- the same string in all three places, which is the
+    /// property that makes "the image proven present is the image that
+    /// runs" true by construction rather than by Docker's reference grammar
+    /// happening to agree today. `resolve_runnable_reference` itself needs a
+    /// live Docker daemon to exercise, so this pins the one function all
+    /// three of its call sites route through, against the crate's own
+    /// pinned constant -- the same value
+    /// [`ci_pre_pulls_exactly_the_pinned_images`] checks the CI pre-pull
+    /// step against.
+    #[test]
+    fn the_reference_run_is_the_reference_checked() {
+        assert_eq!(
+            repository_digest_form(crate::support::images::NDC_POSTGRES),
+            "ghcr.io/hasura/ndc-postgres@sha256:f91910ef5107aa80d31d82639e149b7f41f4a5bb3af9a369397d7d5965d79a57"
+        );
+    }
+
+    /// `.github/workflows/ci.yml`'s `connector-acceptance` job pre-pulls
+    /// every pinned image by hand, precisely so a slow or failing pull shows
+    /// up in that step's own log rather than inside a test's timeout (see
+    /// that job's comment). Nothing regenerates that step from `images.rs`,
+    /// so a bumped pin here with an un-bumped `docker pull` line there would
+    /// silently turn the pre-pull step into a no-op: the suite would still
+    /// pass -- `resolve_runnable_reference` pulls again on the resulting
+    /// cache miss -- but the pull time, and any pull failure, would move
+    /// back inside the job's `timeout-minutes`, exactly what the dedicated
+    /// step exists to avoid. This test fails loudly the moment the two
+    /// drift, instead of waiting for that timeout to explain it.
+    #[test]
+    fn ci_pre_pulls_exactly_the_pinned_images() {
+        let ci_yaml = include_str!("../../../../../.github/workflows/ci.yml");
+
+        for image in [
+            crate::support::images::NDC_POSTGRES,
+            crate::support::images::POSTGRES,
+            crate::support::images::NGINX,
+        ] {
+            let expected = format!("docker pull {}", repository_digest_form(image));
+            assert!(
+                ci_yaml.contains(expected.as_str()),
+                "ci.yml's connector-acceptance pre-pull step is missing `{expected}`"
+            );
+        }
     }
 }

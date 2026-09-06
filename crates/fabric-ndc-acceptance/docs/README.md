@@ -73,18 +73,21 @@ for why it cannot use `fabric_identity::TrustedIngressReader` directly).
   fixture README's "Regenerating" section.
 - `support/` -- the harness. `docker/` is `process.rs` (driving the `docker`
   binary), `containers.rs`, `image_reference.rs`, `networks.rs`, and
-  `polling.rs` (deadline-bounded,
-  never a bare sleep), behind a `docker.rs` facade so every other file's
-  `docker::` calls are unaffected by the split. `stack.rs` assembles postgres
-  plus one connector mode; `impostor.rs` is a self-contained nginx standing
-  in for "a real HTTP process that is not an NDC connector"; `compose.rs`
-  publishes a fixture and assembles the real runtime and Data API over it;
-  `fixtures.rs` and `requests.rs` are the publication fixture and the
-  request/token helpers, deliberately not shared with
-  `fabric-runtime-publication`'s own versions of each (see those files'
-  module docs for why); `gate.rs` is the honest Docker-required-or-skip
-  check every test calls first; `names.rs` and `images.rs` are naming and
-  image pins.
+  `polling.rs` (deadline-bounded, never a bare sleep), with `process.rs`,
+  `containers.rs`, `networks.rs`, and `polling.rs` re-exported behind a
+  `docker.rs` facade -- `image_reference.rs` is not re-exported there;
+  `containers::run` is its only caller and reaches it directly -- so every
+  other file's `docker::` calls are unaffected by the split. `stack.rs`
+  assembles postgres plus one connector mode; `impostor.rs` is a
+  self-contained nginx standing in for "a real HTTP process that is not an
+  NDC connector"; `compose.rs` publishes a fixture and assembles the real
+  runtime and Data API over it; `fixtures.rs` and `requests.rs` are the
+  publication fixture and the request/token helpers, deliberately not
+  shared with `fabric-runtime-publication`'s own versions of each (see
+  those files' module docs for why); `gate.rs` is the honest
+  Docker-required-or-skip check every test calls first; `names.rs`,
+  `go_timestamp.rs` (parsing Docker's own `{{.CreatedAt}}` format, split out
+  of `names.rs`), and `images.rs` are naming, that parser, and image pins.
 
 ## Gotchas
 
@@ -102,17 +105,23 @@ for why it cannot use `fabric_identity::TrustedIngressReader` directly).
   `connector-acceptance` CI job always does, and that env var, not the
   stderr line, is the actual guarantee that a real connector was reached.
 - The same variable also disables the fallback in
-  `tests/support/docker/image_reference.rs`: `docker run` first pulls a
-  pinned image absent locally by its digest, and only with the variable
-  *unset* does a failed pull fall back to the bare tag. With it set, that
-  failed pull is a hard failure naming the digest and the pull's own
-  `stderr`, never a silent run of whatever the bare tag resolves to. On a
-  sandboxed machine that cannot pull and only has the connector image loaded
-  under a different (single-platform) digest than the pinned multi-arch index
-  digest -- this repository's own situation on at least one development
-  machine, see `tests/support/images.rs` -- the required mode therefore fails
-  fast rather than passing. That is the mechanism working as intended, not a
-  defect; CI's daemon pulls normally and is unaffected.
+  `tests/support/docker/image_reference.rs`: before `docker run`, that module
+  checks whether a pinned image is already present locally by its digest,
+  and pulls it only when it is absent -- only with the variable *unset* does
+  *that* pull, if it fails, fall back to the bare tag. With it set, a failed
+  pull is a hard failure naming the digest and the pull's own `stderr`, never
+  a silent run of whatever the bare tag resolves to. On a sandboxed machine
+  that cannot pull and only has the connector image loaded under a different
+  (single-platform) digest than the pinned multi-arch index digest -- this
+  repository's own situation on at least one development machine, see
+  `tests/support/images.rs` -- the required mode therefore fails fast rather
+  than passing. That is the mechanism working as intended, not a defect;
+  CI's daemon pulls normally and is unaffected. The fallback, when it does
+  happen, is announced with an `eprintln!` -- but that announcement is
+  captured the same way the skip line above is: visible only under
+  `--nocapture` or on failure, never in an ordinary passing run's summary.
+  `FABRIC_REQUIRE_CONNECTOR_ACCEPTANCE`, not that line, is what actually
+  guarantees whether the fallback was allowed to happen.
 - Do not add a `[dependencies]` entry to make something "just easier to
   reach" from a future test. Everything this crate needs is a
   `[dev-dependencies]` edge, and that is load-bearing: a `[dev-dependencies]`
@@ -129,7 +138,14 @@ for why it cannot use `fabric_identity::TrustedIngressReader` directly).
   what lets `names::sweep_stale` find and remove a prior hard-killed run's
   leftovers at the start of the next one -- `Drop` does not run on `SIGKILL`.
   It skips anything carrying the current process's own pid segment, and
-  anything younger than ten minutes, so two test binaries running at once
-  cannot sweep away each other's still-live resources; only a resource that
-  is both somebody else's and old enough to be certainly abandoned is
-  removed.
+  anything younger than thirty minutes (`STALE_AFTER_SECS`) -- longer than
+  the `connector-acceptance` CI job's own twenty-minute `timeout-minutes`, so
+  no CI run can still be in flight when it becomes sweep-eligible. That is
+  the guarantee this actually gives, not a promise that two test binaries
+  running at once can never sweep each other's still-live resources: a local
+  run left going for more than thirty minutes while a second one starts
+  could still lose its containers to that second run's sweep. Accepted,
+  because CI -- the one unattended environment this sweep protects -- cannot
+  hit that window by construction, and a local run in that shape is rare and
+  visible enough (it fails loudly, not silently) not to warrant a stronger
+  guard.

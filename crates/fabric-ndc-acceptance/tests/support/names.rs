@@ -3,12 +3,15 @@
 //! `Drop` does not run on `SIGKILL`, so a hard-killed test run can leave
 //! containers and the network behind. The prefix every name in this module
 //! carries is what lets [`sweep_stale`] find them again on the next run.
+//! Parsing Docker's own timestamp format is a separate concept, split out
+//! to [`super::go_timestamp`].
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Once;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::support::docker;
+use crate::support::go_timestamp::parse_docker_created_at;
 
 /// Every name this harness gives Docker starts with this.
 pub const PREFIX: &str = "fabric-ndc-acc-";
@@ -63,11 +66,16 @@ impl Default for RunId {
 }
 
 /// How many seconds old a leftover must be before [`sweep_stale`] removes
-/// it. Shorter than this and a concurrent run's own resources -- freshly
-/// created, moments ago, by a different process -- would look exactly like
-/// a prior hard-killed run's leftovers; the pid check alone cannot catch
-/// that case, because it is by definition a different pid.
-const STALE_AFTER_SECS: i64 = 10 * 60;
+/// it.
+///
+/// Longer than the twenty-minute `timeout-minutes` the `connector-acceptance`
+/// CI job runs under (`.github/workflows/ci.yml`), so no CI run can still be
+/// in progress when its own resources become sweep-eligible -- that is the
+/// actual guarantee this constant gives, and it is why the value is chosen
+/// against that job's timeout rather than picked for convenience. It does
+/// not protect every concurrent run unconditionally: see [`sweep_stale`]'s
+/// doc for what a run longer than this, outside CI, is still exposed to.
+const STALE_AFTER_SECS: i64 = 30 * 60;
 
 /// Removes every container and network under [`PREFIX`] left over from a
 /// prior, hard-killed run. Runs at most once per test binary process: called
@@ -79,11 +87,26 @@ const STALE_AFTER_SECS: i64 = 10 * 60;
 /// tests in the same binary racing on different threads -- would otherwise
 /// sweep each other's still-live resources: process B's sweep, running
 /// before process A has finished with the network or containers it just
-/// started, would remove them out from under A's still-running test. Two
-/// independent guards close that, either of which is enough to leave a
-/// resource alone -- see [`is_stale`]: a name carrying a *different*
-/// process's pid, and old enough ([`STALE_AFTER_SECS`]) that it cannot be
-/// some other run's work still in progress.
+/// started, would remove them out from under A's still-running test. The
+/// pid check in [`is_stale`] only ever protects *this* process's own
+/// resources from itself; it cannot distinguish a genuinely stale leftover
+/// from a different, concurrently running process's resources, because both
+/// carry a pid that is not this one. [`STALE_AFTER_SECS`] is what actually
+/// stands in for that: raised to thirty minutes specifically so that no CI
+/// run (capped at twenty) can still be alive when a concurrent sweep would
+/// consider its resources fair game.
+///
+/// **This does not close the gap for every shape of concurrent run.** A
+/// local, interactive run of this suite left going for longer than
+/// [`STALE_AFTER_SECS`] while a second invocation starts could still have
+/// its containers and network removed by that second run's sweep -- the pid
+/// check does not save it, and thirty minutes have genuinely passed. That is
+/// accepted: CI, the one unattended environment this sweep exists to keep
+/// clean of hard-kill leftovers, is covered by construction against its own
+/// timeout; a developer running the suite by hand for more than half an hour
+/// while starting a second run concurrently is a shape rare and visible
+/// enough -- the affected run's containers simply vanish and it fails
+/// loudly -- to accept rather than design further guards against.
 ///
 /// Best-effort: a container or network that fails to remove is left for the
 /// next sweep rather than failing the test that happened to run first.
@@ -150,97 +173,9 @@ fn unix_epoch_seconds_now() -> i64 {
         .unwrap_or(i64::MIN)
 }
 
-/// Parses the fixed layout `docker ps`/`docker network ls` use for
-/// `{{.CreatedAt}}` -- Go's `time.Time.String()`, e.g.
-/// `"2024-01-15 10:23:45.123456789 +0000 UTC"` -- into Unix epoch seconds.
-///
-/// Hand-rolled rather than a date/time dependency: this workspace adds none
-/// for a ten-minute freshness check, and the layout is fixed by Go's
-/// standard library, not by the local host's date conventions. Returns
-/// `None` on anything that does not match closely enough to trust; see
-/// [`is_stale`] for what happens then.
-fn parse_docker_created_at(text: &str) -> Option<i64> {
-    let mut fields = text.split_whitespace();
-    let date = fields.next()?;
-    let time = fields.next()?;
-    let offset = fields.next()?;
-
-    let mut date_parts = date.splitn(3, '-');
-    let year: i64 = date_parts.next()?.parse().ok()?;
-    let month: i64 = date_parts.next()?.parse().ok()?;
-    let day: i64 = date_parts.next()?.parse().ok()?;
-
-    let time_without_fraction = time.split('.').next()?;
-    let mut time_parts = time_without_fraction.splitn(3, ':');
-    let hour: i64 = time_parts.next()?.parse().ok()?;
-    let minute: i64 = time_parts.next()?.parse().ok()?;
-    let second: i64 = time_parts.next()?.parse().ok()?;
-
-    let sign: i64 = match offset.chars().next()? {
-        '+' => 1,
-        '-' => -1,
-        _ => return None,
-    };
-    let offset_digits = offset.get(1..)?;
-    if offset_digits.len() != 4 {
-        return None;
-    }
-    let offset_hours: i64 = offset_digits.get(0..2)?.parse().ok()?;
-    let offset_minutes: i64 = offset_digits.get(2..4)?.parse().ok()?;
-    let offset_seconds = sign * (offset_hours * 3600 + offset_minutes * 60);
-
-    let local_seconds = days_from_civil(year, month, day) * 86_400 + hour * 3600 + minute * 60 + second;
-    Some(local_seconds - offset_seconds)
-}
-
-/// Days since the Unix epoch for a proleptic-Gregorian civil date. Howard
-/// Hinnant's public-domain `days_from_civil` algorithm
-/// (<https://howardhinnant.github.io/date_algorithms.html>).
-fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
-    let shifted_year = if month <= 2 { year - 1 } else { year };
-    let era = if shifted_year >= 0 {
-        shifted_year
-    } else {
-        shifted_year - 399
-    } / 400;
-    let year_of_era = shifted_year - era * 400;
-    let day_of_year = (153 * (if month > 2 { month - 3 } else { month + 9 }) + 2) / 5 + day - 1;
-    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
-    era * 146_097 + day_of_era - 719_468
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{days_from_civil, is_stale, parse_docker_created_at, pid_segment, PREFIX};
-
-    #[test]
-    fn the_unix_epoch_itself_is_day_zero() {
-        assert_eq!(days_from_civil(1970, 1, 1), 0);
-    }
-
-    #[test]
-    fn a_known_recent_date_matches_its_known_day_count() {
-        // 2024-01-15 is 19737 days after 1970-01-01.
-        assert_eq!(days_from_civil(2024, 1, 15), 19_737);
-    }
-
-    #[test]
-    fn a_utc_created_at_round_trips_through_the_parser() {
-        let epoch = parse_docker_created_at("2024-01-15 10:23:45.123456789 +0000 UTC").unwrap();
-        assert_eq!(epoch, 19_737 * 86_400 + 10 * 3600 + 23 * 60 + 45);
-    }
-
-    #[test]
-    fn a_negative_offset_shifts_the_epoch_forward() {
-        let with_offset = parse_docker_created_at("2024-01-15 10:23:45 -0700 MST").unwrap();
-        let utc = parse_docker_created_at("2024-01-15 10:23:45 +0000 UTC").unwrap();
-        assert_eq!(with_offset - utc, 7 * 3600);
-    }
-
-    #[test]
-    fn an_unrecognised_shape_parses_to_nothing() {
-        assert_eq!(parse_docker_created_at("not a timestamp"), None);
-    }
+    use super::{is_stale, parse_docker_created_at, pid_segment, PREFIX};
 
     #[test]
     fn the_pid_segment_is_the_token_right_after_the_prefix() {
@@ -265,26 +200,26 @@ mod tests {
     }
 
     #[test]
-    fn a_resource_younger_than_ten_minutes_is_never_stale_regardless_of_pid() {
+    fn a_resource_younger_than_thirty_minutes_is_never_stale_regardless_of_pid() {
         let created = parse_docker_created_at("2024-01-15 10:23:45 +0000 UTC").unwrap();
-        let five_minutes_later = created + 5 * 60;
+        let twenty_nine_minutes_later = created + 29 * 60;
         assert!(!is_stale(
             &format!("{PREFIX}999-1-0-postgres"),
             "2024-01-15 10:23:45 +0000 UTC",
             "777",
-            five_minutes_later
+            twenty_nine_minutes_later
         ));
     }
 
     #[test]
-    fn a_different_pids_resource_older_than_ten_minutes_is_stale() {
+    fn a_different_pids_resource_older_than_thirty_minutes_is_stale() {
         let created = parse_docker_created_at("2024-01-15 10:23:45 +0000 UTC").unwrap();
-        let eleven_minutes_later = created + 11 * 60;
+        let thirty_one_minutes_later = created + 31 * 60;
         assert!(is_stale(
             &format!("{PREFIX}999-1-0-postgres"),
             "2024-01-15 10:23:45 +0000 UTC",
             "777",
-            eleven_minutes_later
+            thirty_one_minutes_later
         ));
     }
 }

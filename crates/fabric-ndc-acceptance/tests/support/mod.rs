@@ -24,6 +24,7 @@ pub mod connector;
 pub mod docker;
 pub mod fixtures;
 pub mod gate;
+mod go_timestamp;
 pub mod images;
 pub mod impostor;
 pub mod names;

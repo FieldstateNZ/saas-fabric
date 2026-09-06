@@ -8,10 +8,10 @@
 //! # [`REQUIRE_ENV`] also disables the pull-failure fallback
 //!
 //! This constant gates more than this file: `docker::run` (via
-//! `docker::image_reference::resolve_runnable_reference`) pulls a pinned
-//! `image@sha256:...` reference that is not present locally before doing
-//! anything else, and only falls back to the bare tag if that pull itself
-//! fails -- the situation this repository is in today for
+//! `docker::image_reference::resolve_runnable_reference`) checks whether a
+//! pinned `image@sha256:...` reference is already present locally first,
+//! and pulls it only when it is absent. Only *that* pull failing falls back
+//! to the bare tag -- the situation this repository is in today for
 //! `images::NDC_POSTGRES` on at least one development machine, whose daemon
 //! cannot pull at all (see that constant's doc comment). With
 //! [`REQUIRE_ENV`] set to `1`, that fallback is refused outright: a pull

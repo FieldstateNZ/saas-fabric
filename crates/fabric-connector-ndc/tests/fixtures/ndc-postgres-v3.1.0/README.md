@@ -1,6 +1,11 @@
 # Observed `ndc-postgres` v3.1.0 documents
 
-Everything in this directory is **observed**, not written. Most files are a
+Everything in this directory is **observed**, not written -- including the
+three response files flagged below as reconstructed from the plan's quoted
+record rather than a saved capture (`mutation-insert-affected-only.json`,
+`mutation-delete-other-tenant.json`, `error-parse-422.json`): each still
+describes a response the connector actually produced and that was
+transcribed immediately afterward, not a guess at one. Most files are a
 response a real `ndc-postgres` connector produced when driven against a real
 PostgreSQL database, captured on 2026-09-06 (issue #62, slice 1); the three
 `request-*.json` files run the other direction -- the exact request bodies
@@ -74,13 +79,16 @@ Most of the small per-scenario files below are the **exact response body**
 `curl` received, with only the trailing `HTTP <code>` status line (added by
 `curl -w`) stripped so the file is parsable JSON on its own. The request that
 produced each is described here rather than duplicated in every file, except
-the three mutation requests a unit test pins the adapter's own output
-against byte-for-byte (`wire::mutation`'s and `translate::mutation`'s tests):
+the two mutation requests a unit test pins the adapter's own output against
+byte-for-byte (`wire::mutation_fields`'s and `translate::mutation`'s tests):
 those are checked in as their own `request-*.json` fixtures, extracted from
 the plan's `probe6.sh`, so the test reads the accepted body from a file
-instead of repeating it as an inline literal. Every other request body here
-is preserved only in the planning scripts this issue's plan references
-(`query_probes.sh`, `probe4.sh`, `probe5.sh`, `probe6.sh`, `named_mode.sh`).
+instead of repeating it as an inline literal. A third `request-*.json` file,
+`request-delete-other-tenant.json`, is checked in the same verbatim way but
+is not read by any test today; see its table row below for why it is kept
+anyway. Every other request body here is preserved only in the planning
+scripts this issue's plan references (`query_probes.sh`, `probe4.sh`,
+`probe5.sh`, `probe6.sh`, `named_mode.sh`).
 
 | File | Verbatim? | Request | Status |
 |---|---|---|---|
@@ -92,11 +100,13 @@ is preserved only in the planning scripts this issue's plan references
 | `error-unknown-operator.json` | Yes | a predicate using operator `equals` (not a real one) | 400 |
 | `request-insert-returning.json` | Yes | the request that produced `mutation-insert-ok.json` | -- |
 | `request-insert-affected-only.json` | Yes | the request that produced `mutation-insert-affected-only.json` | -- |
-| `request-delete-other-tenant.json` | Yes | the request that produced `mutation-delete-other-tenant.json` | -- |
+| `request-delete-other-tenant.json` | Yes | the request that produced `mutation-delete-other-tenant.json` | No — read by no test; kept as the observed shape F3's follow-up must produce |
 
-The three `request-*.json` files are requests, not responses -- "Status" does
-not apply -- extracted verbatim from `probe6.sh`'s `curl -d` bodies, minified
-onto one line to match this directory's other files.
+The three `request-*.json` files are requests, not responses, so "Status"
+does not carry an HTTP code for any of them -- all three are extracted
+verbatim from `probe6.sh`'s `curl -d` bodies, minified onto one line to match
+this directory's other files. Two of the three are read back by a unit test
+(see above); the column says so for the one that is not.
 
 `mutation-insert-ok.json` keeps the odd `"result" : {` spacing exactly as
 `ndc-postgres` emitted it -- this file was `tee`d straight from `curl` with

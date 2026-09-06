@@ -42,12 +42,13 @@ is at the end, under "The control plane, end to end".
 | Console types | `npm run typecheck` | 0 errors |
 | Console tests | `npm test` | 81 passing, 0 failing |
 | Console build | `npm run build` | 228 kB, 70 kB gzipped |
-| Connector acceptance | `cargo test -p fabric-ndc-acceptance` | 14 passing, 0 failing — **default mode**, Docker up, run on the implementation machine (see "Connector acceptance (issue #62)" below) |
+| Connector acceptance | `cargo test -p fabric-ndc-acceptance` | 44 passing, 0 failing across two integration binaries — **default mode**, Docker not reachable for this run (see "Connector acceptance (issue #62)" below for the breakdown and the earlier Docker-up observation) |
 | Connector acceptance, required mode | `FABRIC_REQUIRE_CONNECTOR_ACCEPTANCE=1 cargo test -p fabric-ndc-acceptance` | **Pending the first green `connector-acceptance` CI run.** Not observed on this machine — see below |
 
 Twelve of the thirteen rows above run in CI on every push and pull request
-(`.github/workflows/ci.yml`): the four Rust gates, the architecture check, and
-the connector-acceptance job as parallel jobs, the four console checks as
+(`.github/workflows/ci.yml`): the four Rust gates, the dependency check
+(`deny`), the file-size check, the architecture check, and the
+connector-acceptance job as parallel jobs, the four console checks as
 steps of one job because `npm ci` dominates each of them. The
 `cargo test --workspace` job excludes `fabric-ndc-acceptance`
 (`--exclude fabric-ndc-acceptance`) so the connector-acceptance job is the
@@ -58,16 +59,50 @@ is not a separate CI job, only this table's honest record of what running
 the same suite without the requirement, on the machine that did this
 increment's work, actually showed.
 
-**Why the required-mode row is pending rather than a number.** The 14
-passing above were observed running this crate's tests the ordinary way,
-with a real Docker daemon reachable and the pinned connector image already
-loaded — the honest thing this machine's daemon can do, per
-`tests/support/images.rs`: it cannot pull from `ghcr.io` at all, so
-`FABRIC_REQUIRE_CONNECTOR_ACCEPTANCE=1` on *this* machine fails fast, by
-design (`tests/support/docker/image_reference.rs`'s required mode refuses the
-bare-tag fallback that default mode uses instead). That failure is the
-required mode doing its job, not a defect this table should paper over by
-quoting a number nobody watched it produce. The row stays pending until
+**What "44 passing" is actually two different kinds of test.**
+`cargo test -p fabric-ndc-acceptance` runs two integration binaries,
+`published_state_reaches_a_real_connector` (26 tests) and
+`the_stack_comes_up` (18 tests), and both now compile this crate's entire
+`tests/support/` module tree — including its inline `#[cfg(test)]` unit
+tests — because both files declare `mod support;`. Of the 26 and 18: 11 and
+3 respectively (14 in total) are container-backed — the composed acceptance
+test and the container harness's own smoke test — and call
+`support::gate::docker_available_or_skip` first, so they skip-as-pass
+without a reachable Docker daemon. The remaining 15 in *each* binary are
+harness unit tests — pure-function tests of
+`tests/support/docker/image_reference.rs`, `tests/support/go_timestamp.rs`,
+and `tests/support/names.rs` — which never call that gate and run
+unconditionally, with or without Docker; that is the same 15 tests, compiled
+and executed once per binary, not 30 distinct ones.
+
+**On this run, Docker was not reachable, so the 14 skipped.** This
+machine's daemon is otherwise up (`docker version` answers, and it already
+holds real containers from other work), but the pinned
+`ghcr.io/hasura/ndc-postgres` digest does not complete a pull on this
+network: letting `docker pull` of that exact reference run for several
+minutes showed no progress and no error, the same "cannot pull" situation
+`tests/support/images.rs` already documents for this machine, reached this
+time by an actual hang rather than an immediate refusal. Rather than block
+this run on that hang, it pointed the harness at an unreachable
+`DOCKER_HOST` — the same "no daemon reachable" path `gate.rs` already
+implements for a machine with no Docker at all. `docker version` then fails
+fast, every container-backed test skips-as-pass, and the 15-per-binary
+harness unit tests run for real, all passing: 14 skips (11 + 3) plus 30 real
+harness-unit-test runs (15 × 2 binaries) is where the 44 above comes from.
+
+**The earlier Docker-up observation.** The "14 passing" this table recorded
+before this round of review, at commit `1403c15`, was a different kind of
+run: a real Docker daemon reachable, with only the bare tag
+`ghcr.io/hasura/ndc-postgres:v3.1.0` present locally, under a different
+(single-platform) digest than the pinned multi-arch index digest —
+`tests/support/images.rs` records exactly that gap for this machine. So the
+connector container that earlier run's 11 composed tests actually drove was
+reached through default mode's bare-tag fallback, not the pin itself. That
+same gap is what makes `FABRIC_REQUIRE_CONNECTOR_ACCEPTANCE=1` fail fast on
+*this* machine (`tests/support/docker/image_reference.rs`'s required mode
+refuses the bare-tag fallback default mode used instead). That failure is
+the required mode doing its job, not a defect this table should paper over
+by quoting a number nobody watched it produce. The row stays pending until
 `.github/workflows/ci.yml`'s `connector-acceptance` job — whose runner can
 pull the pin normally, and which pre-pulls all three pinned images as its own
 step precisely so a pull problem shows up there rather than inside a test's

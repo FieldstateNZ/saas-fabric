@@ -141,11 +141,18 @@ path = "examples/clients"
 #     base_url = "http://keycloak-http.identity.svc.cluster.local"
 #     admin_realm = "master"
 #     client_id = "saas-fabric"
+#     audience = "saas-fabric-data-api"
 #
 # **There is no credential here, and that is the design.** The platform holds
 # no authority over Keycloak of its own: it acts as the operator who asked,
 # using the bearer they presented, so permission to create a realm belongs to a
 # person in the master realm rather than to a service account (ADR 0012).
+#
+# `audience` is the string every declared client's mapper asserts, and it must
+# equal the Data API's own required audience in this deployment (ADR 0019
+# §1/§G5 — one API audience per deployment). Nothing here can check that the
+# two settings agree; a mismatch does not fail loudly, it makes the edge
+# refuse every genuine token from every client this adapter writes.
 #
 # Two things follow. The OIDC operator posture becomes required, because a
 # trusted header asserts a name and lends nothing. And convergence happens when

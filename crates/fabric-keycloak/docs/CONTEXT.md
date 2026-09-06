@@ -13,8 +13,12 @@ Three items, deliberately:
 
 - `KeycloakIdentityProvider::new(&KeycloakConfig, AdminCredential, Arc<dyn Clock>)
   -> Result<Self, String>`. Implements `fabric_reconciliation::IdentityProvider`.
-- `KeycloakConfig { base_url, admin_realm, client_id, http_timeout_seconds }` — no credential; a provider is built per operator from the bearer they presented
-  + `validate()`. All non-secret; belongs in a `ConfigMap`.
+- `KeycloakConfig { base_url, admin_realm, client_id, http_timeout_seconds, audience }`
+  — no credential; a provider is built per operator from the bearer they presented
+  + `validate()`. All non-secret; belongs in a `ConfigMap`. `audience` is the
+  string every declared client's mapper asserts — must equal the Data API's own
+  required audience in this deployment (ADR 0019 §1/§G5); this crate cannot
+  check that equality itself, since it is a cross-crate, cross-deployment fact.
 - `AdminCredential::new(impl Into<String>)`. No `Display`; `Debug` prints
   `AdminCredential(redacted)`. `expose()` is `pub(crate)` and named to be
   conspicuous.
@@ -35,14 +39,33 @@ Everything else — `wire::*`, `admin::*` — is `pub(crate)`.
   `reqwest::Error` (it can carry the full URL) and never reads a body.
 - `wire` — `RealmRepresentation`, `NewRealmRepresentation`, `RealmUpdate`,
   `RoleRepresentation`, `NewRoleRepresentation`, `ClientRepresentation`,
-  `NewClientRepresentation`, `TokenResponse` (no `Debug`, holds a token).
-- `provider::observe` / `provider::mutate` — one function per port operation.
+  `NewClientRepresentation`, `ProtocolMapperRepresentation`, `AudienceMapper`,
+  `TokenResponse` (no `Debug`, holds a token). `ClientRepresentation` and
+  `NewClientRepresentation` both carry `attributes` (the PKCE challenge method,
+  `pkce.code.challenge.method`, and the post-logout redirect set,
+  `post.logout.redirect.uris`) and `protocolMappers` (the audience mapper,
+  `oidc-audience-mapper` / `included.custom.audience`) — the four Keycloak
+  vocabulary strings live as `const`s in `wire/oidc_client.rs` and nowhere else.
+- `provider::declaration` — builds the representation a create or update
+  sends, from an `OidcClient` and the adapter's configured audience. Refuses
+  (`ProviderError::Rejected`) a `customScheme` client that reached the adapter
+  despite model validation refusing it upstream.
+- `provider::observe` / `provider::observe::clients` / `provider::mutate` —
+  one function per port operation. `observe::clients` reads `attributes` and
+  `protocolMappers` off the same page-bounded list call
+  (`admin::paths::clients_page`, mirroring `roles_page`) and counts — rather
+  than drops — a redirect URI it cannot parse into `RedirectUri`.
 
 ## Hard invariants — do not break
 
 1. **No Keycloak type may become `pub`.** The architecture check greps for
    `*Representation`, `RealmUpdate`, `TokenResponse`, `publicClient`,
-   `standardFlowEnabled`, `openid-connect` outside this crate.
+   `standardFlowEnabled`, `openid-connect`, `pkce.code.challenge.method`,
+   `post.logout.redirect.uris`, `oidc-audience-mapper` and
+   `included.custom.audience` outside this crate. `PkceMethod::as_wire_value()`
+   (the value `S256`) stays in `fabric-client-model` and is not part of this
+   pattern — the containment is over Keycloak's own vocabulary, not over a
+   value the model already owns.
 2. **No response body in any error, ever.**
 3. **`RealmUpdate` stays two fields.** A fuller body resets settings SaaS Fabric
    does not manage.

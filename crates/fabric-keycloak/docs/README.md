@@ -16,7 +16,12 @@ Keycloak Admin REST API     RealmRepresentation, ClientRepresentation, …
 
 `RealmRepresentation`, `RoleRepresentation`, `ClientRepresentation` and the
 admin token exchange are `pub(crate)`. Nothing outside this crate can name them,
-and `scripts/check_architecture.py` fails the build if anything tries.
+and `scripts/check_architecture.py` fails the build if anything tries. The same
+containment covers the four Keycloak-specific strings this crate writes and
+reads for a client's identity contract: the `pkce.code.challenge.method` and
+`post.logout.redirect.uris` attribute keys, and the `oidc-audience-mapper`
+mapper type with its `included.custom.audience` config key. All four are
+`const`s in `wire/oidc_client.rs` and appear nowhere else in the workspace.
 
 That is the same containment ADR 0001 applies to the NDC protocol in the runtime
 plane, for the same reason: a representation that escapes its adapter turns the
@@ -35,6 +40,37 @@ and a `RealmUpdate` carrying a full representation would reset every one of them
 each time a display name changed.
 
 That restraint is expressed in the wire types: the update body has two fields.
+
+## A client's identity contract, not just its callbacks
+
+Since ADR 0019, a declared client is written with more than its redirect
+URIs:
+
+- **The PKCE challenge method** (`pkce.code.challenge.method=S256`) — every
+  client this platform declares is public, so this is what stops an
+  intercepted authorisation code being redeemable by whoever intercepted it.
+- **The post-logout redirect set** (`post.logout.redirect.uris=+`), Keycloak's
+  own shorthand for "this client's registered redirect URIs" — one list, so a
+  second cannot drift out of step with it.
+- **An audience mapper** (`oidc-audience-mapper`, asserting `KeycloakConfig::audience`)
+  — the edge's `aud` check refuses every token from a client until this
+  mapper exists on it (ADR 0019 §G5). `audience` must equal the Data API's own
+  required audience in this deployment; this crate cannot check that equality
+  itself; only the deployment operator can keep two independently-configured
+  settings equal.
+
+The same body serves create and update: `PUT` replaces a client's mapper set
+by name rather than merging it, verified against a real Keycloak 26.0.8 (see
+`docs/verification.md`), so no separate `/protocol-mappers/models` call is
+needed — writing the full declaration again keeps the mapper current.
+
+Reading a client back is symmetric. `attributes` and `protocolMappers` are
+read off the same page-bounded list call every client observation already
+makes — no per-client read — and a redirect URI this model cannot parse is
+**counted**, not dropped: an out-of-band edit that added an entry this parser
+refuses is drift the reconciler has to see, not silence. The count travels;
+the URI itself never does, because it is attacker-influenced text with no
+reason to reach a plan, a log line, or an API response.
 
 ## The machine identity
 

@@ -2,11 +2,17 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use fabric_client_model::RedirectUri;
+use fabric_client_model::{PkceMethod, RedirectUri};
 
 use crate::fixtures::{acme, role, web_client, ROLES};
 use crate::plan::{plan, IdentityAction};
 use crate::provider::{ObservedOidcClient, ObservedRealm};
+
+/// The audience a converged fixture client's mapper carries.
+///
+/// Not read by `matches()` yet — that comparison is slice 5's — so this is
+/// only what these fixtures need to hold a plausible, converged shape.
+const AUDIENCE: &str = "saas-fabric-data-api";
 
 /// A realm holding exactly what `acme()` declares, plus two roles the provider
 /// created for itself.
@@ -21,6 +27,9 @@ fn converged_realm() -> ObservedRealm {
         ObservedOidcClient {
             redirect_uris: web_client().redirect.uris().iter().cloned().collect(),
             public: true,
+            challenge_method: Some(PkceMethod::S256),
+            audience_mapper: Some(AUDIENCE.to_owned()),
+            unmodellable_redirect_uris: 0,
         },
     );
 
@@ -109,6 +118,9 @@ fn an_application_client_with_a_changed_redirect_uri_is_updated() {
                 .into_iter()
                 .collect(),
             public: true,
+            challenge_method: Some(PkceMethod::S256),
+            audience_mapper: Some(AUDIENCE.to_owned()),
+            unmodellable_redirect_uris: 0,
         },
     );
 
@@ -137,6 +149,9 @@ fn an_undeclared_application_client_is_left_alone() {
         ObservedOidcClient {
             redirect_uris: BTreeSet::new(),
             public: true,
+            challenge_method: None,
+            audience_mapper: None,
+            unmodellable_redirect_uris: 0,
         },
     );
 

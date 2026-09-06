@@ -21,7 +21,11 @@ mod realm;
 mod role;
 mod token;
 
-pub(crate) use oidc_client::{ClientRepresentation, NewClientRepresentation};
+pub(crate) use oidc_client::{
+    AudienceMapper, ClientRepresentation, NewClientRepresentation, ProtocolMapperRepresentation,
+    AUDIENCE_MAPPER_CONFIG_KEY, AUDIENCE_MAPPER_TYPE, PKCE_CHALLENGE_METHOD_ATTRIBUTE,
+    POST_LOGOUT_REDIRECT_URIS_ATTRIBUTE,
+};
 pub(crate) use realm::{NewRealmRepresentation, RealmRepresentation, RealmUpdate};
 pub(crate) use role::{NewRoleRepresentation, RoleRepresentation};
 pub(crate) use token::TokenResponse;

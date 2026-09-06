@@ -33,6 +33,18 @@ pub struct KeycloakConfig {
     /// every client's status frozen at whatever it last was — and now also
     /// holds an operator's request open while it does.
     pub http_timeout_seconds: u64,
+
+    /// The audience every declared public client's mapper asserts.
+    ///
+    /// **Must equal the Data API's own required audience in this deployment**
+    /// — ADR 0019 §1 and §G5: one API audience per deployment, and a client
+    /// carries exactly one mapper. A mismatch here does not fail loudly: it
+    /// makes the edge refuse every genuine token from every client this
+    /// adapter writes, and it presents as a signature problem rather than a
+    /// configuration one (ADR 0010). This crate cannot check the other side
+    /// of that equality — it is a cross-crate, cross-deployment fact — so the
+    /// deployment operator is the one who has to keep the two settings equal.
+    pub audience: String,
 }
 
 impl Default for KeycloakConfig {
@@ -42,6 +54,7 @@ impl Default for KeycloakConfig {
             admin_realm: "master".to_owned(),
             client_id: "saas-fabric".to_owned(),
             http_timeout_seconds: 10,
+            audience: "saas-fabric-data-api".to_owned(),
         }
     }
 }
@@ -63,7 +76,11 @@ impl KeycloakConfig {
             ));
         }
 
-        for (name, value) in [("admin_realm", &self.admin_realm), ("client_id", &self.client_id)] {
+        for (name, value) in [
+            ("admin_realm", &self.admin_realm),
+            ("client_id", &self.client_id),
+            ("audience", &self.audience),
+        ] {
             if value.trim().is_empty() {
                 return Err(format!("keycloak: {name} must not be empty"));
             }

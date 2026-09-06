@@ -96,6 +96,11 @@ impl IdentityProvider for FakeIdentityProvider {
 
 impl FakeIdentityProvider {
     /// Stores an application client exactly as it was declared.
+    ///
+    /// `audience_mapper` is always `None`: this fake has no configured
+    /// audience to echo back, unlike a real provider whose mapper carries one
+    /// (ADR 0019 §G5). Nothing in this crate compares it yet — that is slice
+    /// 5's `matches()` — so it is left honestly absent rather than invented.
     fn write_client(&self, realm: &RealmName, client: &OidcClient) {
         if let Some(existing) = lock(&self.realms).get_mut(realm) {
             existing.clients.insert(
@@ -103,6 +108,9 @@ impl FakeIdentityProvider {
                 ObservedOidcClient {
                     redirect_uris: client.redirect.uris().iter().cloned().collect(),
                     public: true,
+                    challenge_method: Some(client.pkce),
+                    audience_mapper: None,
+                    unmodellable_redirect_uris: 0,
                 },
             );
         }

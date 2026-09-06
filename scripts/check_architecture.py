@@ -872,6 +872,8 @@ def check_adapter_containment(graph: Graph) -> list[Failure]:
             re.compile(
                 r"\b\w*Representation\b|\bRealmUpdate\b|\bTokenResponse\b"
                 r"|\bpublicClient\b|\bstandardFlowEnabled\b|\bopenid-connect\b"
+                r"|\bpkce\.code\.challenge\.method\b|\bpost\.logout\.redirect\.uris\b"
+                r"|\boidc-audience-mapper\b|\bincluded\.custom\.audience\b"
             ),
             "Keycloak representations stay inside fabric-keycloak (ADR 0008)",
             "Keycloak is an implementation of client identity, not the "

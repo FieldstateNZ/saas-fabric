@@ -822,6 +822,86 @@ let through.
 
 That is a defect the first real document found on its first read.
 
+## Keycloak 26.0.8 probe, 2026-09-06 (issue #61)
+
+ADR 0019 §3 and §6 make three claims about Keycloak's own behaviour that
+nothing in this workspace could have proven: what an any-port loopback
+redirect actually matches, whether `GET /clients` returns `attributes` and
+`protocolMappers` without a per-client read, and whether a `PUT` replaces a
+client's mapper set or requires the `/protocol-mappers/models` sub-resource.
+Slice 4 (the Keycloak adapter change) settled all three, plus two bonus
+questions, against a real **Keycloak 26.0.8** — `quay.io/keycloak/keycloak:26.0`,
+the image `scripts/e2e-services.sh` uses — running as `start-dev` with realm
+`probe`. The socket-level fake in `tests/keycloak_adapter.rs` can confirm any
+answer to these and prove none of them; only the real instance can.
+
+| # | Question | Observed |
+|---|---|---|
+| 1 | Any-port loopback | Over **http**, a loopback URI registered **without a port** (`http://127.0.0.1/cb`, `http://localhost/cb`, `http://[::1]/cb`) matches the same path on any port; the path is compared exactly (`/other` refused). A registered **port** is compared exactly (`http://localhost:5173/cb` does not match `:9999`). Over **https**, the port is always compared exactly: `https://localhost/cb` does not match `https://localhost:5173/cb`, nor does `https://127.0.0.1/cb`. `http://127.0.0.1:*/cb` matches **nothing** (both `:54321/cb` and the portless form are refused) — confirming §3's `Development` row and why `:*` left the model in the prior fix slice. |
+| 2 | Mapper read-back | `GET /admin/realms/{realm}/clients` (the list call) returns `protocolMappers` and `attributes` in full, for every client, in one call. No per-client `GET /clients/{id}` is needed — `observe::clients` reads the list once. |
+| 3 | Mapper update | `PUT /clients/{id}` carrying `protocolMappers` **replaces the set**: a changed audience is read back changed; an empty list removes the mapper; an omitted key leaves existing mappers alone; an id-less mapper with an existing name replaces it in place (no duplicate). No `/clients/{id}/protocol-mappers/models` call is needed — `declaration()` sends the same full representation for create and update alike. |
+| 4 | `attributes` read-back | Yes, on both the list and a single read: `pkce.code.challenge.method=S256` and `post.logout.redirect.uris=+` both round-trip unchanged. |
+| 5 | Pagination (bonus) | `GET /clients?first=0&max=2` returned 2 of 13 seeded clients. `admin::paths::clients_page(realm, max)`, mirroring `roles_page`, is valid; `observe::clients` refuses a response that reaches the page cap exactly as `observe::roles` already does. |
+| 6 | PKCE enforcement (bonus) | With `pkce.code.challenge.method=S256` set: an authorization request with no `code_challenge` is refused with `error=invalid_request&error_description=Missing parameter: code_challenge_method`; `code_challenge_method=plain` is refused with `Invalid parameter: code challenge method is not matching the configured one`; `S256` reaches the login page. All three are enforced at the authorization endpoint, before any user interaction. |
+
+**This crate's own wire body, round-tripped.** Beyond the shell-script probe
+above, the exact JSON `declaration()` produces for a `claimedHttps` client was
+posted to the same instance and read back, to confirm the hand-written
+`NewClientRepresentation`/`ClientRepresentation` shapes agree with what
+Keycloak actually sends and accepts — not only with what the probe script's
+own request bodies did.
+
+POST `http://127.0.0.1:18400/admin/realms/probe/clients`, body exactly as
+`declaration()` serialises it:
+
+```json
+{"clientId":"web-probe-s4","enabled":true,"protocol":"openid-connect","publicClient":true,"standardFlowEnabled":true,"redirectUris":["https://www.example.com/callback"],"attributes":{"pkce.code.challenge.method":"S256","post.logout.redirect.uris":"+"},"protocolMappers":[{"name":"fabric-audience","protocol":"openid-connect","protocolMapper":"oidc-audience-mapper","config":{"access.token.claim":"true","id.token.claim":"false","included.custom.audience":"saas-fabric-data-api"}}]}
+```
+
+`201`, then read back via `GET /admin/realms/probe/clients?clientId=web-probe-s4`
+— the relevant fields, exactly as sent:
+
+```json
+"attributes": {
+    "post.logout.redirect.uris": "+",
+    "pkce.code.challenge.method": "S256"
+},
+"protocolMappers": [
+    {
+        "name": "fabric-audience",
+        "protocol": "openid-connect",
+        "protocolMapper": "oidc-audience-mapper",
+        "config": {
+            "id.token.claim": "false",
+            "access.token.claim": "true",
+            "included.custom.audience": "saas-fabric-data-api"
+        }
+    }
+]
+```
+
+Keycloak added its own defaults around this (`webOrigins`, `clientAuthenticatorType`,
+default client scopes, and so on) — none of them modelled here, all of them
+ignored by `ClientRepresentation`'s lack of `deny_unknown_fields`, which is
+deliberate: this adapter reads only what it wrote. The test client was deleted
+after the check; the probe fixture was otherwise left as found.
+
+**Mutations run against this slice's own tests**, per `docs/delivery.md`'s
+rule ("mutate the thing, watch the test fail, then keep the test"):
+
+| Row | Mutation | Test that went red | Restored |
+|---|---|---|---|
+| C4 | Deleted the `pkce.code.challenge.method` insertion from `provider/declaration.rs`'s `declaration()` | `a_declared_client_is_written_with_the_s256_challenge_method` (`tests/keycloak_adapter_identity.rs`) | Yes, confirmed identical to the pre-mutation file by diff |
+| D13 | Restored the old `.filter_map(\|uri\| RedirectUri::try_new(uri).ok())` silent drop in `provider/observe/clients.rs`, in place of `partition_uris` | `an_unmodellable_redirect_uri_is_counted_rather_than_dropped` (`tests/keycloak_adapter_identity.rs`) | Yes, confirmed identical to the pre-mutation file by diff |
+
+**The version caveat.** §3's any-port rule and §6's mapper-replace behaviour
+were observed here on Keycloak **26.0.8**. LucentRoot runs **26.7.2** (see
+"Real integration: LucentRoot" above, run 2026-08-28) — the platform lane
+re-runs this same probe there and records the result beside these findings
+(§G17). Any-port and mapper-replace semantics are unchanged in Keycloak since
+long before 26, so the caveat is honesty about what was actually run, not
+doubt about the answer.
+
 ## What is not verified
 
 Named here rather than left for a reader to discover.

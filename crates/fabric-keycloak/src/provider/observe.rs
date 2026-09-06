@@ -1,13 +1,15 @@
 //! Reading what Keycloak currently holds.
 
-use std::collections::{BTreeMap, BTreeSet};
+mod clients;
 
-use fabric_client_model::{OidcClientId, RealmName, RedirectUri, RoleName};
-use fabric_reconciliation::{ObservedOidcClient, ObservedRealm, ProviderError};
+use std::collections::BTreeSet;
+
+use fabric_client_model::{RealmName, RoleName};
+use fabric_reconciliation::{ObservedRealm, ProviderError};
 
 use crate::admin::KeycloakAdmin;
 use crate::logging;
-use crate::wire::{ClientRepresentation, RealmRepresentation, RoleRepresentation};
+use crate::wire::{RealmRepresentation, RoleRepresentation};
 
 /// The most roles this adapter will read in one request.
 ///
@@ -33,7 +35,7 @@ pub(super) async fn realm(
     Ok(Some(ObservedRealm {
         display_name: representation.display_name.unwrap_or_default(),
         roles: roles(admin, realm).await?,
-        clients: clients(admin, realm).await?,
+        clients: clients::read(admin, realm).await?,
     }))
 }
 
@@ -52,35 +54,6 @@ async fn roles(admin: &KeycloakAdmin, realm: &RealmName) -> Result<BTreeSet<Role
     Ok(representations
         .into_iter()
         .filter_map(|role| parse_role(&role.name))
-        .collect())
-}
-
-/// Reads a realm's application clients.
-async fn clients(
-    admin: &KeycloakAdmin,
-    realm: &RealmName,
-) -> Result<BTreeMap<OidcClientId, ObservedOidcClient>, ProviderError> {
-    let representations: Vec<ClientRepresentation> = admin
-        .get("reading application clients", admin.paths().clients(realm))
-        .await?;
-
-    Ok(representations
-        .into_iter()
-        .filter_map(|client| {
-            let id = OidcClientId::try_new(&client.client_id).ok()?;
-
-            Some((
-                id,
-                ObservedOidcClient {
-                    redirect_uris: client
-                        .redirect_uris
-                        .iter()
-                        .filter_map(|uri| RedirectUri::try_new(uri).ok())
-                        .collect(),
-                    public: client.public_client,
-                },
-            ))
-        })
         .collect())
 }
 

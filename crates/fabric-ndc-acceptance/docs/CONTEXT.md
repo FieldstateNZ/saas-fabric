@@ -81,22 +81,28 @@ before touching `tests/support/`:
 ## `tests/support/` layout
 
 - `docker/` -- `process.rs` (drives the `docker` binary, knows nothing about
-  containers or networks), `containers.rs`, `image_reference.rs` (checks
-  whether a pinned digest is already present locally, pulls it only when it
-  is absent, and holds the required-mode-versus-fallback policy for the one
-  string that check, that pull, and `docker run` all share), `networks.rs`,
-  `polling.rs` (deadline-bounded, never a bare sleep). `docker.rs` is a
-  facade re-exporting from `process`, `containers`, `networks`, and
-  `polling`; `image_reference` itself is not re-exported -- `containers::run`
-  is its only caller and reaches it directly as
+  containers or networks; its `process/deadline.rs` submodule adds
+  `run_with_deadline`, the one bounded exception -- `image_reference.rs`'s
+  pull is the only caller, since every other `docker` subcommand this
+  harness runs talks only to the local daemon and returns promptly),
+  `containers.rs`, `image_reference.rs` (checks whether a pinned digest is
+  already present locally, pulls it -- bounded by `PULL_DEADLINE`, 120
+  seconds -- only when it is absent regardless of whether the reference
+  carries a digest, resolves each reference at most once per process via a
+  `OnceLock`-per-reference cache, and holds the required-mode-versus-fallback
+  policy for the one string that check, that pull, and `docker run` all
+  share), `networks.rs`, `polling.rs` (deadline-bounded, never a bare
+  sleep). `docker.rs` is a facade re-exporting from `process`, `containers`,
+  `networks`, and `polling`; `image_reference` itself is not re-exported --
+  `containers::run` is its only caller and reaches it directly as
   `image_reference::resolve_runnable_reference`, not through the facade. So
   every other file's `docker::foo(...)` calls are unaffected by which of
   those four files `foo` actually lives in.
 - `gate.rs` -- `docker_available_or_skip` and `REQUIRE_ENV`
   (`FABRIC_REQUIRE_CONNECTOR_ACCEPTANCE`). Also gates the pull-failure
   fallback in `docker/image_reference.rs`: set to `1`, a pinned image whose
-  pull fails is a failure naming the digest and the pull's `stderr`, never a
-  silent bare-tag substitution.
+  pull fails or times out is a failure naming the digest and the pull's
+  `stderr`, never a silent bare-tag substitution.
 - `images.rs` -- every image, pinned by digest, in one place.
 - `names.rs` -- `RunId` (per-run container/network naming) and
   `sweep_stale` (removes a prior hard-killed run's leftovers by the

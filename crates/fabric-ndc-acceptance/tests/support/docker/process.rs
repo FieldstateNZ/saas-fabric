@@ -6,8 +6,22 @@
 //! only how to run `docker <args...>` and turn the result into something
 //! [`containers`](super::containers) and [`networks`](super::networks) can
 //! build on.
+//!
+//! [`run_checked`] and [`spawn`] never time out -- correct for every
+//! subcommand this harness runs against the local daemon, but not for
+//! `docker pull`, which can hang forever against a registry the daemon
+//! cannot reach. That one bounded case is [`deadline::run_with_deadline`],
+//! split into its own file rather than added here: a deadline, a kill, and
+//! two reader threads are a second concept this module's doc does not
+//! promise, and [`image_reference`](super::image_reference) -- the pull's
+//! only caller -- reaches it as `process::run_with_deadline`, the same way
+//! every other function here is called.
+
+mod deadline;
 
 use std::process::{Command, Output};
+
+pub(super) use deadline::run_with_deadline;
 
 /// A `docker` invocation failed, or could not be started at all.
 ///

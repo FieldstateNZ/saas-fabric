@@ -79,34 +79,39 @@ Most of the small per-scenario files below are the **exact response body**
 `curl` received, with only the trailing `HTTP <code>` status line (added by
 `curl -w`) stripped so the file is parsable JSON on its own. The request that
 produced each is described here rather than duplicated in every file, except
-the two mutation requests a unit test pins the adapter's own output against
-byte-for-byte (`wire::mutation_fields`'s and `translate::mutation`'s tests):
-those are checked in as their own `request-*.json` fixtures, extracted from
-the plan's `probe6.sh`, so the test reads the accepted body from a file
-instead of repeating it as an inline literal. A third `request-*.json` file,
-`request-delete-other-tenant.json`, is checked in the same verbatim way but
-is not read by any test today; see its table row below for why it is kept
+three cases checked in as their own `request-*.json` fixtures, extracted
+verbatim from the plan's `probe6.sh`. Two of the three are read back by a
+unit test that pins the adapter's own output against them byte-for-byte, but
+not one test apiece: `request-insert-affected-only.json` is read by both
+`wire::mutation_fields`'s and `translate::mutation`'s tests, while
+`request-insert-returning.json` is read by `wire::mutation_fields`'s alone.
+The third, `request-delete-other-tenant.json`, is checked in the same
+verbatim way but is read by no test today. The table's "Read by" column
+carries the exact fact for all three; see below for why the third is kept
 anyway. Every other request body here is preserved only in the planning
 scripts this issue's plan references (`query_probes.sh`, `probe4.sh`,
 `probe5.sh`, `probe6.sh`, `named_mode.sh`).
 
-| File | Verbatim? | Request | Status |
-|---|---|---|---|
-| `query-isolated-acme.json` | Yes | `id = "1" AND tenant_key = "tenant-acme-482"` | 200 |
-| `query-isolated-globex.json` | Yes | same, `tenant_key = "tenant-globex-915"` | 200 |
-| `query-fields-absent.json` | Yes | `fields` omitted, `limit: 1` | 200 |
-| `mutation-insert-no-fields-400.json` | Yes | `insert_articles`, `fields: null` | 400 |
-| `mutation-insert-ok.json` | Yes | `insert_articles`, `fields` asking `affected_rows` and `returning` | 200 |
-| `error-unknown-operator.json` | Yes | a predicate using operator `equals` (not a real one) | 400 |
-| `request-insert-returning.json` | Yes | the request that produced `mutation-insert-ok.json` | -- |
-| `request-insert-affected-only.json` | Yes | the request that produced `mutation-insert-affected-only.json` | -- |
-| `request-delete-other-tenant.json` | Yes | the request that produced `mutation-delete-other-tenant.json` | No — read by no test; kept as the observed shape F3's follow-up must produce |
+| File | Verbatim? | Request | Status | Read by |
+|---|---|---|---|---|
+| `query-isolated-acme.json` | Yes | `id = "1" AND tenant_key = "tenant-acme-482"` | 200 | -- |
+| `query-isolated-globex.json` | Yes | same, `tenant_key = "tenant-globex-915"` | 200 | -- |
+| `query-fields-absent.json` | Yes | `fields` omitted, `limit: 1` | 200 | -- |
+| `mutation-insert-no-fields-400.json` | Yes | `insert_articles`, `fields: null` | 400 | -- |
+| `mutation-insert-ok.json` | Yes | `insert_articles`, `fields` asking `affected_rows` and `returning` | 200 | -- |
+| `error-unknown-operator.json` | Yes | a predicate using operator `equals` (not a real one) | 400 | -- |
+| `request-insert-returning.json` | Yes | the request that produced `mutation-insert-ok.json` | -- | `wire::mutation_fields` |
+| `request-insert-affected-only.json` | Yes | the request that produced `mutation-insert-affected-only.json` | -- | `wire::mutation_fields`, `translate::mutation` |
+| `request-delete-other-tenant.json` | Yes | the request that produced `mutation-delete-other-tenant.json` | -- | none -- kept as the observed shape F3's follow-up must produce |
 
 The three `request-*.json` files are requests, not responses, so "Status"
-does not carry an HTTP code for any of them -- all three are extracted
+never carries an HTTP code for any of them -- all three are extracted
 verbatim from `probe6.sh`'s `curl -d` bodies, minified onto one line to match
-this directory's other files. Two of the three are read back by a unit test
-(see above); the column says so for the one that is not.
+this directory's other files. "Read by" is `--` for every response file
+above for a different reason than it is a real answer for the three request
+files: a response file is preserved as evidence of what the connector
+returned, not as a byte-for-byte input some test asserts against, so no test
+"reads" one in the sense this column means.
 
 `mutation-insert-ok.json` keeps the odd `"result" : {` spacing exactly as
 `ndc-postgres` emitted it -- this file was `tee`d straight from `curl` with

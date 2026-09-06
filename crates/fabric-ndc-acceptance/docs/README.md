@@ -72,12 +72,15 @@ for why it cannot use `fabric_identity::TrustedIngressReader` directly).
   is deployment topology no introspection can read off a database -- see the
   fixture README's "Regenerating" section.
 - `support/` -- the harness. `docker/` is `process.rs` (driving the `docker`
-  binary), `containers.rs`, `image_reference.rs`, `networks.rs`, and
-  `polling.rs` (deadline-bounded, never a bare sleep), with `process.rs`,
-  `containers.rs`, `networks.rs`, and `polling.rs` re-exported behind a
-  `docker.rs` facade -- `image_reference.rs` is not re-exported there;
-  `containers::run` is its only caller and reaches it directly -- so every
-  other file's `docker::` calls are unaffected by the split. `stack.rs`
+  binary; its own `process/deadline.rs` submodule is `run_with_deadline`,
+  the one bounded exception -- everything else in `process.rs` runs
+  unbounded because it only ever talks to the local daemon), `containers.rs`,
+  `image_reference.rs`, `networks.rs`, and `polling.rs` (deadline-bounded,
+  never a bare sleep), with `process.rs`, `containers.rs`, `networks.rs`, and
+  `polling.rs` re-exported behind a `docker.rs` facade -- `image_reference.rs`
+  is not re-exported there; `containers::run` is its only caller and reaches
+  it directly -- so every other file's `docker::` calls are unaffected by the
+  split. `stack.rs`
   assembles postgres plus one connector mode; `impostor.rs` is a
   self-contained nginx standing in for "a real HTTP process that is not an
   NDC connector"; `compose.rs` publishes a fixture and assembles the real
@@ -107,21 +110,29 @@ for why it cannot use `fabric_identity::TrustedIngressReader` directly).
 - The same variable also disables the fallback in
   `tests/support/docker/image_reference.rs`: before `docker run`, that module
   checks whether a pinned image is already present locally by its digest,
-  and pulls it only when it is absent -- only with the variable *unset* does
-  *that* pull, if it fails, fall back to the bare tag. With it set, a failed
-  pull is a hard failure naming the digest and the pull's own `stderr`, never
-  a silent run of whatever the bare tag resolves to. On a sandboxed machine
-  that cannot pull and only has the connector image loaded under a different
-  (single-platform) digest than the pinned multi-arch index digest -- this
-  repository's own situation on at least one development machine, see
-  `tests/support/images.rs` -- the required mode therefore fails fast rather
-  than passing. That is the mechanism working as intended, not a defect;
-  CI's daemon pulls normally and is unaffected. The fallback, when it does
-  happen, is announced with an `eprintln!` -- but that announcement is
-  captured the same way the skip line above is: visible only under
-  `--nocapture` or on failure, never in an ordinary passing run's summary.
-  `FABRIC_REQUIRE_CONNECTOR_ACCEPTANCE`, not that line, is what actually
-  guarantees whether the fallback was allowed to happen.
+  and pulls it (bounded by that module's `PULL_DEADLINE`, 120 seconds, so an
+  unreachable registry cannot hang the pull forever) only when it is absent
+  -- only with the variable *unset* does *that* pull, if it fails or times
+  out, fall back to the bare tag. With it set, a failed pull is a hard
+  failure naming the digest and the pull's own `stderr`, never a silent run
+  of whatever the bare tag resolves to. Every reference is resolved at most
+  once per process -- a cache keyed by the reference string, failures
+  included -- so this deadline is paid once per run, not once per test, no
+  matter how many of the (currently fourteen) container-backed tests ask for
+  the same image. On a sandboxed machine that cannot pull and only has the
+  connector image loaded under a different (single-platform) digest than the
+  pinned multi-arch index digest -- this repository's own situation on at
+  least one development machine, see `tests/support/images.rs` -- the
+  required mode therefore spends that 120-second deadline once, then fails,
+  naming the digest and the pull's own error, rather than passing or hanging
+  indefinitely. That is the mechanism working as intended, not a defect;
+  CI's daemon pulls normally, and its pre-pull step means the in-test pull is
+  a same-image cache hit there, so this deadline is never what CI waits on.
+  The fallback, when it does happen, is announced with an `eprintln!` -- but
+  that announcement is captured the same way the skip line above is: visible
+  only under `--nocapture` or on failure, never in an ordinary passing run's
+  summary. `FABRIC_REQUIRE_CONNECTOR_ACCEPTANCE`, not that line, is what
+  actually guarantees whether the fallback was allowed to happen.
 - Do not add a `[dependencies]` entry to make something "just easier to
   reach" from a future test. Everything this crate needs is a
   `[dev-dependencies]` edge, and that is load-bearing: a `[dev-dependencies]`

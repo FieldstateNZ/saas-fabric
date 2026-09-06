@@ -10,17 +10,21 @@
 //! This constant gates more than this file: `docker::run` (via
 //! `docker::image_reference::resolve_runnable_reference`) checks whether a
 //! pinned `image@sha256:...` reference is already present locally first,
-//! and pulls it only when it is absent. Only *that* pull failing falls back
+//! and pulls it only when it is absent, bounded by that module's own
+//! `PULL_DEADLINE` (120 seconds) so a registry that never answers cannot
+//! hang the pull forever. Only *that* pull failing or timing out falls back
 //! to the bare tag -- the situation this repository is in today for
 //! `images::NDC_POSTGRES` on at least one development machine, whose daemon
-//! cannot pull at all (see that constant's doc comment). With
+//! cannot pull it at all (see that constant's doc comment). With
 //! [`REQUIRE_ENV`] set to `1`, that fallback is refused outright: a pull
 //! failure becomes a failure naming the digest and the pull's own `stderr`,
 //! never a silent run of whatever the bare tag happens to resolve to. CI
 //! always sets it, so CI can never report success while running an image
 //! other than the one it pinned -- the same "ran and passed" versus "did not
 //! run" honesty this gate enforces for Docker's presence at all, applied to
-//! *which* Docker image ran.
+//! *which* Docker image ran. `image_reference.rs` also resolves each
+//! reference at most once per process, so this required-mode failure is
+//! something every affected test run pays for once, not once per test.
 
 use crate::support::docker;
 

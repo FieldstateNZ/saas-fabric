@@ -11,6 +11,10 @@ use fabric_core::IdentifierError;
 /// The label used in error messages when parsing fails.
 const KIND: &str = "redirect uri";
 
+/// What this model expects in place of userinfo in the authority.
+const EXPECTED_NO_USERINFO: &str =
+    "no userinfo in the authority — a redirect URI has no legitimate use for credentials";
+
 /// The authority: everything before the path, query, or fragment.
 ///
 /// # What this must not be
@@ -82,10 +86,13 @@ pub(super) fn wildcard_port_index(value: &str) -> Option<usize> {
 ///
 /// # Errors
 ///
-/// Returns [`IdentifierError::BadBoundary`] if the authority contains `@`.
+/// Returns [`IdentifierError::Unadmitted`] if the authority contains `@`.
 pub(super) fn reject_userinfo(authority: &str) -> Result<(), IdentifierError> {
     if authority.contains('@') {
-        return Err(IdentifierError::BadBoundary { kind: KIND });
+        return Err(IdentifierError::Unadmitted {
+            kind: KIND,
+            expected: EXPECTED_NO_USERINFO,
+        });
     }
 
     Ok(())

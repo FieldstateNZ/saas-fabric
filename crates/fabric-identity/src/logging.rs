@@ -3,10 +3,25 @@
 //! Wrapping emission in typed helpers keeps field names identical across call
 //! sites, so a dashboard filtering on `tenant_claim` does not miss half the
 //! events because one call site spelled it `claim`.
+//!
+//! **A value that originates inside a bearer token is logged only through
+//! [`sanitize::sanitise`], and never in a response body.** A token is
+//! attacker-controlled input; [`sanitise`] is what keeps a log line from
+//! becoming a second injection surface once a value has already been refused
+//! at the boundary.
+//!
+//! Over the 120-line advisory threshold. The reason is that this is one set
+//! of typed emitters for one domain's refusals, each a few lines of `tracing`
+//! call behind a name and a doc comment explaining what it is safe to log and
+//! why; splitting them across files would separate each event from the
+//! sibling events a reader needs beside it to see the whole refusal path.
+
+mod sanitize;
 
 use fabric_core::{event_id, EventType, IdentifierError};
 
 use crate::DOMAIN_ID;
+use sanitize::sanitise;
 
 /// A token arrived with no tenant claim.
 pub(crate) fn tenant_claim_missing(claim: &str) {
@@ -20,15 +35,18 @@ pub(crate) fn tenant_claim_missing(claim: &str) {
 
 /// A token's tenant claim was present but unusable.
 ///
-/// The rejected value is not logged. It is attacker-controlled, and writing it
-/// into the log stream invites log injection and pollutes tenant-filtered
-/// queries with values that are not tenants.
+/// The rejected value itself is not logged — it is attacker-controlled, and
+/// writing it into the log stream would pollute tenant-filtered queries with
+/// values that are not tenants. `error`'s rendering is logged, through
+/// [`sanitise`]: [`IdentifierError::DisallowedCharacter`] embeds the one
+/// offending character verbatim, which is exactly the value this function
+/// exists not to log unsanitised.
 pub(crate) fn tenant_claim_invalid(claim: &str, error: &IdentifierError) {
     tracing::warn!(
         event = "identity.tenant_claim_invalid",
         event_id = event_id(DOMAIN_ID, EventType::Warning, 2),
         tenant_claim = claim,
-        reason = %error,
+        reason = %sanitise(&error.to_string()),
         "tenant claim is not a valid tenant identifier; rejecting"
     );
 }
@@ -48,16 +66,20 @@ pub(crate) fn issuer_claim_missing(claim: &str) {
 
 /// A token's issuer is in no registration.
 ///
-/// The issuer value is not logged, for the reason
-/// [`tenant_claim_invalid`] does not log its value: it is attacker-controlled,
-/// and writing it into the log stream invites log injection. A burst of these
-/// means the gateway is admitting an issuer `identity.trusted_issuers` does not
-/// know — which is registry drift, and the registry is the authority.
-pub(crate) fn issuer_unregistered(claim: &str) {
+/// The issuer is logged, through [`sanitise`], rather than withheld: a burst
+/// of one `issuer_offered` value is the operator's only signal that the
+/// gateway is admitting an issuer `identity.trusted_issuers` does not know —
+/// registry drift, and the registry is the authority. `registered_issuer_count`
+/// rides alongside it so a dashboard can tell "the registry is empty" apart
+/// from "this one issuer is missing" without a second query. Sanitised and
+/// bounded is not the same as safe to echo back: this value never appears in
+/// a response.
+pub(crate) fn issuer_unregistered(issuer: &str, registered_issuer_count: usize) {
     tracing::warn!(
         event = "identity.issuer_unregistered",
         event_id = event_id(DOMAIN_ID, EventType::Warning, 6),
-        issuer_claim = claim,
+        issuer_offered = %sanitise(issuer),
+        registered_issuer_count,
         "bearer token's issuer is not registered; rejecting"
     );
 }

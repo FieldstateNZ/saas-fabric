@@ -14,6 +14,9 @@ use super::{authority, host_kind, private_use_scheme};
 /// The label used in error messages when parsing fails.
 const KIND: &str = "redirect uri";
 
+/// What this model expects in place of a scheme it does not classify.
+const EXPECTED_SCHEME: &str = "https, http, or a private-use scheme in reverse-domain form";
+
 /// What kind of callback a redirect URI is.
 ///
 /// The partition a redirect *strategy* is stated against: a client declares
@@ -73,24 +76,30 @@ impl fmt::Display for RedirectUriKind {
 ///
 /// # Errors
 ///
-/// Returns [`IdentifierError::BadBoundary`] for a scheme this model does not
-/// classify — `javascript:`, `data:` and `file:` among them — or an authority
-/// carrying userinfo, and whatever [`host_kind::classify`] refuses.
+/// Returns [`IdentifierError::Unadmitted`], naming the schemes this model
+/// classifies, for a scheme it does not — `javascript:`, `data:` and `file:`
+/// among them, and a `www.example.com:8080/cb` missing its scheme entirely —
+/// or an authority carrying userinfo, and whatever [`host_kind::classify`]
+/// refuses.
 pub(super) fn classify(value: &str) -> Result<RedirectUriKind, IdentifierError> {
-    let refused = || IdentifierError::BadBoundary { kind: KIND };
+    let unadmitted = || IdentifierError::Unadmitted {
+        kind: KIND,
+        expected: EXPECTED_SCHEME,
+    };
 
-    let (scheme, rest) = value.split_once(':').ok_or_else(refused)?;
+    let (scheme, rest) = value.split_once(':').ok_or_else(unadmitted)?;
+    let scheme = scheme.to_ascii_lowercase();
 
-    if private_use_scheme::is_private_use(&scheme.to_ascii_lowercase()) {
+    if private_use_scheme::is_private_use(&scheme, rest) {
         return Ok(RedirectUriKind::PrivateUseScheme);
     }
 
-    let secure = scheme.eq_ignore_ascii_case("https");
-    if !secure && !scheme.eq_ignore_ascii_case("http") {
-        return Err(refused());
+    let secure = scheme == "https";
+    if !secure && scheme != "http" {
+        return Err(unadmitted());
     }
 
-    let authority = authority::of(rest.strip_prefix("//").ok_or_else(refused)?);
+    let authority = authority::of(rest.strip_prefix("//").ok_or_else(unadmitted)?);
     authority::reject_userinfo(authority)?;
 
     host_kind::classify(&authority::host(authority).to_ascii_lowercase(), secure)

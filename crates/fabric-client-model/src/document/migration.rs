@@ -91,6 +91,17 @@ fn migrate_client(client: &mut Value) -> Result<(), DesiredStateError> {
         });
     }
 
+    if mapping.contains_key("pkce") {
+        return Err(DesiredStateError::Migration {
+            field: "spec.identity.clients[].pkce",
+            replacement: REPLACEMENT,
+            detail: "a v1 document has no pkce field; a document that carries one is a v2 \
+                     document mislabelled as v1, and relabelling it is the operator's call, not a \
+                     value this migrator may silently overwrite"
+                .to_owned(),
+        });
+    }
+
     let uris = mapping
         .remove("redirectUris")
         .ok_or(DesiredStateError::MissingField { field: FIELD })?;

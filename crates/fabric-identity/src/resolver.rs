@@ -35,11 +35,23 @@ pub struct IdentityResolver {
 }
 
 impl IdentityResolver {
-    /// Builds a resolver. Called from
-    /// [`build_identity`](crate::build_identity).
-    #[must_use]
-    pub fn new(config: IdentityConfig, reader: Arc<dyn TokenReader>) -> Self {
-        Self { config, reader }
+    /// Builds a resolver, refusing an invalid configuration.
+    ///
+    /// A resolver cannot exist without a validated issuer registry — that is
+    /// a property of the type, not a step a caller can skip by constructing
+    /// one directly instead of going through
+    /// [`build_identity`](crate::build_identity). Every downstream read of
+    /// `self.config` therefore trusts what construction already proved,
+    /// rather than re-checking it.
+    ///
+    /// # Errors
+    ///
+    /// Returns a message from [`IdentityConfig::validate`] if the
+    /// configuration is invalid.
+    pub fn new(config: IdentityConfig, reader: Arc<dyn TokenReader>) -> Result<Self, String> {
+        config.validate()?;
+
+        Ok(Self { config, reader })
     }
 
     /// Resolves the tenant identity context from request headers.

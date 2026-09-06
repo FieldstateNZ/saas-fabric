@@ -102,18 +102,16 @@ fn every_example_client_document_parses() {
         }
 
         let text = std::fs::read_to_string(&path).expect("a readable document");
-        ClientDocument::parse(&text)
+        let document = ClientDocument::parse(&text)
             .unwrap_or_else(|error| panic!("{} does not parse: {error}", path.display()));
         parsed += 1;
-
-        for version in [API_VERSION, API_VERSION_V2] {
-            if text.contains(&format!("apiVersion: {version}")) {
-                versions.insert(version);
-            }
-        }
+        versions.insert(document.api_version());
     }
 
-    assert!(parsed >= 3, "the examples should show more than one client");
+    assert!(
+        parsed >= 3,
+        "the examples should include at least three client documents"
+    );
 
     // Both schema versions, because the `v1` migrator is only exercised by the
     // shipped corpus if a shipped document actually reaches it.

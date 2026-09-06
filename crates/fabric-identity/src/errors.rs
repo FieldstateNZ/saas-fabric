@@ -11,10 +11,9 @@ use http::StatusCode;
 
 /// Why a request could not be given a tenant identity context.
 ///
-/// Every variant is a **rejection**. The specification requires the platform to
-/// fail closed when tenant context cannot be safely resolved (§28), so there is
-/// deliberately no variant meaning "carry on without a tenant" and no default
-/// tenant to fall back to.
+/// Every variant is a **rejection**. The specification requires failing closed
+/// when tenant context cannot be safely resolved (§28), so there is
+/// deliberately no variant meaning "carry on without a tenant", and no default.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum IdentityError {
     /// No `Authorization` header was present.
@@ -33,9 +32,8 @@ pub enum IdentityError {
     /// The token's signature did not verify, or a registered claim such as
     /// `exp`, `iss`, or `aud` failed validation.
     ///
-    /// The underlying reason is deliberately not exposed to the caller; it is
-    /// logged instead. Telling an attacker precisely which check failed is free
-    /// help.
+    /// The underlying reason is not exposed to the caller — logged instead,
+    /// since telling an attacker precisely which check failed is free help.
     #[error("bearer token failed verification")]
     UnverifiedToken,
 
@@ -45,51 +43,46 @@ pub enum IdentityError {
 
     /// The token's `nbf` (not-before) is still in the future.
     ///
-    /// Distinct from [`Self::ExpiredToken`] so that operators can tell the two
-    /// ends of the validity window apart in logs — a burst of these usually
-    /// means a clock has drifted, not that anybody is attacking. The caller is
-    /// told no more than "not yet valid" either way.
+    /// Distinct from [`Self::ExpiredToken`] so operators can tell the validity
+    /// window's two ends apart in logs — a burst usually means clock drift,
+    /// not an attack. Either way the caller is told no more than "not yet valid".
     #[error("bearer token is not yet valid")]
     TokenNotYetValid,
 
     /// The token carried no `iss` claim.
     ///
-    /// Refused rather than treated as unregistered-but-harmless. ADR 0002
-    /// records finding the other shape of this hole in the defence-in-depth
-    /// allowlists, where a token that simply omitted `iss` sailed past an
-    /// issuer allowlist — a security control that silently did nothing.
+    /// Refused rather than treated as unregistered-but-harmless: ADR 0002
+    /// records the same hole in the defence-in-depth allowlists, where simply
+    /// omitting `iss` sailed past an issuer allowlist that then did nothing.
     #[error("bearer token has no iss claim")]
     MissingIssuerClaim,
 
     /// The token's issuer is in no registration, so it names no tenant.
     ///
-    /// The issuer value is not echoed back, and is not logged either: it is
-    /// attacker-controlled, and this message would be the confirmation oracle
-    /// telling a caller which issuer strings the deployment knows about.
+    /// Never echoed back — that would make this message a confirmation
+    /// oracle. It **is** logged, sanitised and bounded (see the `logging`
+    /// module): a burst of these is an operator's only signal that the edge
+    /// admits an issuer this registry does not know.
     #[error("the bearer token's issuer is not registered with this runtime")]
     UnregisteredIssuer,
 
     /// The token carried no tenant claim under the configured name.
     ///
-    /// Specification §28: missing tenant claim, request rejected. Still
-    /// required after ADR 0019 §2, even though the issuer now names the tenant:
-    /// a token minted without the canonical claim comes from a realm that has
-    /// not been configured the way §10 says a realm is configured, and
-    /// admitting it would mean quietly accepting two token shapes where the
-    /// specification names one.
+    /// Specification §28. Still required after ADR 0019 §2: a token minted
+    /// without the canonical claim comes from a realm not configured the way
+    /// §10 describes, and admitting it would mean silently accepting two
+    /// token shapes where the specification names one.
     #[error("bearer token has no {claim} claim")]
     MissingTenantClaim {
         /// The configured claim name that was looked for.
         claim: String,
     },
 
-    /// The tenant claim named a different tenant than the issuer's
-    /// registration.
+    /// The tenant claim named a different tenant than the issuer's registration.
     ///
-    /// Neither value is echoed. This is not a request to disambiguate; it is a
-    /// request to pick, and picking is the bug. It is also the only signal this
-    /// process will ever get that the edge and the registry have diverged,
-    /// since it verifies nothing itself.
+    /// Neither value is echoed. This is a request to pick, not to
+    /// disambiguate — and the only signal this process, which verifies
+    /// nothing itself, will ever get that the edge and the registry diverged.
     #[error("the {claim} claim does not name the tenant its issuer is registered to")]
     TenantClaimDisagreesWithIssuer {
         /// The configured claim name that held the disagreeing value.
@@ -120,18 +113,27 @@ pub enum IdentityError {
 impl IdentityError {
     /// Maps the failure to the status code the caller sees.
     ///
-    /// Everything that concerns the *token* is a 401, because presenting a
-    /// different token could succeed. That includes the three issuer-binding
-    /// refusals, which are ADR 0019's credential class: a token from an
-    /// unregistered issuer is a credential this deployment will not accept, not
-    /// a configuration fault of its own. The banned tenant header is a 400,
-    /// because the request itself is malformed and re-authenticating would not
-    /// help.
+    /// Everything concerning the *token* is a 401 — presenting a different one
+    /// could succeed — including the three issuer-binding refusals, ADR 0019's
+    /// credential class: an unregistered issuer is a credential this
+    /// deployment will not accept, not a fault of its own configuration. The
+    /// banned tenant header is a 400: the request itself is malformed, and
+    /// re-authenticating would not help.
     #[must_use]
     pub const fn status(&self) -> StatusCode {
         match self {
+            Self::MissingAuthorization
+            | Self::NotBearer
+            | Self::MalformedToken
+            | Self::UnverifiedToken
+            | Self::ExpiredToken
+            | Self::TokenNotYetValid
+            | Self::MissingIssuerClaim
+            | Self::UnregisteredIssuer
+            | Self::MissingTenantClaim { .. }
+            | Self::TenantClaimDisagreesWithIssuer { .. }
+            | Self::InvalidTenantClaim { .. } => StatusCode::UNAUTHORIZED,
             Self::TenantHeaderPresent { .. } => StatusCode::BAD_REQUEST,
-            _ => StatusCode::UNAUTHORIZED,
         }
     }
 }

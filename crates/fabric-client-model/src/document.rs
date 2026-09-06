@@ -1,4 +1,10 @@
 //! The declarative document that carries a client's desired state.
+//!
+//! Over the 120-line advisory threshold. The reason is that this is one
+//! struct together with its impls: the two halves it holds, the accessors
+//! that read them, and the three operations — parse, edit, render — that
+//! produce and consume it. None of those would be reused or tested apart
+//! from the type they belong to.
 
 #[cfg(test)]
 mod document_tests;
@@ -60,6 +66,28 @@ impl ClientDocument {
     #[must_use]
     pub fn into_client(self) -> Client {
         self.client
+    }
+
+    /// Which schema version this document declares.
+    ///
+    /// Read from `raw` rather than decided once at parse time and cached, so
+    /// it can never drift from what the file actually says. A caller checking
+    /// which schema a shipped example exercises should ask the document this
+    /// rather than search the text for `apiVersion: ...` — a rename of either
+    /// constant would leave a text search checking nothing.
+    #[must_use]
+    pub fn api_version(&self) -> &'static str {
+        let declared = self
+            .raw
+            .as_mapping()
+            .and_then(|mapping| mapping.get("apiVersion"))
+            .and_then(serde_norway::Value::as_str);
+
+        if declared == Some(schema::API_VERSION_V2) {
+            schema::API_VERSION_V2
+        } else {
+            schema::API_VERSION
+        }
     }
 
     /// Produces a copy of this document with a different identity

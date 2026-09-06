@@ -14,7 +14,8 @@ const KIND: &str = "app scheme";
 /// The permitted set, described for the error message.
 const EXPECTED: &str = "a reverse-domain scheme such as nz.fieldstate.slipway";
 
-/// Whether a URI scheme is a private-use scheme in RFC 8252 §7.1 form.
+/// Whether a URI scheme candidate is a private-use scheme in RFC 8252 §7.1
+/// form.
 ///
 /// The RFC asks a native application to use "a domain name under their
 /// control, in reverse order". The observable part of that is the dot: an
@@ -23,11 +24,24 @@ const EXPECTED: &str = "a reverse-domain scheme such as nz.fieldstate.slipway";
 /// the classifier exists to refuse.
 ///
 /// It cannot tell a reversed domain from a forward one — `www.example.com` is
-/// a syntactically valid scheme — and it does not try. Nothing is *admitted*
-/// by being a private-use scheme: such a URI is only ever accepted under the
-/// strategy declaring the same scheme, and that strategy is itself refused
-/// until the phase that will carry it.
-pub(super) fn is_private_use(scheme: &str) -> bool {
+/// a syntactically valid scheme — and mostly does not try. What it does check
+/// is `rest`, the text after the colon: a digit immediately there means the
+/// text before the colon was never a scheme at all, it was a host, and the
+/// colon introduced a port. `www.example.com:8080/cb` has a dot and would
+/// otherwise pass the reverse-domain check; refusing it here is what stops a
+/// missing `https://` prefix from being reported as a native application's
+/// callback. RFC 8252 §7.1's own examples never put a digit straight after
+/// the colon — `nz.fieldstate.slipway:/cb` and
+/// `nz.fieldstate.slipway://localhost/cb` do not, and stay private-use.
+///
+/// Nothing is *admitted* by being a private-use scheme: such a URI is only
+/// ever accepted under the strategy declaring the same scheme, and that
+/// strategy is itself refused until the phase that will carry it.
+pub(super) fn is_private_use(scheme: &str, rest: &str) -> bool {
+    if rest.starts_with(|character: char| character.is_ascii_digit()) {
+        return false;
+    }
+
     AppScheme::check(scheme).is_ok()
 }
 
@@ -124,8 +138,8 @@ mod tests {
 
     #[test]
     fn a_reverse_domain_scheme_is_a_private_use_scheme() {
-        assert!(is_private_use("nz.fieldstate.slipway"));
-        assert!(is_private_use("com.example.app"));
+        assert!(is_private_use("nz.fieldstate.slipway", "/cb"));
+        assert!(is_private_use("com.example.app", "://host/cb"));
     }
 
     #[test]
@@ -133,9 +147,27 @@ mod tests {
         // The regression this rule prevents: every one of these would become a
         // private-use scheme under a "not http, therefore private-use" test,
         // and `javascript:` would then be a callback this model accepts.
-        for scheme in ["http", "https", "javascript", "data", "file", "ftp"] {
-            assert!(!is_private_use(scheme), "{scheme}");
+        // `www.example.com` is the sharper case: it has a dot and would pass
+        // the reverse-domain check on its own — what refuses it is the digit
+        // straight after the colon, a host:port with no scheme at all.
+        for (scheme, rest) in [
+            ("http", "//x"),
+            ("https", "//x"),
+            ("javascript", "alert(1)"),
+            ("data", "text/html,x"),
+            ("file", "///etc/passwd"),
+            ("ftp", "//x"),
+            ("www.example.com", "8080/cb"),
+        ] {
+            assert!(!is_private_use(scheme, rest), "{scheme}");
         }
+    }
+
+    #[test]
+    fn a_scheme_shaped_candidate_followed_by_a_path_is_still_private_use() {
+        // The digit check only fires on a digit. A scheme followed by a path
+        // that happens to start with a letter is unaffected.
+        assert!(is_private_use("nz.fieldstate.slipway", "alert/cb"));
     }
 
     #[test]

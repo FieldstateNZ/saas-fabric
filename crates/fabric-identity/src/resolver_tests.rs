@@ -49,6 +49,7 @@ fn config() -> IdentityConfig {
 
 fn resolver_with(config: IdentityConfig) -> IdentityResolver {
     IdentityResolver::new(config, Arc::new(TrustedIngressReader::new(Arc::new(FixedClock))))
+        .expect("the fixture registry must validate")
 }
 
 fn resolver() -> IdentityResolver {
@@ -185,17 +186,6 @@ fn a_tenant_that_agrees_with_its_issuer_is_the_tenant_that_is_used() {
 }
 
 #[test]
-fn the_registered_tenant_is_what_is_used_even_when_the_claim_spells_it_the_same() {
-    // The value returned is the registration's, cloned. Reading it back off
-    // the claim would be the same string today and the wrong one the moment
-    // the comparison loosened.
-    let registration = TenantId::try_new("acme").unwrap();
-    let headers = headers_for(json!({"iss": ACME_ISSUER, "tenant_id": "acme"}));
-
-    assert_eq!(*resolver().resolve(&headers).unwrap().tenant(), registration);
-}
-
-#[test]
 fn a_claim_projection_header_changes_nothing_about_the_tenant() {
     // The edge strips these; the runtime is written never to notice them. Both
     // requests must resolve the same tenant, or a projected claim would be a
@@ -242,7 +232,8 @@ fn the_defence_in_depth_posture_binds_the_tenant_through_the_same_registry() {
     let claims = json!({"iss": ACME_ISSUER, "tenant_id": "globex", "exp": at + 3_600});
 
     let reader = crate::readers::validating::tests::insecure_reader(SECRET, Arc::new(FixedClock));
-    let resolver = IdentityResolver::new(config(), Arc::new(reader));
+    let resolver =
+        IdentityResolver::new(config(), Arc::new(reader)).expect("the fixture registry must validate");
 
     let token = jsonwebtoken::encode(
         &jsonwebtoken::Header::new(jsonwebtoken::Algorithm::HS256),

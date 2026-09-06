@@ -245,6 +245,37 @@ fn a_v1_client_carrying_a_redirect_block_is_refused_rather_than_read_two_ways() 
 }
 
 #[test]
+fn a_v1_client_carrying_a_pkce_key_is_refused_rather_than_silently_overwritten() {
+    // The migrator writes `pkce: s256` unconditionally. Without this refusal
+    // a `v1` client that already had a `pkce` key of its own — a `v2` document
+    // mislabelled as `v1` — would have that value quietly replaced instead of
+    // the mislabelling being reported.
+    let text = ACME.replace(
+        "        redirectUris:\n",
+        "        pkce: s256\n        redirectUris:\n",
+    );
+
+    assert!(matches!(
+        ClientDocument::parse(&text),
+        Err(DesiredStateError::Migration { .. })
+    ));
+}
+
+#[test]
+fn a_v1_client_missing_its_scheme_is_reported_as_malformed_not_as_a_private_use_scheme() {
+    // Before the scheme/host-port discriminator, `www.example.com:8080/cb`
+    // misclassified as a private-use scheme, because it has a dot and nothing
+    // ruled out a bare host:port. The migrator's diagnosis follows the
+    // classifier: this is a parse failure — an operator's typo, missing its
+    // `https://` — not "it declares a private-use scheme; migrate it to v2 by
+    // hand under the customScheme strategy", which would misdirect them.
+    let text = v1_client_with(&["www.example.com:8080/cb"]);
+    let error = ClientDocument::parse(&text).unwrap_err();
+
+    assert!(matches!(error, DesiredStateError::Malformed { .. }), "{error}");
+}
+
+#[test]
 fn a_migrated_callback_keeps_the_kind_it_was_written_as() {
     let client = acme().into_client();
     let web = &client.identity.clients[0];

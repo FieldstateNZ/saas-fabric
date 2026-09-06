@@ -63,12 +63,31 @@ fn slipway() -> RedirectStrategyKind {
     RedirectStrategyKind::CustomScheme(AppScheme::try_new("nz.fieldstate.slipway").unwrap())
 }
 
+/// The `InvalidField` detail this pairing was refused with, if it was.
+fn refusal_detail(kind: &RedirectStrategyKind, uris: &[&str]) -> Option<String> {
+    match identity_with(kind, uris).validate() {
+        Err(DesiredStateError::InvalidField {
+            field: "spec.identity.clients",
+            detail,
+        }) => Some(detail),
+        _ => None,
+    }
+}
+
 /// Whether validating this pairing produced an `InvalidField` on the clients.
 fn refuses_client(kind: &RedirectStrategyKind, uris: &[&str]) -> bool {
-    matches!(
-        identity_with(kind, uris).validate(),
-        Err(DesiredStateError::InvalidField { field, .. }) if field == "spec.identity.clients"
-    )
+    refusal_detail(kind, uris).is_some()
+}
+
+/// Asserts a refusal's detail names the strategy, the URI's kind, and what
+/// the strategy admits — matrix D1's expectation for every row this helper
+/// covers.
+fn assert_names_strategy_kind_and_admission(kind: &RedirectStrategyKind, uris: &[&str], uri_kind: &str) {
+    let detail = refusal_detail(kind, uris).unwrap_or_else(|| panic!("{kind} must refuse {uris:?}"));
+
+    assert!(detail.contains(&kind.to_string()), "{detail}");
+    assert!(detail.contains(uri_kind), "{detail}");
+    assert!(detail.contains("admits"), "{detail}");
 }
 
 /// Whether validating this pairing was accepted.
@@ -78,28 +97,35 @@ fn accepts(kind: &RedirectStrategyKind, uris: &[&str]) -> bool {
 
 #[test]
 fn a_development_callback_is_refused_under_the_production_strategy() {
-    assert!(refuses_client(
+    // D1: the detail names the strategy, the URI's kind, and what the
+    // strategy admits, so an operator does not have to guess which of the
+    // three is wrong.
+    assert_names_strategy_kind_and_admission(
         &RedirectStrategyKind::ClaimedHttps,
-        &["http://localhost:5173/callback"]
-    ));
+        &["http://localhost:5173/callback"],
+        "loopback callback",
+    );
 }
 
 #[test]
 fn a_loopback_host_is_not_a_claimed_https_callback_even_over_tls() {
-    // The host rule's sharpest edge. "The scheme is https, therefore the
+    // D1a. The host rule's sharpest edge. "The scheme is https, therefore the
     // strategy is claimedHttps" is the intuition the partition exists to break.
-    assert!(refuses_client(
+    assert_names_strategy_kind_and_admission(
         &RedirectStrategyKind::ClaimedHttps,
-        &["https://localhost:5173/callback"]
-    ));
+        &["https://localhost:5173/callback"],
+        "loopback callback",
+    );
 }
 
 #[test]
 fn a_private_network_host_is_not_a_claimed_https_callback_even_over_tls() {
-    assert!(refuses_client(
+    // D1b.
+    assert_names_strategy_kind_and_admission(
         &RedirectStrategyKind::ClaimedHttps,
-        &["https://admin.corp.internal/cb"]
-    ));
+        &["https://admin.corp.internal/cb"],
+        "private-network callback",
+    );
 }
 
 #[test]
@@ -130,20 +156,23 @@ fn a_loopback_callback_may_be_served_over_tls() {
 
 #[test]
 fn a_public_callback_is_refused_under_the_development_strategy() {
-    // Refused rather than waved through as "stricter than needed": the
+    // D2. Refused rather than waved through as "stricter than needed": the
     // strategy is a statement about what the client *is*.
-    assert!(refuses_client(
+    assert_names_strategy_kind_and_admission(
         &RedirectStrategyKind::Development,
-        &["https://www.example.com/callback"]
-    ));
+        &["https://www.example.com/callback"],
+        "public https callback",
+    );
 }
 
 #[test]
 fn a_private_network_callback_is_refused_under_the_production_strategy() {
-    assert!(refuses_client(
+    // D3.
+    assert_names_strategy_kind_and_admission(
         &RedirectStrategyKind::ClaimedHttps,
-        &["http://acme.lucentroot.internal/callback"]
-    ));
+        &["http://acme.lucentroot.internal/callback"],
+        "private-network callback",
+    );
 }
 
 #[test]

@@ -3,9 +3,16 @@
 //!
 //! Its own file because the loopback boundary is the subtlest security
 //! argument in this crate, and it is the one a reader most needs to meet on
-//! its own rather than at the end of a scheme table.
+//! its own rather than at the end of a scheme table. [`ip_literal`] carries
+//! the numeric parsing this file's rules are stated against, so the decision
+//! tree here stays readable as a decision tree.
+//!
+//! Over the 120-line advisory threshold. The reason is that this is one
+//! decision tree — `classify` — together with the two trivial predicates it
+//! calls and the constants naming what each refusal tells the author; none of
+//! those would be reused or tested apart from the tree that calls them.
 
-use std::net::IpAddr;
+mod ip_literal;
 
 use fabric_core::IdentifierError;
 
@@ -31,21 +38,37 @@ const PRIVATE_TLD: &str = "internal";
 /// the three spellings above.
 const BOUNDARY: &str = "loopback is 127.0.0.1, ::1 or localhost, and no other spelling of them";
 
+/// What an author is told when the host is empty, or a label between two dots
+/// is.
+const NO_EMPTY_LABEL: &str = "a host, not an empty string or an empty label between two dots";
+
+/// What an author is told when a claimed-HTTPS host is an IP address literal.
+const NOT_A_DOMAIN: &str = "a registered domain, not an IP address";
+
 /// Classifies an already-lower-cased host.
 ///
-/// Loopback first, then `.internal`, then everything else — and everything
-/// else only if the scheme was `https`. `https://localhost:5173/cb` is
-/// therefore **loopback**, not the production kind, and
-/// `https://admin.corp.internal/cb` is a private-network host: a scheme-only
-/// partition would put both in the production kind and let a production
-/// strategy hold a development callback while looking correct.
+/// Empty first, then loopback, then `.internal`, then everything else — and
+/// everything else only if the scheme was `https`, and then only if it is not
+/// itself an IP address literal. `https://localhost:5173/cb` is therefore
+/// **loopback**, not the production kind, and `https://admin.corp.internal/cb`
+/// is a private-network host: a scheme-only partition would put both in the
+/// production kind and let a production strategy hold a development callback
+/// while looking correct.
 ///
 /// # Errors
 ///
-/// Returns [`IdentifierError::Unadmitted`] for a host that reaches loopback
-/// without being one of [`LOOPBACK`]'s spellings, and
+/// Returns [`IdentifierError::Unadmitted`] for an empty host or label, for a
+/// host that reaches loopback without being one of [`LOOPBACK`]'s spellings,
+/// and for an IP address literal offered under `https`; and
 /// [`IdentifierError::BadBoundary`] for plain HTTP on a public host.
 pub(super) fn classify(host: &str, secure: bool) -> Result<RedirectUriKind, IdentifierError> {
+    if host.split('.').any(str::is_empty) {
+        return Err(IdentifierError::Unadmitted {
+            kind: KIND,
+            expected: NO_EMPTY_LABEL,
+        });
+    }
+
     if LOOPBACK.contains(&host) {
         return Ok(RedirectUriKind::Loopback);
     }
@@ -61,35 +84,47 @@ pub(super) fn classify(host: &str, secure: bool) -> Result<RedirectUriKind, Iden
         return Ok(RedirectUriKind::PrivateNetwork);
     }
 
-    if secure {
-        Ok(RedirectUriKind::Https)
-    } else {
-        Err(IdentifierError::BadBoundary { kind: KIND })
+    if !secure {
+        return Err(IdentifierError::BadBoundary { kind: KIND });
     }
+
+    if is_ip_literal(host) {
+        return Err(IdentifierError::Unadmitted {
+            kind: KIND,
+            expected: NOT_A_DOMAIN,
+        });
+    }
+
+    Ok(RedirectUriKind::Https)
 }
 
 /// Whether a host reaches the loopback interface without being one of the
 /// three spellings this model recognises.
 ///
-/// Refused rather than admitted, and refused rather than classified as an
-/// ordinary public host. `127.0.0.2` is loopback to every operating system,
-/// `[::ffff:127.0.0.1]` is the IPv4-mapped spelling of one that *is* in the
-/// list, and `localhost.localdomain` resolves to loopback on many machines. A
-/// claimed-HTTPS entitlement satisfied by an address that never leaves the
-/// machine is the entitlement failing to mean anything, and an entitlement
-/// that can only be recognised by resolving a name is not a declaration.
-///
-/// A public IPv6 literal is untouched by this: it is parsed, found not to be
-/// loopback, and classified like any other host.
+/// Refused rather than admitted or classified as an ordinary public host.
+/// `127.0.0.2`, the abbreviated `127.1`, the all-numeric `2130706433`, the
+/// hexadecimal `0x7f000001` and the IPv4-mapped `[::ffff:127.0.0.1]` all reach
+/// loopback for `inet_aton` — and therefore for curl, a browser, and most
+/// libc resolvers — without being one of the three spellings this model
+/// recognises; `localhost.localdomain` reaches it by resolving on many
+/// machines instead. An entitlement satisfied by an address that never leaves
+/// the machine, or that can only be recognised by resolving a name, is the
+/// entitlement failing to mean anything.
 fn reaches_loopback(host: &str) -> bool {
-    if let Ok(address) = host.parse::<IpAddr>() {
-        return match address {
-            IpAddr::V4(v4) => v4.is_loopback(),
-            IpAddr::V6(v6) => {
-                v6.is_loopback() || v6.to_ipv4_mapped().is_some_and(|mapped| mapped.is_loopback())
-            }
-        };
+    if let Some(address) = ip_literal::parse(host) {
+        return ip_literal::is_loopback(address);
     }
 
     host.starts_with("localhost.")
+}
+
+/// Whether a host is an IP address literal, in any spelling — not only the
+/// ones that reach loopback.
+///
+/// Reached only once loopback and `.internal` are ruled out: an ordinary
+/// public address is not a registered domain, and a Universal Link or App
+/// Link needs one. Plain HTTP to the same address is refused already, for the
+/// unrelated reason that plain HTTP is refused on any public host.
+fn is_ip_literal(host: &str) -> bool {
+    ip_literal::parse(host).is_some()
 }

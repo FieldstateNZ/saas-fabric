@@ -151,20 +151,29 @@ fn the_example_configuration_builds_an_identity_resolver() {
 fn every_example_tenant_has_an_issuer_that_names_it() {
     // The two shipped files are one fact written twice. A tenant with no
     // registration cannot authenticate at all, and a registration for a tenant
-    // that does not exist is a binding to nothing.
+    // that does not exist is a binding to nothing — both directions are
+    // checked, so neither list can drift ahead of the other.
     let config = config();
-    let registered: Vec<&str> = config
+    let bindings = tenants();
+    let declared_tenants: Vec<&str> = bindings.iter().map(|binding| binding.tenant.as_str()).collect();
+    let registered_tenants: Vec<&str> = config
         .identity
         .trusted_issuers
         .iter()
         .map(|registration| registration.tenant().as_str())
         .collect();
 
-    for binding in tenants() {
+    for tenant in &declared_tenants {
         assert!(
-            registered.contains(&binding.tenant.as_str()),
-            "no issuer is registered for the example tenant {}",
-            binding.tenant
+            registered_tenants.contains(tenant),
+            "no issuer is registered for the example tenant {tenant}"
+        );
+    }
+
+    for tenant in &registered_tenants {
+        assert!(
+            declared_tenants.contains(tenant),
+            "an issuer is registered for {tenant}, which no example tenant declares"
         );
     }
 }

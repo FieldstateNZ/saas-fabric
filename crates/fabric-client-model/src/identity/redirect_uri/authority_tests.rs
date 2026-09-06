@@ -145,15 +145,55 @@ fn the_ipv6_loopback_address_is_a_development_callback() {
 
 #[test]
 fn only_three_loopback_hosts_are_a_development_callback() {
-    // All three reach loopback on some machine, and none of them is one of the
-    // three spellings this model recognises. `[::ffff:127.0.0.1]` parsed under
-    // `https://` before this change, so refusing it is a deliberate narrowing:
-    // a claimed-HTTPS entitlement satisfied by an address that never leaves
-    // the machine is the entitlement failing to mean anything.
-    for host in ["127.0.0.2", "[::ffff:127.0.0.1]", "localhost.localdomain"] {
+    // Every one of these reaches loopback on some machine, and none of them
+    // is one of the three spellings this model recognises. `[::ffff:127.0.0.1]`
+    // parsed under `https://` before this change, so refusing it is a
+    // deliberate narrowing: a claimed-HTTPS entitlement satisfied by an
+    // address that never leaves the machine is the entitlement failing to
+    // mean anything. `127.1`, `2130706433` and `0x7f000001` are the
+    // abbreviated, all-numeric and hexadecimal spellings `inet_aton` — and
+    // therefore curl, a browser, and most libc resolvers — read as the same
+    // address; a strict `IpAddr::from_str` accepted none of them, which is
+    // the bypass this classifier exists to close.
+    for host in [
+        "127.0.0.2",
+        "[::ffff:127.0.0.1]",
+        "localhost.localdomain",
+        "127.1",
+        "2130706433",
+        "0x7f000001",
+        "0177.0.0.1",
+    ] {
         assert!(!accepts(&format!("https://{host}/callback")), "{host}");
         assert!(!accepts(&format!("http://{host}/callback")), "{host}");
     }
+}
+
+#[test]
+fn an_ip_literal_is_never_a_claimed_https_callback() {
+    // Universal Links and App Links require a registered domain. An ordinary
+    // public address — not anybody's loopback — is refused under `https` in
+    // every spelling this model recognises: standard dotted-decimal, the
+    // all-numeric form, hexadecimal, and a bracketed IPv6 literal.
+    for host in ["93.184.216.34", "134744072", "0x08080808", "[2001:db8::1]"] {
+        let error = RedirectUri::try_new(format!("https://{host}/callback")).unwrap_err();
+        assert!(error.to_string().contains("registered domain"), "{host}: {error}");
+    }
+}
+
+#[test]
+fn an_empty_host_is_refused() {
+    // `https:///cb` and `https://:8443/cb` both parse to an empty host, which
+    // is not a domain this model can name a strategy against.
+    assert!(!accepts("https:///cb"));
+    assert!(!accepts("https://:8443/cb"));
+}
+
+#[test]
+fn an_empty_first_label_is_refused() {
+    // `.internal` on its own is a leading dot, not the private top-level
+    // domain — a substring-style `ends_with` would accept it anyway.
+    assert!(!accepts("https://.internal/cb"));
 }
 
 #[test]

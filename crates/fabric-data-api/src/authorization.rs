@@ -142,6 +142,7 @@ mod tests {
         };
 
         IdentityResolver::new(config, Arc::new(TrustedIngressReader::new(Arc::new(FixedClock))))
+            .unwrap()
             .resolve(&headers)
             .unwrap()
     }

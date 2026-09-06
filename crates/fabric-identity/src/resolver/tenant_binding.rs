@@ -27,9 +27,14 @@ const ISSUER_CLAIM: &str = "iss";
 /// claim at all: this process verifies nothing, so a disagreement is the only
 /// evidence it will ever get that the edge and this registry have diverged.
 ///
-/// The returned tenant is **the registration's**, cloned. Reading it back off
-/// the claim after checking equality would be the same value today and the
-/// wrong value the moment the comparison loosened.
+/// The returned tenant is **the registration's**, cloned — structurally, not
+/// merely by test. Every path through this function ends either in an early
+/// `Err` or in the `Ok(registration.tenant().clone())` below; there is no
+/// third path that reads the claim instead. A test asserting "the registered
+/// tenant is what gets used, even when the claim spells it the same" cannot
+/// fail, because the claim is never in the return statement to begin with —
+/// reading it back off the claim after checking equality would be the same
+/// value today and the wrong value the moment the comparison loosened.
 ///
 /// # Errors
 ///
@@ -62,7 +67,7 @@ fn registration_for<'a>(
     })?;
 
     TrustedIssuer::find(&config.trusted_issuers, issuer).ok_or_else(|| {
-        logging::issuer_unregistered(ISSUER_CLAIM);
+        logging::issuer_unregistered(issuer, config.trusted_issuers.len());
         IdentityError::UnregisteredIssuer
     })
 }

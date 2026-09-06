@@ -538,30 +538,30 @@ change.
 
 ## File sizes
 
-808 Rust source files under `crates/*/src`, of which 151 are the control
-plane's; `scripts/check_file_sizes.py` measures 702 of them, the rest being
+811 Rust source files under `crates/*/src`, of which 151 are the control
+plane's; `scripts/check_file_sizes.py` measures 705 of them, the rest being
 `*_tests.rs` siblings and per-crate integration tests it excludes by rule. The
 policy (`docs/architecture/file-size-policy.md`) treats 150 production lines as
 a hard limit and 120 as advisory; test lines never count, whether they live in
 a sibling `*_tests.rs` or in a trailing `#[cfg(test)]` module.
 
 Counted by running the script on the commit that this paragraph ships in — the
-one that removed the `:*` wildcard port from the redirect model and replaced
-the IP-literal test with a registered-domain rule, on `claude/m2-edge-trust`.
-Re-run it rather than trusting the numbers: they are a snapshot, and the point
-of recording them is that the next snapshot can be compared.
+one that refused the reserved and `.localhost` names, made the sanitiser say
+when it had filtered, and re-pointed ADR 0019's citations at the code as it now
+stands, on `claude/m2-edge-trust`. Re-run it rather than trusting the numbers:
+they are a snapshot, and the point of recording them is that the next snapshot
+can be compared.
 
 - **Over 150 lines: none unexplained.** Two files hold an exemption, each with
   its reason recorded beside it in the script:
   `fabric-control-plane/src/errors.rs` (175) and `fabric-fga-auth/src/cache.rs`
   (155).
-- **Over 120 lines: 106 files**, of which 104 are inside the hard limit. The
-  largest unexempted are three at exactly 150 —
-  `fabric-client-model/src/identity/redirect_uri/host_kind/registered_domain.rs`,
+- **Over 120 lines: 105 files**, of which 103 are inside the hard limit. The
+  largest unexempted are two at exactly 150 —
   `fabric-connector/src/errors/connector_error.rs` and
-  `fabric-identity/src/logging.rs`. Every file in the 121–150 band that this
-  lane wrote or touched states its reason at the top of the file, which is what
-  the policy asks of that band.
+  `fabric-platform-management/src/desired_state/port.rs`. Every file in the
+  121–150 band that this lane wrote or touched states its reason at the top of
+  the file, which is what the policy asks of that band.
 
 Two control-plane files reached the limit while being written and were split
 rather than exempted, and both splits are worth recording because they are the
@@ -576,9 +576,16 @@ Neither fragments a type across files: in both cases the struct kept its own
 file and one impl block moved, which is the convention `config::loading` and
 `config::validation` already follow in the runtime host.
 
-The advisory band grew from 20 files to 52, and the reason is the same as it
-was: rustdoc. Every file in the band is a type or a function set whose prose
-outweighs its code — `redirect_uri.rs` is 130 lines for a newtype over a
+Two more reached the limit in this lane, each because something had to be added
+to a file that was already at exactly 150, and each was split rather than
+grown: `fabric-client-model/src/identity/redirect_uri/host_kind/registered_domain.rs`
+kept the rule about a whole *name* and gave `registered_domain/label.rs` the
+rule about one *label*; `fabric-identity/src/logging.rs` kept the domain's
+refusals and gave `logging/startup.rs` the one event there that is not one.
+
+**103 files sit in the 121–150 band**, and the reason is the one it has always
+been: rustdoc. Every file in the band is a type or a function set whose prose
+outweighs its code — `redirect_uri.rs` is 138 lines for a newtype over a
 `String`, and most of that is the argument for why a wildcard in the host is
 refused. Splitting prose away from the thing it explains would satisfy the
 counter and make the code worse.

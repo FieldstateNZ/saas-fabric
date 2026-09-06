@@ -4,9 +4,10 @@
 //! Its own file because the loopback boundary is the subtlest security
 //! argument in this crate, and it is the one a reader most needs to meet on
 //! its own rather than at the end of a scheme table. [`ip_literal`] carries
-//! the numeric parsing the loopback rule is stated against and
-//! [`registered_domain`] carries the production rule, so the decision tree
-//! here stays readable as a decision tree.
+//! the numeric parsing the loopback rule is stated against,
+//! [`special_use`] carries which top-level domains the public DNS has
+//! reserved, and [`registered_domain`] carries the production rule, so the
+//! decision tree here stays readable as a decision tree.
 //!
 //! Over the 120-line advisory threshold. The reason is that this is one
 //! decision tree — `classify` — together with the single predicate it calls
@@ -17,6 +18,7 @@
 
 mod ip_literal;
 mod registered_domain;
+mod special_use;
 
 use fabric_core::IdentifierError;
 
@@ -57,8 +59,9 @@ const PLAIN_HTTP: &str = "https for a public host; plain http only on loopback o
 /// Classifies an already-lower-cased host.
 ///
 /// Empty first, then loopback, then the loopback near-misses, then
-/// `.internal`, then plain HTTP is out — and everything that survives has to
-/// prove it is a registered domain. `https://localhost:5173/cb` is therefore
+/// `.internal`, then plain HTTP is out, then the top-level domains nobody can
+/// register — and everything that survives has to prove it is a registered
+/// domain. `https://localhost:5173/cb` is therefore
 /// **loopback**, not the production kind, and `https://admin.corp.internal/cb`
 /// is a private-network host: a scheme-only partition would put both in the
 /// production kind and let a production strategy hold a development callback
@@ -78,7 +81,7 @@ const PLAIN_HTTP: &str = "https for a public host; plain http only on loopback o
 /// Returns [`IdentifierError::Unadmitted`] for an empty host or label, for a
 /// host that reaches loopback without being one of [`LOOPBACK`]'s spellings,
 /// and for plain HTTP on a public host; and whatever
-/// [`registered_domain::check`] refuses.
+/// [`special_use::check`] and [`registered_domain::check`] refuse.
 pub(super) fn classify(host: &str, secure: bool) -> Result<RedirectUriKind, IdentifierError> {
     if host.split('.').any(str::is_empty) {
         return Err(IdentifierError::Unadmitted {
@@ -109,6 +112,7 @@ pub(super) fn classify(host: &str, secure: bool) -> Result<RedirectUriKind, Iden
         });
     }
 
+    special_use::check(host)?;
     registered_domain::check(host)?;
 
     Ok(RedirectUriKind::Https)
@@ -122,14 +126,17 @@ pub(super) fn classify(host: &str, secure: bool) -> Result<RedirectUriKind, Iden
 /// hexadecimal `0x7f000001` and the IPv4-mapped `[::ffff:127.0.0.1]` all reach
 /// loopback for `inet_aton` — and therefore for curl, a browser, and most libc
 /// resolvers — without being one of the three spellings this model
-/// recognises; `localhost.localdomain` reaches it by resolving on many
-/// machines instead. An entitlement satisfied by an address that never leaves
-/// the machine, or that can only be recognised by resolving a name, is the
+/// recognises. The two by name reach it differently:
+/// `localhost.localdomain` resolves to loopback on many machines, and
+/// **every** name under `.localhost` is required to, by RFC 6761 §6.3 —
+/// `app.localhost` is loopback in Chrome and Firefox without any resolver
+/// being asked. An entitlement satisfied by an address that never leaves the
+/// machine, or that can only be recognised by resolving a name, is the
 /// entitlement failing to mean anything.
 fn reaches_loopback(host: &str) -> bool {
     if let Some(address) = ip_literal::parse(host) {
         return ip_literal::is_loopback(address);
     }
 
-    host.starts_with("localhost.")
+    host.starts_with("localhost.") || special_use::reaches_localhost(host)
 }

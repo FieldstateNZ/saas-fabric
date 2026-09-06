@@ -10,23 +10,29 @@
 //! injection surface once a value has already been refused.
 //!
 //! **This module is that rule's enforcement point for the whole platform.**
-//! [`sanitise`] is exported rather than private because two other places log
-//! a token-derived value — `readers`, and `fabric-data-api`'s refused subject
-//! — and a second copy of this rule is a second answer waiting to disagree.
+//! [`sanitise`] is re-exported from the crate root rather than kept private
+//! because two other places log a token-derived value — `readers`, and
+//! `fabric-data-api`'s refused subject — and a second copy of this rule is a
+//! second answer waiting to disagree. The module itself is private: it is
+//! `sanitise` and `Sanitised` that are the platform's contract, not every
+//! emitter that happens to live beside them.
 //!
 //! Over the 120-line advisory threshold. The reason is that this is one set
 //! of typed emitters for one domain's refusals, each a few lines of `tracing`
 //! call behind a name and a doc comment explaining what it is safe to log and
 //! why; splitting them across files would separate each event from the
-//! sibling events a reader needs beside it to see the whole refusal path.
+//! sibling events a reader needs beside it to see the whole refusal path. The
+//! one event here that is *not* a refusal is in [`startup`].
 
 mod sanitize;
+mod startup;
 
 use fabric_core::{event_id, EventType, IdentifierError};
 
 use crate::DOMAIN_ID;
 
 pub use sanitize::{sanitise, Sanitised};
+pub(crate) use startup::reader_configured;
 
 /// A token arrived with no tenant claim.
 pub(crate) fn tenant_claim_missing(claim: &str) {
@@ -45,7 +51,9 @@ pub(crate) fn tenant_claim_missing(claim: &str) {
 /// values that are not tenants. `error`'s rendering is logged, through
 /// [`sanitise`]: [`IdentifierError::DisallowedCharacter`] embeds the one
 /// offending character verbatim, which is the value this function exists not
-/// to log unsanitised.
+/// to log unsanitised — and `reason_filtered` is how the line says that
+/// happened, because a filtered character leaves nothing behind in the
+/// rendering to notice.
 pub(crate) fn tenant_claim_invalid(claim: &str, error: &IdentifierError) {
     let reason = sanitise(&error.to_string());
 
@@ -55,6 +63,7 @@ pub(crate) fn tenant_claim_invalid(claim: &str, error: &IdentifierError) {
         tenant_claim = claim,
         reason = %reason,
         reason_truncated = reason.truncated,
+        reason_filtered = reason.filtered,
         "tenant claim is not a valid tenant identifier; rejecting"
     );
 }
@@ -84,6 +93,10 @@ pub(crate) fn issuer_claim_missing(claim: &str) {
 ///
 /// `issuer_truncated` says whether the bound fired: without it, a crafted
 /// issuer sharing its first 128 bytes with a real one is the same line.
+/// `issuer_filtered` says whether the filter fired, which is the other way one
+/// value reaches the line looking like another: an issuer written in
+/// homoglyphs arrives as an empty string, and without the flag that is the
+/// same record as a token that offered nothing at all.
 pub(crate) fn issuer_unregistered(issuer: &str, registered_issuer_count: usize) {
     let issuer = sanitise(issuer);
 
@@ -92,6 +105,7 @@ pub(crate) fn issuer_unregistered(issuer: &str, registered_issuer_count: usize) 
         event_id = event_id(DOMAIN_ID, EventType::Warning, 6),
         issuer_offered = %issuer,
         issuer_truncated = issuer.truncated,
+        issuer_filtered = issuer.filtered,
         registered_issuer_count,
         "bearer token's issuer is not registered; rejecting"
     );
@@ -131,20 +145,5 @@ pub(crate) fn tenant_header_ignored(header: &str) {
         event_id = event_id(DOMAIN_ID, EventType::Warning, 4),
         header,
         "request carried a tenant header; ignoring it — the tenant comes from the bearer token"
-    );
-}
-
-/// Records the token-reading posture at startup.
-///
-/// Emitted at info deliberately: whether signatures are verified is the single
-/// most consequential identity setting, and it should be visible in the first
-/// few lines of every deployment's logs rather than inferred from config.
-pub fn reader_configured(description: &str, tenant_claim: &str) {
-    tracing::info!(
-        event = "identity.reader_configured",
-        event_id = event_id(DOMAIN_ID, EventType::Success, 1),
-        reader = description,
-        tenant_claim,
-        "identity resolution configured"
     );
 }

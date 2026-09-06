@@ -154,11 +154,17 @@ fn only_three_loopback_hosts_are_a_development_callback() {
     // abbreviated, all-numeric and hexadecimal spellings `inet_aton` — and
     // therefore curl, a browser, and most libc resolvers — read as the same
     // address; a strict `IpAddr::from_str` accepted none of them, which is
-    // the bypass this classifier exists to close.
+    // the bypass this classifier exists to close. `app.localhost` reaches it
+    // by a rule rather than by a resolver: RFC 6761 §6.3 requires every name
+    // under `.localhost` to resolve to loopback, and Chrome and Firefox do,
+    // so a development server on `app.localhost` is the machine the browser
+    // is already on wearing a name that looks registrable.
     for host in [
         "127.0.0.2",
         "[::ffff:127.0.0.1]",
         "localhost.localdomain",
+        "app.localhost",
+        "a.b.localhost",
         "127.1",
         "2130706433",
         "0x7f000001",
@@ -167,6 +173,47 @@ fn only_three_loopback_hosts_are_a_development_callback() {
         assert!(!accepts(&format!("https://{host}/callback")), "{host}");
         assert!(!accepts(&format!("http://{host}/callback")), "{host}");
     }
+}
+
+#[test]
+fn a_name_under_the_loopback_domain_is_told_what_loopback_is() {
+    // The same boundary message the numeric near-misses get: `app.localhost`
+    // is not a fourth spelling of loopback, and it is not a public host
+    // either.
+    let error = RedirectUri::try_new("https://app.localhost/callback").unwrap_err();
+
+    assert!(error.to_string().contains("127.0.0.1"), "{error}");
+    assert!(error.to_string().contains("localhost"), "{error}");
+}
+
+#[test]
+fn a_reserved_top_level_domain_is_not_a_claimed_https_callback() {
+    // None of these can be registered, so none can carry a publicly-trusted
+    // certificate and none can be claimed as a Universal Link or an App Link
+    // — which is the same criterion `.internal` is admitted on, reaching the
+    // opposite conclusion. Each names the RFC that reserved it, because that
+    // is the evidence the refusal rests on.
+    for (host, rfc) in [
+        ("printer.local", "RFC 6762"),
+        ("app.test", "RFC 2606"),
+        ("www.example", "RFC 2606"),
+        ("nothing.invalid", "RFC 2606"),
+    ] {
+        let error = RedirectUri::try_new(format!("https://{host}/callback")).unwrap_err();
+
+        assert!(error.to_string().contains(rfc), "{host}: {error}");
+        assert!(error.to_string().contains("App Link"), "{host}: {error}");
+    }
+}
+
+#[test]
+fn a_reserved_label_that_is_not_the_top_level_domain_is_an_ordinary_host() {
+    // The mistake a substring test would make. Every one of these is a name
+    // somebody can register, and `example.com` in particular is the host half
+    // this file's other rows are written against.
+    assert!(accepts("https://www.example.com/callback"));
+    assert!(accepts("https://test.example.com/callback"));
+    assert!(accepts("https://local.example.com/callback"));
 }
 
 #[test]
@@ -182,11 +229,17 @@ fn an_ip_literal_is_never_a_claimed_https_callback() {
     // - `[::1%25lo0]`: a zone id names an interface only one machine has.
     // - `[foo]` and `[::1`: a bracketed authority is an IPv6 literal or it is
     //   nothing, and an unclosed bracket classified as *loopback*.
+    //
+    // `[2001:db8::1]` and `[::]` are well-formed IPv6 literals, so they reach
+    // the registered-domain rule rather than the bracket rule, and what they
+    // are told is that they are an address — not, as they were, that a
+    // registered domain needs at least two labels.
     for (host, expected) in [
         ("93.184.216.34", "registered domain"),
         ("134744072", "registered domain"),
         ("0x08080808", "registered domain"),
-        ("[2001:db8::1]", "registered domain"),
+        ("[2001:db8::1]", "not an IP address"),
+        ("[::]", "not an IP address"),
         ("0x", "registered domain"),
         ("0x.0x.0x.0x", "registered domain"),
         ("１２７．０．０．１", "xn--"),

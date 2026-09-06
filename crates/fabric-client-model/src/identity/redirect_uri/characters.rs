@@ -22,9 +22,15 @@ const EXPECTED: &str = "no spaces or control characters, and a wildcard only as 
 /// mean something and needs to know what to write instead: on Keycloak 26.0.8
 /// `http://127.0.0.1:*/cb` matches no redirect at all, while the portless
 /// `http://127.0.0.1/cb` matches every port.
-const EXPECTED_PORT: &str = "a port, or none — over http a loopback callback registered without a \
-                             port already matches any port, and over https, or wherever a port is \
-                             written, the match is exact, so name it";
+///
+/// Scheme-neutral, deliberately. `com.example.app://x:*` reaches this refusal
+/// as well, and a message that opened with http loopback would be describing
+/// a case that is not its author's. The loopback clause is offered as the one
+/// place a portless spelling means something, after the fact that applies to
+/// everyone: no identity provider matches a wildcard port.
+const EXPECTED_PORT: &str = "a port, or none: a wildcard port is a spelling no identity provider \
+                             matches — over http a loopback callback registered without a port \
+                             already matches any port";
 
 /// Refuses whitespace, control characters, and a misplaced wildcard.
 ///
@@ -47,7 +53,7 @@ const EXPECTED_PORT: &str = "a port, or none — over http a loopback callback r
 /// [`IdentifierError::DisallowedCharacter`] naming the first offending
 /// character otherwise.
 pub(super) fn check(value: &str) -> Result<(), IdentifierError> {
-    if authority::wildcard_port_index(value).is_some() {
+    if authority::has_wildcard_in_port_position(value) {
         return Err(IdentifierError::Unadmitted {
             kind: KIND,
             expected: EXPECTED_PORT,

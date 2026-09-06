@@ -14,10 +14,12 @@ const MAX_BYTES: usize = 128;
 
 /// A token-derived value, bounded and made safe to put on a log line.
 ///
-/// A struct rather than a `String` because the bound firing is itself
-/// information: an issuer truncated at 128 bytes and an issuer that is
-/// genuinely 128 bytes long look identical on the line, and an operator
-/// chasing registry drift needs to know which they are reading.
+/// A struct rather than a `String` because neither the bound firing nor the
+/// filter firing is visible in what is left: an issuer truncated at 128 bytes
+/// and an issuer that is genuinely 128 bytes long look identical on the line,
+/// and so do a token that carried no issuer and one whose issuer this refused
+/// to print. An operator chasing registry drift needs to know which they are
+/// reading.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Sanitised {
     /// What reaches the log.
@@ -25,6 +27,15 @@ pub struct Sanitised {
 
     /// Whether the 128-byte bound cut the value short.
     pub truncated: bool,
+
+    /// Whether the filter dropped at least one character on the way.
+    ///
+    /// The case this exists for is a value made entirely of characters the
+    /// filter removes: it reaches the line as an empty string with
+    /// `truncated: false`, which reads as "the token carried nothing" when
+    /// what happened is "the token carried something this refused to print".
+    /// The two want different investigations.
+    pub filtered: bool,
 }
 
 impl fmt::Display for Sanitised {
@@ -55,25 +66,35 @@ impl fmt::Display for Sanitised {
 /// Truncation happens on a character boundary, which after the filter is a
 /// byte boundary — the filter is applied first anyway, so nothing depends on
 /// the order.
+///
+/// A value can report both flags. What lies beyond the bound is never
+/// examined, so a character the filter would have removed after truncation is
+/// not counted in `filtered` — the bound is where reading stopped, and
+/// `truncated` is the field that says so.
 #[must_use]
 pub fn sanitise(value: &str) -> Sanitised {
     let mut result = String::new();
     let mut truncated = false;
+    let mut filtered = false;
 
-    for character in value
-        .chars()
-        .filter(|character| character.is_ascii_graphic() || *character == ' ')
-    {
+    for character in value.chars() {
+        if !(character.is_ascii_graphic() || character == ' ') {
+            filtered = true;
+            continue;
+        }
+
         if result.len() + character.len_utf8() > MAX_BYTES {
             truncated = true;
             break;
         }
+
         result.push(character);
     }
 
     Sanitised {
         value: result,
         truncated,
+        filtered,
     }
 }
 
@@ -87,6 +108,24 @@ mod tests {
 
         assert_eq!(sanitised.value, "https://id.example.com/realms/acme");
         assert!(!sanitised.truncated);
+        assert!(!sanitised.filtered);
+    }
+
+    #[test]
+    fn a_value_the_filter_touched_says_so() {
+        // The distinction the flag exists for. Without it these two lines are
+        // `issuer_offered=acme` either way, and only one of them is a token
+        // trying to write a second record.
+        assert!(sanitise("acme\nSet-Cookie: evil=1").filtered);
+        assert!(!sanitise("acme").filtered);
+    }
+
+    #[test]
+    fn a_value_can_be_both_truncated_and_filtered() {
+        let sanitised = sanitise(&format!("é{}", "a".repeat(500)));
+
+        assert!(sanitised.truncated);
+        assert!(sanitised.filtered);
     }
 
     #[test]
@@ -146,10 +185,17 @@ mod tests {
 
         assert!(sanitised.value.is_empty());
         assert!(!sanitised.truncated);
+        // And the line says which of the two empty values it is: nothing
+        // arrived, or everything that arrived was refused.
+        assert!(sanitised.filtered);
     }
 
     #[test]
-    fn an_empty_value_stays_empty() {
-        assert_eq!(sanitise("").value, "");
+    fn an_empty_value_stays_empty_and_reports_neither_flag() {
+        let sanitised = sanitise("");
+
+        assert_eq!(sanitised.value, "");
+        assert!(!sanitised.truncated);
+        assert!(!sanitised.filtered);
     }
 }

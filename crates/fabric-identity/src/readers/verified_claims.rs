@@ -3,7 +3,7 @@
 //! The one line this file writes to the log carries a library's rendering of
 //! why a token failed, and that rendering can quote the token — a `kid`, an
 //! algorithm name, a claim value. So it goes through
-//! [`logging::sanitise`](crate::logging::sanitise), which is the platform's
+//! [`sanitise`](crate::sanitise), which is the platform's
 //! single enforcement point for the rule that a token-derived value is logged
 //! bounded and printable or not at all. Nothing here re-derives that rule.
 
@@ -67,6 +67,7 @@ pub(crate) fn verify(
             event = "identity.token_rejected",
             reason = %reason,
             reason_truncated = reason.truncated,
+            reason_filtered = reason.filtered,
             "bearer token failed verification"
         );
 

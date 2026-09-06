@@ -69,24 +69,23 @@ pub(super) fn host_and_port(authority: &str) -> (&str, Option<&str>) {
     }
 }
 
-/// The byte index of a `*` standing where a port belongs, if the URI has one.
+/// Whether a `*` stands where a port belongs.
 ///
-/// Found so it can be **refused**, not admitted: a `*` in the port position is
-/// a spelling Keycloak matches nothing against (observed on 26.0.8), and
-/// `characters::check` needs to tell it apart from the trailing wildcard it
-/// does permit. `https://example.com/a:*/b` has a `*` after a colon and it is
-/// in the path, which is the mistake a looser test would make.
-pub(super) fn wildcard_port_index(value: &str) -> Option<usize> {
-    let (scheme, rest) = value.split_once("://")?;
-    let authority = of(rest);
+/// Asked so the spelling can be **refused**, not admitted: a `*` in the port
+/// position is a spelling Keycloak matches nothing against (observed on
+/// 26.0.8), and `characters::check` needs to tell it apart from the trailing
+/// wildcard it does permit. `https://example.com/a:*/b` has a `*` after a
+/// colon and it is in the path, which is the mistake a looser test would make.
+///
+/// A predicate rather than the byte index this used to return. Only
+/// `.is_some()` was ever read of that index, and an index nobody reads is
+/// arithmetic that can be wrong without anything noticing.
+pub(super) fn has_wildcard_in_port_position(value: &str) -> bool {
+    let Some((_, rest)) = value.split_once("://") else {
+        return false;
+    };
 
-    if host_and_port(authority).1? != "*" {
-        return None;
-    }
-
-    // The `*` is the last byte of the authority, which begins three bytes
-    // (`://`) after the scheme.
-    scheme.len().checked_add(2)?.checked_add(authority.len())
+    host_and_port(of(rest)).1 == Some("*")
 }
 
 /// Refuses an authority carrying userinfo.

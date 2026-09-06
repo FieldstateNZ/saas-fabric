@@ -108,16 +108,17 @@ desired-state model cannot express that:
   by anyone who intercepts it, which is the entire reason RFC 8252 §8.1
   requires PKCE for native applications;
 - a redirect URI is a flat, validated string
-  (`crates/fabric-client-model/src/identity/redirect_uri.rs:30-32`) that permits
-  `https://` anywhere and `http://` on loopback or under `.internal`
-  (`.../redirect_uri/authority.rs:60-76`, `:103-107`). There is no way to say
-  which of those a given client is *entitled* to, so a production client and a
-  development client are indistinguishable in the document and either may carry
-  the other's shape;
+  (`crates/fabric-client-model/src/identity/redirect_uri.rs`, at `bc1f58c`)
+  that permits `https://` anywhere and `http://` on loopback or under
+  `.internal` (`.../redirect_uri/authority.rs`, same commit). There is no way
+  to say which of those a given client is *entitled* to, so a production client
+  and a development client are indistinguishable in the document and either may
+  carry the other's shape;
 - a native application's private-use URI scheme
   (`nz.fieldstate.slipway:/callback`) is refused outright, because
-  `authority::check` accepts only `https://` and `http://`. Slipway's desktop
-  shell has no representable callback.
+  `authority::check` — the single function the rule lived in then — accepts only
+  `https://` and `http://`. Slipway's desktop shell has no representable
+  callback.
 
 ### And an out-of-band redirect URI can hide
 
@@ -538,12 +539,11 @@ Every redirect URI classifies into exactly one kind. The partition is two
 levels deep, and both levels matter.
 
 **Level 0 — normalise.** The scheme and the host are **lower-cased before every
-test below**. RFC 3986 makes both case-insensitive, and today they are compared
-case-sensitively at three points: `strip_prefix("https://")`
-(`crates/fabric-client-model/src/identity/redirect_uri/authority.rs:63`), the
-`LOOPBACK` membership test (`:104`), and the `.internal` suffix test (`:105`).
-So `http://LOCALHOST:5173/cb` is refused today and
-`https://ADMIN.CORP.INTERNAL/cb` is classified today as an ordinary public host.
+test below**. RFC 3986 makes both case-insensitive, and at `bc1f58c` they were
+compared case-sensitively at three points, all in `authority.rs` as it then
+stood: `strip_prefix("https://")`, the `LOOPBACK` membership test, and the
+`.internal` suffix test. So `http://LOCALHOST:5173/cb` was refused and
+`https://ADMIN.CORP.INTERNAL/cb` was classified as an ordinary public host.
 Neither is what the operator wrote and neither is what the identity provider
 will do with it. This repository has already been bitten once by precisely this:
 "a mixed-case fixture, absent, made a `to_lowercase()` bug invisible to both the
@@ -562,8 +562,8 @@ socket test and the real engine" (`docs/delivery.md:61-62`).
 | Order | Kind | Test |
 |---|---|---|
 | 1 | `Loopback` | host is `127.0.0.1`, `::1` (bracketed as `[::1]` in a URI) or `localhost` — those three exactly |
-| 2 | `PrivateNetwork` | host is `internal` or ends `.internal` — the ICANN-reserved TLD (`crates/fabric-client-model/src/identity/redirect_uri/authority.rs:14-20`) |
-| 3 | `Https` | a **registered domain**, and only if the scheme is `https` — the positive rule below. Every IP address literal is refused, in every spelling. Plain HTTP that reaches here is refused |
+| 2 | `PrivateNetwork` | host is `internal` or ends `.internal` — the ICANN-reserved TLD (`crates/fabric-client-model/src/identity/redirect_uri/host_kind.rs:104`) |
+| 3 | `Https` | a **registered domain**, and only if the scheme is `https` — the positive rule below. Every IP address literal is refused, in every spelling, and so is every name under a top-level domain the public DNS has reserved. Plain HTTP that reaches here is refused |
 
 **Scheme first is what makes `nz.fieldstate.slipway://localhost/cb` a
 `PrivateUseScheme`** and not a loopback callback. A host-first partition would
@@ -585,7 +585,7 @@ hold a development callback while looking correct.
 it as an address. A browser recognises more spellings than any parser does, so
 the rule is now stated the other way round — a host is `Https` because it *is*
 a registered domain
-(`crates/fabric-client-model/src/identity/redirect_uri/host_kind/registered_domain.rs:82`).
+(`crates/fabric-client-model/src/identity/redirect_uri/host_kind/registered_domain.rs:71`).
 It is ASCII; it has at least two labels; each label is 1–63 characters of
 letters, digits and hyphens and starts and ends with neither hyphen; the whole
 name is at most 253 characters; and the final label is neither all-numeric nor
@@ -596,6 +596,21 @@ domain, and an entitlement satisfied by an address that never leaves the
 machine, or that only a resolver could recognise, is the entitlement failing to
 mean anything.
 
+**And a name nobody can register is not the production kind either.** `.local`
+(RFC 6762) and `.test`, `.example` and `.invalid` (RFC 2606) are reserved
+permanently: no registrar can sell one, and because none can ever be delegated
+no public certificate authority will issue for one — so a callback on one can be
+claimed as neither a Universal Link nor an App Link. All four are refused under
+`https`, before the registered-domain rule runs, with a message each naming the
+RFC that reserved it
+(`crates/fabric-client-model/src/identity/redirect_uri/host_kind/special_use.rs:79`).
+This is `.internal`'s own criterion read the other way round: `.internal` earns
+a kind of its own **because** no publicly-trusted certificate can exist for it,
+and these earn a refusal because a name nobody can hold is a name nobody can
+prove they control. They classified as `Https` before this slice, which put a
+client's production entitlement on a name that resolves to whatever the machine
+in front of it decides.
+
 Six spellings the negative rule admitted make the case. `https://0x/cb` and
 `https://0x.0x.0x.0x/cb` — a browser reads an empty hexadecimal tail as 0, so
 both dial `0.0.0.0`, the machine it is already on. `https://１２７．０．０．１/cb`
@@ -605,7 +620,7 @@ nothing, and a zone id names an interface only one machine has.
 `https://[::1/cb` — an unclosed bracket, which classified as **loopback** on
 the strength of a bracket whose other half nobody wrote. The last three are
 refused before the host rule, by `reject_brackets`
-(`crates/fabric-client-model/src/identity/redirect_uri/authority.rs:132`).
+(`crates/fabric-client-model/src/identity/redirect_uri/authority.rs:131`).
 
 **A non-ASCII host is refused, and told to use its A-label.** `xn--` form is
 what the browser resolves and what the claim is made against, so accepting a
@@ -614,34 +629,42 @@ strings. The refusal names the encoding rather than the character.
 
 **`ip_literal` keeps the job it is right for.** It is the loopback detector, and
 it runs before the plain-HTTP arm for **both** schemes
-(`crates/fabric-client-model/src/identity/redirect_uri/host_kind.rs:94`), so
+(`crates/fabric-client-model/src/identity/redirect_uri/host_kind.rs:97`), so
 `http://0x7f000001/cb` is refused as a loopback near-miss rather than as plain
 HTTP on a public host. What it is not is the definition of "not a domain".
 
 **Exactly three loopback hosts, and the near-misses are refused rather than
 admitted.** `127.0.0.2` is loopback to the operating system and is **not** in
 this list; `[::ffff:127.0.0.1]` is the IPv4-mapped spelling of one that is;
-`localhost.localdomain` resolves to loopback on many machines. All three are
-refused, and the refusal names the boundary rather than reading as a parse
-failure — the entitlement is a statement about a *declared* callback, and a
-declaration that can only be recognised by resolving a name is not a
-declaration. Note that `[::ffff:127.0.0.1]` is **accepted today** under
-`https://`, because the `https` arm checks only userinfo
-(`authority.rs:63-65`); this decision narrows that, deliberately, because a
-claimed-HTTPS entitlement satisfied by an address that never leaves the machine
-is the entitlement failing to mean anything.
+`localhost.localdomain` resolves to loopback on many machines. **So does every
+name under `.localhost`** — RFC 6761 §6.3 requires it, and Chrome and Firefox
+honour it without asking a resolver at all, so `https://app.localhost/cb` is the
+machine the browser is already on wearing a name that looks registrable. All of
+them are refused, under **both** schemes
+(`crates/fabric-client-model/src/identity/redirect_uri/host_kind.rs:136`,
+`.../host_kind/special_use.rs:64`), and the refusal names the boundary rather
+than reading as a parse failure — the entitlement is a statement about a
+*declared* callback, and a declaration that can only be recognised by resolving
+a name is not a declaration. `[::ffff:127.0.0.1]` was **accepted** under
+`https://` before this slice, because the `https` arm examined no host at all;
+the narrowing is deliberate, because a claimed-HTTPS entitlement satisfied by an
+address that never leaves the machine is the entitlement failing to mean
+anything.
 
 Three facts about today's parser that this changes:
 
-- `::1` is not accepted. `LOOPBACK` is `["localhost", "127.0.0.1"]`
-  (`authority.rs:12`) and an IPv6 literal is refused over plain HTTP by design
-  (`authority.rs:85-88`). This is added, because RFC 8252 §7.3 names it and a
-  dual-stack development machine gets it from the OS. It requires **bracket-aware
-  host parsing**: `host` splits on the first colon (`authority.rs:90`), which
-  turns `[::1]:5173` into `[`. The comment above it currently reasons that the
-  ambiguity does not matter *because* an IPv6 literal is never loopback-by-name;
-  that reasoning stops being true here and the comment is rewritten with the
-  rule rather than left to contradict the code.
+- `::1` was not accepted. `LOOPBACK` held `["localhost", "127.0.0.1"]`, and an
+  IPv6 literal was refused over plain HTTP by design. It is added, because RFC
+  8252 §7.3 names it and a dual-stack development machine gets it from the OS;
+  `LOOPBACK` is now those three spellings
+  (`crates/fabric-client-model/src/identity/redirect_uri/host_kind.rs:31`). It
+  required **bracket-aware host parsing**: `host` split on the first colon,
+  which turns `[::1]:5173` into `[`, and now runs to the closing bracket
+  (`crates/fabric-client-model/src/identity/redirect_uri/authority.rs:58`). The
+  comment above it reasoned that the ambiguity did not matter *because* an IPv6
+  literal is never loopback-by-name; that reasoning stopped being true here, so
+  the comment carries the rule instead
+  (`crates/fabric-client-model/src/identity/redirect_uri/authority.rs:42-52`).
 - A `*` is permitted only in the final position, and **that is where it stayed**.
   An earlier draft of this decision widened it to admit `http://127.0.0.1:*/cb`
   as a second spelling of any-port. The real Keycloak says otherwise, so the
@@ -653,7 +676,7 @@ Three facts about today's parser that this changes:
   the strategy table — but it means the parser's existing refusals are
   load-bearing, and the two that matter most are re-proved by mutation: a
   wildcard in the host (`https://*.example.com/callback`, refused at
-  `crates/fabric-client-model/src/identity/redirect_uri/characters.rs:60` and
+  `crates/fabric-client-model/src/identity/redirect_uri/characters.rs:68` and
   again by the registered-domain rule) and a `javascript:` scheme (refused at
   `crates/fabric-client-model/src/identity/redirect_uri/kind.rs:109`). A
   private-use-scheme branch is the most plausible way to accidentally admit
@@ -703,10 +726,13 @@ this paragraph explains:
 - **`http://127.0.0.1:*/cb` matches nothing at all** — neither `:54321/cb` nor
   the portless form. It is not a wider spelling of any-port; it is a redirect
   URI no browser will ever be sent to. So `:*` leaves the model: `RedirectUri`
-  refuses it (`crates/fabric-client-model/src/identity/redirect_uri/characters.rs:50`)
-  with a message that names what to write instead — over `http` a portless
-  loopback callback already matches any port, and over `https` the port has to
-  be named.
+  refuses it (`crates/fabric-client-model/src/identity/redirect_uri/characters.rs:56`)
+  with a message that names what to write instead. The message is
+  scheme-neutral, because `com.example.app://x:*` reaches the same refusal and
+  its author is not writing an http loopback callback: it leads with the fact
+  that holds for everyone — no identity provider matches a wildcard port — and
+  then offers the portless loopback spelling, which is the one place a missing
+  port means something.
 
 Refusing it is the fail-closed reading. A spelling the identity provider matches
 nothing against is worse than one it refuses here: the client would be written,
@@ -715,10 +741,10 @@ different system, weeks later, with nothing in this repository saying why.
 
 The findings are recorded in [`docs/verification.md`](../verification.md) beside
 the 2026-08-28 run. Keycloak **26.0.8** is what was probed — the image
-`scripts/e2e-services.sh` uses — and LucentRoot runs 26.7.2; §G17 is the
-platform lane re-verifying there. The any-port and exact-match semantics are
-unchanged in Keycloak since long before 26, so the caveat is honesty rather than
-doubt.
+`scripts/e2e-services.sh` uses — and that is the whole of what has been
+observed: one version, on one day, against one image. LucentRoot runs 26.7.2,
+and nothing here has been run against it. §G17 is the obligation to do that, and
+it is open.
 
 **A URI whose kind is not admitted by its declared strategy is refused, not
 reclassified.** `http://localhost:5173/callback` under `claimedHttps` is an
@@ -784,12 +810,17 @@ stored document is read, on the existing three-point schedule
    admits.
 4. A wildcard under `ClaimedHttps` or `PrivateNetwork` — refused, naming
    RFC 9700 §2.1's exact-matching requirement.
-5. **A wildcard in the port position under any strategy but `Development`** —
-   refused. The parser accepts the spelling anywhere (§3); this is the rule that
-   makes it mean "any port on loopback" and nothing else. A wildcard port on a
-   public host is a redirect URI matching every port on that host, which is the
-   over-broad entry `RedirectUri` exists to refuse
-   (`crates/fabric-client-model/src/identity/redirect_uri.rs:13-20`).
+5. **A wildcard in the port position, under every strategy** — refused by the
+   parser rather than by a strategy rule
+   (`crates/fabric-client-model/src/identity/redirect_uri/characters.rs:56`).
+   An earlier draft of this list made `:*` a `Development`-only spelling meaning
+   "any port on loopback". The probe against a real Keycloak 26.0.8 found it
+   means nothing anywhere — `http://127.0.0.1:*/cb` matches no redirect at
+   all — so there is no strategy left for it to be entitled under, and the rule
+   belongs where a spelling nobody matches belongs: at the parser, refused for
+   every scheme and every strategy alike. §3's `Development` row is the same
+   fact from the other side: any-port is the **portless** spelling, and a
+   written port is compared exactly.
 6. A `redirect` with an empty `uris` list — refused, as an empty `redirectUris`
    is today (`crates/fabric-client-model/src/identity/validation.rs:78-90`): a
    client with no callback can never sign anyone in.
@@ -797,10 +828,16 @@ stored document is read, on the existing three-point schedule
    **`Lane E phase 2`** and a representable alternative.
 8. A scheme or host the model cannot classify at all — `javascript:`, `data:`,
    `file:`, a wildcard in the host, userinfo in the authority, one of §3's
-   loopback near-misses — refused, the first four exactly as today
-   (`crates/fabric-client-model/src/identity/redirect_uri/authority.rs:60-76`,
-   `.../redirect_uri.rs:82-98`). No new shape is coerced into an existing
-   variant.
+   loopback near-misses — refused, each by the rule that owns it: the scheme by
+   `kind::classify`
+   (`crates/fabric-client-model/src/identity/redirect_uri/kind.rs:109`), the
+   wildcard by `characters::check`
+   (`crates/fabric-client-model/src/identity/redirect_uri/characters.rs:68`),
+   userinfo by `authority::reject_userinfo`
+   (`crates/fabric-client-model/src/identity/redirect_uri/authority.rs:100`),
+   and the near-misses by `host_kind::classify`
+   (`crates/fabric-client-model/src/identity/redirect_uri/host_kind.rs:97`). No
+   new shape is coerced into an existing variant.
 9. A `v2` document still carrying the pre-migration `redirectUris` key — refused
    before the typed deserialisation, with a message naming `redirect` and
    `strategy`. Checked in `document/parse.rs` beside `check_document_kind`, for
@@ -1131,28 +1168,32 @@ cannot express will find it removed, with a plan that says a count rather than
 naming it — and the answer is that the model should be widened, not that the
 sweep should look away.
 
-**Files that must be split, not grown.** The gate measures *production* lines —
-a trailing inline `#[cfg(test)]` module is subtracted
+**Files that had to be split, not grown.** The gate measures *production* lines
+— a trailing inline `#[cfg(test)]` module is subtracted
 (`scripts/check_file_sizes.py:83-109`) — with a warning at 120 and a failure at
-150 (`:36-37`). Measured that way today:
-`crates/fabric-keycloak/src/provider/mutate.rs` is **131** and already in the
-"needs a clear reason" band, and `declaration` is where the whole
+150 (`:36-37`). None of the three files this decision lands in had room for it,
+and none is the cohesive wire-format type an exemption is for, so each grew a
+module rather than a hundred lines. Measured on the commit this paragraph ships
+in: `crates/fabric-keycloak/src/provider/mutate.rs` is **132**, in the "needs a
+clear reason" band, and `declaration` is where the whole
 strategy-to-representation mapping lands;
-`crates/fabric-client-model/src/identity/redirect_uri.rs` is 153 raw but
-**120** production, exactly at the top of the acceptable band, and it takes both
-the classifier and the wildcard-port rule;
-`.../redirect_uri/authority.rs` is **108** and takes the private-use scheme
-argument. None of the three has room for what this decision puts in it, and all
-three are cases the file-size policy calls a design smell rather than a
-candidate for an exemption.
+`crates/fabric-client-model/src/identity/redirect_uri.rs` is **138**, one
+newtype with its impls, every rule it applies living in a module of its own;
+`.../redirect_uri/authority.rs` is **148**, six short functions over one string.
+What moved out is the classification itself — `kind.rs` for the scheme,
+`host_kind.rs` for the host, `characters.rs` for the wildcards,
+`private_use_scheme.rs` for RFC 8252 §7.1 — and, under `host_kind`, the four
+files the host rule is made of: `ip_literal.rs`, `special_use.rs`,
+`registered_domain.rs` and `registered_domain/label.rs`.
 
-**Two documents in this repository currently say something this decision makes
-false**, and both are corrected with it: `fabric-identity`'s crate
-documentation, which says the tenant "comes from one place and one place
-only — the `tenant_id` claim inside the bearer token"
-(`crates/fabric-identity/src/lib.rs:10-12`), and `authority.rs`'s note that an
-IPv6 literal's parsing ambiguity does not matter
-(`crates/fabric-client-model/src/identity/redirect_uri/authority.rs:85-88`).
+**Two documents in this repository said something this decision makes false**,
+and both were corrected with it: `fabric-identity`'s crate documentation, which
+said the tenant "comes from one place and one place only — the `tenant_id`
+claim inside the bearer token" and now records that sentence as the cross-tenant
+hole this closes (`crates/fabric-identity/src/lib.rs:16-34`), and
+`authority.rs`'s note that an IPv6 literal's parsing ambiguity does not matter,
+which now carries the bracket-aware rule that replaced it
+(`crates/fabric-client-model/src/identity/redirect_uri/authority.rs:42-52`).
 Prose nobody checks is prose that drifts.
 
 **The console shows more, and can still change nothing.** `ApplicationClients`

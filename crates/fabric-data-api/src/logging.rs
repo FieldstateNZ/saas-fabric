@@ -14,13 +14,12 @@
 //!   message, not inside an error being formatted. `ResolvedSecret` cannot print
 //!   itself, which makes that structurally hard to get wrong.
 //! - **A token-derived value is logged only through
-//!   [`fabric_identity::logging::sanitise`].** [`operation_forbidden`]'s
+//!   [`fabric_identity::sanitise`].** [`operation_forbidden`]'s
 //!   subject is the token's `sub` claim, which nothing in this process
 //!   verified: a `sub` carrying a newline turns one audit record into two, and
 //!   one carrying a right-to-left override makes a record read as somebody
-//!   else. `fabric_identity::logging` is the platform's single enforcement
-//!   point for that rule, and this module calls it rather than keeping a
-//!   second copy.
+//!   else. `fabric_identity` is the platform's single enforcement point for
+//!   that rule, and this module calls it rather than keeping a second copy.
 //!
 //! Over the 120-line advisory threshold. The reason is that this is one set of
 //! typed emitters for one domain's events, each a few lines of `tracing` call
@@ -32,7 +31,7 @@
 
 use fabric_connector::ExecutionTarget;
 use fabric_core::{event_id, EventType, LogicalDataSourceName, LogicalResourceName, TenantId};
-use fabric_identity::logging::sanitise;
+use fabric_identity::sanitise;
 
 use crate::DOMAIN_ID;
 
@@ -73,8 +72,9 @@ pub(crate) fn operation_dispatched(
 ///
 /// `subject` is the token's `sub` claim, so it is sanitised and bounded before
 /// it reaches the line — see this module's fourth rule. `subject_truncated`
-/// rides with it, because a subject cut at the bound and a subject that is
-/// genuinely that long are otherwise the same record.
+/// and `subject_filtered` ride with it, because a subject cut at the bound and
+/// a subject that is genuinely that long are otherwise the same record, and so
+/// are a subject the filter emptied and a token that carried no `sub` at all.
 pub(crate) fn operation_forbidden(resource: &str, operation: &str, subject: &str) {
     let subject = sanitise(subject);
 
@@ -85,6 +85,7 @@ pub(crate) fn operation_forbidden(resource: &str, operation: &str, subject: &str
         operation,
         subject = %subject,
         subject_truncated = subject.truncated,
+        subject_filtered = subject.filtered,
         "identity is not permitted to perform this operation"
     );
 }

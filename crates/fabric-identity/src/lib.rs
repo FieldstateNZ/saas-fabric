@@ -80,7 +80,7 @@ mod config;
 mod errors;
 mod extractor;
 mod identity;
-pub mod logging;
+mod logging;
 mod readers;
 mod registration;
 mod resolver;
@@ -92,6 +92,7 @@ pub use claims::TokenClaims;
 pub use config::IdentityConfig;
 pub use errors::IdentityError;
 pub use identity::{TenantIdentity, TrustedIssuer};
+pub use logging::{sanitise, Sanitised};
 pub use readers::{
     encode_unsigned_token, LeewaySeconds, TrustedIngressReader, ValidatingReader, VerificationKeys,
 };

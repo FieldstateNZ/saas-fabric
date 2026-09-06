@@ -188,9 +188,25 @@ mod tests {
         for value in ["http://127.0.0.1:*/callback", "http://127.0.0.1:*"] {
             let error = RedirectUri::try_new(value).unwrap_err();
 
+            assert!(
+                error.to_string().contains("no identity provider matches"),
+                "{error}"
+            );
             assert!(error.to_string().contains("already matches any port"), "{error}");
-            assert!(error.to_string().contains("name it"), "{error}");
         }
+    }
+
+    #[test]
+    fn a_wildcard_port_is_refused_on_a_private_use_scheme_in_words_that_fit_one() {
+        // The refusal is not loopback's. A native application's callback can
+        // carry `:*` too, and a message opening with http loopback would be
+        // describing a case that is not this author's.
+        let error = RedirectUri::try_new("com.example.app://x:*").unwrap_err();
+
+        assert!(
+            error.to_string().contains("no identity provider matches"),
+            "{error}"
+        );
     }
 
     #[test]

@@ -1,108 +1,92 @@
-//! Which schemes and hosts a redirect URI may name.
+//! Splitting a redirect URI into the parts the rules are stated about.
 //!
-//! Split from the newtype because this is the security rule, and it deserves
-//! to be read on its own rather than found among length checks.
+//! Split from the newtype because getting the authority out of a URI is where
+//! a substring test would quietly do the wrong thing, and that deserves to be
+//! read on its own rather than found among length checks. The decision about
+//! *which* schemes and hosts are permitted lives in [`super::kind`], which is
+//! the only copy of it; this module hands that decision the right substrings.
 
 use fabric_core::IdentifierError;
 
 /// The label used in error messages when parsing fails.
 const KIND: &str = "redirect uri";
 
-/// Hosts that are the machine the browser is already on.
-const LOOPBACK: [&str; 2] = ["localhost", "127.0.0.1"];
-
-/// The top-level domain ICANN reserved for private-use applications.
+/// The authority: everything before the path, query, or fragment.
 ///
-/// Its board resolved in July 2024 to withhold `.internal` from delegation
-/// permanently, for exactly this purpose: names that resolve only inside an
-/// organisation. It is what makes the plain-HTTP exception below a rule rather
-/// than a favour to one deployment.
-const PRIVATE_TLD: &str = "internal";
-
-/// Checks the scheme and host of a redirect URI.
-///
-/// # Why plain HTTP is permitted at all
-///
-/// A redirect URI is where an authorisation code is delivered, and over plain
-/// HTTP that code is readable by anything on the path. So `https://` is the
-/// rule, and the exceptions are the two cases where requiring TLS would
-/// require a certificate that **cannot exist**:
-///
-/// - **Loopback.** The code never leaves the machine. This is what RFC 8252
-///   recommends for native applications, for the same reason.
-/// - **The `.internal` top-level domain.** ICANN resolved in July 2024 to
-///   withhold it from delegation permanently, reserving it for private-use
-///   applications. Because it will never exist in the public DNS root, it
-///   cannot resolve on the internet and no public certificate authority will
-///   issue for it — so an internal environment reached over plain HTTP is not
-///   a deployment that *should* have TLS and skipped it; it is one where the
-///   public TLS ecosystem does not apply.
-///
-/// Everything else must be `https://`. `http://www.example.com` is refused, and
-/// that is the case this rule exists for.
-///
-/// # What the host check must not be
+/// # What this must not be
 ///
 /// A substring test. `.internal` appearing *anywhere* in the URI is not the
 /// question — `http://evil.example.com/.internal` contains it and is a public
-/// host. Only the authority is examined, with any port and any path, query or
-/// fragment removed first.
-///
-/// Userinfo is refused outright rather than parsed around. `http://x.internal@
-/// evil.example.com/` is a public host wearing an internal-looking prefix, and
-/// a redirect URI has no legitimate use for credentials in it.
-///
-/// # Errors
-///
-/// Returns [`IdentifierError::BadBoundary`] if the scheme is not permitted, if
-/// the authority carries userinfo, or if a plain-HTTP URI names a host that is
-/// neither loopback nor `.internal`.
-pub(super) fn check(value: &str) -> Result<(), IdentifierError> {
-    let refused = || IdentifierError::BadBoundary { kind: KIND };
-
-    if let Some(rest) = value.strip_prefix("https://") {
-        return reject_userinfo(authority(rest));
-    }
-
-    let rest = value.strip_prefix("http://").ok_or_else(refused)?;
-    let authority = authority(rest);
-    reject_userinfo(authority)?;
-
-    if is_permitted_over_plain_http(host(authority)) {
-        Ok(())
-    } else {
-        Err(refused())
-    }
-}
-
-/// The authority: everything before the path, query, or fragment.
-fn authority(rest: &str) -> &str {
+/// host. Only the authority is examined, with any path, query or fragment
+/// removed first, and the port removed after that by [`host`].
+pub(super) fn of(rest: &str) -> &str {
     rest.split(['/', '?', '#']).next().unwrap_or(rest)
 }
 
-/// The host: the authority with any port removed.
+/// The host: the authority with any port removed, and any IPv6 brackets with
+/// it.
 ///
-/// Splitting on the *last* colon would be wrong for a bracketed IPv6 literal,
-/// and splitting on the first is wrong for the same reason. Neither matters
-/// here: an IPv6 literal is not loopback-by-name and not `.internal`, so it is
-/// refused over plain HTTP whichever way it is cut.
-fn host(authority: &str) -> &str {
-    authority.split(':').next().unwrap_or(authority)
+/// Bracket-aware, because it has to be. A bracketed IPv6 literal carries
+/// colons of its own, so splitting `[::1]:5173` on the first colon yields `[`
+/// and splitting it on the last yields `[::1]`, and neither is the host. This
+/// used to be argued away — an IPv6 literal was never loopback-by-name and so
+/// was refused over plain HTTP whichever way it was cut — and that argument
+/// stopped being true when `::1` joined the loopback set. The rule replaces
+/// it: inside brackets the host runs to the closing bracket, and a port, if
+/// there is one, follows it.
+pub(super) fn host(authority: &str) -> &str {
+    host_and_port(authority).0
+}
+
+/// The host and the port, split apart with brackets accounted for.
+pub(super) fn host_and_port(authority: &str) -> (&str, Option<&str>) {
+    if let Some(inside) = authority.strip_prefix('[') {
+        return match inside.split_once(']') {
+            Some((host, after)) => (host, after.strip_prefix(':')),
+            None => (inside, None),
+        };
+    }
+
+    match authority.split_once(':') {
+        Some((host, port)) => (host, Some(port)),
+        None => (authority, None),
+    }
+}
+
+/// The byte index of the `*` that spells "any port", if the URI has one.
+///
+/// A wildcard is otherwise permitted only in the final position, so the parser
+/// needs to know exactly which `*` this is rather than whether one exists —
+/// `https://example.com/a:*/b` has a `*` after a colon and it is in the path,
+/// which is the mistake a looser test would make. Whether a strategy may
+/// *hold* a wildcard port is a separate question, answered in
+/// `redirect_strategy::rules`.
+pub(super) fn wildcard_port_index(value: &str) -> Option<usize> {
+    let (scheme, rest) = value.split_once("://")?;
+    let authority = of(rest);
+
+    if host_and_port(authority).1? != "*" {
+        return None;
+    }
+
+    // The `*` is the last byte of the authority, which begins three bytes
+    // (`://`) after the scheme.
+    scheme.len().checked_add(2)?.checked_add(authority.len())
 }
 
 /// Refuses an authority carrying userinfo.
-fn reject_userinfo(authority: &str) -> Result<(), IdentifierError> {
+///
+/// Refused outright rather than parsed around. `http://x.internal@evil.example.com/`
+/// is a public host wearing an internal-looking prefix, and a redirect URI has
+/// no legitimate use for credentials in it.
+///
+/// # Errors
+///
+/// Returns [`IdentifierError::BadBoundary`] if the authority contains `@`.
+pub(super) fn reject_userinfo(authority: &str) -> Result<(), IdentifierError> {
     if authority.contains('@') {
         return Err(IdentifierError::BadBoundary { kind: KIND });
     }
 
     Ok(())
-}
-
-/// Whether a host may be reached over plain HTTP.
-fn is_permitted_over_plain_http(host: &str) -> bool {
-    let loopback = LOOPBACK.contains(&host);
-    let private = host == PRIVATE_TLD || host.ends_with(&format!(".{PRIVATE_TLD}"));
-
-    loopback || private
 }

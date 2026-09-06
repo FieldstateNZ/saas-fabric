@@ -2,13 +2,15 @@
 
 #[cfg(test)]
 mod document_tests;
+mod migration;
 mod parse;
 mod render;
 mod schema;
+mod version;
 
 use crate::{Client, DesiredStateError, IdentityConfiguration};
 
-pub use schema::{API_VERSION, KIND};
+pub use schema::{API_VERSION, API_VERSION_V2, KIND};
 
 /// One client's stored desired state: the whole document, plus the part of it
 /// this model understands.

@@ -2,28 +2,38 @@
 
 use serde_norway::Value;
 
-use crate::document::schema::{self, DocumentShape};
+use crate::document::migration;
+use crate::document::schema::DocumentShape;
+use crate::document::version::{self, SchemaVersion};
 use crate::{Client, ClientDocument, DesiredStateError};
 
 /// The inclusive maximum length of a display name.
 const MAX_DISPLAY_NAME: usize = 128;
 
-/// How much of an unexpected `apiVersion/kind` pair is quoted back.
-const MAX_QUOTED_KIND: usize = 80;
-
 /// Parses a stored document, checking everything before it is trusted.
 ///
-/// The order is deliberate. The document is identified *before* it is
-/// deserialised into the reading shape, so a `kind: Tenant` document is refused
-/// as the wrong kind rather than as a mysteriously incomplete client — the
-/// first message points an operator at the actual problem, the second sends
-/// them looking for a field the document was never supposed to have.
+/// The order is deliberate, and every step before the typed deserialisation is
+/// there so the message an operator gets names something they can find in
+/// their own file. The document is identified first (`version`), then read
+/// through the schema version it declares (`migration`), and only then handed
+/// to serde — whose message would otherwise be about a field the document was
+/// never supposed to have.
+///
+/// What the migrator rewrites is a *copy*. The document kept for rendering is
+/// the one that was stored, so a `v1` file nobody has edited stays `v1` and
+/// stays labelled `v1`.
 pub(super) fn parse(text: &str) -> Result<ClientDocument, DesiredStateError> {
     let raw: Value = serde_norway::from_str(text).map_err(|error| malformed(&error))?;
 
-    check_document_kind(&raw)?;
+    let reading = match version::check_document_kind(&raw)? {
+        SchemaVersion::V1 => migration::to_v2(raw.clone())?,
+        SchemaVersion::V2 => {
+            migration::reject_replaced_field(&raw)?;
+            raw.clone()
+        }
+    };
 
-    let shape: DocumentShape = serde_norway::from_value(raw.clone()).map_err(|error| malformed(&error))?;
+    let shape: DocumentShape = serde_norway::from_value(reading).map_err(|error| malformed(&error))?;
 
     let display_name = check_display_name(shape.spec.display_name)?;
     shape.spec.identity.validate()?;
@@ -39,36 +49,6 @@ pub(super) fn parse(text: &str) -> Result<ClientDocument, DesiredStateError> {
     };
 
     Ok(ClientDocument::from_parts(raw, client))
-}
-
-/// Refuses a document that is not a client document of a version this model
-/// writes.
-fn check_document_kind(raw: &Value) -> Result<(), DesiredStateError> {
-    let api_version = string_at(raw, "apiVersion");
-    let kind = string_at(raw, "kind");
-
-    if api_version == Some(schema::API_VERSION) && kind == Some(schema::KIND) {
-        return Ok(());
-    }
-
-    let found: String = format!(
-        "{}/{}",
-        api_version.unwrap_or("(no apiVersion)"),
-        kind.unwrap_or("(no kind)")
-    )
-    .chars()
-    .take(MAX_QUOTED_KIND)
-    .collect();
-
-    Err(DesiredStateError::UnknownDocumentKind {
-        expected: schema::EXPECTED_DOCUMENT,
-        found,
-    })
-}
-
-/// Reads a top-level string field, if it is present and is a string.
-fn string_at<'a>(raw: &'a Value, key: &str) -> Option<&'a str> {
-    raw.as_mapping()?.get(key)?.as_str()
 }
 
 /// Bounds a display name and refuses characters that would corrupt whatever

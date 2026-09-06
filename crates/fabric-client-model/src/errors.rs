@@ -71,4 +71,40 @@ pub enum DesiredStateError {
         /// The value that appeared twice.
         value: String,
     },
+
+    /// A shape this model can represent but this phase does not reconcile.
+    ///
+    /// Its own variant rather than an [`Self::InvalidField`] because the two
+    /// say different things to an operator. "That value is not permitted"
+    /// invites a different value; "that value is not carried yet, by this
+    /// phase" invites a decision about when. Naming the phase is the whole
+    /// point, and a shape that is representable now is one whose document does
+    /// not have to change again when the phase lands.
+    #[error("{field}: {detail} (deferred to {phase})")]
+    Deferred {
+        /// The dotted path of the field, as it appears in the document.
+        field: &'static str,
+        /// The phase that will carry it.
+        phase: &'static str,
+        /// What was declared, and what to do instead in the meantime.
+        detail: String,
+    },
+
+    /// A document written before a change of shape, naming what replaced it.
+    ///
+    /// Separate from [`Self::Malformed`] for the reason the document-kind
+    /// check is separate from deserialisation: a message about a missing field
+    /// sends an operator looking for something their document was never
+    /// supposed to have, where naming the replacement points them at the
+    /// actual problem. Every use of it names the version and the field.
+    #[error("{field} was replaced by {replacement}: {detail}")]
+    Migration {
+        /// The dotted path of the field the document still carries, or the one
+        /// it cannot be read into.
+        field: &'static str,
+        /// What replaced it.
+        replacement: &'static str,
+        /// What the document says, and what has to happen to it.
+        detail: String,
+    },
 }

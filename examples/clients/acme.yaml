@@ -4,7 +4,7 @@
 # a `saas-fabric-clients` repository holds at
 # `clients/<client id>/client.yaml`. See
 # docs/architecture/client-desired-state.md for the contract.
-apiVersion: fabric.fieldstate.nz/v1
+apiVersion: fabric.fieldstate.nz/v2
 kind: Client
 
 metadata:
@@ -31,8 +31,18 @@ spec:
     clients:
       - id: web
         type: oidc
-        redirectUris:
-          - https://www.example.com/callback
+        # Required, and stated rather than defaulted: a public client with no
+        # proof key is one whose authorisation code is redeemable by whoever
+        # intercepts it.
+        pkce: s256
+        # The strategy says which kind of callback this client is entitled to,
+        # and a URI outside that kind is refused rather than accepted because
+        # it happens to parse. `claimedHttps` is the production rule, and also
+        # what an iOS Universal Link and an Android App Link are.
+        redirect:
+          strategy: claimedHttps
+          uris:
+            - https://www.example.com/callback
 
   # Sections the control plane does not model yet. They are here precisely so
   # the examples demonstrate the guarantee that matters most: editing identity

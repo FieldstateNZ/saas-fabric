@@ -101,7 +101,7 @@ impl FakeIdentityProvider {
             existing.clients.insert(
                 client.id.clone(),
                 ObservedOidcClient {
-                    redirect_uris: client.redirect_uris.iter().cloned().collect(),
+                    redirect_uris: client.redirect.uris().iter().cloned().collect(),
                     public: true,
                 },
             );

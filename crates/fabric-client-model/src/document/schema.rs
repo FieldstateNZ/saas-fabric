@@ -1,7 +1,13 @@
 //! The document's outer shape: what identifies it, and how its fields are
 //! named.
 
-/// The API version every document this model writes carries.
+/// The API version this model still reads, and no longer writes.
+///
+/// Deprecated in favour of [`API_VERSION_V2`] and kept because the sentence
+/// below is a promise: a document already in a repository does not change
+/// meaning because the model grew. A `v1` document is read through the
+/// migrator in `document::migration`, and only an operator's own edit moves it
+/// forward.
 ///
 /// Versioned from the start, and checked on read. A future change to the
 /// document's shape ships as `v2` alongside this one rather than reinterpreting
@@ -10,6 +16,14 @@
 /// nobody is going to migrate on a schedule the platform controls.
 pub const API_VERSION: &str = "fabric.fieldstate.nz/v1";
 
+/// The API version every document this model writes carries.
+///
+/// Added *beside* [`API_VERSION`] rather than replacing it, which is the rule
+/// above being exercised for the first time rather than amended. `v2` states
+/// two things `v1` could not: the proof-key method a public client must use,
+/// and which kind of callback it is entitled to.
+pub const API_VERSION_V2: &str = "fabric.fieldstate.nz/v2";
+
 /// The kind every document this model writes carries.
 ///
 /// `Client`, not `Tenant`. The two name the same organisation from different
@@ -17,13 +31,13 @@ pub const API_VERSION: &str = "fabric.fieldstate.nz/v1";
 /// are client-shaped because that is the vocabulary an operator uses.
 pub const KIND: &str = "Client";
 
-/// [`API_VERSION`] and [`KIND`] as one string, for the message a rejected
-/// document produces.
+/// Both accepted `apiVersion`/[`KIND`] pairs as one string, for the message a
+/// rejected document produces.
 ///
 /// Spelled out rather than composed, because the error field it fills is a
 /// `&'static str` and neither `format!` nor `concat!` can build one from two
 /// consts. The test below is what keeps it honest.
-pub(super) const EXPECTED_DOCUMENT: &str = "fabric.fieldstate.nz/v1/Client";
+pub(super) const EXPECTED_DOCUMENT: &str = "fabric.fieldstate.nz/v2/Client or fabric.fieldstate.nz/v1/Client";
 
 /// The document, exactly as it is deserialised.
 ///
@@ -89,6 +103,9 @@ mod tests {
 
     #[test]
     fn the_spelled_out_pair_matches_the_two_constants() {
-        assert_eq!(EXPECTED_DOCUMENT, format!("{API_VERSION}/{KIND}"));
+        assert_eq!(
+            EXPECTED_DOCUMENT,
+            format!("{API_VERSION_V2}/{KIND} or {API_VERSION}/{KIND}")
+        );
     }
 }

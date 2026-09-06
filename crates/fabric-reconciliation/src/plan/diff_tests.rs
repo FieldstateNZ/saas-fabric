@@ -19,7 +19,7 @@ fn converged_realm() -> ObservedRealm {
     clients.insert(
         web_client().id,
         ObservedOidcClient {
-            redirect_uris: web_client().redirect_uris.into_iter().collect(),
+            redirect_uris: web_client().redirect.uris().iter().cloned().collect(),
             public: true,
         },
     );

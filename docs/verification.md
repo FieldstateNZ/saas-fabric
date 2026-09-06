@@ -43,7 +43,7 @@ is at the end, under "The control plane, end to end".
 | Console tests | `npm test` | 81 passing, 0 failing |
 | Console build | `npm run build` | 228 kB, 70 kB gzipped |
 | Connector acceptance | `cargo test -p fabric-ndc-acceptance` | 44 passing, 0 failing across two integration binaries — **default mode**, Docker up (server `29.1.3`); of the 14 container-backed tests, 13 reached a real connector and postgres and 1 reached the nginx impostor (see below for the breakdown) |
-| Connector acceptance, required mode | `FABRIC_REQUIRE_CONNECTOR_ACCEPTANCE=1 cargo test -p fabric-ndc-acceptance` | **Pending the first green `connector-acceptance` CI run.** Not observed on this machine — see below |
+| Connector acceptance, required mode | `FABRIC_REQUIRE_CONNECTOR_ACCEPTANCE=1 cargo test -p fabric-ndc-acceptance` | 44 passing, 0 failing across two integration binaries — **required mode**, observed on the first green `connector-acceptance` CI run for PR #66 (workflow run 34014619529): the job pre-pulled all three pins by digest (`Status: Downloaded newer image for ghcr.io/hasura/ndc-postgres@sha256:f91910ef…`, `postgres@sha256:e013e867…`, `nginx@sha256:65645c7b…`), then `published_state_reaches_a_real_connector` reported 26 passed in 12.32 s and `the_stack_comes_up` 18 passed in 3.48 s. Not reproducible on the implementation machine — see below |
 
 Twelve of the thirteen rows above run in CI on every push and pull request
 (`.github/workflows/ci.yml`): the four Rust gates, the dependency check
@@ -161,12 +161,14 @@ This is still the **default mode** row, not the required mode: the
 bare-tag fallback that made this run possible is exactly what
 `FABRIC_REQUIRE_CONNECTOR_ACCEPTANCE=1` refuses
 (`tests/support/docker/image_reference.rs`'s required mode), so this run
-does not stand in for that row, and cannot. The row stays pending until
+does not stand in for that row, and cannot. That row was filled in from
 `.github/workflows/ci.yml`'s `connector-acceptance` job — whose runner can
 pull the pin normally, and which pre-pulls all three pinned images as its
 own step precisely so a pull problem shows up there rather than inside a
-test's own timeout — goes green once, at which point this row should be
-updated with that run's actual count, not before.
+test's own timeout — on its first green run, for PR #66: every digest was
+pulled exactly as pinned, no fallback line appeared, and the two binaries
+finished in 12.32 s and 3.48 s, the difference from the 4 minutes above being
+the 120 s pull deadline this machine pays once per binary and CI never does.
 
 Nothing is ignored.
 

@@ -1,0 +1,1 @@
+{"message":"Parse error","details":"Failed to deserialize the JSON body into the target type: missing field `collection` at line 1 column 17"}

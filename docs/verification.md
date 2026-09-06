@@ -604,16 +604,27 @@ Named here rather than left for a reader to discover.
   a running NDC connector, and round six showed what that costs. Two of its
   findings were invisible to every unit test because our requests were
   well-formed and our logic correct: a connector that declares no
-  request-level arguments silently ignores the per-tenant routing we send
-  (verified against `ndc-postgres` v3.1.0's source, where `Static => None`
-  and `acquire` returns one pool regardless), and `affected_rows` is not an
-  NDC concept on `/mutation` at all, so the count we report is a heuristic
-  read of a connector-private result shape. Both are now checked at startup
-  or refused, but neither was findable from inside this workspace.
+  request-level arguments silently ignores the per-tenant routing we send —
+  now observed directly, not just read from source: a real, statically
+  configured `ndc-postgres` v3.1.0's own `GET /schema` response declares
+  `request_arguments: null`
+  (`crates/fabric-connector-ndc/tests/fixtures/ndc-postgres-v3.1.0/schema-static.json`,
+  captured for issue #62 slice 1) — and `affected_rows` is not an NDC concept
+  on `/mutation` at all: a real insert response nests it inside the
+  procedure's own opaque `result` object
+  (`.../mutation-insert-ok.json`), confirming the count we report is a
+  heuristic read of a connector-private shape, not a guess about one. Both
+  are now checked at startup or refused, but neither was findable from
+  inside this workspace before a real connector answered.
 
   ADR 0004 carries the remaining pre-deployment checklist. The item that
-  matters most: the payload argument's expected **value shape** is still
-  documentation-derived, because the NDC schema does not describe it.
+  mattered most — the payload argument's expected **value shape** — is
+  observed rather than documentation-derived as of issue #62 slice 1: a real
+  insert response
+  (`crates/fabric-connector-ndc/tests/fixtures/ndc-postgres-v3.1.0/mutation-insert-ok.json`)
+  confirms `objects` takes an array of row objects keyed by column name,
+  matching the schema's own `insert_articles_object` type exactly. See ADR
+  0004's addendum for what that closes and what it does not.
 
 - **No exactly-once write guarantee.** The platform now distinguishes a write
   that provably did not reach the backend from one whose outcome is unknown

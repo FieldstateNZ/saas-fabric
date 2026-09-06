@@ -168,3 +168,42 @@ fn a_connector_with_no_routing_configured_needs_no_declaration() {
         Ok(())
     );
 }
+
+// -- Against the real connector's own two `/schema` documents ---------------
+
+/// Reads a real `ndc-postgres` v3.1.0 document, checked in under
+/// `tests/fixtures/` -- see the README there for how it was captured.
+fn fixture(name: &str) -> NdcSchemaResponse {
+    let path = format!(
+        "{}/tests/fixtures/ndc-postgres-v3.1.0/{name}",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+}
+
+#[test]
+fn a_static_configuration_declares_no_request_arguments() {
+    // The real, statically-configured `ndc-postgres` declares
+    // `request_arguments: null` -- confirmed on the parsed document itself,
+    // not just on a hand-written stand-in -- and a configuration naming a
+    // routing argument against it is refused before serving anyone.
+    let schema = fixture("schema-static.json");
+    assert!(schema.request_arguments.is_none());
+
+    let error = check_routing_arguments(&config(), &schema).unwrap_err();
+    assert!(error.contains("declares no request-level arguments"), "{error}");
+}
+
+#[test]
+fn a_named_configuration_declares_connection_name_for_queries_and_mutations() {
+    // The real, name-routed `ndc-postgres` declares `connection_name` for
+    // both request kinds -- matching `NdcRequestLevelArguments` field for
+    // field -- and `check_routing_arguments` passes for a configuration that
+    // names it.
+    let schema = fixture("schema-named.json");
+    let declared = schema.request_arguments.as_ref().unwrap();
+    assert!(declared.declares_for_query("connection_name"));
+    assert!(declared.declares_for_mutation("connection_name"));
+
+    assert_eq!(check_routing_arguments(&name_routed_config(), &schema), Ok(()));
+}

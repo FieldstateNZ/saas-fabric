@@ -122,6 +122,16 @@ pub(crate) struct NdcCollectionInfo {
 mod tests {
     use super::*;
 
+    /// Reads a real `ndc-postgres` v3.1.0 document, checked in under
+    /// `tests/fixtures/` -- see the README there for how it was captured.
+    fn fixture(name: &str) -> String {
+        let path = format!(
+            "{}/tests/fixtures/ndc-postgres-v3.1.0/{name}",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        std::fs::read_to_string(path).unwrap()
+    }
+
     #[test]
     fn an_unknown_operator_semantic_falls_back_to_custom() {
         let definition: NdcComparisonOperatorDefinition =
@@ -171,5 +181,39 @@ mod tests {
             NdcComparisonOperatorDefinition::Contains
         );
         assert_eq!(schema.procedures.first().unwrap().name, "insert_customers");
+    }
+
+    #[test]
+    fn a_custom_operator_carrying_an_argument_type_parses() {
+        // R1: `Custom` is `#[serde(other)]` on an internally-tagged enum, and
+        // the only test of it before this one used a bare `{"type": "..."}`
+        // with no sibling fields. The real connector's `_ilike` operator
+        // carries an `argument_type` alongside `type`, which is exactly the
+        // shape a unit variant has to tolerate rather than choke on.
+        let schema: NdcSchemaResponse = serde_json::from_str(&fixture("schema-static.json")).unwrap();
+
+        assert_eq!(
+            schema.scalar_types["text"].comparison_operators["_ilike"],
+            NdcComparisonOperatorDefinition::Custom
+        );
+    }
+
+    #[test]
+    fn a_schema_with_a_top_level_capabilities_member_still_parses() {
+        // The real `/schema` response carries a top-level `capabilities`
+        // member (`{"query":{"aggregates":{"count_scalar_type":"int8"}}}`)
+        // that `NdcSchemaResponse` does not model at all. Harmless only
+        // because nothing here sets `deny_unknown_fields` -- this pins that
+        // the document still parses rather than being asserted about.
+        let schema: NdcSchemaResponse = serde_json::from_str(&fixture("schema-static.json")).unwrap();
+
+        assert_eq!(
+            schema
+                .collections
+                .iter()
+                .map(|c| c.name.as_str())
+                .collect::<Vec<_>>(),
+            ["articles"]
+        );
     }
 }

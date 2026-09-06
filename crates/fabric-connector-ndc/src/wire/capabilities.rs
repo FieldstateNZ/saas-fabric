@@ -52,6 +52,16 @@ mod tests {
         serde_json::from_str(json).unwrap()
     }
 
+    /// Reads a real `ndc-postgres` v3.1.0 document, checked in under
+    /// `tests/fixtures/` -- see the README there for how it was captured.
+    fn fixture(name: &str) -> String {
+        let path = format!(
+            "{}/tests/fixtures/ndc-postgres-v3.1.0/{name}",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        std::fs::read_to_string(path).unwrap()
+    }
+
     #[test]
     fn detects_transactional_mutation_support_by_key_presence() {
         let parsed = response(r#"{"version":"0.2.13","capabilities":{"mutation":{"transactional":{}}}}"#);
@@ -83,5 +93,17 @@ mod tests {
         let parsed = response(r#"{"version":"0.2.13","capabilities":{"query":{"time_travel":{}}}}"#);
 
         assert_eq!(parsed.version, "0.2.13");
+    }
+
+    #[test]
+    fn the_real_connector_declares_transactional_mutations() {
+        // `ghcr.io/hasura/ndc-postgres:v3.1.0@sha256:f91910ef5107aa80d31d82639e149b7f41f4a5bb3af9a369397d7d5965d79a57`,
+        // `GET /capabilities`. `mutation.transactional` is present as `{}`,
+        // not absent and not `null` -- the one shape this method reads as
+        // "yes".
+        let parsed = response(&fixture("capabilities.json"));
+
+        assert_eq!(parsed.version, "0.2.4");
+        assert!(parsed.supports_transactional_mutations());
     }
 }

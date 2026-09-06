@@ -6,11 +6,19 @@ runtime, the real `fabric-data-api` Data API, and the real
 `fabric-connector-ndc` adapter against a running NDC connector process. It
 has no production code and ships nothing a caller could depend on.
 
-This slice of issue #62 lands the crate boundary and the architecture-gate
-amendment that admits it. The acceptance test itself -- publishing a fixture
-through the real filesystem adapter, starting `ghcr.io/hasura/ndc-postgres`
-as a subprocess, and driving the assembled router against it -- is a later
-slice and does not exist here yet. `src/lib.rs` is documentation only.
+The composed acceptance test now lives here:
+`tests/published_state_reaches_a_real_connector.rs` publishes a fixture
+through the real filesystem publisher, brings up `postgres:16-alpine` and
+`ghcr.io/hasura/ndc-postgres:v3.1.0` as subprocesses (`tests/support/docker/`),
+negotiates the real adapter against the running connector, and drives the
+assembled router with `tower::ServiceExt::oneshot`. `tests/the_stack_comes_up.rs`
+is the container harness's own proof that it comes up and answers, one layer
+below the composed test. `docs/verification.md`'s "Connector acceptance
+(issue #62)" section is the fuller account: what each test proves, the
+mutation experiment that falsifies "no predicate reached the connector," and
+which falsified assumptions (F1, F2, F4) this closed against a real
+connector, versus the one (F3) that is out of scope for this crate and
+deferred to its own issue.
 
 ## Why this crate exists
 
@@ -43,22 +51,70 @@ the dependency graph.
 ## What lives here
 
 Nothing production-shaped. `Cargo.toml` has no `[dependencies]` section at
-all -- only `[dev-dependencies]`, naming the five internal crates the
-eventual test composes (`fabric-runtime-publication`, `fabric-connector-ndc`,
+all -- only `[dev-dependencies]`, naming the internal crates the composed
+test drives (`fabric-runtime-publication`, `fabric-connector-ndc`,
 `fabric-tenant-runtime`, `fabric-data-api`, `fabric-identity`,
-`fabric-connector`) plus the transport and async crates that drive them
-(`axum`, `http`, `tokio`, `tower`, `serde_json`). `publish = false`: this
-crate is never meant to leave the workspace.
+`fabric-connector`), the transport and async crates that drive them
+(`axum`, `http`, `tokio`, `tower`, `serde_json`), and `base64` (decodes this
+crate's own unsigned test tokens -- see `tests/support/unsigned_reader.rs`
+for why it cannot use `fabric_identity::TrustedIngressReader` directly).
+`publish = false`: this crate is never meant to leave the workspace.
+
+`tests/`:
+
+- `published_state_reaches_a_real_connector.rs` -- the composed acceptance
+  test (issue #62 slice 4).
+- `the_stack_comes_up.rs` -- the container harness's own smoke test (slice 3).
+- `fixtures/ndc-postgres-v3.1.0/` -- the CLI-generated `configuration.json`
+  for both connector modes, checked in with the regeneration command; never
+  hand-written.
+- `support/` -- the harness. `docker/` is `process.rs` (driving the `docker`
+  binary), `containers.rs`, `networks.rs`, and `polling.rs` (deadline-bounded,
+  never a bare sleep), behind a `docker.rs` facade so every other file's
+  `docker::` calls are unaffected by the split. `stack.rs` assembles postgres
+  plus one connector mode; `impostor.rs` is a self-contained nginx standing
+  in for "a real HTTP process that is not an NDC connector"; `compose.rs`
+  publishes a fixture and assembles the real runtime and Data API over it;
+  `fixtures.rs` and `requests.rs` are the publication fixture and the
+  request/token helpers, deliberately not shared with
+  `fabric-runtime-publication`'s own versions of each (see those files'
+  module docs for why); `gate.rs` is the honest Docker-required-or-skip
+  check every test calls first; `names.rs` and `images.rs` are naming and
+  image pins.
 
 ## Gotchas
 
 - The crate is `fabric-ndc-acceptance` (hyphen); the Rust identifier is
   `fabric_ndc_acceptance` (underscore).
-- `cargo test -p fabric-ndc-acceptance` currently builds an empty test
-  binary -- there is no `tests/` directory yet. That is expected for this
-  slice; the composed acceptance test is added in a later one.
+- Every test in `tests/` calls `support::gate::docker_available_or_skip`
+  first and returns immediately if it answers `false` -- so
+  `cargo test -p fabric-ndc-acceptance` on a machine with no Docker daemon
+  reports every test as passed while doing nothing, visibly (one stderr line
+  per test naming why). Set `FABRIC_REQUIRE_CONNECTOR_ACCEPTANCE=1` to turn
+  that into a hard failure instead -- the `connector-acceptance` CI job
+  always does.
+- The same variable also disables the digest-to-bare-tag fallback in
+  `tests/support/docker/containers.rs`: with it set, an image absent by its
+  pinned digest is a failure naming the digest, never a silent run of
+  whatever the bare tag resolves to. On a sandboxed machine that cannot pull
+  and only has the connector image loaded under a different (single-platform)
+  digest than the pinned multi-arch index digest -- this repository's own
+  situation on at least one development machine, see `tests/support/images.rs` --
+  the required mode therefore fails fast rather than passing. That is the
+  mechanism working as intended, not a defect; CI's daemon pulls normally and
+  is unaffected.
 - Do not add a `[dependencies]` entry to make something "just easier to
   reach" from a future test. Everything this crate needs is a
   `[dev-dependencies]` edge, and that is load-bearing: a `[dev-dependencies]`
   edge only ever reaches this crate's own test binaries, never a production
-  build, which is part of what keeps this crate out of both planes.
+  build, which is part of what keeps this crate out of both planes. This is
+  also why `tests/support/fixtures.rs` builds publication documents from
+  `serde_json::json!` literals rather than from `fabric_core` typed
+  constructors, and why `tests/support/unsigned_reader.rs` implements its own
+  minimal `TokenReader` rather than using `fabric_identity::TrustedIngressReader`:
+  both would need a `fabric-core` dependency this crate does not have, and
+  `scripts/check_architecture.py`'s dependency table does not list one.
+- No containers or networks should outlive a test run. Every one is named
+  under the `fabric-ndc-acc-` prefix (`tests/support/names.rs`), which is
+  what lets `names::sweep_stale` find and remove a prior hard-killed run's
+  leftovers at the start of the next one -- `Drop` does not run on `SIGKILL`.

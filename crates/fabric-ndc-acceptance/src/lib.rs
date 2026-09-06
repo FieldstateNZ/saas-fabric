@@ -9,8 +9,12 @@
 //! `ghcr.io/hasura/ndc-postgres` process rather than a fake. No existing
 //! crate can host that composition without failing an architecture check --
 //! see "Why this crate exists" below -- so this one exists to hold it. The
-//! test itself lands under `tests/` in a later slice of issue #62; this
-//! crate currently declares only the boundary and the paperwork for it.
+//! composed test itself is
+//! `tests/published_state_reaches_a_real_connector.rs`; the container
+//! harness it depends on lives beside it under `tests/support/`, and
+//! `tests/the_stack_comes_up.rs` is that harness's own proof that it comes
+//! up and answers. `docs/verification.md`'s "Connector acceptance (issue
+//! #62)" section is the fuller account of what each test proves.
 //!
 //! # Why this crate exists, in neither plane
 //!
@@ -56,8 +60,14 @@
 //! This crate has no `[dependencies]`. Everything it names --
 //! `fabric-runtime-publication`, `fabric-connector-ndc`,
 //! `fabric-tenant-runtime`, `fabric-data-api`, `fabric-identity`,
-//! `fabric-connector`, and the transport crates that drive them (`axum`,
-//! `http`, `tokio`, `tower`, `serde_json`) -- is a `[dev-dependencies]` edge,
-//! reachable only from this crate's own test binaries and never from a
-//! production build. This file carries no code, only the documentation a
-//! reviewer needs before reading the test itself.
+//! `fabric-connector`, the transport crates that drive them (`axum`,
+//! `http`, `tokio`, `tower`, `serde_json`), and `base64` (decodes this
+//! crate's own unsigned test tokens; see `tests/support/unsigned_reader.rs`) --
+//! is a `[dev-dependencies]` edge, reachable only from this crate's own test
+//! binaries and never from a production build. Deliberately absent:
+//! `fabric-core`, which `scripts/check_architecture.py`'s dependency table
+//! does not list for this crate -- see `tests/support/fixtures.rs` and
+//! `tests/support/unsigned_reader.rs` for the two places that shapes what
+//! the test harness can and cannot build directly. This file carries no
+//! code, only the documentation a reviewer needs before reading the test
+//! itself.

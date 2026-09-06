@@ -42,11 +42,16 @@ is at the end, under "The control plane, end to end".
 | Console types | `npm run typecheck` | 0 errors |
 | Console tests | `npm test` | 81 passing, 0 failing |
 | Console build | `npm run build` | 228 kB, 70 kB gzipped |
+| Connector acceptance | `FABRIC_REQUIRE_CONNECTOR_ACCEPTANCE=1 cargo test -p fabric-ndc-acceptance` | 14 passing, 0 failing (see "Connector acceptance (issue #62)" below) |
 
-All eleven run in CI on every push and pull request
-(`.github/workflows/ci.yml`); the four Rust gates and the architecture check as
-parallel jobs, the four console checks as steps of one job because `npm ci`
-dominates each of them.
+All twelve run in CI on every push and pull request
+(`.github/workflows/ci.yml`); the four Rust gates, the architecture check, and
+the connector-acceptance job as parallel jobs, the four console checks as
+steps of one job because `npm ci` dominates each of them. The
+`cargo test --workspace` job excludes `fabric-ndc-acceptance`
+(`--exclude fabric-ndc-acceptance`) so the connector-acceptance job is the
+one place that claim is made, with the requirement set — CI can go green on
+that job only by actually reaching a real connector (`tests/support/gate.rs`).
 
 Nothing is ignored.
 
@@ -139,6 +144,113 @@ along with it — the write that used to fail now succeeds outright, which
 are built to notice. The prediction would only be borne out by a mutation
 that leaves the temp-file staging in place and only removes the final
 `rename`, which was not tried here.
+
+## Connector acceptance (issue #62)
+
+`fabric-ndc-acceptance` is new: a test-only crate in neither plane
+(`docs/architecture/crate-dependencies.md`), holding the one composed test
+that is allowed to compose the real `fabric-runtime-publication` publisher,
+the real `fabric-tenant-runtime` runtime, the real `fabric-data-api` Data
+API, and the real `fabric-connector-ndc` adapter against an actual
+`ghcr.io/hasura/ndc-postgres:v3.1.0` process talking to a real
+`postgres:16-alpine` — the gap the previous run of this document named as
+"no test has spoken to a running connector".
+
+**The composed test.**
+`tests/published_state_reaches_a_real_connector.rs` publishes a fixture —
+one shared, `Shared`-placement DataSource behind a `ConnectionSelector::Default`,
+two tenants isolated by different values (`tenant-acme-482`,
+`tenant-globex-915`) in the same `tenant_key` discriminator column, and a
+one-resource `articles` catalogue exposing only `id` and `title` — through
+the real `FilesystemRuntimePublication`, brings up postgres and the
+connector via `std::process::Command` (`tests/support/docker/`, no
+`testcontainers` — lead decision 2), negotiates the real
+`fabric_connector_ndc::build_ndc_connector` against the running connector's
+base URL, builds the real `fabric_tenant_runtime::build_runtime` over the
+published files, and serves both through the real
+`fabric_data_api::build_data_api`, driven with `tower::ServiceExt::oneshot`
+and unsigned bearer tokens. The corpus is seeded as literal SQL
+(`tests/support/postgres.rs::SEED_SQL`), never a Rust constant the fixture
+could move alongside it — row 1a's lesson from the M1 section above, applied
+here with a real database in place of a fake corpus, which is what makes
+mutations 3 and 4 below catch what the equivalent mutation against a shared
+constant could not.
+
+Eleven tests. Ten prove the acceptance criteria directly: two tenants
+sharing one physical table each receive only their own row, on both the list
+and the keyed-lookup routes; the same logical key resolves to a different
+physical row per tenant; a direct `psql` count proves both rows really exist
+in the one table the query narrowed; a caller-supplied `X-Tenant-Id` header
+is refused with `400` before the identity extractor returns, which is before
+any connector call could run; no response body names the connector id, the
+discriminator column, or either tenant's discriminator value; a connector
+declaring no request-level arguments is refused at `build_ndc_connector`
+before it can serve anyone; a real HTTP process that is not an NDC connector
+(`nginx`, reconfigured to answer `200` on every path — see
+`tests/support/impostor.rs` for why the stock welcome page will not do) is
+refused as a malformed response rather than believed; a connector stopped
+mid-run answers `503 connector_unavailable` with `Retry-After: 5` and no row
+from any tenant; and an insert the connector accepts (`insert_articles`,
+mapped to `objects`/no `filter_argument` — an insert carries no predicate,
+only a stamped row) reports the `affected` count the connector gave, with
+the written row readable back only by the tenant that created it. The
+eleventh, on the version floor, asserts what is actually observable: the
+handshake succeeding is the only signal available from outside
+`fabric-connector-ndc`, because ADR 0001 keeps the negotiated version number
+inside that crate the same way it keeps every other NDC type there; the
+floor's own enforcement is pinned by `fabric-connector-ndc`'s fixture-backed
+unit tests instead.
+
+`a_delete_scoped_to_another_tenant_affects_nothing_and_the_row_survives` is
+not implemented. The real `delete_articles_by_id_and_tenant_key` procedure
+requires `key_id` and `key_tenant_key` arguments alongside its `pre_check`
+predicate, and `fabric_connector_ndc::CollectionProcedures` has nowhere to
+carry a required key argument — a neutral `MutationSpec::Delete { filter }`
+cannot be expressed against this connector's generated procedures as they
+stand. This is F3, below, and it is deferred to its own issue rather than
+grown here.
+
+**The mutation experiments.** Five mutations were run against this
+composed test in this worktree, following the standard above: mutate, run
+`cargo test -p fabric-ndc-acceptance --test published_state_reaches_a_real_connector`,
+record what failed, restore the file (`git checkout --`, or a manual revert
+for the two mutations inside this crate's own not-yet-committed
+`tests/support/fixtures.rs`), confirm `git status --short` is clean, move
+on. No code change from this exercise survives in this commit.
+
+| # | Mutation | File | Test(s) that failed | First failure line |
+| --- | --- | --- | --- | --- |
+| 1 | `IsolationModel::tenant_predicate` returns `None` unconditionally | `crates/fabric-connector/src/execution/isolation_model.rs` | 5 of 11: `two_tenants_sharing_one_physical_table_each_receive_only_their_own_row`, `both_tenants_rows_really_are_in_the_one_table_the_query_narrowed`, `the_predicate_the_platform_built_is_the_predicate_the_database_applied`, `the_same_logical_article_key_reaches_a_different_physical_row_for_each_tenant`, `a_write_the_connector_accepts_reports_the_count_the_connector_gave` (this one because the insert stamp is gated by the same early return, so the row landed with no `tenant_key` at all and the `NOT NULL` column rejected it) | `assertion \`left == right\` failed: acme should see only its own row: {"data":[{"id":"1","title":"Acme Handbook"},{"id":"1","title":"Globex Playbook"}],…}`<br>`left: 2 right: 1` |
+| 2 | `QuerySpec::for_target` returns `self.clone()` unconditionally | `crates/fabric-connector/src/query/query_spec.rs` | Same 5 as row 1 | `assertion \`left == right\` failed`<br>`left: 200 right: 404` (globex's keyed read of the row acme had just inserted, which an unpredicated query no longer hides) |
+| 3 | Globex's discriminator value zeroed to `""` at the binding call site only | `crates/fabric-ndc-acceptance/tests/support/fixtures.rs` (`read_only_snapshot`) | 5 of 11: `both_tenants_rows_really_are_in_the_one_table_the_query_narrowed`, `no_response_names_the_table_the_connector_or_the_discriminator`, `the_predicate_the_platform_built_is_the_predicate_the_database_applied`, `the_same_logical_article_key_reaches_a_different_physical_row_for_each_tenant`, `two_tenants_sharing_one_physical_table_each_receive_only_their_own_row` | `assertion \`left == right\` failed: globex`<br>`left: 0 right: 1` — globex's predicate now matches no real row at all, rather than the wrong one |
+| 4 | Both tenants given the same discriminator value | `crates/fabric-ndc-acceptance/tests/support/fixtures.rs` (`read_only_snapshot`) | 4 of 11: `the_predicate_the_platform_built_is_the_predicate_the_database_applied`, `both_tenants_rows_really_are_in_the_one_table_the_query_narrowed`, `the_same_logical_article_key_reaches_a_different_physical_row_for_each_tenant`, `two_tenants_sharing_one_physical_table_each_receive_only_their_own_row` | `assertion \`left == right\` failed: globex`<br>`left: String("Acme Handbook") right: "Globex Playbook"` |
+| 5 | `to_expression` drops the tenant conjunct from the `And` (the last clause, where `Filter::and` places it) | `crates/fabric-connector-ndc/src/translate/expression.rs` | 2 of 11: `a_write_the_connector_accepts_reports_the_count_the_connector_gave`, `the_same_logical_article_key_reaches_a_different_physical_row_for_each_tenant` — a bare list query's tenant predicate is never wrapped in `Filter::And` (there is no caller filter to conjoin with), so only the two tests driving a *keyed* read, whose filter is `key.and(tenant)`, are affected | `assertion \`left == right\` failed`<br>`left: 200 right: 404` |
+
+Mutations 1, 2 and 5 confirm §2.5 of the plan directly: the unpredicated
+query really does return both tenants' rows once the platform stops adding
+the predicate, which is what makes
+`the_predicate_the_platform_built_is_the_predicate_the_database_applied`'s
+pair of facts (two physical rows; one row per tenant through the router)
+meaningful rather than coincidental. Mutation 3 is the form that left
+`docs/verification.md` row 1a's Rust-fixture equivalent green at `9e7c83b`
+in the runtime-publication crate; here it cannot, because the corpus a real
+`psql` reads back cannot follow a mutation to a Rust binding.
+
+**What this closes, and what it does not.** Two defects round six of review
+found were invisible to every unit test because the requests were
+well-formed and the logic correct — a connector that declares no
+request-level arguments silently ignoring per-tenant routing, and
+`affected_rows` not being an NDC concept on `/mutation` at all — are now
+observed directly against a running connector, not read from source or
+documentation, and both are checked at startup or refused. The falsified
+assumptions, and the commit that corrected each:
+
+| # | Assumption that was wrong | Corrected in |
+| --- | --- | --- |
+| F1 | Every write could omit `fields` on a procedure request. A real `ndc-postgres` refuses that outright: `400 — "Procedure requests must ask for 'affected_rows' or use the 'returning' clause."` | `6defacb` |
+| F2 | The shipped example's predicate argument name, `filter`, was a real connector's name for it. A real `ndc-postgres` calls it `pre_check` (delete, update) or `post_check` (insert) | `6defacb` |
+| F4 | `wire/response.rs`'s rustdoc gave the wrong reason `rows` is ever absent from a query response. `ndc-postgres` never takes that route; only another connector might | `e5e2d73` |
+| F3 | Neutral update/delete could be mapped onto this connector's generated procedures the same way insert is. They cannot: `update_articles_by_id_and_tenant_key` and `delete_articles_by_id_and_tenant_key` require `key_id`/`key_tenant_key` arguments `CollectionProcedures` has nowhere to carry | **Not corrected here** — deferred to a new issue, "neutral update/delete cannot be expressed against `ndc-postgres` v3.1.0's keyed procedures," which will supersede ADR 0004 rather than amend it further (ADR 0004's addendum; lead decision on issue #62) |
 
 ## Acting on Keycloak as the operator
 
@@ -598,38 +710,41 @@ Named here rather than left for a reader to discover.
   is `docs/architecture/client-desired-state.md`, and the shipped examples
   conform to it under test.
 
-**Runtime plane** (unchanged from the previous run):
+**Runtime plane:**
 
-- **No connector integration test.** Nothing in this workspace has spoken to
-  a running NDC connector, and round six showed what that costs. Two of its
-  findings were invisible to every unit test because our requests were
-  well-formed and our logic correct: a connector that declares no
-  request-level arguments silently ignores the per-tenant routing we send —
-  now observed directly, not just read from source: a real, statically
-  configured `ndc-postgres` v3.1.0's own `GET /schema` response declares
-  `request_arguments: null`
-  (`crates/fabric-connector-ndc/tests/fixtures/ndc-postgres-v3.1.0/schema-static.json`,
-  captured for issue #62 slice 1) — and `affected_rows` is not an NDC concept
-  on `/mutation` at all: a real insert response nests it inside the
-  procedure's own opaque `result` object
-  (`.../mutation-insert-ok.json`), confirming the count we report is a
-  heuristic read of a connector-private shape, not a guess about one. Both
-  are now checked at startup or refused, but neither was findable from
-  inside this workspace before a real connector answered.
+- **The connector integration gap is closed, except F3.** As of issue #62
+  slice 4, something in this workspace has spoken to a running NDC
+  connector: `crates/fabric-ndc-acceptance/tests/published_state_reaches_a_real_connector.rs`
+  composes the real publisher, runtime, Data API and NDC adapter against an
+  actual `ghcr.io/hasura/ndc-postgres:v3.1.0` and `postgres:16-alpine`, and
+  proves tenant isolation, fail-closed behaviour, and a real write against
+  them rather than a fake. "Connector acceptance (issue #62)" above is the
+  detail — the composed test's own description, its eleven tests, and the
+  five-mutation table that falsifies "no predicate reached the connector" by
+  disabling the predicate and watching the isolation assertions fail against
+  the real database.
 
-  ADR 0004 carries the remaining pre-deployment checklist. The item that
-  mattered most — the payload argument's expected **value shape** — is
-  observed rather than documentation-derived as of issue #62 slice 1: a real
-  insert response
-  (`crates/fabric-connector-ndc/tests/fixtures/ndc-postgres-v3.1.0/mutation-insert-ok.json`)
-  confirms `objects` takes an array of row objects keyed by column name,
-  matching the schema's own `insert_articles_object` type exactly. See ADR
-  0004's addendum for what that closes and what it does not.
+  Round six of review found two defects invisible to every unit test because
+  the requests were well-formed and the logic correct: a connector that
+  declares no request-level arguments silently ignores the per-tenant
+  routing sent to it, and `affected_rows` is not an NDC concept on
+  `/mutation` at all. Both are now checked at startup or refused, and both
+  are now observed directly against a running connector rather than read
+  from source or documentation. Every assumption that observation
+  falsified, and the commit that corrected it, is F1 (`6defacb`), F2
+  (`6defacb`), and F4 (`e5e2d73`) in the table above.
 
-  As of issue #62 slice 5, the mutation `fields` selection this crate sends
-  is the observed one too: every procedure request now asks for
-  `affected_rows`, the shape a real `ndc-postgres` actually requires and
-  answers, in place of the `fields: None` every write previously sent.
+  **F3 is the one exception, and it is deferred rather than closed.** Neutral
+  update and delete cannot be expressed against this connector's generated
+  procedures: `update_articles_by_id_and_tenant_key` and
+  `delete_articles_by_id_and_tenant_key` require `key_id`/`key_tenant_key`
+  arguments `fabric_connector_ndc::CollectionProcedures` has nowhere to
+  carry, so `a_delete_scoped_to_another_tenant_affects_nothing_and_the_row_survives`
+  — named in the plan — is not implemented. ADR 0004's addendum and the
+  lead's decision on issue #62 both point this at a new, separate issue,
+  "neutral update/delete cannot be expressed against `ndc-postgres` v3.1.0's
+  keyed procedures," which supersedes ADR 0004 rather than amending it
+  further.
 
 - **No exactly-once write guarantee.** The platform now distinguishes a write
   that provably did not reach the backend from one whose outcome is unknown

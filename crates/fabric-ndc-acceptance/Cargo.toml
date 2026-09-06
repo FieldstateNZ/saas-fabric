@@ -18,6 +18,13 @@ fabric-identity.workspace = true
 fabric-runtime-publication.workspace = true
 fabric-tenant-runtime.workspace = true
 
+# Decodes the payload segment of a token `fabric_identity::encode_unsigned_token`
+# builds -- already pinned in the workspace root and already in Cargo.lock
+# (fabric-identity uses it for the same encoding internally). Needed because
+# this crate has no `fabric-core` dependency of its own to supply the `Clock`
+# `fabric_identity::TrustedIngressReader::new` requires; see
+# `tests/support/unsigned_reader.rs` for the reader this decodes into.
+base64.workspace = true
 axum.workspace = true
 http.workspace = true
 serde_json.workspace = true

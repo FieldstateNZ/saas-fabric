@@ -25,11 +25,16 @@
     clippy::panic
 )]
 
+pub mod compose;
 pub mod connector;
 pub mod docker;
+pub mod fixtures;
 pub mod gate;
 pub mod images;
 pub mod impostor;
 pub mod names;
 pub mod postgres;
+pub mod requests;
 pub mod stack;
+pub mod tempdir;
+pub mod unsigned_reader;

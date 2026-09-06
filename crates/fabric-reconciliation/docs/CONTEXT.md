@@ -18,19 +18,21 @@ Converges an identity provider onto a client's desired state. Depends on
   — only what the platform declares. Fields SaaS Fabric says nothing about are
   absent so the reconciler cannot notice, and therefore cannot overwrite, an
   operator's deliberate change to one.
-- `ObservedOidcClient { redirect_uris: BTreeSet<RedirectUri>, public: bool, challenge_method: Option<PkceMethod>, audience_mapper: Option<String>, unmodellable_redirect_uris: usize, enabled: bool, standard_flow_enabled: bool, post_logout_redirect_uris_is_every_registered_uri: bool }`.
+- `ObservedOidcClient { redirect_uris: BTreeSet<RedirectUri>, public: bool, challenge_method: Option<PkceMethod>, audience_mapper: Option<String>, other_protocol_mappers: usize, unmodellable_redirect_uris: usize, enabled: bool, standard_flow_enabled: bool, post_logout_redirect_uris_is_every_registered_uri: bool }`.
   `challenge_method` is `None` for both "no such attribute" and "a value this
   model cannot read" — no `Plain` variant exists to hold the latter (ADR 0019
   §6). `audience_mapper` is the audience the client's mapper currently
   asserts, or `None` if it has none **or more than one** — see its own
-  rustdoc. `unmodellable_redirect_uris` is a **count**, never the values —
-  they are attacker-influenced text with no reason to reach a plan, a log
-  line, or an API response — and non-zero is drift regardless of what
-  `redirect_uris` holds. `enabled`, `standard_flow_enabled`, and
-  `post_logout_redirect_uris_is_every_registered_uri` close the gap where a
-  declaration always writes `true` (or the literal `+`) but nothing read it
-  back — a client disabled, or narrowed, by hand used to read as converged
-  forever.
+  rustdoc. `other_protocol_mappers` is a **count** of the client's mappers
+  that are not that one — a mapper nobody declared, added out of band, is
+  corrected the same way a missing audience mapper is. `unmodellable_redirect_uris`
+  is a **count**, never the values — they are attacker-influenced text with no
+  reason to reach a plan, a log line, or an API response — and non-zero is
+  drift regardless of what `redirect_uris` holds. `enabled`,
+  `standard_flow_enabled`, and `post_logout_redirect_uris_is_every_registered_uri`
+  close the gap where a declaration always writes `true` (or the literal `+`)
+  but nothing read it back — a client disabled, or narrowed, by hand used to
+  read as converged forever.
 - `ProviderError` — `Unavailable{detail}`, `NotPermitted`, `Rejected{detail}`,
   `NoAudienceConfigured`. `is_transient()`. **`detail` must never carry an
   upstream response body or a credential** — the adapter is where that is
@@ -92,12 +94,14 @@ Converges an identity provider onto a client's desired state. Depends on
 - A declared client is always public, so an observed client held as confidential
   does not match and is corrected. That is the one property that changes what a
   client *is*.
-- **`matches()`'s eight terms** (`plan::diff::matches`): `existing.public`;
+- **`matches()`'s nine terms** (`plan::diff::matches`): `existing.public`;
   `existing.unmodellable_redirect_uris == 0`; `existing.redirect_uris ==
   declared_uris(&declared.redirect)`; `existing.challenge_method ==
   Some(declared.pkce)`; `existing.audience_mapper.as_deref() ==
   Some(configured_audience)` (also `None`, hence non-matching, when the
-  provider holds more than one mapper); `existing.enabled`;
+  provider holds more than one mapper); `existing.other_protocol_mappers ==
+  0` (a client-level mapper nobody declared, added out of band, is the same
+  drift with the same correction); `existing.enabled`;
   `existing.standard_flow_enabled`;
   `existing.post_logout_redirect_uris_is_every_registered_uri`.
 - **Where the audience comes from, and why.** ADR 0019 §1/§G5: one audience

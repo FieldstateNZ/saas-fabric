@@ -67,6 +67,10 @@ impl IdentityReconciler {
     pub async fn reconcile(&self, client: &Client) -> ReconciliationOutcome {
         let plan = match self.plan(client).await {
             Ok(plan) => plan,
+            Err(error @ ProviderError::NoAudienceConfigured) => {
+                logging::planning_refused(client, &error);
+                return ReconciliationOutcome::failed(&error);
+            }
             Err(error) => {
                 logging::observation_failed(client, &error);
                 return ReconciliationOutcome::failed(&error);

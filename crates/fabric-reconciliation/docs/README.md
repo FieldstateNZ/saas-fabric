@@ -82,6 +82,10 @@ following hold, and any one failing produces `UpdateOidcClient`:
   mapper reads as having none of them — see `ObservedOidcClient::audience_mapper`),
   all count as drift, because any of them leaves the edge's `aud` check
   refusing every token the client issues;
+- it carries **no other protocol mappers** (`other_protocol_mappers == 0`) —
+  a client-level mapper nobody declared, added out of band, is corrected the
+  same way an absent audience mapper is: the next sweep rewrites the client's
+  whole mapper set down to this platform's own;
 - it is still **enabled**, and its **standard flow** is still enabled — a
   client switched off, or with authorization-code disabled, by hand answers
   nobody, silently;

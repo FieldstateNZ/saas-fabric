@@ -16,9 +16,9 @@ use std::sync::Arc;
 
 use fabric_client_model::{AppScheme, ClientProtocol, OidcClient, OidcClientId, PkceMethod, RealmName};
 use fabric_client_model::{RedirectStrategy, RedirectStrategyKind, RedirectUri};
-use fabric_keycloak::{KeycloakConfig, KeycloakIdentityProvider};
+use fabric_keycloak::KeycloakIdentityProvider;
 use fabric_reconciliation::{IdentityProvider, ProviderError};
-use support::{FakeKeycloak, RecordedRequest};
+use support::{config_for_tests, FakeKeycloak, RecordedRequest};
 
 /// The audience this test suite's provider is configured with.
 const AUDIENCE: &str = "saas-fabric-data-api";
@@ -79,11 +79,7 @@ fn custom_scheme_client() -> OidcClient {
 /// Builds a provider pointed at a fake Keycloak, configured with
 /// [`AUDIENCE`].
 fn provider(keycloak: &FakeKeycloak) -> KeycloakIdentityProvider {
-    let config = KeycloakConfig {
-        base_url: keycloak.base_url.clone(),
-        audience: AUDIENCE.to_owned(),
-        ..KeycloakConfig::default()
-    };
+    let config = config_for_tests(&keycloak.base_url, AUDIENCE);
 
     KeycloakIdentityProvider::new(&config, "an-operators-token").expect("the provider must build")
 }
@@ -218,6 +214,50 @@ async fn two_audience_mappers_are_observed_as_no_single_audience() {
 }
 
 #[tokio::test]
+async fn a_mapper_nobody_declared_reads_back_as_an_extra_mapper() {
+    // A client-level mapper this adapter never writes — a hardcoded-claim
+    // mapper injecting a claim, say — added out of band. It is not the
+    // audience mapper, so `audience_mapper` alone cannot see it; that is what
+    // `other_protocol_mappers` is for.
+    let keycloak = FakeKeycloak::start(Arc::new(|request: &RecordedRequest| match request.path.as_str() {
+        path if path.starts_with("/admin/realms/acme/roles") => (200, "[]".to_owned()),
+        path if path.starts_with("/admin/realms/acme/clients") => (
+            200,
+            format!(
+                r#"[{{"id":"uuid-1","clientId":"web","redirectUris":[],"publicClient":true,"protocolMappers":[
+                    {{"protocolMapper":"oidc-audience-mapper","config":{{"included.custom.audience":"{AUDIENCE}"}}}},
+                    {{"protocolMapper":"oidc-hardcoded-claim-mapper","config":{{}}}}
+                ]}}]"#
+            ),
+        ),
+        "/admin/realms/acme" => (200, r#"{"displayName":"Acme"}"#.to_owned()),
+        _ => (404, "{}".to_owned()),
+    }))
+    .await;
+
+    let observed = provider(&keycloak)
+        .observe_realm(&realm())
+        .await
+        .unwrap()
+        .expect("the realm exists");
+
+    let client = observed
+        .clients
+        .get(&web_client().id)
+        .expect("the client is reported");
+
+    assert_eq!(
+        client.audience_mapper.as_deref(),
+        Some(AUDIENCE),
+        "the audience mapper must still be read correctly beside an unrelated one"
+    );
+    assert_eq!(
+        client.other_protocol_mappers, 1,
+        "a mapper nobody declared must be counted rather than ignored"
+    );
+}
+
+#[tokio::test]
 async fn a_declared_native_client_round_trips_through_the_wire_unchanged() {
     let write = FakeKeycloak::start(Arc::new(|_: &RecordedRequest| (201, String::new()))).await;
 
@@ -259,6 +299,7 @@ async fn a_declared_native_client_round_trips_through_the_wire_unchanged() {
     assert_eq!(client.redirect_uris, declared_uris);
     assert_eq!(client.challenge_method, Some(PkceMethod::S256));
     assert_eq!(client.audience_mapper, Some(AUDIENCE.to_owned()));
+    assert_eq!(client.other_protocol_mappers, 0);
     assert_eq!(client.unmodellable_redirect_uris, 0);
     assert!(
         client.enabled,
@@ -310,6 +351,107 @@ async fn a_client_disabled_by_hand_reads_back_disabled() {
     assert!(
         client.standard_flow_enabled,
         "unrelated fields must read back unaffected"
+    );
+}
+
+#[tokio::test]
+async fn a_plain_challenge_method_reads_back_as_no_recognised_method() {
+    // A downgrade, not an absence (see `a_client_without_a_recognised_challenge_method_is_corrected`
+    // in `fabric-reconciliation` for the absent case): the provider holds a
+    // value, and this model does not recognise it as `S256`.
+    let keycloak = FakeKeycloak::start(Arc::new(|request: &RecordedRequest| match request.path.as_str() {
+        path if path.starts_with("/admin/realms/acme/roles") => (200, "[]".to_owned()),
+        path if path.starts_with("/admin/realms/acme/clients") => (
+            200,
+            r#"[{"id":"uuid-1","clientId":"web","redirectUris":[],"publicClient":true,"attributes":{"pkce.code.challenge.method":"plain"}}]"#
+                .to_owned(),
+        ),
+        "/admin/realms/acme" => (200, r#"{"displayName":"Acme"}"#.to_owned()),
+        _ => (404, "{}".to_owned()),
+    }))
+    .await;
+
+    let observed = provider(&keycloak)
+        .observe_realm(&realm())
+        .await
+        .unwrap()
+        .expect("the realm exists");
+
+    let client = observed
+        .clients
+        .get(&web_client().id)
+        .expect("the client is reported");
+
+    assert_eq!(
+        client.challenge_method, None,
+        "a downgrade to plain must read as no recognised method, not silently accepted"
+    );
+}
+
+#[tokio::test]
+async fn a_missing_post_logout_attribute_reads_back_as_not_every_registered_uri() {
+    // No `attributes` key at all — the shape before this slice, or a client
+    // edited by hand to remove it.
+    let keycloak = FakeKeycloak::start(Arc::new(|request: &RecordedRequest| {
+        match request.path.as_str() {
+            path if path.starts_with("/admin/realms/acme/roles") => (200, "[]".to_owned()),
+            path if path.starts_with("/admin/realms/acme/clients") => (
+                200,
+                r#"[{"id":"uuid-1","clientId":"web","redirectUris":[],"publicClient":true}]"#.to_owned(),
+            ),
+            "/admin/realms/acme" => (200, r#"{"displayName":"Acme"}"#.to_owned()),
+            _ => (404, "{}".to_owned()),
+        }
+    }))
+    .await;
+
+    let observed = provider(&keycloak)
+        .observe_realm(&realm())
+        .await
+        .unwrap()
+        .expect("the realm exists");
+
+    let client = observed
+        .clients
+        .get(&web_client().id)
+        .expect("the client is reported");
+
+    assert!(
+        !client.post_logout_redirect_uris_is_every_registered_uri,
+        "a client with no post-logout attribute at all must not read as \"every registered URI\""
+    );
+}
+
+#[tokio::test]
+async fn an_explicit_post_logout_list_reads_back_as_not_every_registered_uri() {
+    // An operator narrowed the attribute by hand to a literal list, rather
+    // than the `+` shorthand a declaration always writes.
+    let keycloak = FakeKeycloak::start(Arc::new(|request: &RecordedRequest| match request.path.as_str() {
+        path if path.starts_with("/admin/realms/acme/roles") => (200, "[]".to_owned()),
+        path if path.starts_with("/admin/realms/acme/clients") => (
+            200,
+            r#"[{"id":"uuid-1","clientId":"web","redirectUris":["https://www.example.com/callback"],"publicClient":true,"attributes":{"post.logout.redirect.uris":"https://www.example.com/callback"}}]"#
+                .to_owned(),
+        ),
+        "/admin/realms/acme" => (200, r#"{"displayName":"Acme"}"#.to_owned()),
+        _ => (404, "{}".to_owned()),
+    }))
+    .await;
+
+    let observed = provider(&keycloak)
+        .observe_realm(&realm())
+        .await
+        .unwrap()
+        .expect("the realm exists");
+
+    let client = observed
+        .clients
+        .get(&web_client().id)
+        .expect("the client is reported");
+
+    assert!(
+        !client.post_logout_redirect_uris_is_every_registered_uri,
+        "an operator-narrowed explicit list must not read as \"every registered URI\""
     );
 }
 

@@ -65,6 +65,11 @@ Everything else — `wire::*`, `admin::*` — is `pub(crate)`.
   `protocolMappers` off the same page-bounded list call
   (`admin::paths::clients_page`, mirroring `roles_page`) and counts — rather
   than drops — a redirect URI it cannot parse into `RedirectUri`.
+  `observe::clients::protocol_mappers` (its own file, the way
+  `wire/protocol_mapper.rs` split from `wire/oidc_client.rs`) reads the
+  audience mapper's configured value and, in the same pass, counts every
+  other client-level mapper — a mapper nobody declared, added out of band, is
+  drift too.
 
 ## Hard invariants — do not break
 

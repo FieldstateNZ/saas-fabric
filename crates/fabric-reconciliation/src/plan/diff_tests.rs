@@ -32,6 +32,7 @@ fn converged_realm() -> ObservedRealm {
             public: true,
             challenge_method: Some(PkceMethod::S256),
             audience_mapper: Some(AUDIENCE.to_owned()),
+            other_protocol_mappers: 0,
             unmodellable_redirect_uris: 0,
             enabled: true,
             standard_flow_enabled: true,
@@ -68,7 +69,7 @@ fn a_realm_that_already_matches_produces_no_actions() {
     assert!(plan.is_converged(), "{:?}", plan.actions());
 }
 
-/// The positive control for `matches()`'s eight terms: enumerates each one
+/// The positive control for `matches()`'s nine terms: enumerates each one
 /// against the fixture the tests below mutate, so a future change to any of
 /// them cannot silently start from a baseline that was already drifting.
 #[test]
@@ -83,6 +84,7 @@ fn a_converged_client_is_left_alone() {
     assert_eq!(existing.unmodellable_redirect_uris, 0);
     assert_eq!(existing.challenge_method, Some(PkceMethod::S256));
     assert_eq!(existing.audience_mapper.as_deref(), Some(AUDIENCE));
+    assert_eq!(existing.other_protocol_mappers, 0);
     assert!(existing.enabled);
     assert!(existing.standard_flow_enabled);
     assert!(existing.post_logout_redirect_uris_is_every_registered_uri);
@@ -161,6 +163,7 @@ fn an_application_client_with_a_changed_redirect_uri_is_updated() {
             public: true,
             challenge_method: Some(PkceMethod::S256),
             audience_mapper: Some(AUDIENCE.to_owned()),
+            other_protocol_mappers: 0,
             unmodellable_redirect_uris: 0,
             enabled: true,
             standard_flow_enabled: true,
@@ -282,6 +285,23 @@ fn a_client_whose_audience_mapper_names_another_audience_is_corrected() {
     assert_eq!(plan.actions(), [IdentityAction::UpdateOidcClient(web_client())]);
 }
 
+/// A client-level mapper nobody declared, added out of band, is the same
+/// drift the audience-mapper terms already catch and gets the same
+/// correction: `declaration()` writes a client's whole mapper set and the
+/// provider's `PUT` replaces it, so the extra mapper does not survive the
+/// next sweep.
+#[test]
+fn a_client_carrying_a_mapper_nobody_declared_is_corrected() {
+    let mut realm = converged_realm();
+    if let Some(existing) = realm.clients.get_mut(&web_client().id) {
+        existing.other_protocol_mappers = 1;
+    }
+
+    let plan = plan(&acme(), Some(&realm), AUDIENCE);
+
+    assert_eq!(plan.actions(), [IdentityAction::UpdateOidcClient(web_client())]);
+}
+
 /// E2. A declared client is always public — see
 /// [`fabric_client_model::OidcClient`] for why a confidential one cannot be
 /// expressed — so a client the provider now holds as confidential does not
@@ -354,6 +374,7 @@ fn an_undeclared_application_client_is_left_alone() {
             public: true,
             challenge_method: None,
             audience_mapper: None,
+            other_protocol_mappers: 0,
             unmodellable_redirect_uris: 0,
             enabled: false,
             standard_flow_enabled: false,

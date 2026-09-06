@@ -36,7 +36,19 @@ start_timeout_seconds = 30
 [[issuers]]
 tenant = "acme"
 issuer = "https://identity.fabric.example/realms/acme"
-audience = "openfga"
+
+# One string across the deployment (ADR 0019 §1 "The equality constraint",
+# and §G5): the same value as the Data API's own required audience
+# ([token].audiences in examples/config.toml) and the Keycloak client's
+# audience mapper ([identity_provider].audience in
+# examples/control-plane.toml). A client carries exactly one mapper, so an
+# unequal value here makes this route refuse every genuine token.
+#
+# Not to be confused with scripts/e2e-services.sh's "openfga" audience: that
+# script mints its own tokens, against a registered client named "openfga",
+# for fabric-fga-auth's whole_path.rs e2e suite — a self-contained fixture
+# with no relationship to this deployment's audience string.
+audience = "saas-fabric"
 jwks_uri = "http://keycloak-http.identity.svc.cluster.local/realms/acme/protocol/openid-connect/certs"
 algorithms = ["RS256"]
 store = "01ABCDEFGHIJKLMNOPQRSTUVWX"

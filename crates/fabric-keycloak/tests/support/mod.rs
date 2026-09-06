@@ -16,6 +16,8 @@
     clippy::indexing_slicing
 )]
 
+mod config;
 mod fake_keycloak;
 
+pub use config::config_for_tests;
 pub use fake_keycloak::{FakeKeycloak, RecordedRequest};

@@ -1,7 +1,7 @@
 //! Comparing desired state with observed state.
 //!
 //! In the 121–150 line band: one concept, `plan` and the `matches` predicate
-//! it calls, and `matches`'s eight terms each need a sentence saying which
+//! it calls, and `matches`'s nine terms each need a sentence saying which
 //! kind of drift they catch. Splitting the predicate from the function that
 //! calls it, or the terms from their explanation, would separate one
 //! comparison from the reasons it exists.
@@ -77,7 +77,7 @@ pub fn plan(client: &Client, observed: Option<&ObservedRealm>, configured_audien
 
 /// Whether an existing application client already matches its declaration.
 ///
-/// Eight terms, and every one of them is a way a client can have drifted:
+/// Nine terms, and every one of them is a way a client can have drifted:
 ///
 /// - `existing.public` — a declared client is always public (see
 ///   [`OidcClient`] for why a confidential one cannot be expressed), so one
@@ -100,6 +100,12 @@ pub fn plan(client: &Client, observed: Option<&ObservedRealm>, configured_audien
 ///   holds more than one mapper (see its own rustdoc); either way, without
 ///   this term the mapper would be written once and could silently
 ///   disappear, taking the edge's `aud` check down with it.
+/// - `existing.other_protocol_mappers == 0` — a client-level mapper nobody
+///   declared, added out of band, is the same drift as the audience mapper
+///   going missing: `declaration()` writes a client's whole mapper set and
+///   the provider's `PUT` replaces it, so an extra mapper is corrected the
+///   same way. Without this term a mapper nobody wrote through this platform
+///   would sit unnoticed beside the one it did write.
 /// - `existing.enabled` — a declared client is always enabled, so one
 ///   switched off by hand answers nobody while every other term still
 ///   matches.
@@ -116,6 +122,7 @@ fn matches(declared: &OidcClient, existing: &ObservedOidcClient, configured_audi
         && existing.redirect_uris == declared_uris(&declared.redirect)
         && existing.challenge_method == Some(declared.pkce)
         && existing.audience_mapper.as_deref() == Some(configured_audience)
+        && existing.other_protocol_mappers == 0
         && existing.enabled
         && existing.standard_flow_enabled
         && existing.post_logout_redirect_uris_is_every_registered_uri

@@ -1,11 +1,9 @@
 //! What the Keycloak adapter needs to be told.
 //!
 //! In the 121–150 line band: one config type, its per-field serde defaults,
-//! its `Default` impl (a test convenience, not a deployment posture — see
-//! `audience`'s doc), and its `validate()`. Splitting the default functions
-//! or `Default` out from `KeycloakConfig` would separate a type from the
-//! values it falls back to, which is the field-level version of splitting a
-//! struct from its own impl.
+//! and its `validate()`. Splitting the default functions out from
+//! `KeycloakConfig` would separate a type from the values it falls back to,
+//! which is the field-level version of splitting a struct from its own impl.
 
 /// How to reach Keycloak, and as whom.
 ///
@@ -17,6 +15,16 @@
 /// a document that omits it fails to deserialise rather than silently
 /// inheriting a guessed value. See its own doc for why a default would be
 /// actively dangerous rather than merely unhelpful.
+///
+/// **No `Default` impl, deliberately.** A guessed audience is exactly the
+/// silent wrong value `audience`'s own doc refuses, and a `Default` on a
+/// `pub` type is available to production code as much as to a test — nothing
+/// stops `..KeycloakConfig::default()` reaching a composition root the day
+/// someone finds it convenient. No code anywhere may construct one without
+/// stating the audience by hand. A test that wants every other field at its
+/// ordinary default still states this one explicitly, through a shared
+/// helper (`config_for_tests` in this crate's `tests/support`) rather than
+/// through this type.
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct KeycloakConfig {
@@ -89,24 +97,6 @@ fn default_client_id() -> String {
 /// [`KeycloakConfig::http_timeout_seconds`]'s default.
 const fn default_http_timeout_seconds() -> u64 {
     10
-}
-
-impl Default for KeycloakConfig {
-    /// A convenience for tests, not a deployment posture: `audience` still
-    /// needs a value, so this cannot be what a real config falls back to
-    /// (there is no `#[serde(default)]` on the struct any more, and none on
-    /// `audience` itself). Callers that build a `KeycloakConfig` by hand in a
-    /// test and care about the audience set it explicitly, the way
-    /// `keycloak_adapter_identity.rs`'s `provider()` helper does.
-    fn default() -> Self {
-        Self {
-            base_url: default_base_url(),
-            admin_realm: default_admin_realm(),
-            client_id: default_client_id(),
-            http_timeout_seconds: default_http_timeout_seconds(),
-            audience: "saas-fabric-data-api".to_owned(),
-        }
-    }
 }
 
 impl KeycloakConfig {

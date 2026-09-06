@@ -114,10 +114,11 @@ impl FakeIdentityProvider {
     /// mirroring a real provider's write-then-read-back. Leaving it `None`
     /// here would make every client written through this fake permanently
     /// drifted the moment `matches()` started comparing it. `enabled`,
-    /// `standard_flow_enabled`, and the post-logout term are always written
-    /// `true` for the same reason: a real declaration always asserts them, so
-    /// a fake that did not echo them back would drift on fields no test here
-    /// ever touches.
+    /// `standard_flow_enabled`, `other_protocol_mappers`, and the post-logout
+    /// term are always written to the value a real declaration always
+    /// asserts — `true`, `true`, `0`, `true` — for the same reason: a fake
+    /// that did not echo them back would drift on fields no test here ever
+    /// touches.
     fn write_client(&self, realm: &RealmName, client: &OidcClient) {
         if let Some(existing) = lock(&self.realms).get_mut(realm) {
             existing.clients.insert(
@@ -127,6 +128,7 @@ impl FakeIdentityProvider {
                     public: true,
                     challenge_method: Some(client.pkce),
                     audience_mapper: Some(self.audience.clone()),
+                    other_protocol_mappers: 0,
                     unmodellable_redirect_uris: 0,
                     enabled: true,
                     standard_flow_enabled: true,

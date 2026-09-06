@@ -83,6 +83,12 @@ refuses is drift the reconciler has to see, not silence. The count travels;
 the URI itself never does, because it is attacker-influenced text with no
 reason to reach a plan, a log line, or an API response.
 
+A client-level mapper nobody declared is counted the same way
+(`ObservedOidcClient::other_protocol_mappers`, read by
+`observe::clients::protocol_mappers`): `PUT` replaces a client's whole mapper
+set, so a hardcoded-claim mapper added out of band is corrected on the next
+sweep exactly as a missing audience mapper is.
+
 ## The machine identity
 
 The adapter is handed an `AdminCredential` — a redacting newtype with no

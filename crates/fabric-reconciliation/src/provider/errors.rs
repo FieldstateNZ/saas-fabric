@@ -17,11 +17,16 @@
 /// retrying and the next reconciliation pass will. `NotPermitted` means the
 /// platform's own machine credential is wrong and retrying forever will not
 /// fix it. `Rejected` means the desired state cannot be realised as written,
-/// which is an operator's problem and not a transient one. `NoAudienceConfigured`
-/// means the deployment itself is missing a setting — also an operator's
-/// problem, and also not one retrying fixes. Collapsing any of these would
-/// make one kind of misconfiguration look like another, or like a restarting
-/// provider.
+/// which is an operator's problem and not a transient one.
+/// `NoAudienceConfigured` is different again: it is not a fault this
+/// deployment can actually be in. A provider that failed to build reports
+/// `Unavailable` from `observe_realm` and never reaches this check, and
+/// `fabric-keycloak`'s own config requires the audience, so a provider that
+/// built at all always has one to report. This variant exists for an
+/// `IdentityProvider` implementation that answers `None` anyway — defence in
+/// depth against a future or third-party adapter, not a scenario this
+/// deployment produces today. Collapsing any of these would make one kind of
+/// misconfiguration look like another, or like a restarting provider.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ProviderError {
     /// The provider could not be reached, or failed internally.

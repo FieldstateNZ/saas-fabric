@@ -11,9 +11,14 @@ use std::sync::{Arc, Mutex};
 
 use fabric_client_model::{ClientProtocol, OidcClient, OidcClientId, PkceMethod, RealmName, RoleName};
 use fabric_client_model::{RedirectStrategy, RedirectStrategyKind, RedirectUri};
-use fabric_keycloak::{KeycloakConfig, KeycloakIdentityProvider};
+use fabric_keycloak::KeycloakIdentityProvider;
 use fabric_reconciliation::{IdentityProvider, ProviderError};
-use support::{FakeKeycloak, RecordedRequest};
+use support::{config_for_tests, FakeKeycloak, RecordedRequest};
+
+/// The audience this test suite's provider is configured with. The value
+/// itself is never under test here — see `keycloak_adapter_identity.rs` for
+/// that — so one fixed string is all any of these tests need.
+const AUDIENCE: &str = "saas-fabric-data-api";
 
 fn realm() -> RealmName {
     RealmName::try_new("acme").unwrap()
@@ -34,10 +39,7 @@ fn web_client() -> OidcClient {
 
 /// Builds a provider pointed at a fake Keycloak.
 fn provider(keycloak: &FakeKeycloak) -> KeycloakIdentityProvider {
-    let config = KeycloakConfig {
-        base_url: keycloak.base_url.clone(),
-        ..KeycloakConfig::default()
-    };
+    let config = config_for_tests(&keycloak.base_url, AUDIENCE);
 
     KeycloakIdentityProvider::new(&config, "an-operators-token").expect("the provider must build")
 }
@@ -287,12 +289,9 @@ async fn keycloaks_own_error_body_never_reaches_the_error() {
 
 #[tokio::test]
 async fn an_unreachable_keycloak_is_reported_as_unavailable_and_transient() {
-    let config = KeycloakConfig {
-        // Port 1 is reserved and nothing listens on it, so the connect is
-        // refused rather than hanging until a timeout.
-        base_url: "http://127.0.0.1:1".to_owned(),
-        ..KeycloakConfig::default()
-    };
+    // Port 1 is reserved and nothing listens on it, so the connect is refused
+    // rather than hanging until a timeout.
+    let config = config_for_tests("http://127.0.0.1:1", AUDIENCE);
     let provider = KeycloakIdentityProvider::new(&config, "an-operators-token").unwrap();
 
     let error = provider.observe_realm(&realm()).await.unwrap_err();

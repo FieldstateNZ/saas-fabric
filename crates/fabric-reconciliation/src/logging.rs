@@ -60,6 +60,23 @@ pub(crate) fn observation_failed(client: &Client, error: &ProviderError) {
     );
 }
 
+/// The provider was read successfully, but names no audience — a
+/// configuration fault, not a failure to observe, so it gets its own event
+/// rather than sharing [`observation_failed`]'s: the two are refused for
+/// different reasons and an operator reading the log should not have to
+/// guess which.
+pub(crate) fn planning_refused(client: &Client, error: &ProviderError) {
+    tracing::error!(
+        event = "reconciliation.planning_refused",
+        event_id = event_id(DOMAIN_ID, EventType::Error, 3),
+        client_id = %client.id,
+        realm = %client.identity.realm,
+        transient = error.is_transient(),
+        detail = %error,
+        "the provider names no audience; nothing was planned"
+    );
+}
+
 /// A plan could not be applied.
 ///
 /// The desired state is untouched by this: nothing in reconciliation writes to

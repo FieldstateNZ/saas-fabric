@@ -89,6 +89,22 @@ pub struct ObservedOidcClient {
     /// only carries the resulting `Option`.
     pub audience_mapper: Option<String>,
 
+    /// How many of the client's protocol mappers are not the one audience
+    /// mapper this adapter writes.
+    ///
+    /// Client-level mappers only, never a client scope's: observed on
+    /// Keycloak 26.0.8, a freshly written client carries exactly the one
+    /// mapper. A mapper nobody declared — a hardcoded-claim mapper injecting
+    /// a claim, say — added out of band is corrected the same way an absent
+    /// or wrong audience mapper is: `declaration()` writes a client's entire
+    /// mapper set and the provider's `PUT` replaces rather than merges it, so
+    /// "a mapper nobody declared" is drift with the same fix as "the
+    /// audience mapper is missing" — a full rewrite down to this adapter's
+    /// own set. Without this field that extra mapper is invisible to every
+    /// sweep, the same write/read asymmetry [`Self::audience_mapper`] closes
+    /// for the mapper this platform does write.
+    pub other_protocol_mappers: usize,
+
     /// How many of the provider's registered redirect URIs this model could
     /// not parse into a [`RedirectUri`].
     ///

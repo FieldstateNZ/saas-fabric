@@ -1,0 +1,12 @@
+Observed: GET /schema against the statically-configured connector, varying
+the X-Hasura-NDC-Version request header. Status codes only -- the response
+bodies were discarded at capture time (`curl -o /dev/null -w '%{http_code}'`)
+and are not reproduced here. See the README in this directory.
+
+X-Hasura-NDC-Version   status
+0.2.4                  200
+0.2.13                 400
+0.1.0                  400
+99.0.0                 400
+nonsense               400
+(header absent)        200

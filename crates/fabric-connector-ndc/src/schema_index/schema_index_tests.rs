@@ -200,3 +200,26 @@ fn procedures_are_recorded_for_mutation_validation() {
     assert!(index().has_procedure("insert_customers"));
     assert!(!index().has_procedure("drop_everything"));
 }
+
+// -- Against the real connector's own `/schema` document ---------------------
+
+#[test]
+fn the_real_text_equality_operator_maps_to_equal() {
+    // `ghcr.io/hasura/ndc-postgres:v3.1.0` names equality `_eq` on `text`,
+    // declared `{"type":"equal"}`. Confirms A6 end to end: this platform's
+    // `Equal` semantic resolves to the real connector's own spelling, read
+    // from its schema rather than hardcoded.
+    let path = format!(
+        "{}/tests/fixtures/ndc-postgres-v3.1.0/schema-static.json",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let schema: NdcSchemaResponse = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    let index = SchemaIndex::build(&schema);
+    let articles = CollectionName::try_new("articles").unwrap();
+    let title = FieldName::try_new("title").unwrap();
+
+    assert_eq!(
+        index.operator_name(&articles, &title, SemanticOperator::Equal),
+        Some("_eq")
+    );
+}

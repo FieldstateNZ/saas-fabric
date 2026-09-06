@@ -42,7 +42,7 @@ is at the end, under "The control plane, end to end".
 | Console types | `npm run typecheck` | 0 errors |
 | Console tests | `npm test` | 81 passing, 0 failing |
 | Console build | `npm run build` | 228 kB, 70 kB gzipped |
-| Connector acceptance | `cargo test -p fabric-ndc-acceptance` | 44 passing, 0 failing across two integration binaries — **default mode**, Docker not reachable for this run (see "Connector acceptance (issue #62)" below for the breakdown and the earlier Docker-up observation) |
+| Connector acceptance | `cargo test -p fabric-ndc-acceptance` | 44 passing, 0 failing across two integration binaries — **default mode**, Docker up (server `29.1.3`), all 14 container-backed tests reached a real connector and postgres (see below for the breakdown) |
 | Connector acceptance, required mode | `FABRIC_REQUIRE_CONNECTOR_ACCEPTANCE=1 cargo test -p fabric-ndc-acceptance` | **Pending the first green `connector-acceptance` CI run.** Not observed on this machine — see below |
 
 Twelve of the thirteen rows above run in CI on every push and pull request
@@ -67,47 +67,71 @@ increment's work, actually showed.
 tests — because both files declare `mod support;`. Of the 26 and 18: 11 and
 3 respectively (14 in total) are container-backed — the composed acceptance
 test and the container harness's own smoke test — and call
-`support::gate::docker_available_or_skip` first, so they skip-as-pass
-without a reachable Docker daemon. The remaining 15 in *each* binary are
-harness unit tests — pure-function tests of
-`tests/support/docker/image_reference.rs`, `tests/support/go_timestamp.rs`,
-and `tests/support/names.rs` — which never call that gate and run
-unconditionally, with or without Docker; that is the same 15 tests, compiled
-and executed once per binary, not 30 distinct ones.
+`support::gate::docker_available_or_skip` first. On this run Docker was up,
+so all 14 actually reached a running connector and postgres rather than
+skipping as pass. The remaining 15 in *each* binary are harness unit tests —
+pure-function tests of `tests/support/docker/image_reference.rs`,
+`tests/support/go_timestamp.rs`, and `tests/support/names.rs` — which never
+call that gate and run unconditionally, with or without Docker; that is the
+same 15 tests, compiled and executed once per binary, not 30 distinct ones.
 
-**On this run, Docker was not reachable, so the 14 skipped.** This
-machine's daemon is otherwise up (`docker version` answers, and it already
-holds real containers from other work), but the pinned
-`ghcr.io/hasura/ndc-postgres` digest does not complete a pull on this
-network: letting `docker pull` of that exact reference run for several
-minutes showed no progress and no error, the same "cannot pull" situation
-`tests/support/images.rs` already documents for this machine, reached this
-time by an actual hang rather than an immediate refusal. Rather than block
-this run on that hang, it pointed the harness at an unreachable
-`DOCKER_HOST` — the same "no daemon reachable" path `gate.rs` already
-implements for a machine with no Docker at all. `docker version` then fails
-fast, every container-backed test skips-as-pass, and the 15-per-binary
-harness unit tests run for real, all passing: 14 skips (11 + 3) plus 30 real
-harness-unit-test runs (15 × 2 binaries) is where the 44 above comes from.
+**This run: Docker up, default mode, real containers throughout.** At
+commit `88ee7bf` ("Bound the pull to a deadline, and pay it once per
+process"), with a real Docker daemon reachable (`docker version` reports
+server `29.1.3`) and `FABRIC_REQUIRE_CONNECTOR_ACCEPTANCE` unset:
 
-**The earlier Docker-up observation.** The "14 passing" this table recorded
-before this round of review, at commit `1403c15`, was a different kind of
-run: a real Docker daemon reachable, with only the bare tag
-`ghcr.io/hasura/ndc-postgres:v3.1.0` present locally, under a different
-(single-platform) digest than the pinned multi-arch index digest —
-`tests/support/images.rs` records exactly that gap for this machine. So the
-connector container that earlier run's 11 composed tests actually drove was
-reached through default mode's bare-tag fallback, not the pin itself. That
-same gap is what makes `FABRIC_REQUIRE_CONNECTOR_ACCEPTANCE=1` fail fast on
-*this* machine (`tests/support/docker/image_reference.rs`'s required mode
-refuses the bare-tag fallback default mode used instead). That failure is
-the required mode doing its job, not a defect this table should paper over
-by quoting a number nobody watched it produce. The row stays pending until
+```
+$ cargo test -p fabric-ndc-acceptance -- --nocapture
+     Running unittests src/lib.rs (target/debug/deps/fabric_ndc_acceptance-...)
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/published_state_reaches_a_real_connector.rs (target/debug/deps/published_state_reaches_a_real_connector-...)
+test result: ok. 26 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 127.14s
+
+     Running tests/the_stack_comes_up.rs (target/debug/deps/the_stack_comes_up-...)
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 123.24s
+
+   Doc-tests fabric_ndc_acceptance
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+```
+
+The pinned `ghcr.io/hasura/ndc-postgres` digest still cannot be pulled on
+this machine — Docker Desktop's registry route here goes through a proxy
+that never answers, per `tests/support/images.rs` — but it no longer hangs
+the suite the way it did before this round of review closed that finding:
+each binary's own pull deadline (`image_reference::PULL_DEADLINE`, 120
+seconds) fired exactly once, then fell back to the bare tag already present
+locally under a different digest. Its stderr line, verbatim:
+
+> fabric-ndc-acceptance: ghcr.io/hasura/ndc-postgres@sha256:f91910ef5107aa80d31d82639e149b7f41f4a5bb3af9a369397d7d5965d79a57 could not be pulled within 120s (`docker pull ghcr.io/hasura/ndc-postgres@sha256:f91910ef5107aa80d31d82639e149b7f41f4a5bb3af9a369397d7d5965d79a57` failed: did not complete within 120s and was killed); falling back to the bare tag ghcr.io/hasura/ndc-postgres:v3.1.0 (see images.rs for why)
+
+That line appeared exactly twice in the whole run's output — once per test
+*binary*, each its own process with its own resolution cache — never once
+per test. Every container-backed test after the first one in a binary
+reused the cached fallback and paid no further wait, which is the whole
+point of `image_reference.rs`'s per-reference cache: the composed binary's
+11 container-backed tests plus 15 unit tests still finished in 127.14s
+total, and the stack binary's 3 container-backed tests plus 15 unit tests
+in 123.24s — one deadline per binary, not one per test, and certainly not
+one per container-backed test (which would have been 14 deadlines, over 28
+minutes, on this machine). All 14 container-backed tests actually reached a
+running connector and postgres this time: no "skipped -- no Docker daemon
+available" line appears anywhere in this run's output, and
+`docker ps -a --filter name=fabric-ndc-acc` was empty again immediately
+afterward, confirming every `Stack`'s `Drop` tore its own containers and
+network down. Wall-clock for the whole `cargo test -p fabric-ndc-acceptance`
+invocation, start to finish: 4 minutes 8 seconds.
+
+This is still the **default mode** row, not the required mode: the
+bare-tag fallback that made this run possible is exactly what
+`FABRIC_REQUIRE_CONNECTOR_ACCEPTANCE=1` refuses
+(`tests/support/docker/image_reference.rs`'s required mode), so this run
+does not stand in for that row, and cannot. The row stays pending until
 `.github/workflows/ci.yml`'s `connector-acceptance` job — whose runner can
-pull the pin normally, and which pre-pulls all three pinned images as its own
-step precisely so a pull problem shows up there rather than inside a test's
-own timeout — goes green once, at which point this row should be updated
-with that run's actual count, not before.
+pull the pin normally, and which pre-pulls all three pinned images as its
+own step precisely so a pull problem shows up there rather than inside a
+test's own timeout — goes green once, at which point this row should be
+updated with that run's actual count, not before.
 
 Nothing is ignored.
 
@@ -272,7 +296,9 @@ composed test in this worktree, following the standard above: mutate, run
 record what failed, restore the file (`git checkout --`, or a manual revert
 for the two mutations inside this crate's own not-yet-committed
 `tests/support/fixtures.rs`), confirm `git status --short` is clean, move
-on. No code change from this exercise survives in this commit.
+on. No code change from this exercise survives in this commit. This run is
+also recorded in `e3d5518`'s own commit message -- the commit that both ran
+these five mutations and added this table.
 
 | # | Mutation | File | Test(s) that failed | First failure line |
 | --- | --- | --- | --- | --- |

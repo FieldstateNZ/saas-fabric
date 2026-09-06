@@ -903,6 +903,29 @@ re-runs this same probe there and records the result beside these findings
 long before 26, so the caveat is honesty about what was actually run, not
 doubt about the answer.
 
+**Slice 5 (`fabric-reconciliation`'s diff), the same rule one layer up.** The
+row above mutated the *adapter's* silent drop. `plan::diff::matches` has its
+own term for the same fact and needs its own proof it is load-bearing:
+
+| Row | Mutation | Test that went red | Restored |
+|---|---|---|---|
+| D13 (diff) | Deleted the `existing.unmodellable_redirect_uris == 0` conjunct from `plan::diff::matches` (`crates/fabric-reconciliation/src/plan/diff.rs`) | `a_redirect_uri_this_model_cannot_parse_is_drift` (`crates/fabric-reconciliation/src/plan/diff_tests.rs`) — reported `plan.actions() == []` where `[UpdateOidcClient(web_client())]` was expected, because every other term still matched | Yes, confirmed identical to the pre-mutation file by diff |
+
+The new terms in `matches` (`challenge_method`, `audience_mapper`, and the
+redirect-URI equality-not-containment change) are exercised by
+`a_client_whose_pkce_attribute_was_removed_is_corrected`,
+`a_client_with_a_challenge_method_this_model_cannot_read_is_corrected`,
+`a_v1_client_is_still_reconciled_with_the_s256_challenge_method`,
+`a_client_whose_audience_mapper_was_removed_is_corrected`,
+`a_client_whose_audience_mapper_names_another_audience_is_corrected`,
+`an_extra_redirect_uri_keycloak_holds_is_drift`, and the existing
+`a_declared_client_switched_to_confidential_is_corrected` (all in
+`plan/diff_tests.rs`), plus the positive control
+`a_converged_native_client_is_left_alone`. The end-to-end path — a correction
+actually reaching the provider, not only the plan — is
+`a_client_whose_mapper_was_removed_is_corrected_on_the_next_pass` in
+`reconciler/reconciler_tests.rs`.
+
 ## What is not verified
 
 Named here rather than left for a reader to discover.

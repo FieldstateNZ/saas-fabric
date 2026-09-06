@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use crate::fixtures::{acme, role};
+use crate::fixtures::{acme, role, web_client};
 use crate::status::ReconciliationStatus;
 use crate::testing::FakeIdentityProvider;
 use crate::{IdentityReconciler, ProviderError};
@@ -86,6 +86,41 @@ async fn only_the_missing_role_is_created() {
             "observe_realm:acme".to_owned(),
             "create_realm_role:acme:Client Realm User".to_owned()
         ]
+    );
+}
+
+#[tokio::test]
+async fn a_client_whose_mapper_was_removed_is_corrected_on_the_next_pass() {
+    // The client-level analogue of `only_the_missing_role_is_created`: proves
+    // a correction reaches the provider, not only the plan.
+    let (reconciler, provider) = reconciler();
+    reconciler.reconcile(&acme()).await;
+
+    // Something removed the client's audience mapper out of band.
+    let realm = acme().identity.realm;
+    let mut current = provider.realm(&realm).unwrap();
+    if let Some(client) = current.clients.get_mut(&web_client().id) {
+        client.audience_mapper = None;
+    }
+    provider.seed_realm(realm.clone(), current);
+
+    provider.clear_calls();
+    let outcome = reconciler.reconcile(&acme()).await;
+
+    assert_eq!(outcome.actions(), 1);
+    assert_eq!(
+        provider.calls(),
+        [
+            "observe_realm:acme".to_owned(),
+            format!("update_oidc_client:acme:{}", web_client().id)
+        ]
+    );
+
+    let corrected = provider.realm(&realm).unwrap();
+    let client = corrected.clients.get(&web_client().id).unwrap();
+    assert!(
+        client.audience_mapper.is_some(),
+        "the mapper must be rewritten, not merely re-planned"
     );
 }
 

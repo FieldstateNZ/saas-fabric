@@ -50,7 +50,11 @@ impl IdentityReconciler {
     pub async fn plan(&self, client: &Client) -> Result<IdentityPlan, ProviderError> {
         let observed = self.provider.observe_realm(&client.identity.realm).await?;
 
-        Ok(plan::plan(client, observed.as_ref()))
+        Ok(plan::plan(
+            client,
+            observed.as_ref(),
+            self.provider.configured_audience(),
+        ))
     }
 
     /// Brings the provider in line with the desired state.

@@ -87,6 +87,21 @@ pub trait IdentityProvider: Send + Sync {
     /// Returns [`ProviderError`] if the client could not be updated.
     async fn update_oidc_client(&self, realm: &RealmName, client: &OidcClient) -> Result<(), ProviderError>;
 
+    /// The audience string this provider currently writes onto every declared
+    /// client's mapper.
+    ///
+    /// # Deployment configuration, not desired state
+    ///
+    /// One string per deployment (ADR 0019 §1, §G5), equal to the Data API's
+    /// own required `aud` — never a value a client document sets, because a
+    /// document that could name its own audience could opt out of the edge's
+    /// check. It is reported here, by the same provider that writes it,
+    /// rather than duplicated into a second configuration path: that keeps
+    /// one source of truth for the string, and it is why the diff compares an
+    /// observed mapper against a value the provider states about itself
+    /// rather than one this crate would otherwise have no way to know.
+    fn configured_audience(&self) -> &str;
+
     /// A short description for logging, such as an endpoint.
     ///
     /// Must not contain a credential. Reconciliation logs this on every pass.

@@ -62,6 +62,33 @@ pass that changed something was ordinary convergence or drift depends on
 history, so `status::transition` decides it from the previous report — and it
 is written down once, there, rather than inside the store.
 
+## What "matches" compares
+
+An existing application client matches its declaration only when all of the
+following hold, and any one failing produces `UpdateOidcClient`:
+
+- it is still **public** — a declared client can never be confidential;
+- the provider holds **zero** redirect URIs this model could not parse
+  (`unmodellable_redirect_uris == 0`) — a value the model cannot read is
+  drift, not silence, because it is exactly the out-of-band edit reconciliation
+  exists to catch;
+- its redirect URIs equal the declared set exactly — a legitimate extra entry
+  the provider holds is drift too, the same as a missing one;
+- its PKCE challenge method equals the declared one — an attribute Keycloak
+  holds that this model cannot read reads as absent, and absent is drift;
+- its audience mapper asserts the deployment's configured audience — removed,
+  or naming a different audience, both count as drift, because either way the
+  edge's `aud` check refuses every token the client issues.
+
+**The audience is provider configuration, not a document field.** A client
+desired-state document has no field to name its own audience — see ADR 0019
+§1/§G5 for why: it is one string per deployment, and a document that could set
+its own would be a document that could opt out of the edge's check. This
+crate asks the provider for it, through `IdentityProvider::configured_audience`,
+rather than duplicating it into a second configuration path — the same object
+that writes the mapper is asked what it wrote, so there is exactly one place
+this string lives.
+
 ## The port's contract
 
 Every operation must be **idempotent**: creating a realm, a role, or an

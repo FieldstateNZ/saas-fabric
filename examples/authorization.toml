@@ -45,7 +45,8 @@ issuer = "https://identity.fabric.example/realms/acme"
 # unequal value here makes this route refuse every genuine token.
 #
 # Not to be confused with scripts/e2e-services.sh's "openfga" audience: that
-# script mints its own tokens, against a registered client named "openfga",
+# script mints its own tokens, against a registered client named "app" whose
+# "openfga-audience" mapper asserts "included.client.audience": "openfga",
 # for fabric-fga-auth's whole_path.rs e2e suite — a self-contained fixture
 # with no relationship to this deployment's audience string.
 audience = "saas-fabric"

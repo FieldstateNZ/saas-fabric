@@ -1,14 +1,17 @@
 //! Reading a realm's application clients.
 //!
-//! This is one read (`read`) and the three small, pure decompositions it
-//! exists to keep readable — `partition_uris`, `challenge_method`,
-//! `is_every_registered_uri` — each turning one field of Keycloak's wire
-//! shape into the one thing `ObservedOidcClient` needs from it. None of the
-//! four is reused, tested, or meaningful outside this read, so splitting them
-//! into their own files would scatter one concept across four, not separate
-//! two. What a client's protocol-mapper list says is a fifth such fact, but a
-//! two-part one computed from one pass over its own short list — see
-//! `protocol_mappers`, split out rather than added here.
+//! Over the 120-line advisory threshold. The reason is that this is one read
+//! (`read`) and the three small, pure decompositions it exists to keep
+//! readable — `partition_uris`, `challenge_method`, `is_every_registered_uri`
+//! — each turning one field of Keycloak's wire shape into the one thing
+//! `ObservedOidcClient` needs from it. None of the four is reused, tested, or
+//! meaningful outside this read, so splitting them into their own files would
+//! scatter one concept across four, not separate two. What a client's
+//! protocol-mapper list says is a fifth such fact, but a two-part one
+//! computed from one pass over its own short list — see `protocol_mappers`,
+//! split out rather than added here.
+
+mod protocol_mappers;
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -19,8 +22,6 @@ use crate::admin::KeycloakAdmin;
 use crate::wire::{
     ClientRepresentation, PKCE_CHALLENGE_METHOD_ATTRIBUTE, POST_LOGOUT_REDIRECT_URIS_ATTRIBUTE,
 };
-
-mod protocol_mappers;
 
 /// The most application clients this adapter will read in one request.
 ///

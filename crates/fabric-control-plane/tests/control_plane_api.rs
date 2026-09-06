@@ -553,8 +553,9 @@ async fn a_native_client_is_declared_reconciled_and_read_back_with_its_pkce_and_
     // `crates/fabric-reconciliation/src/plan/diff_tests.rs`: C5/C6
     // (`a_client_without_a_recognised_challenge_method_is_corrected`), C6a
     // (`a_client_whose_audience_mapper_was_removed_is_corrected`), D13
-    // (`a_redirect_uri_this_model_cannot_parse_is_drift`), and D13b
-    // (`an_extra_redirect_uri_the_provider_holds_is_drift`).
+    // (`a_redirect_uri_this_model_cannot_parse_is_drift`), D13b
+    // (`an_extra_redirect_uri_the_provider_holds_is_drift`), and A13b
+    // (`a_client_carrying_a_mapper_nobody_declared_is_corrected`).
     let provider = Arc::new(FakeIdentityProvider::new());
     let plane = control_plane_with_identity_provider(provider.clone());
 
@@ -614,7 +615,7 @@ async fn a_native_client_is_declared_reconciled_and_read_back_with_its_pkce_and_
         .get(&OidcClientId::try_new("native").unwrap())
         .expect("the sweep must have written the declared client");
 
-    // All eight fields `ObservedOidcClient` carries (`observed.rs:50-128`).
+    // All nine fields `ObservedOidcClient` carries (`observed.rs:50-147`).
     // This proves the values round-trip through the API, the plan, and the
     // fake's own write — see this test's docstring for what it does not prove.
     assert!(observed.public, "every declared client is written as public");
@@ -632,6 +633,10 @@ async fn a_native_client_is_declared_reconciled_and_read_back_with_its_pkce_and_
         observed.audience_mapper.as_deref(),
         provider.configured_audience(),
         "the written mapper must assert the provider's own configured audience"
+    );
+    assert_eq!(
+        observed.other_protocol_mappers, 0,
+        "a client this test declared carries nothing beyond the one audience mapper"
     );
     assert!(observed.enabled, "a declared client is always written enabled");
     assert!(

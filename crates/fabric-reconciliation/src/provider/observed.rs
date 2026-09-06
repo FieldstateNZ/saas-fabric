@@ -94,9 +94,12 @@ pub struct ObservedOidcClient {
     ///
     /// Client-level mappers only, never a client scope's: observed on
     /// Keycloak 26.0.8, a freshly written client carries exactly the one
-    /// mapper. A mapper nobody declared — a hardcoded-claim mapper injecting
-    /// a claim, say — added out of band is corrected the same way an absent
-    /// or wrong audience mapper is: `declaration()` writes a client's entire
+    /// mapper. That boundary is also this field's limit: a mapper on a
+    /// client scope assigned to the client — an audience mapper on a scope,
+    /// say — is not observed here and is not drift this term can see. A mapper
+    /// nobody declared — a hardcoded-claim mapper injecting a claim, say —
+    /// added out of band is corrected the same way an absent or wrong
+    /// audience mapper is: `declaration()` writes a client's entire
     /// mapper set and the provider's `PUT` replaces rather than merges it, so
     /// "a mapper nobody declared" is drift with the same fix as "the
     /// audience mapper is missing" — a full rewrite down to this adapter's

@@ -18,14 +18,26 @@ use std::time::{Duration, Instant};
 
 use super::{describe, ensure_success, DockerError};
 
-/// How often [`run_with_deadline`] checks whether the child has exited yet.
-/// Short enough that a command finishing well inside its deadline is still
-/// noticed promptly, without spinning the CPU polling a process that is
-/// almost always still running.
+/// How often [`poll_to_exit_or_kill`] checks whether the child has exited,
+/// and how often [`join_readers_bounded`] checks whether its reader threads
+/// have finished. Short enough that either wait is noticed promptly without
+/// spinning the CPU on a process or thread that is almost always still
+/// running or reading.
 const POLL_INTERVAL: Duration = Duration::from_millis(200);
 
-/// Runs `docker <args...>`, killing it and returning a [`DockerError`]
-/// naming the command and `deadline` if it has not exited by then.
+/// How long, once `docker`'s own exit status is known, [`join_readers_bounded`]
+/// waits for the stdout/stderr reader threads to finish on their own before
+/// concluding that something other than `docker` itself is still holding a
+/// pipe open. See that function's doc for the concrete case this guards.
+const READER_JOIN_DEADLINE: Duration = Duration::from_secs(3);
+
+/// How much of a killed pull's stderr [`run_with_deadline`] folds into its
+/// timeout error. Enough to show the registry's or credential helper's own
+/// last words -- a TLS failure, a redirect notice, an auth prompt -- without
+/// repeating a pull's entire progress stream, which can run to megabytes.
+const STDERR_TAIL_BYTES: usize = 400;
+
+/// Runs `docker <args...>`, killing it if it has not exited by `deadline`.
 ///
 /// Reads stdout and stderr on their own threads while polling, rather than
 /// waiting for the process to exit first: `docker pull`'s progress output
@@ -44,8 +56,12 @@ const POLL_INTERVAL: Duration = Duration::from_millis(200);
 ///
 /// # Errors
 ///
-/// A [`DockerError`] if `docker` could not be started, did not exit within
-/// `deadline`, or exited with a non-zero status.
+/// A [`DockerError`] if `docker` could not be started, exited with a
+/// non-zero status, or did not exit within `deadline` -- in the timeout
+/// case, naming `deadline` itself, whether the `kill` utility used to stop
+/// the whole process group could even be run (see [`kill_process_group`]),
+/// and the tail of whatever stderr had already been read before the kill
+/// (see [`STDERR_TAIL_BYTES`]).
 pub(in super::super) fn run_with_deadline(
     args: &[String],
     deadline: Duration,
@@ -67,16 +83,37 @@ pub(in super::super) fn run_with_deadline(
     let stdout_reader = spawn_reader(child.stdout.take());
     let stderr_reader = spawn_reader(child.stderr.take());
 
-    let status = poll_to_exit_or_kill(&mut child, pgid, deadline);
+    let outcome = poll_to_exit_or_kill(&mut child, pgid, deadline);
+    // Bounded even on the success path: `child`'s own exit does not close a
+    // pipe a grandchild still holds open (see `join_readers_bounded`'s doc).
+    let (stdout, stderr) = join_readers_bounded(pgid, stdout_reader, stderr_reader);
 
-    let stdout = join_reader(stdout_reader);
-    let stderr = join_reader(stderr_reader);
-
-    let Some(status) = status else {
-        return Err(DockerError::from_parts(
-            describe(args),
-            format!("did not complete within {deadline:?} and was killed"),
-        ));
+    let status = match outcome {
+        ExitOutcome::Exited(status) => status,
+        ExitOutcome::TimedOut(kill_result) => {
+            // `kill_result` is the *group* kill's own success at being
+            // started, not a claim that everything it targeted is dead --
+            // see `kill_process_group`'s doc. An `Err` here means the `kill`
+            // utility itself could not be run at all (missing from `PATH`,
+            // no permission to exec it, ...), which is worth knowing: it is
+            // the one case where the grandchild that doc describes is not
+            // just probably dead, but never asked to die by this call.
+            let kill_detail = match kill_result {
+                Ok(_) => String::new(),
+                Err(error) => format!(
+                    "; the `kill` utility itself could not be run ({error}), so a lingering \
+                     grandchild may not have been killed -- see kill_process_group's doc"
+                ),
+            };
+            return Err(DockerError::from_parts(
+                describe(args),
+                format!(
+                    "did not complete within {deadline:?} and was killed{kill_detail}; stderr \
+                     so far: {}",
+                    tail(&stderr, STDERR_TAIL_BYTES)
+                ),
+            ));
+        }
     };
 
     let output = Output {
@@ -88,23 +125,42 @@ pub(in super::super) fn run_with_deadline(
     Ok(output)
 }
 
+/// What became of waiting for `child` to exit within its deadline.
+enum ExitOutcome {
+    /// Exited on its own, in time.
+    Exited(ExitStatus),
+    /// Did not exit in time and was killed. Carries the result of *starting*
+    /// [`kill_process_group`]'s `kill` utility -- not a guarantee about what
+    /// that utility went on to do -- so [`run_with_deadline`] can say, in the
+    /// rare case the utility itself could not run at all, that its usual
+    /// cleanup of a lingering grandchild did not happen either.
+    TimedOut(std::io::Result<ExitStatus>),
+}
+
 /// Polls `child` for exit at [`POLL_INTERVAL`] until it exits or `deadline`
 /// elapses since this call started.
 ///
-/// A timeout kills `child`'s whole process group ([`kill_process_group`])
-/// and reaps `child` before returning `None`, so the caller never leaves a
+/// A timeout kills `child`'s whole process group ([`kill_process_group`]),
+/// also kills `child` itself directly via [`Child::kill`] (belt and braces:
+/// that std API does not depend on the external `kill` binary being on
+/// `PATH` the way [`kill_process_group`] does, though on its own it would
+/// still leave a grandchild holding the pipes open -- see that function's
+/// doc), and reaps `child` before returning, so the caller never leaves a
 /// zombie process behind -- killing alone does not reap; the following
-/// `wait` does.
-fn poll_to_exit_or_kill(child: &mut Child, pgid: u32, deadline: Duration) -> Option<ExitStatus> {
+/// `wait` does. [`Child::kill`]'s own result is not worth surfacing: an
+/// `Err` from it means `child` had already exited, which is not a failure
+/// worth reporting on a path that is about to kill it anyway.
+fn poll_to_exit_or_kill(child: &mut Child, pgid: u32, deadline: Duration) -> ExitOutcome {
     let start = Instant::now();
     loop {
         if let Ok(Some(status)) = child.try_wait() {
-            return Some(status);
+            return ExitOutcome::Exited(status);
         }
         if start.elapsed() >= deadline {
-            kill_process_group(pgid);
+            let kill_result = kill_process_group(pgid);
+            let _ = child.kill();
             let _ = child.wait();
-            return None;
+            return ExitOutcome::TimedOut(kill_result);
         }
         thread::sleep(POLL_INTERVAL);
     }
@@ -134,8 +190,60 @@ fn poll_to_exit_or_kill(child: &mut Child, pgid: u32, deadline: Duration) -> Opt
 /// has no C-interop dependency today (`Cargo.toml` carries only
 /// `[dev-dependencies]`), and every other function in this module already
 /// drives a process by name the same way.
-fn kill_process_group(pgid: u32) {
-    let _ = Command::new("kill").arg("-KILL").arg(format!("-{pgid}")).status();
+///
+/// # Errors
+///
+/// An [`std::io::Error`] only if the `kill` utility itself could not be
+/// started -- not if it ran and reported nothing left to kill, which is the
+/// ordinary case once `pgid` is already fully reaped and not itself a sign
+/// anything is wrong.
+fn kill_process_group(pgid: u32) -> std::io::Result<ExitStatus> {
+    Command::new("kill").arg("-KILL").arg(format!("-{pgid}")).status()
+}
+
+/// Joins both reader threads, tolerating a pipe that `child`'s own exit did
+/// not close.
+///
+/// `child` exiting reaps only *its* copy of a pipe's write end, not a
+/// grandchild's: [`kill_process_group`]'s doc describes the concrete case --
+/// `docker pull`'s own credential-helper process, still holding the pipe
+/// open after `docker pull` itself has already returned. A reader thread
+/// blocked in `read_to_end` on that pipe then never sees an EOF, so joining
+/// it without a bound here would trade the very hang [`run_with_deadline`]
+/// exists to prevent for an identical one one step later, on the success
+/// path this time -- a pull that finished fine, immediately followed by a
+/// join that never does.
+///
+/// Polling [`JoinHandle::is_finished`] for [`READER_JOIN_DEADLINE`] costs an
+/// ordinary reader nothing: with nothing left to drain it finishes within
+/// milliseconds of `child` exiting, well inside the bound. Only when a
+/// reader is still running after that does this fall back to killing
+/// `pgid`'s whole group -- the same mechanism a timeout already uses --
+/// which closes every remaining copy of the write end and is what actually
+/// lets the read return. That fallback kill's own result is not surfaced
+/// the way [`ExitOutcome::TimedOut`]'s is: this path only runs after `child`
+/// has already exited normally, so there is no timeout error for it to
+/// attach to, and a `kill` that could not be started here still leaves
+/// [`join_reader`]'s `unwrap_or_default` as a safe (if silent) way out
+/// rather than hanging.
+fn join_readers_bounded(
+    pgid: u32,
+    stdout_reader: JoinHandle<Vec<u8>>,
+    stderr_reader: JoinHandle<Vec<u8>>,
+) -> (Vec<u8>, Vec<u8>) {
+    let both_finished =
+        |out: &JoinHandle<Vec<u8>>, err: &JoinHandle<Vec<u8>>| out.is_finished() && err.is_finished();
+
+    let start = Instant::now();
+    while start.elapsed() < READER_JOIN_DEADLINE && !both_finished(&stdout_reader, &stderr_reader) {
+        thread::sleep(POLL_INTERVAL);
+    }
+
+    if !both_finished(&stdout_reader, &stderr_reader) {
+        let _ = kill_process_group(pgid);
+    }
+
+    (join_reader(stdout_reader), join_reader(stderr_reader))
 }
 
 /// Spawns a thread that drains `pipe` to completion, so a child writing more
@@ -157,4 +265,21 @@ fn spawn_reader(pipe: Option<impl Read + Send + 'static>) -> JoinHandle<Vec<u8>>
 /// report.
 fn join_reader(handle: JoinHandle<Vec<u8>>) -> Vec<u8> {
     handle.join().unwrap_or_default()
+}
+
+/// The last `max_bytes` of `bytes`, lossily decoded as UTF-8 and trimmed.
+///
+/// Used to fold a killed pull's stderr into [`run_with_deadline`]'s timeout
+/// error without repeating a pull's entire (potentially large) progress
+/// output -- the tail is where a registry's or credential helper's own last
+/// words actually are. `bytes.get(start..)` rather than `bytes[start..]`:
+/// this workspace denies `clippy::indexing_slicing`, and `start` is computed
+/// from `bytes.len()` so the `get` can never actually miss, but the
+/// `unwrap_or` fallback keeps that a property of the arithmetic below rather
+/// than a panic waiting to be wrong.
+fn tail(bytes: &[u8], max_bytes: usize) -> String {
+    let start = bytes.len().saturating_sub(max_bytes);
+    String::from_utf8_lossy(bytes.get(start..).unwrap_or(bytes))
+        .trim()
+        .to_owned()
 }

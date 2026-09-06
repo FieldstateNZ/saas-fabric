@@ -35,9 +35,9 @@
 /// 120-second deadline once per process -- `image_reference.rs`'s
 /// per-reference resolution cache means every test after the first reuses
 /// that one outcome rather than paying the deadline again -- and then fails,
-/// naming the missing digest and the pull's own error, rather than quietly
-/// substituting the tag or hanging forever. That is the required mode doing
-/// exactly what it is for, not a defect in the harness.
+/// naming the missing digest and the pull's own `stderr`, rather than
+/// quietly substituting the tag or hanging forever. That is the required
+/// mode doing exactly what it is for, not a defect in the harness.
 ///
 /// Bump by pulling normally and re-reading:
 /// `docker image inspect --format '{{index .RepoDigests 0}}' ghcr.io/hasura/ndc-postgres:v3.1.0`.

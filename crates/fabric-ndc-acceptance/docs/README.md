@@ -118,14 +118,16 @@ for why it cannot use `fabric_identity::TrustedIngressReader` directly).
   of whatever the bare tag resolves to. Every reference is resolved at most
   once per process -- a cache keyed by the reference string, failures
   included -- so this deadline is paid once per run, not once per test, no
-  matter how many of the (currently fourteen) container-backed tests ask for
-  the same image. On a sandboxed machine that cannot pull and only has the
+  matter how many of the (currently thirteen -- of the fourteen
+  container-backed tests, all but the one that starts only the nginx
+  impostor and never asks for this image) `Stack`-backed tests ask for the
+  same image. On a sandboxed machine that cannot pull and only has the
   connector image loaded under a different (single-platform) digest than the
   pinned multi-arch index digest -- this repository's own situation on at
   least one development machine, see `tests/support/images.rs` -- the
   required mode therefore spends that 120-second deadline once, then fails,
-  naming the digest and the pull's own error, rather than passing or hanging
-  indefinitely. That is the mechanism working as intended, not a defect;
+  naming the digest and the pull's own `stderr`, rather than passing or
+  hanging indefinitely. That is the mechanism working as intended, not a defect;
   CI's daemon pulls normally, and its pre-pull step means the in-test pull is
   a same-image cache hit there, so this deadline is never what CI waits on.
   The fallback, when it does happen, is announced with an `eprintln!` -- but

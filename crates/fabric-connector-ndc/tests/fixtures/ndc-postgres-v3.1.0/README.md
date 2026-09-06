@@ -80,26 +80,38 @@ Most of the small per-scenario files below are the **exact response body**
 `curl -w`) stripped so the file is parsable JSON on its own. The request that
 produced each is described here rather than duplicated in every file, except
 three cases checked in as their own `request-*.json` fixtures, extracted
-verbatim from the plan's `probe6.sh`. Two of the three are read back by a
-unit test that pins the adapter's own output against them byte-for-byte, but
-not one test apiece: `request-insert-affected-only.json` is read by both
+verbatim from the plan's `probe6.sh`. Every other request body here is
+preserved only in the planning scripts this issue's plan references
+(`query_probes.sh`, `probe4.sh`, `probe5.sh`, `probe6.sh`, `named_mode.sh`).
+
+**What "Read by" means, once, for the whole table below:** the unit test
+module (or modules) that loads a file through this crate's own `fixture(...)`
+helper and asserts against its parsed content -- a byte-for-byte input to a
+real assertion, not merely a file that happens to describe a scenario some
+test covers another way. `--` means no test does that for this file today.
+Six of the nine rows below are read this way: `wire::response`'s one test
+reads the three query captures together; `client::error_mapping`'s tests
+read the two error captures and the fieldless-insert refusal; and
+`translate::response`'s tests read `mutation-insert-ok.json` (its two
+reconstructed siblings, `mutation-insert-affected-only.json` and
+`mutation-delete-other-tenant.json`, are read the same way but are discussed
+below the table rather than given their own `Verbatim? Yes` row). Two of the
+three `request-*.json` files are read the same way too, but not one test
+apiece: `request-insert-affected-only.json` is read by both
 `wire::mutation_fields`'s and `translate::mutation`'s tests, while
 `request-insert-returning.json` is read by `wire::mutation_fields`'s alone.
 The third, `request-delete-other-tenant.json`, is checked in the same
-verbatim way but is read by no test today. The table's "Read by" column
-carries the exact fact for all three; see below for why the third is kept
-anyway. Every other request body here is preserved only in the planning
-scripts this issue's plan references (`query_probes.sh`, `probe4.sh`,
-`probe5.sh`, `probe6.sh`, `named_mode.sh`).
+verbatim way but is read by no test today -- see below the table for why it
+is kept anyway.
 
 | File | Verbatim? | Request | Status | Read by |
 |---|---|---|---|---|
-| `query-isolated-acme.json` | Yes | `id = "1" AND tenant_key = "tenant-acme-482"` | 200 | -- |
-| `query-isolated-globex.json` | Yes | same, `tenant_key = "tenant-globex-915"` | 200 | -- |
-| `query-fields-absent.json` | Yes | `fields` omitted, `limit: 1` | 200 | -- |
-| `mutation-insert-no-fields-400.json` | Yes | `insert_articles`, `fields: null` | 400 | -- |
-| `mutation-insert-ok.json` | Yes | `insert_articles`, `fields` asking `affected_rows` and `returning` | 200 | -- |
-| `error-unknown-operator.json` | Yes | a predicate using operator `equals` (not a real one) | 400 | -- |
+| `query-isolated-acme.json` | Yes | `id = "1" AND tenant_key = "tenant-acme-482"` | 200 | `wire::response` |
+| `query-isolated-globex.json` | Yes | same, `tenant_key = "tenant-globex-915"` | 200 | `wire::response` |
+| `query-fields-absent.json` | Yes | `fields` omitted, `limit: 1` | 200 | `wire::response` |
+| `mutation-insert-no-fields-400.json` | Yes | `insert_articles`, `fields: null` | 400 | `client::error_mapping` |
+| `mutation-insert-ok.json` | Yes | `insert_articles`, `fields` asking `affected_rows` and `returning` | 200 | `translate::response` |
+| `error-unknown-operator.json` | Yes | a predicate using operator `equals` (not a real one) | 400 | `client::error_mapping` |
 | `request-insert-returning.json` | Yes | the request that produced `mutation-insert-ok.json` | -- | `wire::mutation_fields` |
 | `request-insert-affected-only.json` | Yes | the request that produced `mutation-insert-affected-only.json` | -- | `wire::mutation_fields`, `translate::mutation` |
 | `request-delete-other-tenant.json` | Yes | the request that produced `mutation-delete-other-tenant.json` | -- | none -- kept as the observed shape F3's follow-up must produce |
@@ -107,11 +119,7 @@ scripts this issue's plan references (`query_probes.sh`, `probe4.sh`,
 The three `request-*.json` files are requests, not responses, so "Status"
 never carries an HTTP code for any of them -- all three are extracted
 verbatim from `probe6.sh`'s `curl -d` bodies, minified onto one line to match
-this directory's other files. "Read by" is `--` for every response file
-above for a different reason than it is a real answer for the three request
-files: a response file is preserved as evidence of what the connector
-returned, not as a byte-for-byte input some test asserts against, so no test
-"reads" one in the sense this column means.
+this directory's other files.
 
 `mutation-insert-ok.json` keeps the odd `"result" : {` spacing exactly as
 `ndc-postgres` emitted it -- this file was `tee`d straight from `curl` with

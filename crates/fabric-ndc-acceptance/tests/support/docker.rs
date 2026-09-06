@@ -41,6 +41,8 @@
 
 mod containers;
 mod image_reference;
+#[cfg(test)]
+mod image_reference_tests;
 mod networks;
 mod polling;
 mod process;
@@ -53,11 +55,17 @@ pub use networks::{network_create, network_rm, network_summaries_with_prefix};
 pub use polling::poll_until;
 pub use process::{ensure_success, version};
 
-// `image_reference::image_present` and `process::DockerError` are not
-// re-exported here: nothing outside their own modules names either one by
-// path today (every caller either constructs a `RunSpec` and lets `run`
-// resolve the image, or inspects a `Result`'s `Err` through `.unwrap_or_else`
-// without naming its type). Re-exporting an item nothing uses is exactly the
-// unused import this facade should not be carrying -- see
-// `tests/support/mod.rs`'s removed blanket `unused_imports` allow. Add
-// either back here the day a caller actually needs to name it.
+// `process::DockerError` is not re-exported here: nothing outside its own
+// module names it by path today (every caller either constructs a `RunSpec`
+// and lets `run` resolve the image, or inspects a `Result`'s `Err` through
+// `.unwrap_or_else` without naming its type). Re-exporting an item nothing
+// uses is exactly the unused import this facade should not be carrying --
+// see `tests/support/mod.rs`'s removed blanket `unused_imports` allow. Add
+// it back here the day a caller actually needs to name it.
+//
+// `image_reference` itself is not re-exported either: `containers::run`
+// reaches `image_reference::resolve_runnable_reference` directly, and the
+// module's only presence check, `image_present_at`, is called only from
+// within `image_reference.rs` (a `pub fn image_present` wrapper around it
+// once existed here too, with no caller anywhere in the crate, and was
+// removed rather than kept "for symmetry").

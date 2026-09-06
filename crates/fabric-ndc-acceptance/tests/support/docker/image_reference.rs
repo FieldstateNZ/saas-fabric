@@ -49,7 +49,14 @@ const PULL_DEADLINE: Duration = Duration::from_secs(120);
 /// repository name can itself carry a registry host with a port
 /// (`localhost:5000/foo`), and stripping after the *last* colon anywhere in
 /// the string would truncate the registry host instead of the tag.
-fn repository_digest_form(reference: &str) -> String {
+///
+/// `pub(super)`, not private: its unit tests live in the sibling
+/// `image_reference_tests.rs`, declared alongside this module in
+/// `docker.rs` rather than nested inside it (this repository's `*_tests.rs`
+/// convention -- see `crates/fabric-connector-ndc/src/translate/mutation_tests.rs`
+/// for another crate's version of the same pattern), so they sit outside
+/// this module and need at least `docker`-and-below visibility to reach it.
+pub(super) fn repository_digest_form(reference: &str) -> String {
     let Some((name_and_tag, digest)) = reference.split_once('@') else {
         return reference.to_owned();
     };
@@ -63,33 +70,26 @@ fn repository_digest_form(reference: &str) -> String {
     format!("{prefix}{last_segment}@{digest}")
 }
 
-/// Whether `reference` is present locally.
+/// Whether the reference `inspected` -- already reduced to a bare tag or a
+/// [`repository_digest_form`] -- is present locally.
 ///
-/// A digest-qualified reference is checked by its [`repository_digest_form`]
-/// rather than the combined `name:tag@digest` string -- see that function's
-/// doc for why the combined form can under-report. A bare tag (no `@`) is
-/// inspected exactly as given.
+/// Takes the already-reduced string rather than reducing a raw reference
+/// itself: its only caller, [`resolve_runnable_reference_uncached`], has
+/// already made the one [`repository_digest_form`] call the pull path needs,
+/// and asking this function to redo that reduction would risk it computing
+/// a second, merely-equal string instead of reusing the first. That sharing
+/// -- not merely both values happening to be equal -- is what makes "the
+/// image inspected is the image pulled is the image returned" true by
+/// construction: there is exactly one call to [`repository_digest_form`]
+/// per reference on the pull path, and every use of its result is a clone
+/// of that one `String`.
 ///
 /// Never attempts a pull itself: [`resolve_runnable_reference`] owns when a
-/// pull happens, so this stays a pure presence check callable on its own.
+/// pull happens, so this stays a pure presence check.
 ///
 /// # Errors
 ///
 /// A [`DockerError`] only if `docker` itself could not be started.
-pub fn image_present(reference: &str) -> Result<bool, DockerError> {
-    image_present_at(&repository_digest_form(reference))
-}
-
-/// [`image_present`]'s check, for a reference a caller has already reduced.
-///
-/// Split out so [`resolve_runnable_reference`] can reuse the one
-/// [`repository_digest_form`] call it already made instead of asking
-/// [`image_present`] to redo the same reduction on the same input. That
-/// sharing -- not merely both sides happening to compute the same value --
-/// is what makes "the image inspected is the image pulled is the image
-/// returned" true by construction: there is exactly one call to
-/// [`repository_digest_form`] per reference on the pull path, and every use
-/// of its result is a clone of that one `String`.
 fn image_present_at(inspected: &str) -> Result<bool, DockerError> {
     let output = process::spawn(&["image".to_owned(), "inspect".to_owned(), inspected.to_owned()])?;
     Ok(output.status.success())
@@ -110,10 +110,15 @@ type ResolutionCell = Arc<OnceLock<Result<String, String>>>;
 /// answer to "is this pin present" and "did the pull succeed" depends on the
 /// local daemon and network, neither of which this harness expects to
 /// change mid-run. `cargo test` runs a binary's tests concurrently by
-/// default, and this crate's (currently fourteen) container-backed tests
-/// each call [`super::containers::run`] for the connector image, so several
-/// can reach this function for the same reference before any of them has
-/// finished resolving it. Keying the map by reference and putting a
+/// default, and this crate's (currently thirteen -- ten in
+/// `published_state_reaches_a_real_connector.rs`, three in
+/// `the_stack_comes_up.rs`) `Stack`-backed tests each call
+/// [`super::containers::run`] for the connector image, so several can reach
+/// this function for the same reference before any of them has finished
+/// resolving it. (A fourteenth container-backed test,
+/// `a_connector_that_answers_http_but_not_ndc_is_refused_rather_than_believed`,
+/// starts only the `Impostor`'s nginx and never asks this function for the
+/// connector image at all.) Keying the map by reference and putting a
 /// [`OnceLock`] behind each key -- rather than caching a plain
 /// `Result<String, String>` after the fact -- is what makes that race safe:
 /// the second and every later caller for a reference, whether it arrives a
@@ -281,128 +286,5 @@ impl DockerError {
                 gate::REQUIRE_ENV
             ),
         )
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::repository_digest_form;
-
-    #[test]
-    fn a_digest_qualified_reference_drops_its_tag() {
-        assert_eq!(
-            repository_digest_form("ghcr.io/hasura/ndc-postgres:v3.1.0@sha256:abc"),
-            "ghcr.io/hasura/ndc-postgres@sha256:abc"
-        );
-    }
-
-    #[test]
-    fn a_bare_tag_is_returned_unchanged() {
-        assert_eq!(repository_digest_form("postgres:16-alpine"), "postgres:16-alpine");
-    }
-
-    /// A registry host can itself carry a port (`localhost:5000/...`), so a
-    /// colon before the final `/`-separated segment is a registry port, not
-    /// a tag separator. Stripping after the last colon in the whole string
-    /// would truncate the registry host out of the repository name
-    /// entirely, leaving `localhost@sha256:x` instead of the correct
-    /// `localhost:5000/foo@sha256:x`.
-    #[test]
-    fn a_registry_port_is_not_mistaken_for_a_tag() {
-        assert_eq!(
-            repository_digest_form("localhost:5000/foo@sha256:x"),
-            "localhost:5000/foo@sha256:x"
-        );
-    }
-
-    /// Pins [`crate::support::images::NDC_POSTGRES`]'s own reduction against
-    /// a literal digest, so a hand-edit of that constant that forgets to
-    /// re-derive the digest half fails here instead of only showing up as a
-    /// pull of the wrong reference. This checks one crate constant's value,
-    /// not a property of [`repository_digest_form`] in general -- the three
-    /// tests above already cover the function's behaviour -- and it is
-    /// exactly the same reduction [`ci_pre_pulls_exactly_the_pinned_images`]
-    /// holds `.github/workflows/ci.yml`'s pre-pull step to.
-    #[test]
-    fn the_ndc_postgres_pin_reduces_to_its_digest_form() {
-        assert_eq!(
-            repository_digest_form(crate::support::images::NDC_POSTGRES),
-            "ghcr.io/hasura/ndc-postgres@sha256:f91910ef5107aa80d31d82639e149b7f41f4a5bb3af9a369397d7d5965d79a57"
-        );
-    }
-
-    /// The exact `docker pull ...` lines inside the `connector-acceptance`
-    /// job's "Pull the pinned connector-acceptance images" step, parsed from
-    /// that one step's own `run:` block rather than grepped from the whole
-    /// file -- so a `docker pull` line anywhere else in `ci.yml`, or a
-    /// leftover line this step no longer needs, cannot hide a mismatch
-    /// behind a `contains` check.
-    fn ci_pre_pull_lines(ci_yaml: &str) -> Vec<&str> {
-        const STEP_NAME: &str = "- name: Pull the pinned connector-acceptance images";
-
-        let step_start = ci_yaml
-            .find(STEP_NAME)
-            .unwrap_or_else(|| panic!("ci.yml no longer has a step named `{STEP_NAME}`"));
-        let after_step = &ci_yaml[step_start..];
-
-        let run_at = after_step
-            .find("run: |")
-            .unwrap_or_else(|| panic!("`{STEP_NAME}` no longer has a `run: |` block"));
-        let run_line_start = after_step[..run_at].rfind('\n').map_or(0, |newline| newline + 1);
-        let run_indent = run_at - run_line_start;
-
-        let after_run_line = run_at + after_step[run_at..].find('\n').map_or(0, |offset| offset + 1);
-
-        after_step[after_run_line..]
-            .lines()
-            .take_while(|line| {
-                let indent = line.len() - line.trim_start().len();
-                !line.trim().is_empty() && indent > run_indent
-            })
-            .map(str::trim)
-            .collect()
-    }
-
-    /// `.github/workflows/ci.yml`'s `connector-acceptance` job pre-pulls
-    /// every pinned image by hand, precisely so a slow or failing pull shows
-    /// up in that step's own log rather than inside a test's timeout (see
-    /// that job's comment). Nothing regenerates that step from `images.rs`,
-    /// so this checks both directions: every pinned image has its
-    /// `docker pull` line (a bumped pin here with an un-bumped line there
-    /// would otherwise silently turn the pre-pull step into a no-op -- the
-    /// suite would still pass, since [`resolve_runnable_reference`] pulls
-    /// again on the resulting cache miss, but the pull time -- now bounded
-    /// by [`PULL_DEADLINE`], previously unbounded -- would move back inside
-    /// the job's `timeout-minutes`), and the step has *exactly* as many
-    /// pull lines as there are pinned images (a stale leftover line, for an
-    /// image no longer pinned, would otherwise pass silently forever).
-    #[test]
-    fn ci_pre_pulls_exactly_the_pinned_images() {
-        let ci_yaml = include_str!("../../../../../.github/workflows/ci.yml");
-        let pull_lines = ci_pre_pull_lines(ci_yaml);
-
-        let images = [
-            crate::support::images::NDC_POSTGRES,
-            crate::support::images::POSTGRES,
-            crate::support::images::NGINX,
-        ];
-
-        assert_eq!(
-            pull_lines.len(),
-            images.len(),
-            "ci.yml's connector-acceptance pre-pull step has {} `docker pull` line(s) but images.rs \
-             pins {} image(s) -- they must match one-for-one, or a stale or missing line would pass \
-             silently. Lines found: {pull_lines:?}",
-            pull_lines.len(),
-            images.len()
-        );
-
-        for image in images {
-            let expected = format!("docker pull {}", repository_digest_form(image));
-            assert!(
-                pull_lines.contains(&expected.as_str()),
-                "ci.yml's connector-acceptance pre-pull step is missing `{expected}`"
-            );
-        }
     }
 }

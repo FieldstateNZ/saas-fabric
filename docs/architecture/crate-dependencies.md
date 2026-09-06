@@ -234,6 +234,60 @@ chain that bridges the planes through a crate in neither one, and
 `check_runtime_plane_cannot_reach_the_publisher` refuses this crate
 specifically to every runtime-plane crate, dev tables included.
 
+## `fabric-ndc-acceptance` is test-only, and also in neither plane
+
+Issue #62 needs an acceptance test that composes four real things at once:
+the `fabric-runtime-publication` publisher, the `fabric-tenant-runtime`
+runtime it feeds, the `fabric-data-api` router served over it, and the
+`fabric-connector-ndc` adapter executing against a running
+`ghcr.io/hasura/ndc-postgres` process. No existing crate can host that test.
+
+Three checks in `scripts/check_architecture.py` interact, and between them
+they rule out every other placement:
+
+- `check_ndc_containment`'s source scan reads every `.rs` file in a crate,
+  `tests/` included, and forbids any crate but `fabric-connector-ndc` itself
+  (and, narrowly, `fabric-api`) from naming an NDC type. A test living in
+  `fabric-runtime-publication/tests/` that named the adapter's wire types to
+  assert against a real connector would fail this.
+- The same function's dependency-edge loop forbids any crate but those two
+  from *declaring a dependency* on `fabric-connector-ndc`, dev-dependencies
+  included. `fabric-runtime-publication` dev-depending on the NDC crate to
+  drive that test would fail this instead.
+- `check_runtime_plane_cannot_reach_the_publisher` (ADR 0018) forbids every
+  `RUNTIME_PLANE` crate — `fabric-connector-ndc` and `fabric-data-api` among
+  them — from reaching `fabric-runtime-publication` in any table, dev
+  included. A test living beside the NDC adapter or the Data API that
+  dev-depended on the publisher would fail this one.
+
+Put together: nothing that may see the NDC crate may see the publisher, and
+nothing that may see the publisher may see the NDC crate — so no crate that
+already exists can host a test needing both. `fabric-ndc-acceptance` is a new
+crate that answers to **neither plane**, on the same footing as `fabric-core`
+and `fabric-runtime-publication`, so nothing in `RUNTIME_PLANE` or
+`CONTROL_PLANE` depends on it and its own closure reaches into neither plane
+from the other side.
+
+It ships **no production code** — `src/lib.rs` is documentation only, and its
+`Cargo.toml` has no `[dependencies]` section at all, only
+`[dev-dependencies]`. `scripts/check_architecture.py` admits it by a named
+constant, `NDC_ACCEPTANCE_CRATE`, in both loops of `check_ndc_containment` —
+visible in a diff and in `git blame`, per
+[the dependency policy](dependency-policy.md)'s rule on exceptions (§6) —
+rather than by loosening either loop for every crate. It is deliberately
+**not** added to `DOMAIN_CRATES`, `RUNTIME_PLANE`, or `CONTROL_PLANE`: it
+models no domain, and adding it to either plane's set would be exactly the
+bridge ADR 0018's publisher fence exists to refuse. Its `expected` entry in
+`check_dependency_direction` is every one of its (dev-only) internal edges —
+`fabric-runtime-publication`, `fabric-connector-ndc`, `fabric-tenant-runtime`,
+`fabric-data-api`, `fabric-identity`, `fabric-connector` — and nothing more,
+the same discipline `fabric-runtime-publication`'s own table above keeps.
+
+The composed acceptance test itself is a later slice of issue #62 and does
+not exist under `crates/fabric-ndc-acceptance/tests/` yet; this crate
+currently holds only the boundary and the architecture-gate amendment that
+admits it.
+
 ## The rules behind it
 
 **`fabric-core` knows nothing about anything.** No Axum, no NDC, no runtime, no
@@ -266,7 +320,11 @@ architecture check enforces.
 
 **Only `fabric-api` depends on `fabric-connector-ndc`.** The protocol crate is
 wired in at the composition root and nowhere else. If any other crate ever needs
-it, NDC has leaked and the boundary has failed.
+it, NDC has leaked and the boundary has failed — with one named, test-only
+exception: `fabric-ndc-acceptance` (see above), which dev-depends on it to
+drive the real adapter against a running connector, ships no production code,
+and is admitted by name in `scripts/check_architecture.py` rather than by
+loosening the rule for anyone else.
 
 **Adapters depend inward; the domain never depends on an adapter.**
 `fabric-keycloak` depends on `fabric-reconciliation` and `fabric-control-plane`
@@ -294,11 +352,12 @@ Direction is enforced by Cargo: a cycle will not compile, and a new edge
 requires editing a `Cargo.toml`, which is visible in review. Beyond that:
 
 - `scripts/check_architecture.py` asserts that NDC types do not appear outside
-  `fabric-connector-ndc`, that Keycloak representations stay inside
-  `fabric-keycloak` and Git-hosting details inside `fabric-client-git`, that no
-  crate in one plane depends on the other, and that no Git or Kubernetes client
-  exists **anywhere in the workspace** — including the control plane, which
-  reaches its Git host over HTTPS rather than by linking a Git library.
+  `fabric-connector-ndc` (with one named exception, `fabric-ndc-acceptance` —
+  see above), that Keycloak representations stay inside `fabric-keycloak` and
+  Git-hosting details inside `fabric-client-git`, that no crate in one plane
+  depends on the other, and that no Git or Kubernetes client exists
+  **anywhere in the workspace** — including the control plane, which reaches
+  its Git host over HTTPS rather than by linking a Git library.
 - It also asserts, per ADR 0018, that no workspace crate's non-dev dependency
   closure touches both planes -- catching a bridge through a crate in neither
   one that a direct-edge check, and even an up-to-date `expected` table, would

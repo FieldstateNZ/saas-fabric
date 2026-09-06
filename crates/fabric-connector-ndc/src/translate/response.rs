@@ -67,15 +67,21 @@ fn to_row(fields: &BTreeMap<String, Value>) -> Row {
 ///
 /// NDC does not define the shape of a procedure's result — it is whatever the
 /// procedure declares. There is therefore no universal way to read an
-/// affected-row count, so this recognises the conventions in common use and
-/// falls back conservatively:
+/// affected-row count, so this reads the shape this crate actually asks for
+/// and observed a real connector return, and falls back to a set of
+/// conventions that are inferred rather than observed for anything else:
 ///
-/// | Shape | Interpretation |
-/// |---|---|
-/// | `{"affected_rows": n, ...}` | `n`, plus any `returning` array as rows |
-/// | `[...]` | The array is the returned rows; count is its length |
-/// | `null` | Nothing affected |
-/// | anything else | One row affected, value returned if it is an object |
+/// | Shape | Interpretation | Status |
+/// |---|---|---|
+/// | `{"affected_rows": n, ...}` | `n`, plus any `returning` array as rows | **Observed** — every write this adapter sends selects `affected_rows` (`translate::mutation::to_mutation_request`), and a real `ndc-postgres` answers exactly this shape: `tests/fixtures/ndc-postgres-v3.1.0/mutation-insert-ok.json`, `mutation-insert-affected-only.json`, `mutation-delete-other-tenant.json` |
+/// | `[...]` | The array is the returned rows; count is its length | Inferred — a convention seen in other NDC-adjacent tooling, never produced by a request this crate sends |
+/// | `null` | Nothing affected | Inferred |
+/// | anything else | One row affected, value returned if it is an object | Inferred, and the least confident of the four |
+///
+/// The last three cannot happen for a request this crate builds — its
+/// `fields` selection always names `affected_rows` — and remain for a
+/// response this crate did not itself request: a future selection, or
+/// another connector's procedure convention.
 ///
 /// # Errors
 ///
@@ -98,7 +104,21 @@ pub(crate) fn to_mutation_outcome(
 }
 
 /// Reads an outcome out of a procedure's return value.
+///
+/// Checks the observed shape first, ahead of the inferred-fallback `match`.
 fn interpret(result: &Value) -> MutationOutcome {
+    if let Value::Object(fields) = result {
+        if let Some(affected) = fields.get("affected_rows").and_then(Value::as_u64) {
+            let returned = fields
+                .get("returning")
+                .and_then(Value::as_array)
+                .map(|rows| rows.iter().filter_map(as_row).collect::<Vec<_>>())
+                .unwrap_or_default();
+
+            return MutationOutcome::affected(affected).with_rows(returned);
+        }
+    }
+
     match result {
         Value::Null => MutationOutcome::affected(0),
 
@@ -107,21 +127,9 @@ fn interpret(result: &Value) -> MutationOutcome {
             MutationOutcome::affected(rows.len() as u64).with_rows(returned)
         }
 
-        Value::Object(fields) => {
-            let affected = fields.get("affected_rows").and_then(Value::as_u64);
-
-            let returned = fields
-                .get("returning")
-                .and_then(Value::as_array)
-                .map(|rows| rows.iter().filter_map(as_row).collect::<Vec<_>>())
-                .unwrap_or_default();
-
-            match affected {
-                Some(count) => MutationOutcome::affected(count).with_rows(returned),
-                // An object with no count is most likely the written row itself.
-                None => MutationOutcome::affected(1).with_rows(as_row(result).into_iter().collect()),
-            }
-        }
+        // An object without `affected_rows` is most likely the written row
+        // itself.
+        Value::Object(_) => MutationOutcome::affected(1).with_rows(as_row(result).into_iter().collect()),
 
         _ => MutationOutcome::affected(1),
     }

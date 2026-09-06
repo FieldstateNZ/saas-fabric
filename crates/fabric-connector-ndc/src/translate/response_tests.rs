@@ -17,6 +17,16 @@ fn mutation_response(json: &str) -> NdcMutationResponse {
     serde_json::from_str(json).unwrap()
 }
 
+/// Reads a real `ndc-postgres` v3.1.0 document, checked in under
+/// `tests/fixtures/` — see the README there for how it was captured.
+fn fixture(name: &str) -> String {
+    let path = format!(
+        "{}/tests/fixtures/ndc-postgres-v3.1.0/{name}",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    std::fs::read_to_string(path).unwrap()
+}
+
 #[test]
 fn reads_rows_out_of_a_row_set() {
     let response = query_response(r#"[{"rows":[{"id":1,"name":"Alice"}]}]"#);
@@ -116,6 +126,47 @@ fn a_bare_object_result_is_treated_as_one_written_row() {
 
     assert_eq!(outcome.affected_rows, 1);
     assert_eq!(outcome.returned_rows.len(), 1);
+}
+
+/// F1: both observed responses to a `fields`-carrying insert — the one asking
+/// `affected_rows` and `returning` together, and the one asking `affected_rows`
+/// alone — read the same count and only the first carries a returned row. Real
+/// captures, not constructed JSON: `docs/decisions/0004-*.md`'s addendum and
+/// `tests/fixtures/ndc-postgres-v3.1.0/README.md` record how each was taken.
+#[test]
+fn the_observed_insert_response_with_returning_reads_the_row_back() {
+    let response = mutation_response(&fixture("mutation-insert-ok.json"));
+
+    let outcome = to_mutation_outcome(&connector(), &response).unwrap();
+
+    assert_eq!(outcome.affected_rows, 1);
+    assert_eq!(outcome.returned_rows.len(), 1);
+    assert_eq!(
+        outcome.returned_rows[0].get(&FieldName::try_new("title").unwrap()),
+        Some(&Value::String("Inserted".to_owned()))
+    );
+}
+
+#[test]
+fn the_observed_insert_response_with_affected_rows_alone_reads_the_count_and_no_rows() {
+    let response = mutation_response(&fixture("mutation-insert-affected-only.json"));
+
+    let outcome = to_mutation_outcome(&connector(), &response).unwrap();
+
+    assert_eq!(outcome.affected_rows, 1);
+    assert!(outcome.returned_rows.is_empty());
+}
+
+/// The delete scoped to the other tenant: `affected_rows: 0`, because the
+/// `pre_check` predicate matched nothing — the isolation guarantee holding on
+/// the write path, not a parsing detail.
+#[test]
+fn the_observed_delete_scoped_to_another_tenant_reads_zero_affected() {
+    let response = mutation_response(&fixture("mutation-delete-other-tenant.json"));
+
+    let outcome = to_mutation_outcome(&connector(), &response).unwrap();
+
+    assert_eq!(outcome.affected_rows, 0);
 }
 
 #[test]

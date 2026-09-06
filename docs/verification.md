@@ -626,6 +626,11 @@ Named here rather than left for a reader to discover.
   matching the schema's own `insert_articles_object` type exactly. See ADR
   0004's addendum for what that closes and what it does not.
 
+  As of issue #62 slice 5, the mutation `fields` selection this crate sends
+  is the observed one too: every procedure request now asks for
+  `affected_rows`, the shape a real `ndc-postgres` actually requires and
+  answers, in place of the `fields: None` every write previously sent.
+
 - **No exactly-once write guarantee.** The platform now distinguishes a write
   that provably did not reach the backend from one whose outcome is unknown
   and one that was applied but whose result was lost, and reports each with a

@@ -198,3 +198,22 @@ longer holds for this connector; it is observed.
   expressed against `ndc-postgres` v3.1.0's keyed procedures" — which will
   supersede this ADR rather than quietly amend it further, consistent with
   "Revisit when" above.
+
+## Addendum — 2026-09-06 (issue #62 slice 5)
+
+**F1 is corrected in this commit.** Every procedure request this crate builds
+now carries a `fields` selection — always `affected_rows`
+(`NdcMutationFields::affected_rows_only`,
+`crates/fabric-connector-ndc/src/wire/mutation.rs`), because `MutationSpec`
+has no way for a caller to ask for the written rows back, so there is nothing
+to decide from that would justify asking for `returning` as well. The
+`returning` shape is still modelled — the wire type can represent it, and a
+unit test pins it against the accepted capture — but nothing builds one yet.
+`translate::response::to_mutation_outcome` now reads `affected_rows` off the
+observed shape as the primary case, ahead of the pre-existing heuristics for
+shapes no real connector has been seen to send. Both fixes are pinned against
+the real accepted request and response bodies captured in slice 1, not
+against a construction of what the wire "should" look like.
+
+F3 remains open, exactly as stated above: a separate issue, not this one,
+and it still supersedes this ADR rather than amending it further.

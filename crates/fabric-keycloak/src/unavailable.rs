@@ -67,10 +67,13 @@ impl IdentityProvider for Unavailable {
         Err(self.refusal())
     }
 
-    fn configured_audience(&self) -> &'static str {
+    fn configured_audience(&self) -> Option<&str> {
         // Never actually read: `IdentityReconciler::plan` only asks for this
         // after `observe_realm` succeeds, and every method here refuses.
-        ""
+        // `None` is still the honest answer if that ever changes: this type
+        // exists because the real provider could not be built, so it has no
+        // audience to report either.
+        None
     }
 
     fn describe(&self) -> String {

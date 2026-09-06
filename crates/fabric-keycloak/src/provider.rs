@@ -73,8 +73,8 @@ impl IdentityProvider for KeycloakIdentityProvider {
         mutate::update_oidc_client(&self.admin, realm, client, &self.audience).await
     }
 
-    fn configured_audience(&self) -> &str {
-        &self.audience
+    fn configured_audience(&self) -> Option<&str> {
+        Some(&self.audience)
     }
 
     fn describe(&self) -> String {

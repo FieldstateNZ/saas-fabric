@@ -260,6 +260,57 @@ async fn a_declared_native_client_round_trips_through_the_wire_unchanged() {
     assert_eq!(client.challenge_method, Some(PkceMethod::S256));
     assert_eq!(client.audience_mapper, Some(AUDIENCE.to_owned()));
     assert_eq!(client.unmodellable_redirect_uris, 0);
+    assert!(
+        client.enabled,
+        "a declared client is written, and must read back, enabled"
+    );
+    assert!(
+        client.standard_flow_enabled,
+        "a declared client is written, and must read back, with the standard flow enabled"
+    );
+    assert!(
+        client.post_logout_redirect_uris_is_every_registered_uri,
+        "a declared client's post-logout attribute must read back as \"every registered URI\""
+    );
+}
+
+#[tokio::test]
+async fn a_client_disabled_by_hand_reads_back_disabled() {
+    // The write side already asserts `enabled: true` and `standardFlowEnabled:
+    // true` (`declaration()`); until now neither was read back, so a client
+    // switched off through the console — never through this platform — stayed
+    // invisible to every sweep.
+    let keycloak = FakeKeycloak::start(Arc::new(|request: &RecordedRequest| match request.path.as_str() {
+        path if path.starts_with("/admin/realms/acme/roles") => (200, "[]".to_owned()),
+        path if path.starts_with("/admin/realms/acme/clients") => (
+            200,
+            r#"[{"id":"uuid-1","clientId":"web","redirectUris":["https://www.example.com/callback"],"publicClient":true,"enabled":false,"standardFlowEnabled":true,"attributes":{"post.logout.redirect.uris":"+"}}]"#
+                .to_owned(),
+        ),
+        "/admin/realms/acme" => (200, r#"{"displayName":"Acme"}"#.to_owned()),
+        _ => (404, "{}".to_owned()),
+    }))
+    .await;
+
+    let observed = provider(&keycloak)
+        .observe_realm(&realm())
+        .await
+        .unwrap()
+        .expect("the realm exists");
+
+    let client = observed
+        .clients
+        .get(&web_client().id)
+        .expect("the client is reported");
+
+    assert!(
+        !client.enabled,
+        "a client disabled by hand must read back disabled"
+    );
+    assert!(
+        client.standard_flow_enabled,
+        "unrelated fields must read back unaffected"
+    );
 }
 
 #[tokio::test]

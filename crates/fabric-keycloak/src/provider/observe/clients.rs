@@ -1,12 +1,12 @@
 //! Reading a realm's application clients.
 //!
-//! In the 121–150 line band: this is one read (`read`) and the three small,
+//! In the 121–150 line band: this is one read (`read`) and the four small,
 //! pure decompositions it exists to keep readable — `partition_uris`,
-//! `challenge_method`, `audience_mapper` — each turning one field of
-//! Keycloak's wire shape into the one thing `ObservedOidcClient` needs from
-//! it. None of the four is reused, tested, or meaningful outside this read,
-//! so splitting them into their own files would scatter one concept across
-//! four, not separate two.
+//! `challenge_method`, `audience_mapper`, `is_every_registered_uri` — each
+//! turning one field of Keycloak's wire shape into the one thing
+//! `ObservedOidcClient` needs from it. None of the five is reused, tested, or
+//! meaningful outside this read, so splitting them into their own files would
+//! scatter one concept across five, not separate two.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -16,7 +16,7 @@ use fabric_reconciliation::{ObservedOidcClient, ProviderError};
 use crate::admin::KeycloakAdmin;
 use crate::wire::{
     ClientRepresentation, ProtocolMapperRepresentation, AUDIENCE_MAPPER_CONFIG_KEY, AUDIENCE_MAPPER_TYPE,
-    PKCE_CHALLENGE_METHOD_ATTRIBUTE,
+    PKCE_CHALLENGE_METHOD_ATTRIBUTE, POST_LOGOUT_REDIRECT_URIS_ATTRIBUTE,
 };
 
 /// The most application clients this adapter will read in one request.
@@ -57,6 +57,11 @@ pub(super) async fn read(
                     challenge_method: challenge_method(&client.attributes),
                     audience_mapper: audience_mapper(&client.protocol_mappers),
                     unmodellable_redirect_uris,
+                    enabled: client.enabled,
+                    standard_flow_enabled: client.standard_flow_enabled,
+                    post_logout_redirect_uris_is_every_registered_uri: is_every_registered_uri(
+                        &client.attributes,
+                    ),
                 },
             ))
         })
@@ -132,4 +137,14 @@ fn audience_mapper(mappers: &[ProtocolMapperRepresentation]) -> Option<String> {
     }
 
     only.config.get(AUDIENCE_MAPPER_CONFIG_KEY).cloned()
+}
+
+/// Whether the post-logout redirect attribute still holds the literal `+`
+/// a declaration always writes — Keycloak's own shorthand for "every
+/// registered redirect URI," which this model does not otherwise parse.
+fn is_every_registered_uri(attributes: &BTreeMap<String, String>) -> bool {
+    attributes
+        .get(POST_LOGOUT_REDIRECT_URIS_ATTRIBUTE)
+        .map(String::as_str)
+        == Some("+")
 }

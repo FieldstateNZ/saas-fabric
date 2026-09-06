@@ -1,4 +1,10 @@
 //! Comparing desired state with observed state.
+//!
+//! In the 121–150 line band: one concept, `plan` and the `matches` predicate
+//! it calls, and `matches`'s eight terms each need a sentence saying which
+//! kind of drift they catch. Splitting the predicate from the function that
+//! calls it, or the terms from their explanation, would separate one
+//! comparison from the reasons it exists.
 
 use std::collections::BTreeSet;
 
@@ -71,34 +77,48 @@ pub fn plan(client: &Client, observed: Option<&ObservedRealm>, configured_audien
 
 /// Whether an existing application client already matches its declaration.
 ///
-/// Five terms, and every one of them is a way a client can have drifted:
+/// Eight terms, and every one of them is a way a client can have drifted:
 ///
 /// - `existing.public` — a declared client is always public (see
 ///   [`OidcClient`] for why a confidential one cannot be expressed), so one
 ///   the provider now holds as confidential does not match.
-/// - `existing.unmodellable_redirect_uris == 0` — a redirect URI Keycloak
+/// - `existing.unmodellable_redirect_uris == 0` — a redirect URI the provider
 ///   holds that this model cannot parse is drift, not silence (ADR 0019 §6).
 ///   A client whose declared set is fully present *and* carries one extra,
 ///   unmodellable entry has still drifted from its declaration.
 /// - `existing.redirect_uris == declared_uris(&declared.redirect)` — compared
-///   as **sets**: the provider is free to return them in any order, and a
-///   provider holding one legitimate entry beyond what is declared is drift
-///   too, not merely a superset the declared set happens to fit inside.
+///   as **sets**, so an extra entry the provider holds beyond what is
+///   declared is drift too, exactly as a missing one is (D13b).
 /// - `existing.challenge_method == Some(declared.pkce)` — `challenge_method`
-///   is `Option<PkceMethod>`, so an attribute Keycloak holds that this model
-///   cannot read and an attribute that is simply absent both read `None`,
-///   which is not `Some(S256)`. No `Plain` variant exists anywhere in this
-///   model, and none is needed for a downgrade to be seen as drift.
+///   is `Option<PkceMethod>`, so an attribute the provider holds that this
+///   model cannot read and an attribute that is simply absent both read
+///   `None`, which is not `Some(S256)`. No `Plain` variant exists anywhere in
+///   this model, and none is needed for a downgrade to be seen as drift.
 /// - `existing.audience_mapper.as_deref() == Some(configured_audience)` — a
 ///   mapper that was removed by hand, or that names a different audience,
-///   stops matching. Without this term the mapper would be written once and
-///   could silently disappear, taking the edge's `aud` check down with it.
+///   stops matching. `audience_mapper` also reads `None` when the provider
+///   holds more than one mapper (see its own rustdoc); either way, without
+///   this term the mapper would be written once and could silently
+///   disappear, taking the edge's `aud` check down with it.
+/// - `existing.enabled` — a declared client is always enabled, so one
+///   switched off by hand answers nobody while every other term still
+///   matches.
+/// - `existing.standard_flow_enabled` — a declared client exists to run the
+///   authorization-code flow, so one with it switched off has silently
+///   stopped being able to authenticate anyone through it.
+/// - `existing.post_logout_redirect_uris_is_every_registered_uri` — the
+///   provider always writes this as the shorthand for "every registered
+///   redirect URI"; an operator narrowing it by hand is narrowing where a
+///   user can land after logging out.
 fn matches(declared: &OidcClient, existing: &ObservedOidcClient, configured_audience: &str) -> bool {
     existing.public
         && existing.unmodellable_redirect_uris == 0
         && existing.redirect_uris == declared_uris(&declared.redirect)
         && existing.challenge_method == Some(declared.pkce)
         && existing.audience_mapper.as_deref() == Some(configured_audience)
+        && existing.enabled
+        && existing.standard_flow_enabled
+        && existing.post_logout_redirect_uris_is_every_registered_uri
 }
 
 /// The redirect URIs a declaration carries, as the set [`matches`] compares

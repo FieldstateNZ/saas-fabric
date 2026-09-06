@@ -1,4 +1,10 @@
 //! What an identity provider currently holds, in the platform's own terms.
+//!
+//! In the 121–150 line band: two small, closely related observed-state
+//! structs — a realm and the one client shape it holds — each field
+//! documented with the drift it represents. Splitting `ObservedOidcClient`'s
+//! fields from each other, or from `ObservedRealm`, would separate one
+//! observation from the reasons every part of it exists.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -32,6 +38,14 @@ pub struct ObservedRealm {
 }
 
 /// An application client as it currently exists.
+// A flag per attribute is the honest representation here: `public`, `enabled`,
+// `standard_flow_enabled` and the post-logout term are four independent facts
+// the provider reports, not four values of one state machine — a client can
+// hold any combination of them, and `matches` needs each answered on its own.
+// Grouping them into a sub-struct to satisfy the lint would add nesting at
+// every call site and hide nothing (see `ConnectorCapabilities` for the same
+// reasoning).
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ObservedOidcClient {
     /// The redirect URIs currently registered, limited to the ones this model
@@ -58,12 +72,21 @@ pub struct ObservedOidcClient {
     pub challenge_method: Option<PkceMethod>,
 
     /// The audience the provider's audience mapper currently asserts, if it
-    /// has one.
+    /// has exactly one.
     ///
     /// A client whose mapper has been removed, or never had one, reports
     /// `None` here — which is drift from the configured audience just as
     /// surely as a wrong string would be, because either way the edge's `aud`
-    /// check refuses every token this client issues.
+    /// check refuses every token this client issues. `None` also covers a
+    /// client carrying **more than one** audience mapper: this model never
+    /// picks one arbitrarily among several, because which one the provider
+    /// would treat as authoritative is exactly the ambiguity that should be
+    /// visible as drift rather than resolved by a guess. The substantive
+    /// proof that a provider actually behaves this way — mappers read back at
+    /// all, and two of them collapsing to `None` rather than to "first
+    /// found" — lives in `fabric-keycloak`'s
+    /// `two_audience_mappers_are_observed_as_no_single_audience`; this crate
+    /// only carries the resulting `Option`.
     pub audience_mapper: Option<String>,
 
     /// How many of the provider's registered redirect URIs this model could
@@ -75,4 +98,31 @@ pub struct ObservedOidcClient {
     /// client whose declared set is fully present *and* carries an extra,
     /// unmodellable entry has still drifted from its declaration.
     pub unmodellable_redirect_uris: usize,
+
+    /// Whether the provider currently has the client enabled.
+    ///
+    /// A declared client is always enabled; one switched off by hand — through
+    /// the provider's own console, never through this platform — answers
+    /// nobody, silently, while every other field can still read as converged.
+    pub enabled: bool,
+
+    /// Whether the provider currently has the standard (authorization-code)
+    /// flow enabled for this client.
+    ///
+    /// A declared client exists to run that flow (ADR 0019 §3); one with it
+    /// switched off has stopped being able to authenticate anyone through it,
+    /// from this platform's point of view without a word said about it.
+    pub standard_flow_enabled: bool,
+
+    /// Whether the provider's post-logout redirect setting still names
+    /// "every registered redirect URI".
+    ///
+    /// Fabric always writes that setting as the literal value the provider
+    /// uses as shorthand for the client's whole registered redirect set, so
+    /// there is nothing here for this model to parse into URIs of its own —
+    /// the adapter reports only whether the raw value is still that literal
+    /// shorthand. An operator who narrows it by hand, to an explicit list or
+    /// to nothing, is narrowing where a user can land after logging out, and
+    /// that is drift the same way a redirect URI itself would be.
+    pub post_logout_redirect_uris_is_every_registered_uri: bool,
 }

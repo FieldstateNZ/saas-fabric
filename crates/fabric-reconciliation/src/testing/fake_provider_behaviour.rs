@@ -9,13 +9,11 @@
 //!
 //! # Why this file is over 120 lines
 //!
-//! It is one `impl IdentityProvider` block — every method the port declares,
-//! answered the way an in-memory realm answers it — plus the one private
-//! helper (`write_client`) two of those methods share. Splitting the eight
-//! methods of a single trait impl across files would separate things that are
-//! one concept precisely because they are one impl: the whole point of this
-//! file is "everything reconciliation can ask of the fake," in one place a
-//! reader can check against the trait's own declaration.
+//! One `impl IdentityProvider` block covering all eight methods the trait
+//! declares, the `write_client` helper two of those methods share, and the
+//! `PROVIDER_OWNED_ROLES` constant `create_realm` seeds a new realm with.
+//! Splitting the trait impl across files would separate methods that are one
+//! concept precisely because they are one impl.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -32,16 +30,6 @@ use crate::testing::fake_identity_provider::{lock, FakeIdentityProvider};
 /// which is the normal case, and the one a reconciler that compared sets for
 /// equality would get wrong.
 const PROVIDER_OWNED_ROLES: [&str; 2] = ["offline_access", "uma_authorization"];
-
-/// The audience this fake's mapper asserts on every client it writes.
-///
-/// A real provider's audience is its own deployment configuration (ADR 0019
-/// §G5); this fake has no configuration to read one from, so it asserts a
-/// fixed value instead. One constant is enough for what this crate's tests
-/// need — a client written through the fake to come back converged — and
-/// giving the fake a configurable audience would be surface for a difference
-/// no test here exercises.
-const AUDIENCE: &str = "saas-fabric-data-api";
 
 #[async_trait]
 impl IdentityProvider for FakeIdentityProvider {
@@ -109,8 +97,8 @@ impl IdentityProvider for FakeIdentityProvider {
         Ok(())
     }
 
-    fn configured_audience(&self) -> &'static str {
-        AUDIENCE
+    fn configured_audience(&self) -> Option<&str> {
+        Some(&self.audience)
     }
 
     fn describe(&self) -> String {
@@ -121,11 +109,15 @@ impl IdentityProvider for FakeIdentityProvider {
 impl FakeIdentityProvider {
     /// Stores an application client exactly as it was declared.
     ///
-    /// `audience_mapper` carries this fake's own [`AUDIENCE`] — the same
-    /// value [`IdentityProvider::configured_audience`] reports — mirroring a
-    /// real provider's write-then-read-back. Leaving it `None` here would
-    /// make every client written through this fake permanently drifted the
-    /// moment `matches()` started comparing it.
+    /// `audience_mapper` carries this fake's own configured audience — the
+    /// same value [`IdentityProvider::configured_audience`] reports —
+    /// mirroring a real provider's write-then-read-back. Leaving it `None`
+    /// here would make every client written through this fake permanently
+    /// drifted the moment `matches()` started comparing it. `enabled`,
+    /// `standard_flow_enabled`, and the post-logout term are always written
+    /// `true` for the same reason: a real declaration always asserts them, so
+    /// a fake that did not echo them back would drift on fields no test here
+    /// ever touches.
     fn write_client(&self, realm: &RealmName, client: &OidcClient) {
         if let Some(existing) = lock(&self.realms).get_mut(realm) {
             existing.clients.insert(
@@ -134,8 +126,11 @@ impl FakeIdentityProvider {
                     redirect_uris: client.redirect.uris().iter().cloned().collect(),
                     public: true,
                     challenge_method: Some(client.pkce),
-                    audience_mapper: Some(AUDIENCE.to_owned()),
+                    audience_mapper: Some(self.audience.clone()),
                     unmodellable_redirect_uris: 0,
+                    enabled: true,
+                    standard_flow_enabled: true,
+                    post_logout_redirect_uris_is_every_registered_uri: true,
                 },
             );
         }

@@ -42,6 +42,19 @@ pub(crate) struct ClientRepresentation {
     #[serde(rename = "publicClient", default)]
     pub(crate) public_client: bool,
 
+    /// Whether Keycloak has the client enabled at all.
+    ///
+    /// `#[serde(default)]`: absence reads as `false`, which is drift from a
+    /// declared client's always-`true` rather than a silent pass — the same
+    /// "absence is the state worth double-checking" choice `public_client`
+    /// already makes.
+    #[serde(default)]
+    pub(crate) enabled: bool,
+
+    /// Whether Keycloak has the standard (authorization-code) flow enabled.
+    #[serde(rename = "standardFlowEnabled", default)]
+    pub(crate) standard_flow_enabled: bool,
+
     /// Non-standard settings, including the PKCE challenge method and the
     /// post-logout redirect set. `#[serde(default)]`: a client with no
     /// `attributes` key at all — the shape before this slice, or one edited by

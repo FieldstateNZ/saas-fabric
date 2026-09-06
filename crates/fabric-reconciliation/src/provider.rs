@@ -29,8 +29,8 @@ pub use observed::{ObservedOidcClient, ObservedRealm};
 /// Creating a realm, a role, or an application client that already exists must
 /// **succeed**, not fail. The reconciler diffs first and does not ask for work
 /// it can see is unnecessary, but the two are separated by a network and by
-/// whatever the provider does on its own — Keycloak creates several roles with
-/// every realm — so an adapter that returned an error for "already exists"
+/// whatever the provider does on its own — the provider creates several roles
+/// with every realm — so an adapter that returned an error for "already exists"
 /// would make reconciliation flap for reasons no operator could see.
 ///
 /// # Nothing here deletes
@@ -88,7 +88,7 @@ pub trait IdentityProvider: Send + Sync {
     async fn update_oidc_client(&self, realm: &RealmName, client: &OidcClient) -> Result<(), ProviderError>;
 
     /// The audience string this provider currently writes onto every declared
-    /// client's mapper.
+    /// client's mapper, if it has one configured.
     ///
     /// # Deployment configuration, not desired state
     ///
@@ -100,7 +100,20 @@ pub trait IdentityProvider: Send + Sync {
     /// one source of truth for the string, and it is why the diff compares an
     /// observed mapper against a value the provider states about itself
     /// rather than one this crate would otherwise have no way to know.
-    fn configured_audience(&self) -> &str;
+    ///
+    /// # `None` means "refuse to plan", not "compare against nothing"
+    ///
+    /// A provider that cannot yet say what it writes — because it was never
+    /// successfully built, or because its own configuration never named
+    /// one — answers `None`.
+    /// [`IdentityReconciler::plan`](crate::IdentityReconciler::plan) treats
+    /// that as a reason to refuse outright rather than as an audience to
+    /// compare against: comparing every client's mapper against an empty
+    /// string, or skipping the comparison altogether, would either mark every
+    /// client drifted forever or silently stop checking the audience mapper
+    /// at all. Both are worse than a plan that says plainly why it could not
+    /// be built.
+    fn configured_audience(&self) -> Option<&str>;
 
     /// A short description for logging, such as an endpoint.
     ///

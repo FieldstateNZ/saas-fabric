@@ -7,8 +7,14 @@ use fabric_client_model::RealmName;
 
 use crate::provider::{ObservedRealm, ProviderError};
 
+/// The audience [`FakeIdentityProvider::new`] asserts.
+///
+/// Most tests only care that a client written through the fake reads back as
+/// converged, not what the audience string actually is —
+/// [`FakeIdentityProvider::with_audience`] is for the ones that do.
+const DEFAULT_AUDIENCE: &str = "saas-fabric-data-api";
+
 /// An identity provider held entirely in memory.
-#[derive(Default)]
 pub struct FakeIdentityProvider {
     /// The realms that exist, and what is in them.
     pub(super) realms: Mutex<BTreeMap<RealmName, ObservedRealm>>,
@@ -18,13 +24,33 @@ pub struct FakeIdentityProvider {
 
     /// Every call made, in order, as `operation:argument` strings.
     calls: Mutex<Vec<String>>,
+
+    /// The audience [`configured_audience`](crate::IdentityProvider::configured_audience)
+    /// reports, and the audience every client written through this fake's
+    /// mapper asserts.
+    pub(super) audience: String,
 }
 
 impl FakeIdentityProvider {
-    /// Builds a provider holding no realms.
+    /// Builds a provider holding no realms, asserting `DEFAULT_AUDIENCE`.
     #[must_use]
     pub fn new() -> Self {
-        Self::default()
+        Self::with_audience(DEFAULT_AUDIENCE)
+    }
+
+    /// Builds a provider holding no realms, asserting `audience`.
+    ///
+    /// Lets a test configure a fake that disagrees with a client's own
+    /// desired-state audience — the scenario `new()` cannot express with one
+    /// fixed constant.
+    #[must_use]
+    pub fn with_audience(audience: impl Into<String>) -> Self {
+        Self {
+            realms: Mutex::new(BTreeMap::new()),
+            failure: Mutex::new(None),
+            calls: Mutex::new(Vec::new()),
+            audience: audience.into(),
+        }
     }
 
     /// Makes every subsequent call fail.
@@ -69,6 +95,12 @@ impl FakeIdentityProvider {
         lock(&self.calls).push(call);
 
         lock(&self.failure).clone().map_or(Ok(()), Err)
+    }
+}
+
+impl Default for FakeIdentityProvider {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

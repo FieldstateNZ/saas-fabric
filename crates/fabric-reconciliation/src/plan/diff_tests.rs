@@ -33,6 +33,9 @@ fn converged_realm() -> ObservedRealm {
             challenge_method: Some(PkceMethod::S256),
             audience_mapper: Some(AUDIENCE.to_owned()),
             unmodellable_redirect_uris: 0,
+            enabled: true,
+            standard_flow_enabled: true,
+            post_logout_redirect_uris_is_every_registered_uri: true,
         },
     );
 
@@ -65,11 +68,11 @@ fn a_realm_that_already_matches_produces_no_actions() {
     assert!(plan.is_converged(), "{:?}", plan.actions());
 }
 
-/// The positive control for `matches()`'s five terms: enumerates each one
+/// The positive control for `matches()`'s eight terms: enumerates each one
 /// against the fixture the tests below mutate, so a future change to any of
 /// them cannot silently start from a baseline that was already drifting.
 #[test]
-fn a_converged_native_client_is_left_alone() {
+fn a_converged_client_is_left_alone() {
     let realm = converged_realm();
     let existing = realm
         .clients
@@ -80,6 +83,9 @@ fn a_converged_native_client_is_left_alone() {
     assert_eq!(existing.unmodellable_redirect_uris, 0);
     assert_eq!(existing.challenge_method, Some(PkceMethod::S256));
     assert_eq!(existing.audience_mapper.as_deref(), Some(AUDIENCE));
+    assert!(existing.enabled);
+    assert!(existing.standard_flow_enabled);
+    assert!(existing.post_logout_redirect_uris_is_every_registered_uri);
     assert_eq!(
         existing.redirect_uris,
         web_client()
@@ -139,6 +145,10 @@ fn an_undeclared_role_is_left_alone_rather_than_deleted() {
     assert!(plan(&acme(), Some(&realm), AUDIENCE).is_converged());
 }
 
+/// D13a. A declared URI is present in the provider's records but under a
+/// changed value — parseable, so this already worked before ADR 0019.
+/// Distinguished from D13 (a URI the model cannot parse at all) and D13b (an
+/// extra, undeclared URI the provider also holds).
 #[test]
 fn an_application_client_with_a_changed_redirect_uri_is_updated() {
     let mut realm = converged_realm();
@@ -152,6 +162,9 @@ fn an_application_client_with_a_changed_redirect_uri_is_updated() {
             challenge_method: Some(PkceMethod::S256),
             audience_mapper: Some(AUDIENCE.to_owned()),
             unmodellable_redirect_uris: 0,
+            enabled: true,
+            standard_flow_enabled: true,
+            post_logout_redirect_uris_is_every_registered_uri: true,
         },
     );
 
@@ -160,13 +173,13 @@ fn an_application_client_with_a_changed_redirect_uri_is_updated() {
     assert_eq!(plan.actions(), [IdentityAction::UpdateOidcClient(web_client())]);
 }
 
-/// D13a. Every declared URI is present *and* parseable, but Keycloak also
-/// holds one more that is not declared. `matches` compares the sets for
-/// equality, not containment, so a legitimate extra entry is drift too — a
-/// redirect allow-list is a security boundary, and "the declared set is a
-/// subset of what Keycloak accepts" is not the guarantee this model makes.
+/// D13b. Every declared URI is present and parseable, but the provider also
+/// holds one more that is not declared. `matches` compares the two sets for
+/// equality: a redirect allow-list is a security boundary, and a legitimate
+/// extra entry the provider holds beyond what is declared is drift, exactly
+/// as a missing one would be.
 #[test]
-fn an_extra_redirect_uri_keycloak_holds_is_drift() {
+fn an_extra_redirect_uri_the_provider_holds_is_drift() {
     let mut realm = converged_realm();
     if let Some(existing) = realm.clients.get_mut(&web_client().id) {
         existing
@@ -180,9 +193,9 @@ fn an_extra_redirect_uri_keycloak_holds_is_drift() {
 }
 
 /// D13. An observed redirect URI this model cannot parse is drift, not
-/// silence (ADR 0019 §6) — the declared set is fully present *and* Keycloak
-/// holds one more entry that does not parse, and that is still a client to
-/// rewrite.
+/// silence (ADR 0019 §6) — the declared set is fully present *and* the
+/// provider holds one more entry that does not parse, and that is still a
+/// client to rewrite.
 ///
 /// **Mutation-proved.** With the `existing.unmodellable_redirect_uris == 0`
 /// term deleted from `plan::diff::matches`, this test failed:
@@ -202,28 +215,13 @@ fn a_redirect_uri_this_model_cannot_parse_is_drift() {
     assert_eq!(plan.actions(), [IdentityAction::UpdateOidcClient(web_client())]);
 }
 
-/// C5. The PKCE attribute is simply absent — created before this ADR, or
-/// removed by hand. `challenge_method` reads `None` either way.
+/// C5 and C6. The provider may hold no PKCE attribute at all — never set, or
+/// removed by hand (C5) — or a value this model does not recognise, such as
+/// `plain`, empty, or a typo (C6). `challenge_method` reads `None` either
+/// way: there is no `Plain` variant anywhere in this model, and none is
+/// needed for either case to be seen as drift.
 #[test]
-fn a_client_whose_pkce_attribute_was_removed_is_corrected() {
-    let mut realm = converged_realm();
-    if let Some(existing) = realm.clients.get_mut(&web_client().id) {
-        existing.challenge_method = None;
-    }
-
-    let plan = plan(&acme(), Some(&realm), AUDIENCE);
-
-    assert_eq!(plan.actions(), [IdentityAction::UpdateOidcClient(web_client())]);
-}
-
-/// C9. Whether Keycloak holds no PKCE attribute or a value this model does
-/// not recognise (`plain`, empty, a typo), `challenge_method` reads `None`
-/// either way — there is no `Plain` variant to construct here, which is the
-/// point: this is the same observed shape as the attribute being absent
-/// ([`a_client_whose_pkce_attribute_was_removed_is_corrected`]), not a second
-/// code path that could drift out of step with it.
-#[test]
-fn a_client_with_a_challenge_method_this_model_cannot_read_is_corrected() {
+fn a_client_without_a_recognised_challenge_method_is_corrected() {
     let mut realm = converged_realm();
     if let Some(existing) = realm.clients.get_mut(&web_client().id) {
         existing.challenge_method = None;
@@ -235,10 +233,12 @@ fn a_client_with_a_challenge_method_this_model_cannot_read_is_corrected() {
 }
 
 /// E15. ADR 0019's deliberate break: a `v1` document migrates to `pkce: S256`
-/// when it is read, but a client written to Keycloak before this ADR has no
-/// PKCE attribute at all. The first sweep after deployment corrects it —
+/// when it is read, but a client written to the provider before this ADR has
+/// no PKCE attribute at all. The first sweep after deployment corrects it —
 /// every public client not already performing PKCE stops working, and this
-/// test is what makes that visible rather than a surprise.
+/// test is what makes that visible rather than a surprise. Same observed
+/// shape as [`a_client_without_a_recognised_challenge_method_is_corrected`],
+/// not a second code path that could drift out of step with it.
 #[test]
 fn a_v1_client_is_still_reconciled_with_the_s256_challenge_method() {
     let mut realm = converged_realm();
@@ -251,10 +251,10 @@ fn a_v1_client_is_still_reconciled_with_the_s256_challenge_method() {
     assert_eq!(plan.actions(), [IdentityAction::UpdateOidcClient(web_client())]);
 }
 
-/// C6. ADR 0019 §6: "A client whose mapper was removed by hand stops
-/// matching and is rewritten." Without this term the mapper would be written
-/// once and could silently disappear, taking the edge's `aud` check down
-/// with it.
+/// C6a. The audience mapper was removed by hand. ADR 0019 §6: "A client whose
+/// mapper was removed by hand stops matching and is rewritten." Without this
+/// term the mapper would be written once and could silently disappear,
+/// taking the edge's `aud` check down with it.
 #[test]
 fn a_client_whose_audience_mapper_was_removed_is_corrected() {
     let mut realm = converged_realm();
@@ -298,6 +298,52 @@ fn a_declared_client_switched_to_confidential_is_corrected() {
     assert_eq!(plan.actions(), [IdentityAction::UpdateOidcClient(web_client())]);
 }
 
+/// A client disabled by hand — through the provider's own console, not this
+/// platform — is unreachable to every caller, silently: `enabled` was written
+/// once and never observed until this term existed, so every other field
+/// still read as converged while nobody could authenticate through it.
+#[test]
+fn a_client_disabled_by_hand_is_corrected() {
+    let mut realm = converged_realm();
+    if let Some(existing) = realm.clients.get_mut(&web_client().id) {
+        existing.enabled = false;
+    }
+
+    let plan = plan(&acme(), Some(&realm), AUDIENCE);
+
+    assert_eq!(plan.actions(), [IdentityAction::UpdateOidcClient(web_client())]);
+}
+
+/// A client whose standard (authorization-code) flow was switched off by
+/// hand has silently stopped being able to authenticate anyone through it —
+/// the same written-but-unobserved gap `enabled` had.
+#[test]
+fn a_client_whose_standard_flow_was_switched_off_is_corrected() {
+    let mut realm = converged_realm();
+    if let Some(existing) = realm.clients.get_mut(&web_client().id) {
+        existing.standard_flow_enabled = false;
+    }
+
+    let plan = plan(&acme(), Some(&realm), AUDIENCE);
+
+    assert_eq!(plan.actions(), [IdentityAction::UpdateOidcClient(web_client())]);
+}
+
+/// A post-logout redirect set narrowed by hand is an operator narrowing where
+/// a user can land after logging out — drift the same way a redirect URI
+/// itself would be, and just as unobserved before this term existed.
+#[test]
+fn a_client_whose_post_logout_set_was_narrowed_is_corrected() {
+    let mut realm = converged_realm();
+    if let Some(existing) = realm.clients.get_mut(&web_client().id) {
+        existing.post_logout_redirect_uris_is_every_registered_uri = false;
+    }
+
+    let plan = plan(&acme(), Some(&realm), AUDIENCE);
+
+    assert_eq!(plan.actions(), [IdentityAction::UpdateOidcClient(web_client())]);
+}
+
 #[test]
 fn an_undeclared_application_client_is_left_alone() {
     let mut realm = converged_realm();
@@ -309,6 +355,9 @@ fn an_undeclared_application_client_is_left_alone() {
             challenge_method: None,
             audience_mapper: None,
             unmodellable_redirect_uris: 0,
+            enabled: false,
+            standard_flow_enabled: false,
+            post_logout_redirect_uris_is_every_registered_uri: false,
         },
     );
 

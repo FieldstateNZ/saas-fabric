@@ -100,7 +100,7 @@ mod schema;
 pub(crate) use capabilities::NdcCapabilitiesResponse;
 pub(crate) use expression::{NdcComparisonTarget, NdcComparisonValue, NdcExpression, NdcUnaryOperator};
 pub(crate) use mutation::{
-    NdcMutationOperation, NdcMutationRequest, NdcMutationResponse, NdcOperationResult,
+    NdcMutationFields, NdcMutationOperation, NdcMutationRequest, NdcMutationResponse, NdcOperationResult,
 };
 pub(crate) use ndc_type::NdcType;
 pub(crate) use procedure::NdcProcedureInfo;

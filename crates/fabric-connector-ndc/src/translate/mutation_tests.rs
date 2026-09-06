@@ -313,11 +313,21 @@ fn articles_index() -> SchemaIndex {
     SchemaIndex::build(&schema)
 }
 
+/// Reads a real `ndc-postgres` v3.1.0 request, checked in under
+/// `tests/fixtures/` -- see the README there for how it was captured.
+fn fixture(name: &str) -> serde_json::Value {
+    let path = format!(
+        "{}/tests/fixtures/ndc-postgres-v3.1.0/{name}",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+}
+
 /// F1, pinned against the real connector's own accepted request rather than a
-/// guess: the exact `fields` and `arguments` shape of the second `curl` in
-/// the plan's `probe6.sh`, the request that produced
-/// `tests/fixtures/ndc-postgres-v3.1.0/mutation-insert-affected-only.json`.
-/// This is also the shape every insert now takes, `returning` or not — see
+/// guess: `tests/fixtures/ndc-postgres-v3.1.0/request-insert-affected-only.json`,
+/// extracted from the second `curl` in the plan's `probe6.sh`, the request
+/// that produced `mutation-insert-affected-only.json`. This is also the
+/// shape every insert now takes, `returning` or not — see
 /// `NdcMutationFields::affected_rows_only`'s rustdoc for why `MutationSpec`
 /// leaves this adapter no way to ask for the other observed shape instead.
 #[test]
@@ -351,25 +361,7 @@ fn an_insert_request_matches_the_real_connectors_accepted_shape() {
     let request = to_mutation_request(&spec, None, &config, &articles_index()).unwrap();
     let json = serde_json::to_value(&request).unwrap();
 
-    assert_eq!(
-        json,
-        serde_json::json!({
-            "operations": [{
-                "type": "procedure",
-                "name": "insert_articles",
-                "arguments": {
-                    "objects": [{
-                        "id": "10", "tenant_key": "tenant-acme-482", "title": "Second", "body": null
-                    }]
-                },
-                "fields": {
-                    "type": "object",
-                    "fields": {"affected_rows": {"type": "column", "column": "affected_rows"}}
-                }
-            }],
-            "collection_relationships": {}
-        })
-    );
+    assert_eq!(json, fixture("request-insert-affected-only.json"));
 }
 
 /// The bug this pins: `fields` used to be unconditionally `None`

@@ -73,7 +73,7 @@ fn to_row(fields: &BTreeMap<String, Value>) -> Row {
 ///
 /// | Shape | Interpretation | Status |
 /// |---|---|---|
-/// | `{"affected_rows": n, ...}` | `n`, plus any `returning` array as rows | **Observed** — every write this adapter sends selects `affected_rows` (`translate::mutation::to_mutation_request`), and a real `ndc-postgres` answers exactly this shape: `tests/fixtures/ndc-postgres-v3.1.0/mutation-insert-ok.json`, `mutation-insert-affected-only.json`, `mutation-delete-other-tenant.json` |
+/// | `{"affected_rows": n, ...}` | `n`, plus any `returning` array as rows | **Observed** for `tests/fixtures/ndc-postgres-v3.1.0/mutation-insert-ok.json`, a real capture -- every write this adapter sends selects `affected_rows` (`translate::mutation::to_mutation_request`), and a real `ndc-postgres` answered exactly this shape. `mutation-insert-affected-only.json` and `mutation-delete-other-tenant.json` show the same shape too, but are reconstructions from the plan's quoted record rather than saved captures (see the fixture README) — corroborating, not independently observed |
 /// | `[...]` | The array is the returned rows; count is its length | Inferred — a convention seen in other NDC-adjacent tooling, never produced by a request this crate sends |
 /// | `null` | Nothing affected | Inferred |
 /// | anything else | One row affected, value returned if it is an object | Inferred, and the least confident of the four |

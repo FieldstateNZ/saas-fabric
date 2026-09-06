@@ -81,18 +81,24 @@ before touching `tests/support/`:
 ## `tests/support/` layout
 
 - `docker/` -- `process.rs` (drives the `docker` binary, knows nothing about
-  containers or networks), `containers.rs`, `networks.rs`, `polling.rs`
+  containers or networks), `containers.rs`, `image_reference.rs` (what
+  string a container start actually passes to `docker run`: presence
+  checks, pulling a pinned digest that is absent locally, and the
+  required-mode-versus-fallback policy), `networks.rs`, `polling.rs`
   (deadline-bounded, never a bare sleep). `docker.rs` is a thin facade
-  re-exporting all four, so every other file's `docker::foo(...)` calls are
+  re-exporting all five, so every other file's `docker::foo(...)` calls are
   unaffected by which file `foo` actually lives in.
 - `gate.rs` -- `docker_available_or_skip` and `REQUIRE_ENV`
-  (`FABRIC_REQUIRE_CONNECTOR_ACCEPTANCE`). Also gates the digest-fallback in
-  `docker/containers.rs`: set to `1`, a pinned image absent locally is a
-  failure naming the digest, never a silent bare-tag substitution.
+  (`FABRIC_REQUIRE_CONNECTOR_ACCEPTANCE`). Also gates the pull-failure
+  fallback in `docker/image_reference.rs`: set to `1`, a pinned image whose
+  pull fails is a failure naming the digest and the pull's `stderr`, never a
+  silent bare-tag substitution.
 - `images.rs` -- every image, pinned by digest, in one place.
 - `names.rs` -- `RunId` (per-run container/network naming) and
   `sweep_stale` (removes a prior hard-killed run's leftovers by the
-  `fabric-ndc-acc-` prefix).
+  `fabric-ndc-acc-` prefix, skipping anything carrying this process's own
+  pid or younger than ten minutes, so two runs in flight at once cannot
+  sweep each other's still-live resources).
 - `postgres.rs` -- starts postgres, seeds `SEED_SQL` (the shared `articles`
   table, as SQL literals).
 - `connector.rs` -- starts `ndc-postgres` in `ConnectorMode::Static` or

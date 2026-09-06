@@ -111,6 +111,13 @@ jobs:
   connector-acceptance:
     name: cargo test -p fabric-ndc-acceptance (real ndc-postgres)
     runs-on: ubuntu-latest
+    # The suite brings up postgres, a connector, and (for one test) an nginx
+    # impostor, each gated by its own poll-to-deadline -- comfortably inside
+    # a few minutes when everything answers normally. A cap here means a
+    # daemon or network problem that would otherwise hang shows up as a
+    # timeout with this job's name attached, not as "CI is stuck" with no
+    # indication which job.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       # See "The toolchain" above: installs exactly what rust-toolchain.toml
@@ -122,10 +129,26 @@ jobs:
       # normally, so this needs no `services:` block -- the suite drives
       # `docker` itself (crates/fabric-ndc-acceptance/tests/support/docker/),
       # which is also what lets it start a second connector configuration and
-      # the nginx impostor alongside the first. Required mode turns "no
-      # Docker" and "the pinned image isn't the one that ran" from a silent
-      # skip into a failure naming what was missing
-      # (tests/support/gate.rs, tests/support/docker/containers.rs).
+      # the nginx impostor alongside the first.
+      #
+      # Pulled explicitly, here, rather than left to the test run's own
+      # pull-on-first-use: a pull that happens inside the test binary
+      # competes with that test's own timeout, and a slow registry would be
+      # indistinguishable in the log from the connector itself being slow to
+      # answer. Pulling the three pinned references as their own step puts
+      # the pull time, and any pull failure, in a log section that says what
+      # it is. `tests/support/docker/image_reference.rs` still pulls again
+      # if a reference is somehow still absent when a test runs (it is not,
+      # after this step succeeds), so this step is an optimisation and a
+      # clearer log, not a change to what the suite itself guarantees.
+      - name: Pull the pinned connector-acceptance images
+        run: |
+          docker pull ghcr.io/hasura/ndc-postgres:v3.1.0@sha256:f91910ef5107aa80d31d82639e149b7f41f4a5bb3af9a369397d7d5965d79a57
+          docker pull postgres:16-alpine@sha256:e013e867e712fec275706a6c51c966f0bb0c93cfa8f51000f85a15f9865a28cb
+          docker pull nginx:1.27-alpine@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10
+      # Required mode turns "no Docker" and "the pinned image isn't the one
+      # that ran" from a silent skip into a failure naming what was missing
+      # (tests/support/gate.rs, tests/support/docker/image_reference.rs).
       - run: cargo test -p fabric-ndc-acceptance
         env:
           FABRIC_REQUIRE_CONNECTOR_ACCEPTANCE: "1"

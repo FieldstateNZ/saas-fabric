@@ -42,16 +42,37 @@ is at the end, under "The control plane, end to end".
 | Console types | `npm run typecheck` | 0 errors |
 | Console tests | `npm test` | 81 passing, 0 failing |
 | Console build | `npm run build` | 228 kB, 70 kB gzipped |
-| Connector acceptance | `FABRIC_REQUIRE_CONNECTOR_ACCEPTANCE=1 cargo test -p fabric-ndc-acceptance` | 14 passing, 0 failing (see "Connector acceptance (issue #62)" below) |
+| Connector acceptance | `cargo test -p fabric-ndc-acceptance` | 14 passing, 0 failing — **default mode**, Docker up, run on the implementation machine (see "Connector acceptance (issue #62)" below) |
+| Connector acceptance, required mode | `FABRIC_REQUIRE_CONNECTOR_ACCEPTANCE=1 cargo test -p fabric-ndc-acceptance` | **Pending the first green `connector-acceptance` CI run.** Not observed on this machine — see below |
 
-All twelve run in CI on every push and pull request
-(`.github/workflows/ci.yml`); the four Rust gates, the architecture check, and
+Twelve of the thirteen rows above run in CI on every push and pull request
+(`.github/workflows/ci.yml`): the four Rust gates, the architecture check, and
 the connector-acceptance job as parallel jobs, the four console checks as
 steps of one job because `npm ci` dominates each of them. The
 `cargo test --workspace` job excludes `fabric-ndc-acceptance`
 (`--exclude fabric-ndc-acceptance`) so the connector-acceptance job is the
 one place that claim is made, with the requirement set — CI can go green on
 that job only by actually reaching a real connector (`tests/support/gate.rs`).
+That CI job **is** the "required mode" row; the "default mode" row above it
+is not a separate CI job, only this table's honest record of what running
+the same suite without the requirement, on the machine that did this
+increment's work, actually showed.
+
+**Why the required-mode row is pending rather than a number.** The 14
+passing above were observed running this crate's tests the ordinary way,
+with a real Docker daemon reachable and the pinned connector image already
+loaded — the honest thing this machine's daemon can do, per
+`tests/support/images.rs`: it cannot pull from `ghcr.io` at all, so
+`FABRIC_REQUIRE_CONNECTOR_ACCEPTANCE=1` on *this* machine fails fast, by
+design (`tests/support/docker/image_reference.rs`'s required mode refuses the
+bare-tag fallback that default mode uses instead). That failure is the
+required mode doing its job, not a defect this table should paper over by
+quoting a number nobody watched it produce. The row stays pending until
+`.github/workflows/ci.yml`'s `connector-acceptance` job — whose runner can
+pull the pin normally, and which pre-pulls all three pinned images as its own
+step precisely so a pull problem shows up there rather than inside a test's
+own timeout — goes green once, at which point this row should be updated
+with that run's actual count, not before.
 
 Nothing is ignored.
 

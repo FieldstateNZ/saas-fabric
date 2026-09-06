@@ -2,13 +2,16 @@
 //!
 //! The "containers" concept the parent `docker.rs` module doc names. Builds
 //! on [`process`](super::process) for the actual `docker` invocations and
-//! knows nothing about networks beyond the name a [`RunSpec`] joins.
+//! knows nothing about networks beyond the name a [`RunSpec`] joins. Deciding
+//! *which* image reference to actually pass to `docker run` -- presence
+//! checks, pulling, and the required-mode-versus-fallback policy -- is a
+//! separate concept, [`image_reference`](super::image_reference); this file
+//! only calls it.
 
 use std::io::Write as _;
 use std::process::{Command, Output, Stdio};
 
-use crate::support::gate;
-
+use super::image_reference;
 use super::process::{self, DockerError};
 
 /// A container this harness started, identified by the name it was given.
@@ -48,103 +51,16 @@ pub struct RunSpec {
     pub command: Vec<String>,
 }
 
-/// Whether `reference` is present locally under that exact name (tag or
-/// tag@digest). Never attempts a pull: this machine's daemon may not be able
-/// to (see `images.rs`), and CI, which can, is left to `run`'s own pull
-/// fallback via a plain `docker run`.
-///
-/// # Errors
-///
-/// A [`DockerError`] only if `docker` itself could not be started.
-pub fn image_present(reference: &str) -> Result<bool, DockerError> {
-    let output = process::spawn(&["image".to_owned(), "inspect".to_owned(), reference.to_owned()])?;
-    Ok(output.status.success())
-}
-
-/// Resolves `reference` to the string `run` should actually pass to
-/// `docker run`.
-///
-/// A digest-qualified reference (`image:tag@sha256:...`) is used as-is when
-/// present locally. When it is not -- a daemon that cannot pull, with only
-/// the bare tag loaded by hand rather than through a registry pull, which is
-/// this repository's own situation for `images::NDC_POSTGRES` today; see
-/// that constant's doc comment -- this falls back to the bare tag, loudly,
-/// on one stderr line, rather than silently running different bytes than
-/// the pin names. Neither present: returns the original reference unchanged,
-/// so `docker run`'s own error (an attempted pull, and whatever that does on
-/// this daemon) is what the caller sees, honestly.
-///
-/// # The required mode disables the fallback
-///
-/// [`gate::REQUIRE_ENV`] set to `1` -- which CI's `connector-acceptance` job
-/// always does -- turns a missing digest-qualified image into an outright
-/// failure naming the digest, never a silent fallback to the bare tag. See
-/// `gate.rs`'s module doc for why: the fallback exists for exactly one
-/// situation, a sandboxed developer machine whose daemon cannot pull, with
-/// the tag loaded by hand under a different digest. CI's daemon pulls
-/// normally, so a pinned digest genuinely absent there is not that situation
-/// -- it is drift between the pin and what the registry now serves, or a
-/// typo in the pin -- and running whatever the bare tag happens to resolve
-/// to would be running an unpinned image while a pinned-looking test result
-/// reported success. Required mode is what makes that impossible instead of
-/// merely unlikely.
-///
-/// # Errors
-///
-/// A [`DockerError`] only if `docker` itself could not be started, or if
-/// [`gate::REQUIRE_ENV`] is `1` and `reference` names a digest that is not
-/// present locally.
-fn resolve_runnable_reference(reference: &str) -> Result<String, DockerError> {
-    if image_present(reference)? {
-        return Ok(reference.to_owned());
-    }
-
-    let Some((tag, digest)) = reference.split_once('@') else {
-        return Ok(reference.to_owned());
-    };
-
-    if std::env::var(gate::REQUIRE_ENV).as_deref() == Ok("1") {
-        return Err(DockerError::required_digest_missing(reference, digest));
-    }
-
-    if image_present(tag)? {
-        eprintln!(
-            "fabric-ndc-acceptance: {reference} is not present locally by digest; \
-             falling back to the bare tag {tag} (see images.rs for why)"
-        );
-        return Ok(tag.to_owned());
-    }
-
-    Ok(reference.to_owned())
-}
-
-impl DockerError {
-    /// Built by [`resolve_runnable_reference`] when the required mode
-    /// refuses the bare-tag fallback. A free function on [`DockerError`]
-    /// rather than another `spawn`/`run_checked` path: no `docker` process
-    /// runs for this failure at all, so there is no command line or `stderr`
-    /// to carry -- only the digest the caller needs to go pull by hand, or
-    /// to update if the registry has genuinely moved on.
-    fn required_digest_missing(reference: &str, digest: &str) -> Self {
-        Self::from_parts(
-            format!("docker image inspect {reference}"),
-            format!(
-                "not present locally by digest {digest}, and {}=1 disables the bare-tag \
-                 fallback -- pull it, or update the pin in images.rs if the registry has moved on",
-                gate::REQUIRE_ENV
-            ),
-        )
-    }
-}
-
 /// Starts a detached container from `spec`.
 ///
 /// # Errors
 ///
 /// A [`DockerError`] naming the full `docker run` invocation and `stderr` if
-/// the container could not be started.
+/// the container could not be started, or propagated from
+/// [`image_reference::resolve_runnable_reference`] if `spec.image`'s pinned
+/// digest is absent and could not be pulled.
 pub fn run(spec: &RunSpec) -> Result<Container, DockerError> {
-    let image = resolve_runnable_reference(&spec.image)?;
+    let image = image_reference::resolve_runnable_reference(&spec.image)?;
 
     let mut args = vec![
         "run".to_owned(),
@@ -306,19 +222,29 @@ pub fn rm_by_name(name: &str) -> Result<(), DockerError> {
     process::run_checked(&["rm".to_owned(), "-f".to_owned(), name.to_owned()]).map(|_| ())
 }
 
-/// Container names currently matching `prefix`, running or not.
+/// Containers currently matching `prefix`, running or not: each one's name
+/// paired with `docker ps`'s own `{{.CreatedAt}}` reading for it.
+///
+/// The pair, not the name alone, is what [`crate::support::names::sweep_stale`]
+/// needs to tell a concurrent run's fresh container from a hard-killed run's
+/// stale one.
 ///
 /// # Errors
 ///
 /// A [`DockerError`] if `docker ps` failed.
-pub fn container_names_with_prefix(prefix: &str) -> Result<Vec<String>, DockerError> {
+pub fn container_summaries_with_prefix(prefix: &str) -> Result<Vec<(String, String)>, DockerError> {
     let output = process::run_checked(&[
         "ps".to_owned(),
         "-a".to_owned(),
         "--filter".to_owned(),
         format!("name={prefix}"),
         "--format".to_owned(),
-        "{{.Names}}".to_owned(),
+        "{{.Names}}\t{{.CreatedAt}}".to_owned(),
     ])?;
-    Ok(process::lines(&output))
+
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| line.split_once('\t'))
+        .map(|(name, created_at)| (name.trim().to_owned(), created_at.trim().to_owned()))
+        .collect())
 }

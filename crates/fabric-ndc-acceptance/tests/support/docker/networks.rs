@@ -25,19 +25,27 @@ pub fn network_rm(name: &str) -> Result<(), DockerError> {
     process::run_checked(&["network".to_owned(), "rm".to_owned(), name.to_owned()]).map(|_| ())
 }
 
-/// Network names currently matching `prefix`.
+/// Networks currently matching `prefix`: each one's name paired with
+/// `docker network ls`'s own `{{.CreatedAt}}` reading for it -- see
+/// [`super::containers::container_summaries_with_prefix`], the same shape
+/// for the same reason.
 ///
 /// # Errors
 ///
 /// A [`DockerError`] if `docker network ls` failed.
-pub fn network_names_with_prefix(prefix: &str) -> Result<Vec<String>, DockerError> {
+pub fn network_summaries_with_prefix(prefix: &str) -> Result<Vec<(String, String)>, DockerError> {
     let output = process::run_checked(&[
         "network".to_owned(),
         "ls".to_owned(),
         "--filter".to_owned(),
         format!("name={prefix}"),
         "--format".to_owned(),
-        "{{.Name}}".to_owned(),
+        "{{.Name}}\t{{.CreatedAt}}".to_owned(),
     ])?;
-    Ok(process::lines(&output))
+
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| line.split_once('\t'))
+        .map(|(name, created_at)| (name.trim().to_owned(), created_at.trim().to_owned()))
+        .collect())
 }

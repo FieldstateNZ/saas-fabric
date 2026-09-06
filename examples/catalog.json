@@ -3,7 +3,7 @@
     "data_source": "primary",
     "collection": "customers",
     "key_field": "id",
-    "operations": ["read", "list", "create", "update", "delete"],
+    "operations": ["read", "list", "create"],
     "queryable_fields": ["id", "name", "email", "status", "created_at"]
   },
 

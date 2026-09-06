@@ -283,10 +283,18 @@ bridge ADR 0018's publisher fence exists to refuse. Its `expected` entry in
 `fabric-data-api`, `fabric-identity`, `fabric-connector` — and nothing more,
 the same discipline `fabric-runtime-publication`'s own table above keeps.
 
-The composed acceptance test itself is a later slice of issue #62 and does
-not exist under `crates/fabric-ndc-acceptance/tests/` yet; this crate
-currently holds only the boundary and the architecture-gate amendment that
-admits it.
+The composed acceptance test itself lives under
+`crates/fabric-ndc-acceptance/tests/`:
+`published_state_reaches_a_real_connector.rs` publishes a fixture through the
+real `FilesystemRuntimePublication`, negotiates the real
+`fabric_connector_ndc::build_ndc_connector` against a running
+`ghcr.io/hasura/ndc-postgres:v3.1.0` process, and drives the real
+`fabric_tenant_runtime::build_runtime` and `fabric_data_api::build_data_api`
+over both, with two tenants sharing one physical table under discriminator
+isolation. `tests/the_stack_comes_up.rs` is the container harness's own
+proof, one layer below the composed test, that it comes up and answers.
+`docs/verification.md`'s "Connector acceptance (issue #62)" section is the
+fuller account of what each test proves.
 
 ## The rules behind it
 

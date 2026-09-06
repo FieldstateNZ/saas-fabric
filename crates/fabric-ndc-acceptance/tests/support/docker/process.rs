@@ -31,8 +31,8 @@ impl DockerError {
     /// Builds a [`DockerError`] directly from its two parts, for a caller
     /// that already has a command description and a failure detail in hand
     /// -- a raw [`std::io::Error`] from [`std::process::Command`], or a
-    /// required-mode digest refusal with no `docker` process behind it at
-    /// all (`containers::resolve_runnable_reference`).
+    /// required-mode digest refusal after a failed pull
+    /// (`image_reference::resolve_runnable_reference`).
     pub(super) fn from_parts(command: String, detail: String) -> Self {
         Self { command, detail }
     }
@@ -79,16 +79,6 @@ pub fn ensure_success(description: &str, output: &Output) -> Result<(), DockerEr
             String::from_utf8_lossy(&output.stderr).trim()
         ),
     })
-}
-
-/// Non-empty, trimmed lines of `output`'s stdout.
-pub(super) fn lines(output: &Output) -> Vec<String> {
-    String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .map(str::to_owned)
-        .collect()
 }
 
 /// `docker <args...>`, as a string, for error messages.

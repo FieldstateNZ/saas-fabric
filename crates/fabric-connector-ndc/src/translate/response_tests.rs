@@ -130,9 +130,12 @@ fn a_bare_object_result_is_treated_as_one_written_row() {
 
 /// F1: both observed responses to a `fields`-carrying insert — the one asking
 /// `affected_rows` and `returning` together, and the one asking `affected_rows`
-/// alone — read the same count and only the first carries a returned row. Real
-/// captures, not constructed JSON: `docs/decisions/0004-*.md`'s addendum and
+/// alone — read the same count and only the first carries a returned row.
+/// `docs/decisions/0004-*.md`'s addendum and
 /// `tests/fixtures/ndc-postgres-v3.1.0/README.md` record how each was taken.
+/// This one, `mutation-insert-ok.json`, is a real capture -- `tee`d straight
+/// from `curl`, spacing and all; the next test's fixture is not (see its own
+/// doc comment).
 #[test]
 fn the_observed_insert_response_with_returning_reads_the_row_back() {
     let response = mutation_response(&fixture("mutation-insert-ok.json"));
@@ -147,6 +150,14 @@ fn the_observed_insert_response_with_returning_reads_the_row_back() {
     );
 }
 
+/// Unlike the previous test's fixture, `mutation-insert-affected-only.json`
+/// is a **reconstruction**, not a saved capture: the probe that produced it
+/// was quoted in the planning document rather than `tee`d to a file at the
+/// time (`tests/fixtures/ndc-postgres-v3.1.0/README.md`'s "Two captures
+/// reconstructed from the plan's record" section). It is transcribed exactly
+/// as the plan quoted it, immediately after observing the real run, but it
+/// did not come from a saved byte-for-byte capture the way the test above's
+/// fixture did.
 #[test]
 fn the_observed_insert_response_with_affected_rows_alone_reads_the_count_and_no_rows() {
     let response = mutation_response(&fixture("mutation-insert-affected-only.json"));
@@ -159,7 +170,10 @@ fn the_observed_insert_response_with_affected_rows_alone_reads_the_count_and_no_
 
 /// The delete scoped to the other tenant: `affected_rows: 0`, because the
 /// `pre_check` predicate matched nothing — the isolation guarantee holding on
-/// the write path, not a parsing detail.
+/// the write path, not a parsing detail. Like
+/// `mutation-insert-affected-only.json` above, `mutation-delete-other-tenant.json`
+/// is a reconstruction from the plan's quoted record, not a saved capture --
+/// see that test's doc comment and the fixture README.
 #[test]
 fn the_observed_delete_scoped_to_another_tenant_reads_zero_affected() {
     let response = mutation_response(&fixture("mutation-delete-other-tenant.json"));

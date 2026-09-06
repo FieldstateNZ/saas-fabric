@@ -205,6 +205,13 @@ mod tests {
         // captured error body -- `details` is a **string**, not `null`.
         // `NdcErrorResponse` places no type constraint on `details`, so both
         // must parse; this pins that the string case actually does.
+        //
+        // `error-parse-422.json` itself is a reconstruction, not a saved
+        // capture: the probe was quoted in the planning document rather than
+        // `tee`d to a file at the time (`tests/fixtures/ndc-postgres-v3.1.0/README.md`'s
+        // "Two captures reconstructed from the plan's record" section).
+        // Transcribed exactly as the plan quoted it, not read back from a
+        // byte-for-byte capture.
         let body = fixture("error-parse-422.json");
         let parsed: NdcErrorResponse = serde_json::from_str(&body).unwrap();
         assert!(matches!(parsed.details, Value::String(_)), "{:?}", parsed.details);

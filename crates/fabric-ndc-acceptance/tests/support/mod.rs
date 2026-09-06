@@ -17,13 +17,7 @@
 //! Every test in this crate's `tests/` calls [`gate::docker_available_or_skip`]
 //! first and returns immediately if it answers `false`.
 
-#![allow(
-    dead_code,
-    unused_imports,
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::panic
-)]
+#![allow(dead_code, clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 pub mod compose;
 pub mod connector;

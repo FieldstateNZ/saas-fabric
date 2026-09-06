@@ -11,7 +11,10 @@ use crate::support::postgres;
 /// Which of the two checked-in connector configurations to mount.
 ///
 /// See `tests/fixtures/ndc-postgres-v3.1.0/README.md` for how both were
-/// generated and why neither is hand-written.
+/// generated: the static one is CLI output verbatim; the named one starts
+/// from that same CLI output with its `dynamicSettings` block added by
+/// hand, because that block is deployment topology the CLI has no way to
+/// introspect.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConnectorMode {
     /// `connectionSettings.connectionUri` only -- declares no request-level

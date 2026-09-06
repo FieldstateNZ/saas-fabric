@@ -1,0 +1,1 @@
+{"operations":[{"type":"procedure","name":"insert_articles","arguments":{"objects":[{"id":"10","tenant_key":"tenant-acme-482","title":"Second","body":null}]},"fields":{"type":"object","fields":{"affected_rows":{"type":"column","column":"affected_rows"}}}}],"collection_relationships":{}}

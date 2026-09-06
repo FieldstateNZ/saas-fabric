@@ -17,16 +17,18 @@
 /// platform-specific manifest digest
 /// (`sha256:d1420789377464908e17c23568a5a0664b61d95afea75d6c5623c7e2cbbe4d8e`
 /// for this machine's architecture) rather than the index digest below.
-/// `docker::containers::run` falls back to the bare tag when the
-/// digest-qualified reference is not present locally, which is what lets
-/// this constant stay the *correct* pin -- the one a networked machine, or
-/// CI, actually resolves to -- without breaking a sandboxed developer
-/// machine that already has the tag loaded under a different digest. That
-/// fallback is itself disabled under `gate::REQUIRE_ENV=1` (see that
-/// constant's doc comment): running this crate's tests in required mode on
-/// *this* machine, with only the bare tag loaded, fails fast naming the
-/// missing digest rather than quietly substituting it -- which is the
-/// required mode doing exactly what it is for, not a defect in the harness.
+/// `docker::run` (via `docker::image_reference::resolve_runnable_reference`)
+/// tries a real `docker pull` of this exact reference first, and falls back
+/// to the bare tag only once that pull has failed, which is what lets this
+/// constant stay the *correct* pin -- the one a networked machine, or CI,
+/// actually resolves to -- without breaking a sandboxed developer machine
+/// that already has the tag loaded under a different digest and cannot pull
+/// to fix that. That fallback is itself disabled under `gate::REQUIRE_ENV=1`
+/// (see that constant's doc comment): running this crate's tests in required
+/// mode on *this* machine, with only the bare tag loaded and no pull
+/// possible, fails fast naming the missing digest and the pull's own error
+/// rather than quietly substituting the tag -- which is the required mode
+/// doing exactly what it is for, not a defect in the harness.
 ///
 /// Bump by pulling normally and re-reading:
 /// `docker image inspect --format '{{index .RepoDigests 0}}' ghcr.io/hasura/ndc-postgres:v3.1.0`.

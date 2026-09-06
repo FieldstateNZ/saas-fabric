@@ -4,9 +4,16 @@ Two connector configurations, both generated once by the real
 `/bin/ndc-postgres-cli update` shipped inside
 `ghcr.io/hasura/ndc-postgres:v3.1.0` (see
 `crates/fabric-ndc-acceptance/tests/support/images.rs` for the pinned
-digest) — never hand-written. Hand-writing either would reintroduce exactly
-the documentation-derived guessing issue #62 exists to end (see
-`m2-ndc/plan.md` §1.1, assumption A12).
+digest). `configuration-static.json` is that CLI output verbatim, never
+hand-written. `configuration-named.json` starts from the same CLI output,
+with its `dynamicSettings` block added by hand afterwards — see
+"Regenerating" below for exactly what was added and why: the CLI introspects
+a database schema, not an operator's named-connection topology, so that one
+block genuinely cannot come from introspection. Hand-writing anything the
+CLI *can* introspect would reintroduce exactly the documentation-derived
+guessing issue #62 exists to end (see `m2-ndc/plan.md` §1.1, assumption
+A12); the `dynamicSettings` block is the one documented exception, not a
+precedent for more.
 
 Both were introspected against one running `postgres:16-alpine` holding
 exactly the table `crates/fabric-ndc-acceptance/tests/support/postgres.rs`

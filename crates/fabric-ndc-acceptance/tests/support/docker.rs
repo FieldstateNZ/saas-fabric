@@ -14,15 +14,19 @@
 //! This module was a single 422-line file. `docs/architecture/file-size-policy.md`'s
 //! CI check does not itself reach `tests/`, but reviewers hold test support
 //! to the same "one concept per file" convention it enforces for production
-//! code, and 422 lines mixing four distinct concerns is well past what a
+//! code, and 422 lines mixing several distinct concerns is well past what a
 //! reviewer should have to hold in mind as "the docker module". It is split
-//! along those four concerns:
+//! along those concerns:
 //!
 //! - [`process`] -- driving the `docker` binary as a plain process: spawn
 //!   it, read its exit status, turn failure into [`DockerError`]. Knows
 //!   nothing about containers or networks.
 //! - [`containers`] -- container lifecycle: start, inspect, exec into, stop,
 //!   remove. Builds on `process`.
+//! - [`image_reference`] -- what string a container start should actually
+//!   pass to `docker run` for a digest-pinned image: presence checks,
+//!   pulling, and the required-mode-versus-fallback policy. Builds on
+//!   `process`; `containers::run` is its only caller.
 //! - [`networks`] -- network lifecycle: create, remove, list by prefix.
 //!   Builds on `process`, independently of `containers`.
 //! - [`polling`] -- polling to a deadline. Knows about none of the above;
@@ -36,14 +40,24 @@
 //! `stack.rs` call through.
 
 mod containers;
+mod image_reference;
 mod networks;
 mod polling;
 mod process;
 
 pub use containers::{
-    container_names_with_prefix, exec, exec_with_stdin, image_present, logs, port, rm, rm_by_name, run, stop,
-    Container, RunSpec,
+    container_summaries_with_prefix, exec, exec_with_stdin, logs, port, rm, rm_by_name, run, stop, Container,
+    RunSpec,
 };
-pub use networks::{network_create, network_names_with_prefix, network_rm};
+pub use networks::{network_create, network_rm, network_summaries_with_prefix};
 pub use polling::poll_until;
-pub use process::{ensure_success, version, DockerError};
+pub use process::{ensure_success, version};
+
+// `image_reference::image_present` and `process::DockerError` are not
+// re-exported here: nothing outside their own modules names either one by
+// path today (every caller either constructs a `RunSpec` and lets `run`
+// resolve the image, or inspects a `Result`'s `Err` through `.unwrap_or_else`
+// without naming its type). Re-exporting an item nothing uses is exactly the
+// unused import this facade should not be carrying -- see
+// `tests/support/mod.rs`'s removed blanket `unused_imports` allow. Add
+// either back here the day a caller actually needs to name it.

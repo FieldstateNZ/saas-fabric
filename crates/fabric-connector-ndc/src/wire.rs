@@ -90,6 +90,7 @@
 mod capabilities;
 mod expression;
 mod mutation;
+mod mutation_fields;
 mod ndc_type;
 mod procedure;
 mod query;
@@ -100,8 +101,9 @@ mod schema;
 pub(crate) use capabilities::NdcCapabilitiesResponse;
 pub(crate) use expression::{NdcComparisonTarget, NdcComparisonValue, NdcExpression, NdcUnaryOperator};
 pub(crate) use mutation::{
-    NdcMutationFields, NdcMutationOperation, NdcMutationRequest, NdcMutationResponse, NdcOperationResult,
+    NdcMutationOperation, NdcMutationRequest, NdcMutationResponse, NdcOperationResult,
 };
+pub(crate) use mutation_fields::NdcMutationFields;
 pub(crate) use ndc_type::NdcType;
 pub(crate) use procedure::NdcProcedureInfo;
 pub(crate) use query::{

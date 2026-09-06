@@ -113,6 +113,25 @@ NDC_NAMES_THE_HOST_MAY_USE = frozenset(
     }
 )
 
+# The test-only crate that composes the real fabric-runtime-publication
+# publisher, the real fabric-tenant-runtime runtime, the real fabric-data-api
+# Data API and the real fabric-connector-ndc adapter against a running
+# connector. It is a narrow, named exception to NDC containment, not a
+# relaxation of it: this crate has no production code (see its src/lib.rs),
+# and it is the only crate a test needing both the NDC crate and the
+# publisher can live in at all. ADR 0018's publisher fence
+# (check_runtime_plane_cannot_reach_the_publisher, below) forbids the
+# acceptance test living in any RUNTIME_PLANE crate -- fabric-connector-ndc
+# and fabric-data-api among them -- because reaching the publisher from
+# there would give the runtime plane a path to its own writer. NDC
+# containment, in this same function, forbids it living in
+# fabric-runtime-publication's own crate, because that crate would then
+# declare a dependency on fabric-connector-ndc, which only the NDC crate and
+# the host may do. Naming the exception here, rather than admitting it
+# silently by loosening either loop, is what dependency-policy.md section 6
+# asks of every exception: visible in a diff and in `git blame`.
+NDC_ACCEPTANCE_CRATE = "fabric-ndc-acceptance"
+
 # Crates that model a domain. None of them may know what HTTP is.
 #
 # In the runtime plane the reason is that the Data API's shape must be
@@ -326,7 +345,16 @@ def check_ndc_containment(graph: Graph) -> list[Failure]:
     pattern = re.compile(r"\bNdc[A-Z]\w*|\bndc_models\b|\bNDC_VERSION\w*")
 
     for crate in graph.crates:
-        if crate == NDC_CRATE:
+        # fabric-ndc-acceptance is a test-only crate with no production code
+        # (see NDC_ACCEPTANCE_CRATE above and its src/lib.rs). Its whole
+        # purpose is a `tests/` file that drives the real NDC adapter against
+        # a running connector, which means naming the adapter's wire types.
+        # ADR 0018's publisher fence forbids that test living in any
+        # RUNTIME_PLANE crate, and this same function's dependency-edge loop
+        # below forbids it living in fabric-runtime-publication's crate --
+        # this is the named, visible exception dependency-policy.md section 6
+        # asks for, not a loosening of the scan for anyone else.
+        if crate in (NDC_CRATE, NDC_ACCEPTANCE_CRATE):
             continue
 
         for path in source_files(crate):
@@ -350,7 +378,13 @@ def check_ndc_containment(graph: Graph) -> list[Failure]:
 
     # The dependency edge itself, not just the vocabulary.
     for crate in graph.crates:
-        if crate in (NDC_CRATE, HOST):
+        # Same exception as the loop above, for the same reason: this
+        # test-only crate (no production code) is the only place a test
+        # needing both fabric-connector-ndc and fabric-runtime-publication
+        # can live without tripping either ADR 0018's publisher fence or
+        # this check. Named here, not folded into a wider allowance, per
+        # dependency-policy.md section 6.
+        if crate in (NDC_CRATE, HOST, NDC_ACCEPTANCE_CRATE):
             continue
         if NDC_CRATE in graph.direct_dependencies(crate):
             failures.append(
@@ -499,6 +533,18 @@ def check_dependency_direction(graph: Graph) -> list[Failure]:
         # the real edges, not a pre-authorisation for edges nobody needs yet.
         "fabric-runtime-publication": {
             "fabric-core",
+            "fabric-tenant-runtime",
+            "fabric-data-api",
+            "fabric-identity",
+            "fabric-connector",
+        },
+        # Also in neither plane, and test-only: no non-dev dependencies at
+        # all, so every edge below is a dev edge. See NDC_ACCEPTANCE_CRATE
+        # above for why this crate exists rather than the test living beside
+        # either fabric-connector-ndc or fabric-runtime-publication.
+        "fabric-ndc-acceptance": {
+            "fabric-runtime-publication",
+            "fabric-connector-ndc",
             "fabric-tenant-runtime",
             "fabric-data-api",
             "fabric-identity",

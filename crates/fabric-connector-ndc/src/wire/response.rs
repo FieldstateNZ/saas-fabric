@@ -46,8 +46,16 @@ pub(crate) struct NdcRowSet {
 
     /// The rows.
     ///
-    /// `None` is meaningful and distinct from `Some(vec![])`: it means the
-    /// query requested no fields, not that no rows matched.
+    /// `None` is meaningful and distinct from `Some(vec![])`: an absent `rows`
+    /// member would mean the query requested no fields, not that no rows
+    /// matched. That case is still handled -- another connector may take
+    /// this route -- but it is not what `ndc-postgres` v3.1.0 actually does.
+    /// Observed against a real instance (`crates/fabric-connector-ndc/tests/fixtures/ndc-postgres-v3.1.0/query-fields-absent.json`):
+    /// a fieldless query returns `[{"rows":[{}]}]`, one empty object per
+    /// matching row, present and non-null. `rows.as_deref().unwrap_or_default()`
+    /// in `translate::response::to_query_outcome` already handles both shapes
+    /// correctly; only this comment's claim about which one the field exists
+    /// for was wrong.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) rows: Option<Vec<BTreeMap<String, Value>>>,
 
@@ -80,6 +88,16 @@ pub(crate) struct NdcErrorResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Reads a real `ndc-postgres` v3.1.0 document, checked in under
+    /// `tests/fixtures/` -- see the README there for how it was captured.
+    fn fixture(name: &str) -> String {
+        let path = format!(
+            "{}/tests/fixtures/ndc-postgres-v3.1.0/{name}",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        std::fs::read_to_string(path).unwrap()
+    }
 
     #[test]
     fn deserialises_a_row_set() {
@@ -135,5 +153,26 @@ mod tests {
         let error: NdcErrorResponse = serde_json::from_str(r#"{"message":"boom","details":null}"#).unwrap();
 
         assert_eq!(error.details, Value::Null);
+    }
+
+    #[test]
+    fn a_query_response_is_one_row_set_and_a_fieldless_query_is_one_empty_object_per_row() {
+        // F4: `ndc-postgres` v3.1.0 does not report a fieldless query with an
+        // absent `rows` member. It reports `[{"rows":[{}]}]` -- present,
+        // non-null, one empty object for the one matching row. The `Option`
+        // stays right for a connector that does take the other route; this
+        // pins what the one real connector actually does.
+        let fieldless: NdcQueryResponse = serde_json::from_str(&fixture("query-fields-absent.json")).unwrap();
+        let row_set = fieldless.sole().unwrap();
+
+        assert_eq!(row_set.rows.as_ref().unwrap(), &[BTreeMap::new()]);
+
+        // Both tenant-scoped reads are real captures too, and each is the
+        // one row set with the one row a keyed, tenant-scoped read promises.
+        let acme: NdcQueryResponse = serde_json::from_str(&fixture("query-isolated-acme.json")).unwrap();
+        let globex: NdcQueryResponse = serde_json::from_str(&fixture("query-isolated-globex.json")).unwrap();
+
+        assert_eq!(acme.sole().unwrap().rows.as_ref().unwrap().len(), 1);
+        assert_eq!(globex.sole().unwrap().rows.as_ref().unwrap().len(), 1);
     }
 }

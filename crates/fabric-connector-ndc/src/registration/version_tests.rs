@@ -125,3 +125,21 @@ fn a_version_with_no_patch_component_does_not_pass_silently() {
     // a patch-level floor there is nothing to compare it against.
     assert!(check_version("postgres", "0.2").is_err());
 }
+
+// -- Against the real connector's own capabilities document -----------------
+
+#[test]
+fn the_real_connector_reports_the_version_floor_and_it_matches() {
+    // `ghcr.io/hasura/ndc-postgres:v3.1.0`'s `GET /capabilities` reports
+    // exactly `0.2.4` -- the floor this client requires, not merely a
+    // version above it. See `tests/fixtures/ndc-postgres-v3.1.0/README.md`.
+    let path = format!(
+        "{}/tests/fixtures/ndc-postgres-v3.1.0/capabilities.json",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let capabilities = std::fs::read_to_string(path).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&capabilities).unwrap();
+    let reported = parsed["version"].as_str().unwrap();
+
+    assert_eq!(check_version("postgres", reported), Ok(VersionOutcome::Matched));
+}

@@ -167,14 +167,25 @@ connection_name_argument = "connection_name"
 procedure = "insert_customers"
 payload_argument = "objects"
 
-[connectors.procedures.customers.update]
-procedure = "update_customers"
-payload_argument = "update_columns"
-# Mandatory for update and delete. Without somewhere to put the predicate, the
-# tenant scoping would be dropped and the write would reach every tenant's rows.
-# Startup validation rejects a mapping that omits it.
-filter_argument = "filter"
-
-[connectors.procedures.customers.delete]
-procedure = "delete_customers"
-filter_argument = "filter"
+# Update and delete are not mapped here -- and, to match, examples/catalog.json
+# lists only read/list/create for "customers", never update or delete: an
+# operation the catalogue allowed but no procedure mapping could serve would
+# be a promise this configuration cannot keep. A real ndc-postgres generates
+# these two keyed by primary key -- update_customers_by_id(key_id, ...,
+# pre_check, post_check), delete_customers_by_id(key_id, ..., pre_check) --
+# and ProcedureBinding below has nowhere to put a required key argument, so
+# neither can be expressed honestly yet. See ADR 0004's addendum (issue #62)
+# for the gap and the issue that supersedes it. The blocks are shown
+# commented out, named the way the real connector actually would (never
+# guessed at), rather than omitted silently: a real connector calls the
+# predicate argument pre_check (delete, update) or post_check (insert's own
+# permission predicate), never filter_argument's previous "filter".
+#
+# [connectors.procedures.customers.update]
+# procedure = "update_customers_by_id"
+# payload_argument = "update_columns"
+# filter_argument = "pre_check"
+#
+# [connectors.procedures.customers.delete]
+# procedure = "delete_customers_by_id"
+# filter_argument = "pre_check"

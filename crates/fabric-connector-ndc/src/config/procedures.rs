@@ -94,6 +94,14 @@ pub struct ProcedureBinding {
     /// added by
     /// [`MutationSpec::for_target`](fabric_connector::MutationSpec::for_target)
     /// would be silently dropped, and the write would reach every tenant's rows.
+    ///
+    /// Nothing in the specification fixes this name; a real `ndc-postgres`
+    /// calls it `pre_check` on the delete and update procedures it generates,
+    /// and `post_check` on the insert procedure's own permission predicate
+    /// (observed against `ndc-postgres` v3.1.0, issue #62) — never `filter`,
+    /// which the shipped example wrongly used until that observation. Set this
+    /// to whatever name the target connector's own `/schema` declares; startup
+    /// checks the name and its kind against that schema either way.
     #[serde(default)]
     pub filter_argument: Option<String>,
 }

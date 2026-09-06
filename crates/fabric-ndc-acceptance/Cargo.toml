@@ -1,0 +1,35 @@
+[package]
+name = "fabric-ndc-acceptance"
+description = "Test-only crate: the composed NDC connector acceptance test, in neither plane. No production code."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+# No [dependencies]. This crate ships no production code -- see src/lib.rs --
+# so it has nothing to depend on outside of tests.
+
+[dev-dependencies]
+fabric-connector.workspace = true
+fabric-connector-ndc.workspace = true
+fabric-data-api.workspace = true
+fabric-identity.workspace = true
+fabric-runtime-publication.workspace = true
+fabric-tenant-runtime.workspace = true
+
+# Decodes the payload segment of a token `fabric_identity::encode_unsigned_token`
+# builds -- already pinned in the workspace root and already in Cargo.lock
+# (fabric-identity uses it for the same encoding internally). Needed because
+# this crate has no `fabric-core` dependency of its own to supply the `Clock`
+# `fabric_identity::TrustedIngressReader::new` requires; see
+# `tests/support/unsigned_reader.rs` for the reader this decodes into.
+base64.workspace = true
+axum.workspace = true
+http.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tower = { workspace = true, features = ["util"] }
+
+[lints]
+workspace = true

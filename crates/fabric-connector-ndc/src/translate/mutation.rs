@@ -8,7 +8,7 @@ use serde_json::Value;
 use crate::config::ProcedureBinding;
 use crate::schema_index::ArgumentKind;
 use crate::translate::procedure_arguments as arguments;
-use crate::wire::{NdcMutationOperation, NdcMutationRequest};
+use crate::wire::{NdcMutationFields, NdcMutationOperation, NdcMutationRequest};
 use crate::{NdcConnectorConfig, SchemaIndex};
 
 /// Builds the `POST /mutation` body for a targeted mutation.
@@ -70,7 +70,13 @@ pub(crate) fn to_mutation_request(
         operations: vec![NdcMutationOperation::Procedure {
             name: binding.procedure.clone(),
             arguments: procedure_arguments,
-            fields: None,
+            // Every procedure request must select something back — a real
+            // `ndc-postgres` refuses one that omits `fields` outright (see
+            // `NdcMutationOperation::Procedure`'s rustdoc). `MutationSpec` has
+            // no way for a caller to ask for the written rows, so this is
+            // always the minimal accepted selection rather than a choice made
+            // per call — see `NdcMutationFields::affected_rows_only`.
+            fields: Some(NdcMutationFields::affected_rows_only()),
         }],
         collection_relationships: BTreeMap::new(),
         request_arguments,

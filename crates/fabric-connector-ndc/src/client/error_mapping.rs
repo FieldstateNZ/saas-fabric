@@ -94,11 +94,22 @@ pub(super) fn malformed(connector: &ConnectorId, detail: String) -> ConnectorErr
 #[cfg(test)]
 mod tests {
     use fabric_connector::OperationEffect;
+    use serde_json::Value;
 
     use super::*;
 
     fn connector() -> ConnectorId {
         ConnectorId::try_new("postgres").unwrap()
+    }
+
+    /// Reads a real `ndc-postgres` v3.1.0 document, checked in under
+    /// `tests/fixtures/` -- see the README there for how it was captured.
+    fn fixture(name: &str) -> String {
+        let path = format!(
+            "{}/tests/fixtures/ndc-postgres-v3.1.0/{name}",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        std::fs::read_to_string(path).unwrap()
     }
 
     #[test]
@@ -185,5 +196,67 @@ mod tests {
         let error = rejected(&connector(), reqwest::StatusCode::BAD_REQUEST, b"{}");
 
         assert!(error.is_internal());
+    }
+
+    #[test]
+    fn a_parse_error_is_422_with_a_string_details_and_maps_to_rejected() {
+        // R2 and A9: a body that is not an NDC request at all (posted
+        // straight to `/query`) comes back `422`, and -- unlike every other
+        // captured error body -- `details` is a **string**, not `null`.
+        // `NdcErrorResponse` places no type constraint on `details`, so both
+        // must parse; this pins that the string case actually does.
+        //
+        // `error-parse-422.json` itself is a reconstruction, not a saved
+        // capture: the probe was quoted in the planning document rather than
+        // `tee`d to a file at the time (`tests/fixtures/ndc-postgres-v3.1.0/README.md`'s
+        // "Two captures reconstructed from the plan's record" section).
+        // Transcribed exactly as the plan quoted it, not read back from a
+        // byte-for-byte capture.
+        let body = fixture("error-parse-422.json");
+        let parsed: NdcErrorResponse = serde_json::from_str(&body).unwrap();
+        assert!(matches!(parsed.details, Value::String(_)), "{:?}", parsed.details);
+
+        let ConnectorError::Rejected { message, .. } = rejected(
+            &connector(),
+            reqwest::StatusCode::UNPROCESSABLE_ENTITY,
+            body.as_bytes(),
+        ) else {
+            panic!("expected a rejection");
+        };
+        assert_eq!(message, "Parse error");
+    }
+
+    #[test]
+    fn an_unknown_operator_is_400_with_null_details() {
+        // A9's other half: an operator the connector never declared is `400`
+        // with `details: null`, the shape every other captured error body
+        // shares except the malformed-body case above.
+        let body = fixture("error-unknown-operator.json");
+        let parsed: NdcErrorResponse = serde_json::from_str(&body).unwrap();
+        assert_eq!(parsed.details, Value::Null);
+
+        let ConnectorError::Rejected { message, .. } =
+            rejected(&connector(), reqwest::StatusCode::BAD_REQUEST, body.as_bytes())
+        else {
+            panic!("expected a rejection");
+        };
+        assert!(message.contains("equals"), "{message}");
+    }
+
+    #[test]
+    fn a_mutation_without_a_field_selection_is_refused_by_the_real_connector() {
+        // F1's symptom, pinned against the real body: every write this
+        // adapter can currently send omits `fields`, and the real connector
+        // refuses it outright. The fix (selecting `affected_rows`/`returning`)
+        // is slice 5's; this only records that the refusal is real and that
+        // it maps to `Rejected`, not to something a caller might retry.
+        let body = fixture("mutation-insert-no-fields-400.json");
+
+        let ConnectorError::Rejected { message, .. } =
+            rejected(&connector(), reqwest::StatusCode::BAD_REQUEST, body.as_bytes())
+        else {
+            panic!("expected a rejection");
+        };
+        assert!(message.contains("affected_rows"), "{message}");
     }
 }

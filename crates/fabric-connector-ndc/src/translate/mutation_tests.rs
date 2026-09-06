@@ -292,6 +292,116 @@ fn a_filter_argument_naming_a_non_predicate_argument_is_refused() {
     ));
 }
 
+/// A schema mirroring the real `ndc-postgres` `articles` procedures observed
+/// for issue #62 — see
+/// `tests/fixtures/ndc-postgres-v3.1.0/schema-static.json`. Separate from
+/// [`index`] (the pre-existing `customers` fixture used above), because the
+/// two tests below exist specifically to pin this adapter's request against
+/// the real connector's own naming, not against this file's synthetic one.
+fn articles_index() -> SchemaIndex {
+    let schema: NdcSchemaResponse = serde_json::from_str(
+        r#"{
+            "procedures": [
+                {"name": "insert_articles", "arguments": {
+                    "objects": {"type": {"type": "array", "element_type": {"type": "named", "name": "articles"}}}
+                }}
+            ]
+        }"#,
+    )
+    .unwrap();
+
+    SchemaIndex::build(&schema)
+}
+
+/// Reads a real `ndc-postgres` v3.1.0 request, checked in under
+/// `tests/fixtures/` -- see the README there for how it was captured.
+fn fixture(name: &str) -> serde_json::Value {
+    let path = format!(
+        "{}/tests/fixtures/ndc-postgres-v3.1.0/{name}",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+}
+
+/// F1, pinned against the real connector's own accepted request rather than a
+/// guess: `tests/fixtures/ndc-postgres-v3.1.0/request-insert-affected-only.json`,
+/// extracted from the second `curl` in the plan's `probe6.sh`, the request
+/// that produced `mutation-insert-affected-only.json`. This is also the
+/// shape every insert now takes, `returning` or not — see
+/// `NdcMutationFields::affected_rows_only`'s rustdoc for why `MutationSpec`
+/// leaves this adapter no way to ask for the other observed shape instead.
+#[test]
+fn an_insert_request_matches_the_real_connectors_accepted_shape() {
+    let config = config_with(CollectionProcedures {
+        insert: Some(ProcedureBinding {
+            procedure: "insert_articles".to_owned(),
+            payload_argument: Some("objects".to_owned()),
+            filter_argument: None,
+        }),
+        ..CollectionProcedures::default()
+    });
+
+    let row = Row::new()
+        .with(FieldName::try_new("id").unwrap(), Value::String("10".to_owned()))
+        .with(
+            FieldName::try_new("tenant_key").unwrap(),
+            Value::String("tenant-acme-482".to_owned()),
+        )
+        .with(
+            FieldName::try_new("title").unwrap(),
+            Value::String("Second".to_owned()),
+        )
+        .with(FieldName::try_new("body").unwrap(), Value::Null);
+
+    let spec = MutationSpec::Insert {
+        collection: collection(),
+        rows: vec![row],
+    };
+
+    let request = to_mutation_request(&spec, None, &config, &articles_index()).unwrap();
+    let json = serde_json::to_value(&request).unwrap();
+
+    assert_eq!(json, fixture("request-insert-affected-only.json"));
+}
+
+/// The bug this pins: `fields` used to be unconditionally `None`
+/// (`src/translate/mutation.rs`, before this commit), and a real connector
+/// refuses every procedure request that omits it — see
+/// `wire::mutation::NdcMutationOperation::Procedure`'s rustdoc. No
+/// `MutationSpec` variant this translator handles may reach the connector
+/// with no selection.
+#[test]
+fn every_mutation_variant_selects_fields_rather_than_asking_for_nothing() {
+    let insert_config = config_with(CollectionProcedures {
+        insert: Some(insert_binding()),
+        ..CollectionProcedures::default()
+    });
+    let insert_spec = MutationSpec::Insert {
+        collection: collection(),
+        rows: vec![Row::new()],
+    };
+    let insert_request = to_mutation_request(&insert_spec, None, &insert_config, &index()).unwrap();
+    let NdcMutationOperation::Procedure { fields, .. } = insert_request.operations.first().unwrap();
+    assert!(fields.is_some(), "insert must select fields");
+
+    let update_request =
+        to_mutation_request(&update_spec(), None, &update_config(update_binding()), &index()).unwrap();
+    let NdcMutationOperation::Procedure { fields, .. } = update_request.operations.first().unwrap();
+    assert!(fields.is_some(), "update must select fields");
+
+    let delete_config = config_with(CollectionProcedures {
+        delete: Some(delete_binding()),
+        ..CollectionProcedures::default()
+    });
+    let delete_spec = MutationSpec::Delete {
+        collection: collection(),
+        filter: Some(tenant_predicate()),
+    };
+    let delete_request = to_mutation_request(&delete_spec, None, &delete_config, &index()).unwrap();
+    let NdcMutationOperation::Procedure { fields, .. } = delete_request.operations.first().unwrap();
+    assert!(fields.is_some(), "delete must select fields");
+}
+
 #[test]
 fn a_mapping_naming_a_procedure_the_connector_lacks_is_refused() {
     let config = config_with(CollectionProcedures {

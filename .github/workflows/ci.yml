@@ -97,7 +97,71 @@ jobs:
       - run: rustup toolchain install
       - run: rustup show active-toolchain
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test --workspace
+      # fabric-ndc-acceptance is excluded so one job owns the claim "the
+      # connector acceptance suite passed" -- the connector-acceptance job
+      # below, which runs it with FABRIC_REQUIRE_CONNECTOR_ACCEPTANCE=1 so it
+      # can never go green without a real connector actually answering.
+      # Without the exclusion this job would also run those tests, but with
+      # the requirement unset -- silently skipped on a runner with no Docker
+      # daemon reachable the way this job expects, and silently run for real
+      # on one that does, either way without the honesty the dedicated job
+      # enforces.
+      - run: cargo test --workspace --exclude fabric-ndc-acceptance
+
+  connector-acceptance:
+    name: cargo test -p fabric-ndc-acceptance (real ndc-postgres)
+    runs-on: ubuntu-latest
+    # The suite brings up postgres, a connector, and (for one test) an nginx
+    # impostor, each gated by its own poll-to-deadline -- comfortably inside
+    # a few minutes when everything answers normally. A cap here means a
+    # daemon or network problem that would otherwise hang shows up as a
+    # timeout with this job's name attached, not as "CI is stuck" with no
+    # indication which job.
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      # See "The toolchain" above: installs exactly what rust-toolchain.toml
+      # pins, then records which version ran.
+      - run: rustup toolchain install
+      - run: rustup show active-toolchain
+      - uses: Swatinem/rust-cache@v2
+      # GitHub-hosted `ubuntu-latest` ships Docker preinstalled and can pull
+      # normally, so this needs no `services:` block -- the suite drives
+      # `docker` itself (crates/fabric-ndc-acceptance/tests/support/docker/),
+      # which is also what lets it start a second connector configuration and
+      # the nginx impostor alongside the first.
+      #
+      # Pulled explicitly, here, rather than left to the test run's own
+      # pull-on-first-use: a pull that happens inside the test binary
+      # competes with that test's own timeout, and a slow registry would be
+      # indistinguishable in the log from the connector itself being slow to
+      # answer. Pulling the three pinned references as their own step puts
+      # the pull time, and any pull failure, in a log section that says what
+      # it is. `tests/support/docker/image_reference.rs` still pulls again
+      # if a reference is somehow still absent when a test runs (it is not,
+      # after this step succeeds), so this step is an optimisation and a
+      # clearer log, not a change to what the suite itself guarantees.
+      - name: Pull the pinned connector-acceptance images
+        # The repository@digest form, with no tag -- the exact reduction
+        # `tests/support/docker/image_reference.rs::repository_digest_form`
+        # produces for every pinned reference before inspecting, pulling, or
+        # returning it, and the exact string its own test
+        # `ci_pre_pulls_exactly_the_pinned_images` asserts this step's
+        # `docker pull` lines against, verbatim. The tag half was never
+        # load-bearing to `docker pull` -- Docker resolves a
+        # `name:tag@digest` reference by its digest alone -- so pulling the
+        # reduced form here is what lets that test hold this step to the
+        # pins byte-for-byte.
+        run: |
+          docker pull ghcr.io/hasura/ndc-postgres@sha256:f91910ef5107aa80d31d82639e149b7f41f4a5bb3af9a369397d7d5965d79a57
+          docker pull postgres@sha256:e013e867e712fec275706a6c51c966f0bb0c93cfa8f51000f85a15f9865a28cb
+          docker pull nginx@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10
+      # Required mode turns "no Docker" and "the pinned image isn't the one
+      # that ran" from a silent skip into a failure naming what was missing
+      # (tests/support/gate.rs, tests/support/docker/image_reference.rs).
+      - run: cargo test -p fabric-ndc-acceptance
+        env:
+          FABRIC_REQUIRE_CONNECTOR_ACCEPTANCE: "1"
 
   deny:
     name: cargo deny check

@@ -4,6 +4,8 @@ use std::collections::BTreeMap;
 
 use serde_json::Value;
 
+use super::mutation_fields::NdcMutationFields;
+
 /// The body of `POST /mutation`.
 ///
 /// # Mutations are procedure calls
@@ -49,9 +51,18 @@ pub(crate) enum NdcMutationOperation {
         name: String,
         /// Named arguments.
         arguments: BTreeMap<String, Value>,
-        /// Fields to return, or `None` for everything.
+        /// What to read back from the result.
+        ///
+        /// **Not optional in practice**: a real `ndc-postgres` refuses a
+        /// procedure request that omits this, with a 400 naming
+        /// `affected_rows` and `returning` as the only two accepted
+        /// selections
+        /// (`tests/fixtures/ndc-postgres-v3.1.0/mutation-insert-no-fields-400.json`).
+        /// The `Option` stays because the wire format allows omitting it;
+        /// this crate always sends `Some(_)` — see
+        /// [`NdcMutationFields::affected_rows_only`].
         #[serde(skip_serializing_if = "Option::is_none")]
-        fields: Option<Value>,
+        fields: Option<NdcMutationFields>,
     },
 }
 

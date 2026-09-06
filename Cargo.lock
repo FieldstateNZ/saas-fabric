@@ -459,6 +459,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "fabric-ndc-acceptance"
+version = "0.3.0"
+dependencies = [
+ "axum",
+ "base64",
+ "fabric-connector",
+ "fabric-connector-ndc",
+ "fabric-data-api",
+ "fabric-identity",
+ "fabric-runtime-publication",
+ "fabric-tenant-runtime",
+ "http",
+ "serde_json",
+ "tokio",
+ "tower",
+]
+
+[[package]]
 name = "fabric-openbao"
 version = "0.3.0"
 dependencies = [

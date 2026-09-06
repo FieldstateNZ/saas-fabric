@@ -66,7 +66,27 @@ fn the_example_catalogue_parses() {
         .resolve(&LogicalResourceName::try_new("customers").unwrap())
         .unwrap();
     assert_eq!(customers.data_source.as_str(), "primary");
-    assert!(customers.allows(OperationKind::Delete));
+    assert!(customers.allows(OperationKind::Create));
+}
+
+/// The example connector has no `update` or `delete` mapping for
+/// `customers` (they are shown commented out in `examples/config.toml`,
+/// named the way a real `ndc-postgres` actually generates them) -- see F3 in
+/// `docs/verification.md`'s "Connector acceptance (issue #62)" section and
+/// `crates/fabric-ndc-acceptance/docs/CONTEXT.md`: neutral update/delete
+/// cannot yet be expressed against that connector's keyed procedures at all.
+/// The catalogue matches deliberately: granting an operation the connector
+/// cannot serve would be a promise this example cannot keep, not a
+/// conservative default.
+#[test]
+fn the_example_catalogue_does_not_promise_writes_the_connector_cannot_serve() {
+    let catalog = catalog();
+
+    let customers = catalog
+        .resolve(&LogicalResourceName::try_new("customers").unwrap())
+        .unwrap();
+    assert!(!customers.allows(OperationKind::Update));
+    assert!(!customers.allows(OperationKind::Delete));
 }
 
 #[test]

@@ -159,3 +159,61 @@ refuses to report success when the number disagrees with what it sent.
 A real `ndc-postgres` is available in CI. At that point the checklist becomes an
 integration test, this gap closes, and this ADR should be superseded rather than
 quietly left to rot.
+
+## Addendum — 2026-09-06 (issue #62 slice 1)
+
+The first of the three checklist items above is now done, against a real
+`ghcr.io/hasura/ndc-postgres:v3.1.0`. This is an addendum, not a rewrite: the
+decision above still stands, and the other two checklist items are still
+open.
+
+**The payload argument's value shape is closed.** A real `insert_articles`
+call, executed against the connector and its own database, confirms `objects`
+takes an array of row objects keyed by column name —
+`array<insert_articles_object>`, exactly as the connector's own `/schema`
+declares the type, with no wrapping or renaming this crate would have had to
+guess at. See
+`crates/fabric-connector-ndc/tests/fixtures/ndc-postgres-v3.1.0/mutation-insert-ok.json`
+and its README. Line 119 above ("that remains documentation-derived") no
+longer holds for this connector; it is observed.
+
+**What the same observation run found, and does not close:**
+
+- **`fields` must select `affected_rows` or `returning`.** Every write this
+  crate currently sends omits `fields` (`src/wire/mutation.rs`,
+  `src/translate/mutation.rs`), and the real connector refuses that outright:
+  `400 — "Procedure requests must ask for 'affected_rows' or use the
+  'returning' clause."` This is F1 in the issue #62 plan. The fixture and a
+  unit test pinning the refusal ship in slice 1; the fix to the wire and
+  translation code is slice 5's, not this addendum's.
+- **Update and delete are keyed by primary key, not by a predicate alone.**
+  The real `update_articles_by_id_and_tenant_key` and
+  `delete_articles_by_id_and_tenant_key` procedures take **required**
+  `key_id` and `key_tenant_key` arguments alongside `pre_check`/`post_check`.
+  `CollectionProcedures` has nowhere to put a required key argument, so a
+  neutral `MutationSpec::Delete { filter }` cannot be expressed against this
+  connector's generated procedures as they stand. This is F3 in the issue #62
+  plan, and it is **not** fixed here: per the lead decision on that issue,
+  it is being tracked as its own issue — "neutral update/delete cannot be
+  expressed against `ndc-postgres` v3.1.0's keyed procedures" — which will
+  supersede this ADR rather than quietly amend it further, consistent with
+  "Revisit when" above.
+
+## Addendum — 2026-09-06 (issue #62 slice 5)
+
+**F1 is corrected in this commit.** Every procedure request this crate builds
+now carries a `fields` selection — always `affected_rows`
+(`NdcMutationFields::affected_rows_only`,
+`crates/fabric-connector-ndc/src/wire/mutation.rs`), because `MutationSpec`
+has no way for a caller to ask for the written rows back, so there is nothing
+to decide from that would justify asking for `returning` as well. The
+`returning` shape is still modelled — the wire type can represent it, and a
+unit test pins it against the accepted capture — but nothing builds one yet.
+`translate::response::to_mutation_outcome` now reads `affected_rows` off the
+observed shape as the primary case, ahead of the pre-existing heuristics for
+shapes no real connector has been seen to send. Both fixes are pinned against
+the real accepted request and response bodies captured in slice 1, not
+against a construction of what the wire "should" look like.
+
+F3 remains open, exactly as stated above: a separate issue, not this one,
+and it still supersedes this ADR rather than amending it further.

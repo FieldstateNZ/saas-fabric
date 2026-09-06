@@ -90,7 +90,9 @@ describe('the application clients list', () => {
     // because `text-transform` only changes what is painted, never the DOM
     // text node -- so a `getByText('claimedHttps')` assertion alone would
     // pass even if the capitalising class were still applied. Asserting the
-    // class is what actually pins the fix.
+    // class names the mechanism this fix relies on; jsdom never loads CSS,
+    // so no test here can confirm the stylesheet still overrides
+    // `text-transform` -- only that the markup still asks it to.
     render(
       <ApplicationClients
         apiVersion={V2_API_VERSION}

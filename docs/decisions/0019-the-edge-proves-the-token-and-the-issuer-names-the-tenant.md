@@ -99,14 +99,14 @@ desired-state model cannot express that:
 
 - every declared application client is reconciled as public —
   `declaration()` hard-codes `public_client: true`
-  (`crates/fabric-keycloak/src/provider/mutate.rs:118-131`, the value at
-  `:123`) — and **no field enforces PKCE at all**. The body Fabric writes
-  carries `clientId`, `enabled`, `protocol`, `publicClient`,
+  (`crates/fabric-keycloak/src/provider/mutate.rs:118-131`, at `bc1f58c`; the
+  value at `:123`) — and **no field enforces PKCE at all**. The body Fabric
+  writes carries `clientId`, `enabled`, `protocol`, `publicClient`,
   `standardFlowEnabled` and `redirectUris`, and nothing else
-  (`crates/fabric-keycloak/src/wire/oidc_client.rs:34-63`). A public client
-  with no PKCE requirement is a client whose authorization code is redeemable
-  by anyone who intercepts it, which is the entire reason RFC 8252 §8.1
-  requires PKCE for native applications;
+  (`crates/fabric-keycloak/src/wire/oidc_client.rs:34-63`, same commit). A
+  public client with no PKCE requirement is a client whose authorization code
+  is redeemable by anyone who intercepts it, which is the entire reason RFC
+  8252 §8.1 requires PKCE for native applications;
 - a redirect URI is a flat, validated string
   (`crates/fabric-client-model/src/identity/redirect_uri.rs`, at `bc1f58c`)
   that permits `https://` anywhere and `http://` on loopback or under
@@ -124,9 +124,9 @@ desired-state model cannot express that:
 
 `observe::clients` builds the observed URI set with
 `.filter_map(|uri| RedirectUri::try_new(uri).ok())`
-(`crates/fabric-keycloak/src/provider/observe.rs:75-79`). Any URI the model
-cannot parse is silently dropped. `diff::matches` then compares the surviving
-set against the declared set
+(`crates/fabric-keycloak/src/provider/observe.rs:75-79`, at `bc1f58c`). Any
+URI the model cannot parse is silently dropped. `diff::matches` then compares
+the surviving set against the declared set
 (`crates/fabric-reconciliation/src/plan/diff.rs:76-80`), so an operator who adds
 `http://evil.example.com/steal` to a realm by hand adds a URI the model refuses,
 which is dropped on read, which leaves the sets equal, which reports
@@ -822,8 +822,8 @@ stored document is read, on the existing three-point schedule
    fact from the other side: any-port is the **portless** spelling, and a
    written port is compared exactly.
 6. A `redirect` with an empty `uris` list — refused, as an empty `redirectUris`
-   is today (`crates/fabric-client-model/src/identity/validation.rs:78-90`): a
-   client with no callback can never sign anyone in.
+   was (`crates/fabric-client-model/src/identity/validation.rs:78-90`, at
+   `bc1f58c`): a client with no callback can never sign anyone in.
 7. `strategy: customScheme` — refused with a message naming
    **`Lane E phase 2`** and a representable alternative.
 8. A scheme or host the model cannot classify at all — `javascript:`, `data:`,
@@ -980,12 +980,13 @@ reads the whole `examples/clients` directory):
 ### 6. Drift, and what observation reports
 
 **An observed redirect URI the model cannot parse is drift, not silence.**
-`observe::clients` today drops it
-(`crates/fabric-keycloak/src/provider/observe.rs:75-79`), which makes the most
-dangerous kind of out-of-band edit the one kind reconciliation cannot see.
-Observation therefore reports, beside the parsed set, **the count of observed
-URIs the model could not parse**, and `matches` is false whenever that count is
-non-zero (`crates/fabric-reconciliation/src/plan/diff.rs:76-80` gains the term).
+`observe::clients` dropped it
+(`crates/fabric-keycloak/src/provider/observe.rs:75-79`, at `bc1f58c`), which
+made the most dangerous kind of out-of-band edit the one kind reconciliation
+could not see. Observation therefore reports, beside the parsed set, **the
+count of observed URIs the model could not parse**, and `matches` is false
+whenever that count is non-zero
+(`crates/fabric-reconciliation/src/plan/diff.rs:76-80` gains the term).
 The resulting `UpdateOidcClient` rewrites the declared set, which removes the
 unmodellable entry.
 
@@ -1002,7 +1003,8 @@ role side — and the difference is exactly the one that file already records. A
 declared role "always parses — it came from a document this platform validated.
 So a name that fails to parse is by definition one SaaS Fabric did not declare,
 and one it will therefore never look for. Dropping it changes no decision the
-reconciler makes" (`crates/fabric-keycloak/src/provider/observe.rs:89-95`). An
+reconciler makes" (`crates/fabric-keycloak/src/provider/observe.rs:89-95`, at
+`bc1f58c`). An
 unmodellable *redirect URI* is precisely a decision the reconciler must make,
 so the same reasoning gives the opposite answer.
 
@@ -1016,13 +1018,14 @@ mapper was removed by hand stops matching and is rewritten. Without this the
 mapper would be written once and could silently disappear, taking the edge's
 `aud` check down with it — the write/read asymmetry that hides forever.
 
-**What Keycloak actually does here is verified, not asserted.** Today
-`ClientRepresentation` reads four fields and neither `attributes` nor
-`protocolMappers` is among them
-(`crates/fabric-keycloak/src/wire/oidc_client.rs:5-26`), so nothing in this
-repository has ever observed either. The socket-level fake will return whatever
-the test hands it, which means a fake alone can prove the adapter parses a
-response and can prove nothing about whether Keycloak sends one. Three questions
+**What Keycloak actually does here is verified, not asserted.** At `bc1f58c`,
+`ClientRepresentation` read four fields and neither `attributes` nor
+`protocolMappers` was among them
+(`crates/fabric-keycloak/src/wire/oidc_client.rs:5-26`, same commit), so
+nothing in this repository had ever observed either. The socket-level fake
+will return whatever the test hands it, which means a fake alone can prove
+the adapter parses a response and can prove nothing about whether Keycloak
+sends one. Three questions
 are therefore settled against a **real Keycloak** in the adapter slice, and
 recorded in [`docs/verification.md`](../verification.md) beside the 2026-08-28
 findings:
@@ -1037,17 +1040,18 @@ findings:
 If (1) or (2) contradicts this section, this section is amended in that slice
 with the evidence. The pattern is the one that section of `verification.md`
 exists for: "Two things only the real instance could have told us"
-(`docs/verification.md:509-524`).
+(`docs/verification.md:519-534`).
 
-**`/clients` is read with a bounded page, exactly as roles are.**
-`paths::clients` today has no bound
+**`/clients` is read with a bounded page, exactly as roles are.** At
+`bc1f58c`, `paths::clients` had no bound
 (`crates/fabric-keycloak/src/admin/paths.rs:61-64`) while `paths::roles_page`
-does (`:53-59`), and `observe::roles` refuses a response that reaches the cap
+did (`:53-59`), and `observe::roles` refused a response that reached the cap
 rather than reconciling against a truncated list
-(`crates/fabric-keycloak/src/provider/observe.rs:12-18`, `:46-50`). Clients get
-the same treatment and the same refusal. Quietly working from a partial client
-list would leave a realm permanently reporting changes it had already made,
-and — now that an unparseable URI is drift — could also hide the client carrying
+(`crates/fabric-keycloak/src/provider/observe.rs:12-18`, `:46-50`, same
+commit). Clients get the same treatment and the same refusal. Quietly working
+from a partial client list would leave a realm permanently reporting changes
+it had already made, and — now that an unparseable URI is drift — could also
+hide the client carrying
 one.
 
 ### 7. The identity-source rule, rewritten
@@ -1275,5 +1279,5 @@ this repository. The row-by-row evidence expected for each is in
 | G13 | **`503` shape.** A `Retry-After`, and a body that does not describe the credential. Never collapsed into `401` | a legitimate caller must not be told their token is bad |
 | G14 | **The M2 acceptance run.** Two real Keycloak realm users complete authorization-code with S256 PKCE against a deployed runtime behind this edge | recorded, both users, plus the two Keycloak PKCE refusals observed |
 | G15 | **An intercepted code cannot be redeemed without the verifier.** The property PKCE exists for, demonstrated rather than assumed | a mismatched `code_verifier` at the token endpoint |
-| G16 | **Keycloak's real behaviour, recorded.** Any-port loopback; whether `GET /clients` returns `protocolMappers` and `attributes`; whether `PUT /clients/{id}` updates mappers or the sub-resource is required. Each amends §3 or §6 with evidence if it contradicts them | `docs/verification.md`, beside the 2026-08-28 findings (`docs/verification.md:487-524`) |
+| G16 | **Keycloak's real behaviour, recorded.** Any-port loopback; whether `GET /clients` returns `protocolMappers` and `attributes`; whether `PUT /clients/{id}` updates mappers or the sub-resource is required. Each amends §3 or §6 with evidence if it contradicts them | `docs/verification.md`, beside the 2026-08-28 findings (`docs/verification.md:497-534`) |
 | G17 | **The version caveat, closed.** §3's any-port rule and §6's mapper behaviour were observed on Keycloak **26.0.8**, the image `scripts/e2e-services.sh` uses. LucentRoot runs **26.7.2**. The platform lane re-runs the same probe there and records the result beside the 26.0.8 findings | `docs/verification.md`. A difference amends §3 or §6 with the evidence, the way 26.0.8's observation amended the `Development` row |

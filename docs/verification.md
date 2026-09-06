@@ -33,15 +33,15 @@ is at the end, under "The control plane, end to end".
 | --- | --- | --- |
 | Formatting | `cargo fmt --all --check` | clean |
 | Lints | `cargo clippy --workspace --all-targets -- -D warnings` | 0 findings |
-| Tests | `cargo test --workspace --exclude fabric-ndc-acceptance` | 1767 passing, 0 failing, 1 ignored |
+| Tests | `cargo test --workspace --exclude fabric-ndc-acceptance` | TESTCOUNT passing, 0 failing, 1 ignored |
 | Docs | `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps` | 0 warnings |
 | Dependencies | `cargo deny check` | advisories, bans, licences, sources — all ok |
 | File sizes | `python3 scripts/check_file_sizes.py` | 0 over the 150-line limit (2 exempted, both explained) |
 | Architecture | `python3 scripts/check_architecture.py` | 11 invariants hold across 22 crates |
 | Console lint | `npm run lint` | 0 findings |
 | Console types | `npm run typecheck` | 0 errors |
-| Console tests | `npm test` | 81 passing, 0 failing |
-| Console build | `npm run build` | 228 kB, 70 kB gzipped |
+| Console tests | `npm test` | 91 passing, 0 failing |
+| Console build | `npm run build` | 229 kB, 70 kB gzipped |
 | Connector acceptance | `cargo test -p fabric-ndc-acceptance` | 44 passing, 0 failing across two integration binaries — **default mode**, Docker up (server `29.1.3`); of the 14 container-backed tests, 13 reached a real connector and postgres and 1 reached the nginx impostor (see below for the breakdown) |
 | Connector acceptance, required mode | `FABRIC_REQUIRE_CONNECTOR_ACCEPTANCE=1 cargo test -p fabric-ndc-acceptance` | 44 passing, 0 failing across two integration binaries — **required mode**, observed on the first green `connector-acceptance` CI run for PR #66 (workflow run 34014619529): the job pre-pulled all three pins by digest (`Status: Downloaded newer image for ghcr.io/hasura/ndc-postgres@sha256:f91910ef…`, `postgres@sha256:e013e867…`, `nginx@sha256:65645c7b…`), then `published_state_reaches_a_real_connector` reported 26 passed in 12.32 s and `the_stack_comes_up` 18 passed in 3.48 s. Not reproducible on the implementation machine — see below |
 
@@ -172,17 +172,27 @@ the 120 s pull deadline this machine pays once per binary and CI never does.
 
 Nothing is ignored.
 
-The numbers in this table are from a run in the M1 worktree at `9e7c83b`
-("Fail closed when a held manifest outlives its payload"), the commit that
-adds `fabric-runtime-publication` and the two architecture invariants it
-brings (see "Runtime publication (M1)" below) — newer than the
+Most of the numbers in this table are from a run in the M1 worktree at
+`9e7c83b` ("Fail closed when a held manifest outlives its payload"), the
+commit that adds `fabric-runtime-publication` and the two architecture
+invariants it brings (see "Runtime publication (M1)" below) — newer than the
 `claude/split-issuer-from-endpoints` run the rest of this document otherwise
-describes. That is also why every count grew: 11 invariants across 21 crates,
-not 8 across 14; 1745 Rust tests, not 1256; 81 console tests, not 35. None of
-the growth outside `fabric-runtime-publication` is this slice's work — it is
-the accumulated increments between the two runs — and none of it is
-re-narrated here; only the table above and the new section below reflect the
-later commit.
+describes. That is also why most counts grew: 11 invariants across 21 crates,
+not 8 across 14. None of that growth outside `fabric-runtime-publication` is
+this slice's work — it is the accumulated increments between the two runs —
+and none of it is re-narrated here; only the table above and the new section
+below reflect the later commit.
+
+The **Tests**, **Console tests** and **Console build** rows are newer still —
+counted on `deb5e59` ("Harden the composed native-client test, and drain its
+background sweep"), the commit issue #61's identity-edge lane shipped on, in
+the `claude/m2-edge-trust-s4` worktree: `cargo test --workspace --exclude
+fabric-ndc-acceptance` (1921 passing, 0 failing, 1 ignored — the exclusion is
+a no-op today, since `fabric-ndc-acceptance` is not a member of this
+workspace), then `(cd apps/control-plane-ui && npm test -- --run && npm run
+build)` (91 passing, 0 failing; 229.27 kB / 70.24 kB gzipped). This
+documentation pass changes no code, so the numbers still hold on the commit
+it ships on.
 
 The Architecture and Tests rows have moved once more since, for issue #62:
 this slice adds `fabric-ndc-acceptance`, a 22nd crate
@@ -538,25 +548,25 @@ change.
 
 ## File sizes
 
-811 Rust source files under `crates/*/src`, of which 151 are the control
-plane's; `scripts/check_file_sizes.py` measures 705 of them, the rest being
+815 Rust source files under `crates/*/src`, of which 151 are the control
+plane's; `scripts/check_file_sizes.py` measures 709 of them, the rest being
 `*_tests.rs` siblings and per-crate integration tests it excludes by rule. The
 policy (`docs/architecture/file-size-policy.md`) treats 150 production lines as
 a hard limit and 120 as advisory; test lines never count, whether they live in
 a sibling `*_tests.rs` or in a trailing `#[cfg(test)]` module.
 
-Counted by running the script on the commit that this paragraph ships in — the
-one that refused the reserved and `.localhost` names, made the sanitiser say
-when it had filtered, and re-pointed ADR 0019's citations at the code as it now
-stands, on `claude/m2-edge-trust`. Re-run it rather than trusting the numbers:
-they are a snapshot, and the point of recording them is that the next snapshot
-can be compared.
+Counted by running the script on `deb5e59` ("Harden the composed native-client
+test, and drain its background sweep"), the commit this doc pass's own code
+round shipped on, on `claude/m2-edge-trust-s4`. This documentation-only commit
+changes no `.rs` file, so the numbers below still hold on the doc-pass commit
+itself. Re-run it rather than trusting the numbers: they are a snapshot, and
+the point of recording them is that the next snapshot can be compared.
 
 - **Over 150 lines: none unexplained.** Two files hold an exemption, each with
   its reason recorded beside it in the script:
   `fabric-control-plane/src/errors.rs` (175) and `fabric-fga-auth/src/cache.rs`
   (155).
-- **Over 120 lines: 105 files**, of which 103 are inside the hard limit. The
+- **Over 120 lines: 110 files**, of which 108 are inside the hard limit. The
   largest unexempted are two at exactly 150 —
   `fabric-connector/src/errors/connector_error.rs` and
   `fabric-platform-management/src/desired_state/port.rs`. Every file in the
@@ -583,7 +593,7 @@ kept the rule about a whole *name* and gave `registered_domain/label.rs` the
 rule about one *label*; `fabric-identity/src/logging.rs` kept the domain's
 refusals and gave `logging/startup.rs` the one event there that is not one.
 
-**103 files sit in the 121–150 band**, and the reason is the one it has always
+**108 files sit in the 121–150 band**, and the reason is the one it has always
 been: rustdoc. Every file in the band is a type or a function set whose prose
 outweighs its code — `redirect_uri.rs` is 138 lines for a newtype over a
 `String`, and most of that is the argument for why a wildcard in the host is
@@ -829,7 +839,7 @@ nothing in this workspace could have proven: what an any-port loopback
 redirect actually matches, whether `GET /clients` returns `attributes` and
 `protocolMappers` without a per-client read, and whether a `PUT` replaces a
 client's mapper set or requires the `/protocol-mappers/models` sub-resource.
-Slice 4 (the Keycloak adapter change) settled all three, plus two bonus
+Slice 4 (the Keycloak adapter change) settled all three, plus four bonus
 questions, against a real **Keycloak 26.0.8** — `quay.io/keycloak/keycloak:26.0`,
 the image `scripts/e2e-services.sh` uses — running as `start-dev` with realm
 `probe`. The socket-level fake in `tests/keycloak_adapter.rs` can confirm any
@@ -844,6 +854,7 @@ answer to these and prove none of them; only the real instance can.
 | 5 | Pagination (bonus) | `GET /clients?first=0&max=2` returned 2 of 13 seeded clients. `admin::paths::clients_page(realm, max)`, mirroring `roles_page`, is valid; `observe::clients` refuses a response that reaches the page cap exactly as `observe::roles` already does. |
 | 6 | PKCE enforcement (bonus) | With `pkce.code.challenge.method=S256` set: an authorization request with no `code_challenge` is refused with `error=invalid_request&error_description=Missing parameter: code_challenge_method`; `code_challenge_method=plain` is refused with `Invalid parameter: code challenge method is not matching the configured one`; `S256` reaches the login page. All three are enforced at the authorization endpoint, before any user interaction. |
 | 7 | Omitted-field update semantics (bonus) | A client created with no `frontchannelLogout` key holds it `false`. A `PUT` of the same minimal body (still no `frontchannelLogout` key) flips it to `true` on the *first* write; a second, identical `PUT` leaves it `true` — byte-stable from there. So "an omitted field is left alone" is Keycloak's usual behaviour, not a guarantee for every field: some fields are filled with Keycloak's own default the first time a client is written through, rather than left at their create-time value. Nothing this crate models reads `frontchannelLogout`, so the flip changes no decision here — recorded because `wire.rs`'s "deliberately partial" claim needed the caveat. |
+| 8 | Second mapper survives observation, not a `PUT` (bonus) | A protocol mapper added directly through the Admin API — alongside the client's declared `oidc-audience-mapper`, the way an operator working around the platform would — is returned by `GET /clients` next to it: both appear in the list, confirming `other_protocol_mappers` (A13b) counts something Keycloak actually reports, not something the fake merely echoes back. A subsequent `PUT` carrying only `declaration()`'s own shape — the one audience mapper — removes it, per finding 3's replace-the-set semantics: nothing added outside Fabric survives the next sweep. |
 
 **This crate's own wire body, round-tripped.** Beyond the shell-script probe
 above, the exact JSON `declaration()` produces for a `claimedHttps` client was
@@ -888,12 +899,18 @@ deliberate: this adapter reads only what it wrote. The test client was deleted
 after the check; the probe fixture was otherwise left as found.
 
 **Mutations run against this slice's own tests**, per `docs/delivery.md`'s
-rule ("mutate the thing, watch the test fail, then keep the test"):
+rule ("mutate the thing, watch the test fail, then keep the test"). D13 is
+proved at **two** layers — the adapter's read and the diff's comparison —
+because an unmodellable redirect URI has to survive both to go unnoticed:
+dropped instead of counted on read, or counted but never compared on diff.
+Each mutation below turns off one of the two, independently, and each is
+caught:
 
 | Row | Mutation | Test that went red | Restored |
 |---|---|---|---|
 | C4 | Deleted the `pkce.code.challenge.method` insertion from `provider/declaration.rs`'s `declaration()` | `a_declared_client_is_written_with_the_s256_challenge_method` (`tests/keycloak_adapter_identity.rs`) | Yes, confirmed identical to the pre-mutation file by diff |
-| D13 | Restored the old `.filter_map(\|uri\| RedirectUri::try_new(uri).ok())` silent drop in `provider/observe/clients.rs`, in place of `partition_uris` | `an_unmodellable_redirect_uri_is_counted_rather_than_dropped` (`tests/keycloak_adapter_identity.rs`) | Yes, confirmed identical to the pre-mutation file by diff |
+| D13, adapter | Restored the old `.filter_map(\|uri\| RedirectUri::try_new(uri).ok())` silent drop in `provider/observe/clients.rs`, in place of `partition_uris` | `an_unmodellable_redirect_uri_is_counted_rather_than_dropped` (`tests/keycloak_adapter_identity.rs`) | Yes, confirmed identical to the pre-mutation file by diff |
+| D13, diff | Deleted the `existing.unmodellable_redirect_uris == 0` conjunct from `plan::diff::matches` (`crates/fabric-reconciliation/src/plan/diff.rs`) | `a_redirect_uri_this_model_cannot_parse_is_drift` (`crates/fabric-reconciliation/src/plan/diff_tests.rs`) — reported `plan.actions() == []` where `[UpdateOidcClient(web_client())]` was expected, because every other term still matched | Yes, confirmed identical to the pre-mutation file by diff |
 
 **The version caveat.** §3's any-port rule and §6's mapper-replace behaviour
 were observed here on Keycloak **26.0.8**. LucentRoot runs **26.7.2** (see
@@ -903,24 +920,30 @@ re-runs this same probe there and records the result beside these findings
 long before 26, so the caveat is honesty about what was actually run, not
 doubt about the answer.
 
-**Slice 5 (`fabric-reconciliation`'s diff), the same rule one layer up.** The
-row above mutated the *adapter's* silent drop. `plan::diff::matches` has its
-own term for the same fact and needs its own proof it is load-bearing:
+**The terms `matches` gained, across both slice 5 commits (`1e6fb24`, and the
+review follow-up `d1a395b`) plus one more in the final code round
+(`1d2fc2c`).** `matches` held two terms — `public` and `redirect_uris ==
+declared_uris` — since `4d508e7`, the commit that founded this crate. Slice 5
+added six, and the final round added a ninth:
 
-| Row | Mutation | Test that went red | Restored |
-|---|---|---|---|
-| D13 (diff) | Deleted the `existing.unmodellable_redirect_uris == 0` conjunct from `plan::diff::matches` (`crates/fabric-reconciliation/src/plan/diff.rs`) | `a_redirect_uri_this_model_cannot_parse_is_drift` (`crates/fabric-reconciliation/src/plan/diff_tests.rs`) — reported `plan.actions() == []` where `[UpdateOidcClient(web_client())]` was expected, because every other term still matched | Yes, confirmed identical to the pre-mutation file by diff |
+| Term | Added in | Proof |
+|---|---|---|
+| `unmodellable_redirect_uris == 0` | `1e6fb24` | **Mutation-proved** — the D13, diff row above |
+| `challenge_method == Some(declared.pkce)` | `1e6fb24` | Single-field drift test — `a_client_without_a_recognised_challenge_method_is_corrected`, plus `a_v1_client_is_still_reconciled_with_the_s256_challenge_method` (E15) |
+| `audience_mapper.as_deref() == Some(configured_audience)` | `1e6fb24` | Single-field drift tests — `a_client_whose_audience_mapper_was_removed_is_corrected` and `a_client_whose_audience_mapper_names_another_audience_is_corrected` |
+| `enabled` | `d1a395b` | Single-field drift test — `a_client_disabled_by_hand_is_corrected` |
+| `standard_flow_enabled` | `d1a395b` | Single-field drift test — `a_client_whose_standard_flow_was_switched_off_is_corrected` |
+| `post_logout_redirect_uris_is_every_registered_uri` | `d1a395b` | Single-field drift test — `a_client_whose_post_logout_set_was_narrowed_is_corrected` |
+| `other_protocol_mappers == 0` | `1d2fc2c` | Single-field drift test — `a_client_carrying_a_mapper_nobody_declared_is_corrected` (A13b) |
 
-The terms `matches` gained in this slice — `challenge_method`,
-`audience_mapper`, and `unmodellable_redirect_uris == 0` (mutation-proved
-above) — are exercised by
-`a_client_without_a_recognised_challenge_method_is_corrected`,
-`a_v1_client_is_still_reconciled_with_the_s256_challenge_method`,
-`a_client_whose_audience_mapper_was_removed_is_corrected`, and
-`a_client_whose_audience_mapper_names_another_audience_is_corrected` (all in
-`plan/diff_tests.rs`), plus the existing
-`a_declared_client_switched_to_confidential_is_corrected` and the positive
-control `a_converged_client_is_left_alone`.
+(all tests in `crates/fabric-reconciliation/src/plan/diff_tests.rs`, plus the
+existing `a_declared_client_switched_to_confidential_is_corrected` and the
+positive control `a_converged_client_is_left_alone`). Only
+`unmodellable_redirect_uris == 0` has a mutation run against it, because it
+is the term this section's own probe work turned up as a real, previously
+silent gap (D13); the other six are proved by a drift test that flips one
+field and asserts the plan corrects it, which is the ordinary proof for a
+term nobody has reason to doubt is load-bearing.
 
 **Redirect-URI equality is not a term this slice added.** `existing.redirect_uris
 == declared_uris(&declared.redirect)` has compared the two sets for equality

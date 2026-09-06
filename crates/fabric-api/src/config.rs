@@ -12,6 +12,7 @@
 //! | `loading` | File and environment layering |
 //! | `load_failure` | Saying which of the two sources failed |
 //! | `validation` | Checks that span more than one domain |
+//! | `validation/issuers` | The one relationship neither identity nor token config can see |
 //!
 //! `loading` and `validation` are `impl AppConfig` blocks in their own modules
 //! rather than methods on the struct's file. Rust keeps a type with its impls,

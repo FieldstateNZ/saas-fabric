@@ -40,7 +40,11 @@ pub struct Application {
 /// the `background_tasks` submodule for why that is not left to the process
 /// exiting.
 pub async fn build(config: &AppConfig) -> Result<Application, String> {
-    // 1. Identity. First, because it decides what the process will believe.
+    // 1. Identity. First, because it decides what the process will believe —
+    //    including which issuer names which tenant. `build_identity` runs
+    //    `IdentityConfig::validate`, so a deployment that has not stated
+    //    `[identity].trusted_issuers` stops here rather than refusing every
+    //    request later (ADR 0019 §2).
     let identity = build_identity(
         config.identity.clone(),
         token_reader::build(&config.token, config.leeway)?,

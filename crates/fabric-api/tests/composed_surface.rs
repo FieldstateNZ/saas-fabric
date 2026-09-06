@@ -128,6 +128,48 @@ async fn status_of(path: &str) -> StatusCode {
 }
 
 #[test]
+fn the_example_configuration_builds_an_identity_resolver() {
+    // The gate for ADR 0019 §2's fail-closed change. `build_identity` runs
+    // `IdentityConfig::validate`, which refuses an empty `trusted_issuers` —
+    // and `example_configuration.rs` cannot catch that, because
+    // `AppConfig::validate` never reaches it. So this file is where the
+    // shipped example proves it still starts.
+    let config = config();
+
+    assert!(
+        !config.identity.trusted_issuers.is_empty(),
+        "the shipped example must carry the issuer registry a deployment needs"
+    );
+    assert!(build_identity(
+        config.identity,
+        Arc::new(TrustedIngressReader::new(SystemClock::shared()))
+    )
+    .is_ok());
+}
+
+#[test]
+fn every_example_tenant_has_an_issuer_that_names_it() {
+    // The two shipped files are one fact written twice. A tenant with no
+    // registration cannot authenticate at all, and a registration for a tenant
+    // that does not exist is a binding to nothing.
+    let config = config();
+    let registered: Vec<&str> = config
+        .identity
+        .trusted_issuers
+        .iter()
+        .map(|registration| registration.tenant().as_str())
+        .collect();
+
+    for binding in tenants() {
+        assert!(
+            registered.contains(&binding.tenant.as_str()),
+            "no issuer is registered for the example tenant {}",
+            binding.tenant
+        );
+    }
+}
+
+#[test]
 fn the_data_api_prefix_carries_the_version_in_front() {
     // If this ever becomes `/data/v1`, the host is nesting a prefix in front
     // of a router that already has one.

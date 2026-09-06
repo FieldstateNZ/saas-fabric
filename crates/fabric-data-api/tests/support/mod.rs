@@ -31,8 +31,8 @@ pub use counting_connector::CountingConnector;
 pub use delayed_connector::DelayedConnector;
 pub use fixtures::{
     acme_data_source, catalog, data_sources, discriminator_data_source, draining_data_source, field,
-    read_only_data_source, tenant, tenant_on_draining, tenant_on_replica, tenant_with_missing_data_source,
-    tenants,
+    issuer_for, issuer_naming, read_only_data_source, tenant, tenant_on_draining, tenant_on_replica,
+    tenant_with_missing_data_source, tenants, trusted_issuers,
 };
 pub use requests::{body_json, json_request, request};
 pub use scripted_connector::{wide_row, ScriptedConnector};
@@ -101,8 +101,14 @@ pub fn app_with_config(
     // docs for the cross-test race this closes.
     tracing_capture::install();
 
+    // The registry is required, so the resolver these suites drive is built
+    // the way a real deployment's is: an issuer per tenant, and the tenant
+    // taken from the registration rather than from the claim.
     let identity = build_identity(
-        IdentityConfig::default(),
+        IdentityConfig {
+            trusted_issuers: trusted_issuers(),
+            ..IdentityConfig::default()
+        },
         Arc::new(TrustedIngressReader::new(Arc::new(FixedClock))),
     )
     .unwrap();

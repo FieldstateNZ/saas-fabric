@@ -95,7 +95,12 @@ mod tests {
     }
 
     #[test]
-    fn accepts_a_token_with_no_expiry_claim() {
+    fn a_token_with_no_expiry_is_accepted_because_the_edge_required_one() {
+        // This pins the *absence* of a check, so nobody later reads it as an
+        // oversight and nobody assumes the runtime is a backstop. On the Data
+        // API path the edge is the only enforcement of `exp`'s presence
+        // (ADR 0019 §G6): a bearer token with no `exp` never expires, and if
+        // the gateway does not require the claim, nothing downstream will.
         assert!(ensure_not_expired(&claims("{}"), &FrozenClock(5_000), leeway(60)).is_ok());
     }
 

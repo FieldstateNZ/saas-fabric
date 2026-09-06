@@ -28,7 +28,10 @@ use examples_support::{data_sources, tenants};
 use fabric_api::health::{health_routes, HealthState};
 use fabric_connector::ConnectorRegistry;
 use fabric_core::SystemClock;
-use fabric_identity::{build_identity, encode_unsigned_token, IdentityConfig, TrustedIngressReader};
+use fabric_core::TenantId;
+use fabric_identity::{
+    build_identity, encode_unsigned_token, IdentityConfig, TrustedIngressReader, TrustedIssuer,
+};
 use fabric_tenant_runtime::{
     DataSource, DataSourceRegistry, RuntimeResolver, TenantRegistry, TenantRuntimeBinding,
 };
@@ -38,6 +41,9 @@ use tower::ServiceExt;
 
 /// The role the example configuration grants estate-wide authority to.
 const ADMINISTRATOR_ROLE: &str = "platform-admin";
+
+/// The issuer registered to `acme`, which the probe's tokens claim.
+const ACME_ISSUER: &str = "https://identity.test.invalid/realms/acme";
 
 /// Builds the probe router over registries primed with exactly these sets.
 ///
@@ -56,10 +62,16 @@ fn probe_router(
     assert!(data_source_registry.apply_all(data_sources).is_ok());
 
     let identity = build_identity(
-        IdentityConfig::default(),
+        IdentityConfig {
+            trusted_issuers: vec![TrustedIssuer::new(
+                ACME_ISSUER,
+                TenantId::try_new("acme").unwrap(),
+            )],
+            ..IdentityConfig::default()
+        },
         Arc::new(TrustedIngressReader::new(SystemClock::shared())),
     )
-    .expect("the default identity configuration must build");
+    .expect("the identity configuration must build");
 
     health_routes(HealthState {
         runtime: Arc::new(RuntimeResolver::new(tenant_registry, data_source_registry)),
@@ -78,6 +90,7 @@ fn one_healthy_connector() -> ConnectorRegistry {
 /// A token carrying the given roles, in the trusted-ingress posture.
 fn token_with_roles(roles: &[&str]) -> String {
     let claims = serde_json::json!({
+        "iss": ACME_ISSUER,
         "tenant_id": "acme",
         "sub": "operator@example.com",
         "roles": roles,

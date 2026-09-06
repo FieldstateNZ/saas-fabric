@@ -1,5 +1,7 @@
 //! Configuration for how the tenant identity context is derived.
 
+use crate::TrustedIssuer;
+
 /// How this deployment reads identity out of a bearer token.
 ///
 /// Claim names are configurable because §10 permits it, but the defaults match
@@ -47,6 +49,22 @@ pub struct IdentityConfig {
     /// behaviour: a caller sending `X-Tenant-Id: acme` and getting back
     /// `globex` data has been told nothing is wrong.
     pub reject_tenant_header: bool,
+
+    /// The issuers this deployment trusts, and the tenant each one names.
+    ///
+    /// **Required.** The default is empty and [`Self::validate`] refuses it, so
+    /// every deployment must state the binding before the process will start.
+    /// See [`TrustedIssuer`] for why the tenant comes from here rather than
+    /// from the token, and for the rules this list has to satisfy.
+    ///
+    /// This is one of *two* configurations of the same fact: the gateway in
+    /// front of this service carries the same issuer set as its JWT policy
+    /// (ADR 0019 §1). The two can only fail closed against each other, but
+    /// neither catches this list binding an issuer to the *wrong* tenant —
+    /// the gateway has no opinion about tenants and this registry is the
+    /// authority. Generate both from one tenant list; do not maintain them
+    /// twice.
+    pub trusted_issuers: Vec<TrustedIssuer>,
 }
 
 impl Default for IdentityConfig {
@@ -57,6 +75,9 @@ impl Default for IdentityConfig {
             roles_claim: "roles".to_owned(),
             scope_claim: "scope".to_owned(),
             reject_tenant_header: true,
+            // Empty, and `validate` refuses empty. A default that trusted
+            // something would be a default that decided a tenant boundary.
+            trusted_issuers: Vec::new(),
         }
     }
 }
@@ -72,6 +93,11 @@ impl IdentityConfig {
     /// Returns a message naming the offending field if a claim name is empty.
     /// An empty claim name would silently never match, which would make every
     /// request fail closed with no obvious cause.
+    ///
+    /// Also returns a message if the issuer registry is unusable — see
+    /// [`TrustedIssuer::validate_registry`], which is why a deployment that has
+    /// not stated its tenant binding refuses to start rather than refusing
+    /// every request.
     pub fn validate(&self) -> Result<(), String> {
         for (field, value) in [
             ("tenant_claim", &self.tenant_claim),
@@ -84,13 +110,29 @@ impl IdentityConfig {
             }
         }
 
-        Ok(())
+        TrustedIssuer::validate_registry(&self.trusted_issuers)
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use fabric_core::TenantId;
+
     use super::*;
+
+    /// A configuration that is valid apart from whatever a test breaks.
+    ///
+    /// The default registry is empty and refused, so every test about a claim
+    /// name has to start from a configuration that would otherwise start.
+    fn registered() -> IdentityConfig {
+        IdentityConfig {
+            trusted_issuers: vec![TrustedIssuer::new(
+                "https://id.example.com/realms/acme",
+                TenantId::try_new("acme").unwrap(),
+            )],
+            ..IdentityConfig::default()
+        }
+    }
 
     #[test]
     fn defaults_match_the_specification_canonical_claim() {
@@ -106,7 +148,7 @@ mod tests {
     fn an_empty_claim_name_is_rejected_at_startup() {
         let config = IdentityConfig {
             tenant_claim: "  ".to_owned(),
-            ..IdentityConfig::default()
+            ..registered()
         };
         assert!(config.validate().is_err());
     }
@@ -122,7 +164,7 @@ mod tests {
         // would return false, and the deployment would see blanket 403s.
         let config = IdentityConfig {
             scope_claim: String::new(),
-            ..IdentityConfig::default()
+            ..registered()
         };
         assert!(config.validate().is_err());
     }
@@ -143,6 +185,69 @@ mod tests {
         let config: IdentityConfig = serde_json::from_str(r#"{"scope_claim":"scp"}"#).unwrap();
 
         assert_eq!(config.scope_claim, "scp");
+        assert!(IdentityConfig {
+            scope_claim: config.scope_claim,
+            ..registered()
+        }
+        .validate()
+        .is_ok());
+    }
+
+    #[test]
+    fn a_runtime_with_no_trusted_issuers_refuses_to_start() {
+        // Reached from `build_identity`, which is step 1 of the application
+        // graph — so this is a process that does not start, never a request
+        // that fails. ADR 0019 §2.
+        let error = IdentityConfig::default().validate().unwrap_err();
+
+        assert!(error.contains("identity.trusted_issuers"));
+    }
+
+    #[test]
+    fn two_registrations_for_one_issuer_are_refused_at_startup() {
+        // Which one won would depend on ordering, and the two name different
+        // tenants — so the answer would be a coin toss about a tenant
+        // boundary.
+        let config = IdentityConfig {
+            trusted_issuers: vec![
+                TrustedIssuer::new(
+                    "https://id.example.com/realms/acme",
+                    TenantId::try_new("acme").unwrap(),
+                ),
+                TrustedIssuer::new(
+                    "https://id.example.com/realms/acme",
+                    TenantId::try_new("globex").unwrap(),
+                ),
+            ],
+            ..IdentityConfig::default()
+        };
+
+        assert!(config
+            .validate()
+            .unwrap_err()
+            .contains("https://id.example.com/realms/acme"));
+    }
+
+    #[test]
+    fn a_blank_issuer_is_refused_as_an_unrendered_template() {
+        // It matches nothing a provider emits — except a token that carries
+        // `"iss": ""`, which would then be handed this entry's tenant.
+        let config = IdentityConfig {
+            trusted_issuers: vec![TrustedIssuer::new("  ", TenantId::try_new("acme").unwrap())],
+            ..IdentityConfig::default()
+        };
+
+        assert!(config.validate().unwrap_err().contains("blank issuer"));
+    }
+
+    #[test]
+    fn a_registry_deserialises_from_the_configuration_file() {
+        let config: IdentityConfig = serde_json::from_str(
+            r#"{"trusted_issuers":[{"issuer":"https://id.example.com/realms/acme","tenant":"acme"}]}"#,
+        )
+        .unwrap();
+
         assert!(config.validate().is_ok());
+        assert_eq!(config.trusted_issuers.len(), 1);
     }
 }

@@ -1,5 +1,7 @@
 //! Checks that span more than one domain.
 
+mod issuers;
+
 use std::collections::BTreeSet;
 
 use crate::config::{administrator_role, AppConfig};
@@ -15,10 +17,16 @@ impl AppConfig {
     /// # Errors
     ///
     /// Returns a message describing the first problem found.
+    /// Note what is **not** here: the issuer registry's own rules — empty,
+    /// blank, duplicated — belong to `IdentityConfig::validate` and are reached
+    /// from `build_identity`, which runs after this. What is here is the one
+    /// thing neither crate can see for itself: that a defence-in-depth
+    /// deployment's two issuer lists agree.
     pub fn validate(&self) -> Result<(), String> {
         self.validate_connectors()?;
         self.validate_state_paths()?;
         administrator_role::validate(&self.permissions)?;
+        issuers::validate(&self.token, &self.identity)?;
         self.validate_timeouts()
     }
 

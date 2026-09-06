@@ -207,6 +207,21 @@ mod tests {
     }
 
     #[test]
+    fn the_canonical_posture_does_not_examine_the_signature_or_the_audience() {
+        // Accepted here, and refused at the edge — which is the division of
+        // labour ADR 0002 chose and ADR 0019 §1 writes down as a contract. The
+        // token names an audience belonging to somebody else and carries a
+        // signature nothing here could verify; this reader reads claims and
+        // checks the window, and that is the whole job.
+        //
+        // Note this is the *reader*. The resolver refuses an unregistered
+        // `iss`, so the pair of tests together says which layer does what.
+        let foreign = token(r#"{"tenant_id":"acme","aud":"somebody-else","iss":"https://not.ours"}"#);
+
+        assert!(reader_at(1_000).read(&foreign).is_ok());
+    }
+
+    #[test]
     fn rejects_a_malformed_token() {
         assert_eq!(
             reader_at(1_000).read("not-a-jwt").unwrap_err(),

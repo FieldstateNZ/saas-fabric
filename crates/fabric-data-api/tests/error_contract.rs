@@ -96,7 +96,10 @@ async fn an_oversized_inbound_request_id_is_replaced_rather_than_echoed_or_trimm
     // something that looks like the caller's id but no longer matches it.
     let (app, _) = app();
 
-    let serde_json::Value::Object(claims) = json!({"tenant_id": "acme"}) else {
+    // Built by hand rather than through `request`, so the registered issuer
+    // the resolver binds on has to be written out here.
+    let serde_json::Value::Object(claims) = json!({"iss": support::issuer_for("acme"), "tenant_id": "acme"})
+    else {
         unreachable!("claims are always an object")
     };
     let oversized = "a".repeat(1024 * 1024);

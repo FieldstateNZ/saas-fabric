@@ -3,26 +3,18 @@
 // A test's helpers assert their own preconditions; `unwrap` there is the
 // assertion, not a hole. Clippy's `allow-unwrap-in-tests` only covers
 // `#[test]` functions, so an integration test file states it once here.
-//
-// `too_many_lines` is allowed for the same reason `fabric-fga-auth`'s
-// `whole_path.rs` allows it: the composed proof below drives the real router
-// through a whole operator workflow, and splitting it into helpers named
-// "step one" and "step two" would hide the sequence rather than clarify it.
-#![allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::panic,
-    clippy::too_many_lines
-)]
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 mod support;
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use axum::body::Body;
-use fabric_client_model::{ClientId, OidcClientId, PkceMethod, RealmName};
+use fabric_client_model::{ClientId, OidcClientId, PkceMethod, RealmName, RedirectUri};
 use fabric_control_plane::ClientRepository as _;
 use fabric_reconciliation::testing::FakeIdentityProvider;
+use fabric_reconciliation::IdentityProvider as _;
 use http::{header, StatusCode};
 use support::{as_operator, control_plane, control_plane_with_identity_provider, entity_tag, json, send};
 
@@ -528,6 +520,7 @@ async fn a_client_carrying_a_callback_its_strategy_does_not_admit_is_refused_at_
     assert!(message.contains("loopback"), "{message}");
 }
 
+#[allow(clippy::too_many_lines)]
 #[tokio::test]
 async fn a_native_client_is_declared_reconciled_and_read_back_with_its_pkce_and_strategy() {
     // docs/delivery.md's rule: one test through the surface an operator
@@ -545,6 +538,23 @@ async fn a_native_client_is_declared_reconciled_and_read_back_with_its_pkce_and_
     // a second sweep changes nothing
     // PUT the same client with strategy claimedHttps and the loopback
     //     callback → 400 invalid_request, naming the strategy and the URI
+    //
+    // `too_many_lines` is allowed here for the same reason `fabric-fga-auth`'s
+    // `whole_path.rs` allows it: this composed proof drives the real router
+    // through a whole operator workflow, and splitting it into helpers named
+    // "step one" and "step two" would hide the sequence rather than clarify it.
+    //
+    // What this test does *not* guard: `matches()` deciding "converged" for
+    // the right reasons. `FakeIdentityProvider::write_client` echoes back
+    // exactly what was declared — challenge method, audience mapper, enabled,
+    // standard flow, and the post-logout term are all written unconditionally
+    // — so every comparison below would still pass even if `matches()` never
+    // looked at one of those fields at all. The actual drift guards are
+    // `crates/fabric-reconciliation/src/plan/diff_tests.rs`: C5/C6
+    // (`a_client_without_a_recognised_challenge_method_is_corrected`), C6a
+    // (`a_client_whose_audience_mapper_was_removed_is_corrected`), D13
+    // (`a_redirect_uri_this_model_cannot_parse_is_drift`), and D13b
+    // (`an_extra_redirect_uri_the_provider_holds_is_drift`).
     let provider = Arc::new(FakeIdentityProvider::new());
     let plane = control_plane_with_identity_provider(provider.clone());
 
@@ -574,6 +584,18 @@ async fn a_native_client_is_declared_reconciled_and_read_back_with_its_pkce_and_
     assert_eq!(put_response.status(), StatusCode::OK);
     assert_eq!(json(put_response).await["reconciliation"]["status"], "pending");
 
+    // `put_identity` spawns its convergence with `converge::in_background`
+    // rather than awaiting it (ADR 0008: the write is answered before the
+    // identity provider is touched). On this test's current-thread runtime
+    // that spawned task makes no progress until this future yields, so
+    // without this it would run at some unpredictable later point — maybe
+    // interleaved with the explicit sweep below, maybe not until after
+    // `clear_calls()` has already been read, silently corrupting the exact
+    // call-log assertion the second sweep depends on. Yielding once here
+    // drains it deterministically instead of relying on the request path
+    // below happening to be pending at the right moment.
+    tokio::task::yield_now().await;
+
     let sweep = send(
         &plane.router,
         as_operator("POST", "/api/reconciliation")
@@ -592,16 +614,33 @@ async fn a_native_client_is_declared_reconciled_and_read_back_with_its_pkce_and_
         .get(&OidcClientId::try_new("native").unwrap())
         .expect("the sweep must have written the declared client");
 
+    // All eight fields `ObservedOidcClient` carries (`observed.rs:50-128`).
+    // This proves the values round-trip through the API, the plan, and the
+    // fake's own write — see this test's docstring for what it does not prove.
     assert!(observed.public, "every declared client is written as public");
-    assert_eq!(observed.challenge_method, Some(PkceMethod::S256));
-    assert!(
-        observed.audience_mapper.is_some(),
-        "a declared client is written with the platform audience mapper"
-    );
-    assert_eq!(observed.redirect_uris.len(), 1);
     assert_eq!(
-        observed.redirect_uris.iter().next().unwrap().as_str(),
-        "http://127.0.0.1/callback"
+        observed.unmodellable_redirect_uris, 0,
+        "a client this test declared has nothing the model cannot parse"
+    );
+    assert_eq!(
+        observed.redirect_uris,
+        BTreeSet::from([RedirectUri::try_new("http://127.0.0.1/callback").unwrap()]),
+        "the observed set must be exactly the declared callback, no more and no less"
+    );
+    assert_eq!(observed.challenge_method, Some(PkceMethod::S256));
+    assert_eq!(
+        observed.audience_mapper.as_deref(),
+        provider.configured_audience(),
+        "the written mapper must assert the provider's own configured audience"
+    );
+    assert!(observed.enabled, "a declared client is always written enabled");
+    assert!(
+        observed.standard_flow_enabled,
+        "a declared client is written running the authorization-code flow"
+    );
+    assert!(
+        observed.post_logout_redirect_uris_is_every_registered_uri,
+        "the post-logout set must be written as every registered redirect URI"
     );
 
     let read_back = send(
@@ -621,6 +660,20 @@ async fn a_native_client_is_declared_reconciled_and_read_back_with_its_pkce_and_
         body["clients"][0]["redirect"]["uris"][0],
         "http://127.0.0.1/callback"
     );
+    // The sweep converged the client, and the API says so rather than leaving
+    // the console to infer it from the absence of an error.
+    assert_eq!(body["reconciliation"]["status"], "applied");
+
+    let stored = plane
+        .repository
+        .get(&ClientId::try_new("acme").unwrap())
+        .await
+        .expect("the client must still be there");
+    assert_eq!(
+        stored.document.api_version(),
+        fabric_client_model::API_VERSION_V2,
+        "an edit through this endpoint migrates the stored document in place (matrix row E14)"
+    );
 
     provider.clear_calls();
     let second_sweep = send(
@@ -631,13 +684,10 @@ async fn a_native_client_is_declared_reconciled_and_read_back_with_its_pkce_and_
     )
     .await;
     assert_eq!(second_sweep.status(), StatusCode::OK);
-    assert!(
-        provider
-            .calls()
-            .iter()
-            .all(|call| !call.starts_with("create_oidc_client") && !call.starts_with("update_oidc_client")),
-        "a second sweep against an unchanged declaration must write nothing: {:?}",
-        provider.calls()
+    assert_eq!(
+        provider.calls(),
+        vec!["observe_realm:acme"],
+        "a second sweep against an unchanged declaration reads the realm and writes nothing"
     );
 
     let mismatched = send(

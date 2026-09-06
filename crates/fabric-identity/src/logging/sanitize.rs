@@ -4,32 +4,77 @@
 //! originates inside a bearer token is attacker-controlled, and logging it
 //! unsanitised risks log injection from a control character and unbounded
 //! storage from a crafted value. This is the one place that risk is closed,
-//! so every call site in `logging` routes through it rather than reasoning
-//! about the value's shape itself.
+//! so every call site routes through it rather than reasoning about the
+//! value's shape itself.
+
+use std::fmt;
 
 /// The maximum number of bytes of a sanitised value that reach a log line.
 const MAX_BYTES: usize = 128;
 
-/// Strips control characters and truncates to [`MAX_BYTES`], on a character
-/// boundary.
+/// A token-derived value, bounded and made safe to put on a log line.
+///
+/// A struct rather than a `String` because the bound firing is itself
+/// information: an issuer truncated at 128 bytes and an issuer that is
+/// genuinely 128 bytes long look identical on the line, and an operator
+/// chasing registry drift needs to know which they are reading.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Sanitised {
+    /// What reaches the log.
+    pub value: String,
+
+    /// Whether the 128-byte bound cut the value short.
+    pub truncated: bool,
+}
+
+impl fmt::Display for Sanitised {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.value)
+    }
+}
+
+/// Keeps the printable ASCII of a value and bounds it to 128 bytes.
 ///
 /// This is bounding, not redaction: the value still reaches the log,
 /// deliberately, because seeing it is the point — a burst of one
 /// `issuer_offered` value is what makes registry drift visible. What this
-/// refuses is the log stream itself becoming an attack surface: a newline
-/// forging a second log line, or a value long enough to matter for storage.
+/// refuses is the log stream itself becoming an attack surface.
+///
+/// # Why printable ASCII and not "not a control character"
+///
+/// The values this bounds are URIs and identifier-parse messages, and an
+/// issuer is an RFC 3986 URI, whose grammar is ASCII throughout. So keeping
+/// only `is_ascii_graphic` plus the space loses nothing a legitimate value
+/// carries, and it closes three families a control-character test does not:
+/// the Unicode line terminators U+2028 and U+2029, which several log viewers
+/// and JSON consumers break a line on; the `Cf` format characters, U+202E
+/// among them, which reorder the rest of the line as it is displayed so a
+/// record can be made to read as something it does not say; and every
+/// homoglyph that would make one issuer look like another in a dashboard.
+///
+/// Truncation happens on a character boundary, which after the filter is a
+/// byte boundary — the filter is applied first anyway, so nothing depends on
+/// the order.
 #[must_use]
-pub(crate) fn sanitise(value: &str) -> String {
+pub fn sanitise(value: &str) -> Sanitised {
     let mut result = String::new();
+    let mut truncated = false;
 
-    for character in value.chars().filter(|character| !character.is_control()) {
+    for character in value
+        .chars()
+        .filter(|character| character.is_ascii_graphic() || *character == ' ')
+    {
         if result.len() + character.len_utf8() > MAX_BYTES {
+            truncated = true;
             break;
         }
         result.push(character);
     }
 
-    result
+    Sanitised {
+        value: result,
+        truncated,
+    }
 }
 
 #[cfg(test)]
@@ -38,41 +83,73 @@ mod tests {
 
     #[test]
     fn an_ordinary_value_passes_through_unchanged() {
-        assert_eq!(
-            sanitise("https://id.example.com/realms/acme"),
-            "https://id.example.com/realms/acme"
-        );
+        let sanitised = sanitise("https://id.example.com/realms/acme");
+
+        assert_eq!(sanitised.value, "https://id.example.com/realms/acme");
+        assert!(!sanitised.truncated);
     }
 
     #[test]
     fn control_characters_are_stripped() {
-        assert_eq!(sanitise("acme\nSet-Cookie: evil=1"), "acmeSet-Cookie: evil=1");
-        assert_eq!(sanitise("acme\r\nX-Injected: true"), "acmeX-Injected: true");
+        assert_eq!(
+            sanitise("acme\nSet-Cookie: evil=1").value,
+            "acmeSet-Cookie: evil=1"
+        );
+        assert_eq!(sanitise("acme\r\nX-Injected: true").value, "acmeX-Injected: true");
     }
 
     #[test]
-    fn a_value_longer_than_the_bound_is_truncated() {
+    fn a_right_to_left_override_is_stripped() {
+        // U+202E is a `Cf` format character, not a control character, so a
+        // `is_control` filter keeps it. It reverses the display order of
+        // everything after it, which is how a log line is made to read as an
+        // issuer it does not name.
+        assert_eq!(
+            sanitise("acme\u{202e}moc.live//:sptth").value,
+            "acmemoc.live//:sptth"
+        );
+    }
+
+    #[test]
+    fn the_unicode_line_terminators_are_stripped() {
+        // Neither is a control character, and both end a line for enough log
+        // viewers and JSON consumers to be a second injection surface.
+        assert_eq!(sanitise("acme\u{2028}next").value, "acmenext");
+        assert_eq!(sanitise("acme\u{2029}next").value, "acmenext");
+    }
+
+    #[test]
+    fn a_value_longer_than_the_bound_is_truncated_and_says_so() {
         let long = "a".repeat(500);
 
         let sanitised = sanitise(&long);
 
-        assert_eq!(sanitised.len(), MAX_BYTES);
+        assert_eq!(sanitised.value.len(), MAX_BYTES);
+        assert!(sanitised.truncated);
     }
 
     #[test]
-    fn truncation_lands_on_a_character_boundary() {
-        // Each of these is a multi-byte character, so a byte-oblivious cut
-        // would produce invalid UTF-8 partway through the last one.
-        let long = "é".repeat(200);
+    fn a_value_exactly_at_the_bound_is_not_reported_as_truncated() {
+        // The distinction the flag exists for: this and the case above are
+        // indistinguishable on the line without it.
+        let sanitised = sanitise(&"a".repeat(MAX_BYTES));
 
-        let sanitised = sanitise(&long);
+        assert_eq!(sanitised.value.len(), MAX_BYTES);
+        assert!(!sanitised.truncated);
+    }
 
-        assert!(sanitised.len() <= MAX_BYTES);
-        assert!(std::str::from_utf8(sanitised.as_bytes()).is_ok());
+    #[test]
+    fn a_non_ascii_value_reaches_the_log_as_nothing_rather_than_as_itself() {
+        // Deliberate. An issuer is an RFC 3986 URI, so a value made entirely
+        // of non-ASCII is not a truncated issuer, it is not an issuer.
+        let sanitised = sanitise("é".repeat(200).as_str());
+
+        assert!(sanitised.value.is_empty());
+        assert!(!sanitised.truncated);
     }
 
     #[test]
     fn an_empty_value_stays_empty() {
-        assert_eq!(sanitise(""), "");
+        assert_eq!(sanitise("").value, "");
     }
 }

@@ -64,9 +64,9 @@ impl RedirectUri {
 
     /// Parses a redirect URI.
     ///
-    /// The parser widens universally and a strategy narrows: a wildcard port
-    /// is a spelling accepted anywhere here, and which strategies may hold one
-    /// is `redirect_strategy::rules`' question, not this one.
+    /// The parser widens universally and a strategy narrows: a trailing
+    /// wildcard is a spelling accepted anywhere here, and which strategies may
+    /// hold one is `redirect_strategy::rules`' question, not this one.
     ///
     /// # Errors
     ///
@@ -114,12 +114,6 @@ impl RedirectUri {
     pub fn has_path_wildcard(&self) -> bool {
         characters::has_path_wildcard(&self.value)
     }
-
-    /// Whether it names every port rather than one.
-    #[must_use]
-    pub fn has_wildcard_port(&self) -> bool {
-        characters::has_wildcard_port(&self.value)
-    }
 }
 
 impl fmt::Display for RedirectUri {
@@ -166,10 +160,13 @@ mod tests {
     fn refuses_a_wildcard_in_the_host() {
         // The mistake this check exists for: `https://*.example.com` reads as
         // a subdomain wildcard and would accept a host the operator never
-        // intended to trust. Load-bearing in a way it was not before the
-        // wildcard *port* widened the same rule.
+        // intended to trust. Two rules refuse it now — the registered-domain
+        // rule will not take `*` as a label character, and `characters` will
+        // not take a `*` anywhere but the end — and the `.internal` spelling
+        // reaches only the second, which is why both are kept.
         assert!(RedirectUri::try_new("https://*.example.com/callback").is_err());
         assert!(RedirectUri::try_new("https://*.example.com:8443/callback").is_err());
+        assert!(RedirectUri::try_new("http://*.lucentroot.internal/callback").is_err());
     }
 
     #[test]
@@ -182,12 +179,18 @@ mod tests {
     }
 
     #[test]
-    fn a_wildcard_port_is_how_a_loopback_callback_says_any_port() {
-        let uri = RedirectUri::try_new("http://127.0.0.1:*/callback").unwrap();
+    fn a_wildcard_port_is_refused_because_a_portless_loopback_callback_already_matches_any_port() {
+        // Observed on Keycloak 26.0.8: `http://127.0.0.1:*/cb` matches no
+        // redirect at all, while the portless `http://127.0.0.1/cb` matches
+        // every port. Both spellings of it are refused — with and without a
+        // path — because the bare one puts its `*` last and would otherwise
+        // pass as a trailing path wildcard.
+        for value in ["http://127.0.0.1:*/callback", "http://127.0.0.1:*"] {
+            let error = RedirectUri::try_new(value).unwrap_err();
 
-        assert!(uri.has_wildcard_port());
-        assert!(!uri.has_path_wildcard());
-        assert_eq!(uri.kind(), RedirectUriKind::Loopback);
+            assert!(error.to_string().contains("already matches any port"), "{error}");
+            assert!(error.to_string().contains("name it"), "{error}");
+        }
     }
 
     #[test]
@@ -197,11 +200,11 @@ mod tests {
     }
 
     #[test]
-    fn a_trailing_wildcard_is_a_path_wildcard_and_a_bare_wildcard_port_is_not() {
+    fn a_trailing_wildcard_is_a_path_wildcard() {
         assert!(RedirectUri::try_new("https://www.example.com/*")
             .unwrap()
             .has_path_wildcard());
-        assert!(!RedirectUri::try_new("http://127.0.0.1:*")
+        assert!(!RedirectUri::try_new("https://www.example.com/callback")
             .unwrap()
             .has_path_wildcard());
     }

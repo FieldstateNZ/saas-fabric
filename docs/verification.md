@@ -538,15 +538,30 @@ change.
 
 ## File sizes
 
-474 Rust source files under `crates/*/src`, of which 156 are the control
-plane's. The policy (`docs/architecture/file-size-policy.md`) treats 150
-production lines as a hard limit and 120 as advisory; test lines never count,
-whether they live in a sibling `*_tests.rs` or in a trailing `#[cfg(test)]`
-module.
+808 Rust source files under `crates/*/src`, of which 151 are the control
+plane's; `scripts/check_file_sizes.py` measures 702 of them, the rest being
+`*_tests.rs` siblings and per-crate integration tests it excludes by rule. The
+policy (`docs/architecture/file-size-policy.md`) treats 150 production lines as
+a hard limit and 120 as advisory; test lines never count, whether they live in
+a sibling `*_tests.rs` or in a trailing `#[cfg(test)]` module.
 
-- **Over 150 lines: none.** The exemption list is still empty.
-- **Over 120 lines: 52 files**, largest 150. Eight of the 52 are in the new
-  crates, largest 131.
+Counted by running the script on the commit that this paragraph ships in — the
+one that removed the `:*` wildcard port from the redirect model and replaced
+the IP-literal test with a registered-domain rule, on `claude/m2-edge-trust`.
+Re-run it rather than trusting the numbers: they are a snapshot, and the point
+of recording them is that the next snapshot can be compared.
+
+- **Over 150 lines: none unexplained.** Two files hold an exemption, each with
+  its reason recorded beside it in the script:
+  `fabric-control-plane/src/errors.rs` (175) and `fabric-fga-auth/src/cache.rs`
+  (155).
+- **Over 120 lines: 106 files**, of which 104 are inside the hard limit. The
+  largest unexempted are three at exactly 150 —
+  `fabric-client-model/src/identity/redirect_uri/host_kind/registered_domain.rs`,
+  `fabric-connector/src/errors/connector_error.rs` and
+  `fabric-identity/src/logging.rs`. Every file in the 121–150 band that this
+  lane wrote or touched states its reason at the top of the file, which is what
+  the policy asks of that band.
 
 Two control-plane files reached the limit while being written and were split
 rather than exempted, and both splits are worth recording because they are the

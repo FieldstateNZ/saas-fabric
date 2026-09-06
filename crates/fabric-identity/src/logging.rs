@@ -5,10 +5,14 @@
 //! events because one call site spelled it `claim`.
 //!
 //! **A value that originates inside a bearer token is logged only through
-//! [`sanitize::sanitise`], and never in a response body.** A token is
-//! attacker-controlled input; [`sanitise`] is what keeps a log line from
-//! becoming a second injection surface once a value has already been refused
-//! at the boundary.
+//! [`sanitise`], and never in a response body.** A token is attacker-
+//! controlled input, and [`sanitise`] keeps a log line from becoming a second
+//! injection surface once a value has already been refused.
+//!
+//! **This module is that rule's enforcement point for the whole platform.**
+//! [`sanitise`] is exported rather than private because two other places log
+//! a token-derived value — `readers`, and `fabric-data-api`'s refused subject
+//! — and a second copy of this rule is a second answer waiting to disagree.
 //!
 //! Over the 120-line advisory threshold. The reason is that this is one set
 //! of typed emitters for one domain's refusals, each a few lines of `tracing`
@@ -21,7 +25,8 @@ mod sanitize;
 use fabric_core::{event_id, EventType, IdentifierError};
 
 use crate::DOMAIN_ID;
-use sanitize::sanitise;
+
+pub use sanitize::{sanitise, Sanitised};
 
 /// A token arrived with no tenant claim.
 pub(crate) fn tenant_claim_missing(claim: &str) {
@@ -39,14 +44,17 @@ pub(crate) fn tenant_claim_missing(claim: &str) {
 /// writing it into the log stream would pollute tenant-filtered queries with
 /// values that are not tenants. `error`'s rendering is logged, through
 /// [`sanitise`]: [`IdentifierError::DisallowedCharacter`] embeds the one
-/// offending character verbatim, which is exactly the value this function
-/// exists not to log unsanitised.
+/// offending character verbatim, which is the value this function exists not
+/// to log unsanitised.
 pub(crate) fn tenant_claim_invalid(claim: &str, error: &IdentifierError) {
+    let reason = sanitise(&error.to_string());
+
     tracing::warn!(
         event = "identity.tenant_claim_invalid",
         event_id = event_id(DOMAIN_ID, EventType::Warning, 2),
         tenant_claim = claim,
-        reason = %sanitise(&error.to_string()),
+        reason = %reason,
+        reason_truncated = reason.truncated,
         "tenant claim is not a valid tenant identifier; rejecting"
     );
 }
@@ -71,14 +79,19 @@ pub(crate) fn issuer_claim_missing(claim: &str) {
 /// gateway is admitting an issuer `identity.trusted_issuers` does not know —
 /// registry drift, and the registry is the authority. `registered_issuer_count`
 /// rides alongside it so a dashboard can tell "the registry is empty" apart
-/// from "this one issuer is missing" without a second query. Sanitised and
-/// bounded is not the same as safe to echo back: this value never appears in
-/// a response.
+/// from "this one issuer is missing". Sanitised and bounded is not the same as
+/// safe to echo back: this value never appears in a response.
+///
+/// `issuer_truncated` says whether the bound fired: without it, a crafted
+/// issuer sharing its first 128 bytes with a real one is the same line.
 pub(crate) fn issuer_unregistered(issuer: &str, registered_issuer_count: usize) {
+    let issuer = sanitise(issuer);
+
     tracing::warn!(
         event = "identity.issuer_unregistered",
         event_id = event_id(DOMAIN_ID, EventType::Warning, 6),
-        issuer_offered = %sanitise(issuer),
+        issuer_offered = %issuer,
+        issuer_truncated = issuer.truncated,
         registered_issuer_count,
         "bearer token's issuer is not registered; rejecting"
     );

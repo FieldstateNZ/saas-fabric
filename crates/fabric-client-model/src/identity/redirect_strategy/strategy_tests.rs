@@ -24,7 +24,7 @@ fn every_variant() -> Vec<RedirectStrategy> {
         .unwrap(),
         RedirectStrategy::try_new(
             RedirectStrategyKind::Development,
-            vec![uri("http://127.0.0.1:*/callback")],
+            vec![uri("http://127.0.0.1/callback")],
         )
         .unwrap(),
         RedirectStrategy::try_new(custom, vec![uri("nz.fieldstate.slipway:/callback")]).unwrap(),

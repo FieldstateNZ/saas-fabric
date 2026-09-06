@@ -31,7 +31,9 @@ The control plane's desired-state model. Depends on `fabric-core`, `serde`,
   `strategy`, camelCase values, `deny_unknown_fields`.
 - `RedirectUriKind { PrivateUseScheme, Loopback, PrivateNetwork, Https }` —
   what a strategy is stated against. Decided once, at `RedirectUri::try_new`,
-  and carried on the value.
+  and carried on the value. `Https` is a **positive** rule
+  (`identity/redirect_uri/host_kind/registered_domain.rs`): the host has to be
+  a registered domain, not merely something no parser read as an address.
 - `AppScheme` — a private-use URI scheme, RFC 8252 §7.1 reverse-domain form.
 - `required_roles::{REQUIRED_ROLES, first_missing}` — `["Client Realm Administrator", "Client Realm User"]`.
 - Names: `ClientId`, `RealmName`, `OidcClientId` (macro, `slug_newtype!`),
@@ -70,11 +72,13 @@ The control plane's desired-state model. Depends on `fabric-core`, `serde`,
 8. **A private-use scheme must keep requiring a dot.** A branch admitting any
    `scheme:` that is not `http` would admit `javascript:` — the regression
    `refuses_a_javascript_scheme` is mutation-proved against.
-9. **The parser widens universally; the strategy narrows.** A wildcard port is
+9. **The parser widens universally; the strategy narrows.** A trailing `*` is
    a spelling `RedirectUri::try_new` accepts anywhere; which strategies may
    hold one is `redirect_strategy::rules`' question. Keeping the two apart is
    what stops the parser growing a second copy of the strategy table — and it
-   is why a wildcard in the *host* is still refused, mutation-proved.
+   is why a wildcard in the *host* is still refused, mutation-proved. A `*` in
+   the **port** is refused outright: Keycloak matches nothing against `:*`, and
+   over `http` a portless loopback callback already matches any port.
 10. **`v1` keeps parsing, and the migrator stays total.** Every
     `RedirectUriKind` has an arm, including the private-use one that `v1`
     could not hold. A mixed list is refused, never resolved.

@@ -55,7 +55,12 @@ fn parse_ipv4(host: &str) -> Option<Ipv4Addr> {
 }
 
 /// Parses one label the way `inet_aton` parses it: decimal, `0`-prefixed
-/// octal, or `0x`/`0X`-prefixed hexadecimal.
+/// octal, or `0x`-prefixed hexadecimal.
+///
+/// Only the lower-cased `0x` is tested, and that is correct rather than a gap:
+/// `super::super::kind::classify` lower-cases the host before any of this
+/// runs, so `0X7F000001` has already become `0x7f000001` by the time it
+/// arrives here.
 fn parse_c_integer(label: &str) -> Option<u32> {
     if let Some(hex) = label.strip_prefix("0x") {
         if hex.is_empty() || !hex.chars().all(|character| character.is_ascii_hexdigit()) {

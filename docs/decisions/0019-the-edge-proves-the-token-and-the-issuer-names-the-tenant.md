@@ -563,7 +563,7 @@ socket test and the real engine" (`docs/delivery.md:61-62`).
 |---|---|---|
 | 1 | `Loopback` | host is `127.0.0.1`, `::1` (bracketed as `[::1]` in a URI) or `localhost` — those three exactly |
 | 2 | `PrivateNetwork` | host is `internal` or ends `.internal` — the ICANN-reserved TLD (`crates/fabric-client-model/src/identity/redirect_uri/authority.rs:14-20`) |
-| 3 | `Https` | everything else, **and only if the scheme is `https`**. Plain HTTP that reaches here is refused, exactly as today |
+| 3 | `Https` | a **registered domain**, and only if the scheme is `https` — the positive rule below. Every IP address literal is refused, in every spelling. Plain HTTP that reaches here is refused |
 
 **Scheme first is what makes `nz.fieldstate.slipway://localhost/cb` a
 `PrivateUseScheme`** and not a loopback callback. A host-first partition would
@@ -579,6 +579,44 @@ there.
 `https://admin.corp.internal/cb` is `PrivateNetwork`, not `Https`. A
 scheme-only partition would put both in `Https` and let a production strategy
 hold a development callback while looking correct.
+
+**The last arm is a positive rule, and that is the amendment.** It used to read
+"everything else": a host was the production kind because no parser recognised
+it as an address. A browser recognises more spellings than any parser does, so
+the rule is now stated the other way round — a host is `Https` because it *is*
+a registered domain
+(`crates/fabric-client-model/src/identity/redirect_uri/host_kind/registered_domain.rs:82`).
+It is ASCII; it has at least two labels; each label is 1–63 characters of
+letters, digits and hyphens and starts and ends with neither hyphen; the whole
+name is at most 253 characters; and the final label is neither all-numeric nor
+`0x`-prefixed — the URL Standard's "ends in a number" test, which is what makes
+a host an IPv4 candidate to a browser rather than a name to resolve. **Why
+positive:** a Universal Link and an App Link are claimed against a registered
+domain, and an entitlement satisfied by an address that never leaves the
+machine, or that only a resolver could recognise, is the entitlement failing to
+mean anything.
+
+Six spellings the negative rule admitted make the case. `https://0x/cb` and
+`https://0x.0x.0x.0x/cb` — a browser reads an empty hexadecimal tail as 0, so
+both dial `0.0.0.0`, the machine it is already on. `https://１２７．０．０．１/cb`
+— UTS-46 maps the fullwidth digits back to `127.0.0.1`. `https://[foo]/cb` and
+`https://[::1%25lo0]/cb` — a bracketed authority is an IPv6 literal or it is
+nothing, and a zone id names an interface only one machine has.
+`https://[::1/cb` — an unclosed bracket, which classified as **loopback** on
+the strength of a bracket whose other half nobody wrote. The last three are
+refused before the host rule, by `reject_brackets`
+(`crates/fabric-client-model/src/identity/redirect_uri/authority.rs:132`).
+
+**A non-ASCII host is refused, and told to use its A-label.** `xn--` form is
+what the browser resolves and what the claim is made against, so accepting a
+U-label would mean this model and the operating system comparing two different
+strings. The refusal names the encoding rather than the character.
+
+**`ip_literal` keeps the job it is right for.** It is the loopback detector, and
+it runs before the plain-HTTP arm for **both** schemes
+(`crates/fabric-client-model/src/identity/redirect_uri/host_kind.rs:94`), so
+`http://0x7f000001/cb` is refused as a loopback near-miss rather than as plain
+HTTP on a public host. What it is not is the definition of "not a domain".
 
 **Exactly three loopback hosts, and the near-misses are refused rather than
 admitted.** `127.0.0.2` is loopback to the operating system and is **not** in
@@ -604,20 +642,22 @@ Three facts about today's parser that this changes:
   ambiguity does not matter *because* an IPv6 literal is never loopback-by-name;
   that reasoning stops being true here and the comment is rewritten with the
   rule rather than left to contradict the code.
-- A `*` is permitted only in the final position
-  (`crates/fabric-client-model/src/identity/redirect_uri.rs:86`), so
-  `http://127.0.0.1:*/callback` is **not representable today**. The any-port
-  rule below requires widening that.
-- The parser widens **universally** and the strategy narrows. A wildcard port is
-  a spelling `RedirectUri::try_new` accepts anywhere; which strategies may
-  *hold* one is §4's rule. Keeping the widening in one place and the entitlement
-  in another is what stops the parser growing a second copy of the strategy
-  table — but it means the parser's existing refusals are now load-bearing in a
-  way they were not, and the two that matter most are re-proved by mutation: a
+- A `*` is permitted only in the final position, and **that is where it stayed**.
+  An earlier draft of this decision widened it to admit `http://127.0.0.1:*/cb`
+  as a second spelling of any-port. The real Keycloak says otherwise, so the
+  widening was never landed: see the `Development` row below.
+- The parser widens **universally** and the strategy narrows. A trailing
+  wildcard is a spelling `RedirectUri::try_new` accepts anywhere; which
+  strategies may *hold* one is §4's rule. Keeping the widening in one place and
+  the entitlement in another is what stops the parser growing a second copy of
+  the strategy table — but it means the parser's existing refusals are
+  load-bearing, and the two that matter most are re-proved by mutation: a
   wildcard in the host (`https://*.example.com/callback`, refused at
-  `redirect_uri.rs:82-98`) and a `javascript:` scheme (refused at
-  `authority.rs:60-76`). A private-use-scheme branch is the most plausible way
-  to accidentally admit either.
+  `crates/fabric-client-model/src/identity/redirect_uri/characters.rs:60` and
+  again by the registered-domain rule) and a `javascript:` scheme (refused at
+  `crates/fabric-client-model/src/identity/redirect_uri/kind.rs:109`). A
+  private-use-scheme branch is the most plausible way to accidentally admit
+  either.
 
 #### The four variants, what each admits, and what each writes
 
@@ -625,7 +665,7 @@ Three facts about today's parser that this changes:
 |---|---|---|---|
 | `ClaimedHttps { uris }` | `Https` **only**. The production rule, and also what an iOS Universal Link and an Android App Link are. `https://localhost/cb` and `https://foo.internal/cb` are **refused under it**, because the partition classifies them elsewhere | **Refused.** RFC 9700 §2.1 requires exact redirect-URI matching, and Universal/App Links require exact URLs anyway | `redirectUris` verbatim; `pkce.code.challenge.method=S256`; `post.logout.redirect.uris=+`; the audience mapper |
 | `PrivateNetwork { uris }` | `PrivateNetwork` over **http or https**. LucentRoot's production posture: "its gateway has one listener, on port 80, and its hosts are `*.lucentroot.internal`" (`docs/architecture/client-desired-state.md:140-141`) | **Refused**, same rule | as above |
-| `Development { uris }` | `Loopback` over **http (and https)**, on any port | A single **trailing path** `*` is permitted, here only; and a wildcard **port**, here only | as above, with the any-port form below |
+| `Development { uris }` | `Loopback`. Over `http`, a URI registered without a port matches any port (Keycloak compares no port for it, RFC 8252 §7.3); over `https`, and whenever a port is written, the match is exact | A single **trailing path** `*` is permitted, here only. There is no wildcard **port**: `:*` is refused | as above; the portless spelling verbatim |
 | `CustomScheme { scheme, uris }` | `PrivateUseScheme` matching its own declared `scheme` | Refused | **Nothing.** Refused at validation — see below |
 | — (all variants) | — | — | post-logout is written once as `attributes["post.logout.redirect.uris"] = "+"`, Keycloak's documented value meaning "the registered redirect URIs". One list, so a second cannot drift out of step with it |
 
@@ -645,19 +685,40 @@ plain-HTTP URI inside the variant whose entire job is to be the HTTPS rule. A
 closed set that cannot describe a deployment we already run is not closed
 enough.
 
-**Loopback, any port.** RFC 8252 §7.3 requires the authorization server to allow
-any port for a loopback redirect, because a native app binds an ephemeral one.
-`Development` expresses this explicitly: **a URI with no port, or `*` in the port
-position, means any port on loopback.** Both spellings, because
-`http://127.0.0.1/callback` is what a developer writes and
-`http://127.0.0.1:*/callback` is what a developer writes when they want to be
-sure. **How Keycloak is told is an adapter concern, and it is verified against a
-real Keycloak in the adapter slice** — the exact behaviour is recorded in
-[`docs/verification.md`](../verification.md) beside the findings from the
-2026-08-28 run (`docs/verification.md:487-524`). If Keycloak turns out to be
-unable to express any-port for loopback, this row is amended in that slice with
-the evidence, rather than the ADR quietly asserting a capability nobody
-exercised.
+**Loopback, any port — as observed, not as assumed.** RFC 8252 §7.3 requires the
+authorization server to allow any port for a loopback redirect, because a native
+app binds an ephemeral one. An earlier draft of this row said `Development`
+expresses that in **two** spellings: a URI with no port, and `*` in the port
+position. The probe against a real Keycloak 26.0.8 on 2026-09-06 says otherwise,
+and the row is amended with the evidence, which is the sentence above the table
+this paragraph explains:
+
+- Over `http`, a loopback URI registered **without a port**
+  (`http://127.0.0.1/cb`, `http://localhost/cb`, `http://[::1]/cb`) matches the
+  same path on any port. The path is still compared exactly — `/other` is
+  refused.
+- Over `https`, the port is always compared exactly: `https://localhost/cb` does
+  not match `https://localhost:5173/cb`. So is a port written under `http`:
+  `http://localhost:5173/cb` does not match `:9999`.
+- **`http://127.0.0.1:*/cb` matches nothing at all** — neither `:54321/cb` nor
+  the portless form. It is not a wider spelling of any-port; it is a redirect
+  URI no browser will ever be sent to. So `:*` leaves the model: `RedirectUri`
+  refuses it (`crates/fabric-client-model/src/identity/redirect_uri/characters.rs:50`)
+  with a message that names what to write instead — over `http` a portless
+  loopback callback already matches any port, and over `https` the port has to
+  be named.
+
+Refusing it is the fail-closed reading. A spelling the identity provider matches
+nothing against is worse than one it refuses here: the client would be written,
+reconciled and reported converged, and the first login attempt would fail in a
+different system, weeks later, with nothing in this repository saying why.
+
+The findings are recorded in [`docs/verification.md`](../verification.md) beside
+the 2026-08-28 run. Keycloak **26.0.8** is what was probed — the image
+`scripts/e2e-services.sh` uses — and LucentRoot runs 26.7.2; §G17 is the
+platform lane re-verifying there. The any-port and exact-match semantics are
+unchanged in Keycloak since long before 26, so the caveat is honesty rather than
+doubt.
 
 **A URI whose kind is not admitted by its declared strategy is refused, not
 reclassified.** `http://localhost:5173/callback` under `claimedHttps` is an
@@ -1174,3 +1235,4 @@ this repository. The row-by-row evidence expected for each is in
 | G14 | **The M2 acceptance run.** Two real Keycloak realm users complete authorization-code with S256 PKCE against a deployed runtime behind this edge | recorded, both users, plus the two Keycloak PKCE refusals observed |
 | G15 | **An intercepted code cannot be redeemed without the verifier.** The property PKCE exists for, demonstrated rather than assumed | a mismatched `code_verifier` at the token endpoint |
 | G16 | **Keycloak's real behaviour, recorded.** Any-port loopback; whether `GET /clients` returns `protocolMappers` and `attributes`; whether `PUT /clients/{id}` updates mappers or the sub-resource is required. Each amends §3 or §6 with evidence if it contradicts them | `docs/verification.md`, beside the 2026-08-28 findings (`docs/verification.md:487-524`) |
+| G17 | **The version caveat, closed.** §3's any-port rule and §6's mapper behaviour were observed on Keycloak **26.0.8**, the image `scripts/e2e-services.sh` uses. LucentRoot runs **26.7.2**. The platform lane re-runs the same probe there and records the result beside the 26.0.8 findings | `docs/verification.md`. A difference amends §3 or §6 with the evidence, the way 26.0.8's observation amended the `Development` row |

@@ -80,7 +80,7 @@ mod config;
 mod errors;
 mod extractor;
 mod identity;
-mod logging;
+pub mod logging;
 mod readers;
 mod registration;
 mod resolver;

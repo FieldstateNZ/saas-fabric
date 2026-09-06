@@ -75,6 +75,19 @@ impl ClientDocument {
     /// which schema a shipped example exercises should ask the document this
     /// rather than search the text for `apiVersion: ...` — a rename of either
     /// constant would leave a text search checking nothing.
+    ///
+    /// Both constants are matched by name, and anything else is `None` — which
+    /// is what makes this an answer rather than a guess. It used to read
+    /// "`v2` if it says `v2`, otherwise `v1`", so a document declaring
+    /// something neither constant names would have been reported as `v1`.
+    ///
+    /// That third case cannot arise: `version::check_document_kind` runs
+    /// before the document is deserialised and refuses any pair that is not
+    /// one of the two, so a `ClientDocument` only ever exists for a version
+    /// this model reads. `unwrap_or` supplies `v1` for it because this crate
+    /// does not panic in production code and a wrong answer about a schema
+    /// label is not worth a process; adding a `v3` without adding an arm here
+    /// is then a visible omission rather than a silent misreport.
     #[must_use]
     pub fn api_version(&self) -> &'static str {
         let declared = self
@@ -83,11 +96,12 @@ impl ClientDocument {
             .and_then(|mapping| mapping.get("apiVersion"))
             .and_then(serde_norway::Value::as_str);
 
-        if declared == Some(schema::API_VERSION_V2) {
-            schema::API_VERSION_V2
-        } else {
-            schema::API_VERSION
+        match declared {
+            Some(schema::API_VERSION_V2) => Some(schema::API_VERSION_V2),
+            Some(schema::API_VERSION) => Some(schema::API_VERSION),
+            _ => None,
         }
+        .unwrap_or(schema::API_VERSION)
     }
 
     /// Produces a copy of this document with a different identity

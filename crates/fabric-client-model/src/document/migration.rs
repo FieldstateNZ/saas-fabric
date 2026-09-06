@@ -7,13 +7,17 @@
 //! where naming the replacement points them at the actual problem.
 //!
 //! Over the 120-line advisory threshold. The reason is that this is one
-//! traversal of one document with one refusal beside it: the judgement it
-//! makes — which strategy a flat list reads as, and when it refuses to guess —
-//! is already split into `strategy`, and what is left is the walk, the two
-//! keys it writes, and the accessors that reach `spec.identity.clients`.
-//! Splitting the walk from the keys it writes would put half a rewrite in each
-//! file.
+//! traversal of one document, with the single refusal that belongs to the
+//! *other* direction beside it — a `v2` document still carrying `v1`'s field,
+//! which is the same pair of keys read the other way round and would be
+//! obscure anywhere else. The two judgements this traversal defers are in
+//! files of their own: which strategy a flat callback list reads as, in
+//! `strategy`, and whether the client is a `v1` client at all, in
+//! `mislabelled`. What is left is the walk, the two keys it writes, and the
+//! accessors that reach `spec.identity.clients`; splitting the walk from the
+//! keys it writes would put half a rewrite in each file.
 
+mod mislabelled;
 mod strategy;
 
 use serde_norway::Value;
@@ -61,8 +65,10 @@ pub(super) fn reject_replaced_field(raw: &Value) -> Result<(), DesiredStateError
 /// # Errors
 ///
 /// Returns [`DesiredStateError::Migration`] for a client whose callbacks do
-/// not all agree on one kind, or that already carries a `redirect` key, and
-/// [`DesiredStateError::MissingField`] for one carrying neither.
+/// not all agree on one kind, or that already carries a `redirect` block or a
+/// `pkce` field — both of which are `v2` keys, so a `v1` document holding one
+/// is mislabelled — and [`DesiredStateError::MissingField`] for a client
+/// carrying no callbacks at all.
 pub(super) fn to_v2(mut raw: Value) -> Result<Value, DesiredStateError> {
     let Some(clients) = clients_mut(&mut raw) else {
         return Ok(raw);
@@ -81,26 +87,7 @@ fn migrate_client(client: &mut Value) -> Result<(), DesiredStateError> {
         return Ok(());
     };
 
-    if mapping.contains_key("redirect") {
-        return Err(DesiredStateError::Migration {
-            field: "spec.identity.clients[].redirect",
-            replacement: REPLACEMENT,
-            detail: "a v1 document has no redirect block; a document that carries one is a v2 \
-                     document mislabelled as v1, and relabelling it is the operator's call"
-                .to_owned(),
-        });
-    }
-
-    if mapping.contains_key("pkce") {
-        return Err(DesiredStateError::Migration {
-            field: "spec.identity.clients[].pkce",
-            replacement: REPLACEMENT,
-            detail: "a v1 document has no pkce field; a document that carries one is a v2 \
-                     document mislabelled as v1, and relabelling it is the operator's call, not a \
-                     value this migrator may silently overwrite"
-                .to_owned(),
-        });
-    }
+    mislabelled::reject(mapping)?;
 
     let uris = mapping
         .remove("redirectUris")

@@ -171,14 +171,88 @@ fn only_three_loopback_hosts_are_a_development_callback() {
 
 #[test]
 fn an_ip_literal_is_never_a_claimed_https_callback() {
-    // Universal Links and App Links require a registered domain. An ordinary
-    // public address — not anybody's loopback — is refused under `https` in
-    // every spelling this model recognises: standard dotted-decimal, the
-    // all-numeric form, hexadecimal, and a bracketed IPv6 literal.
-    for host in ["93.184.216.34", "134744072", "0x08080808", "[2001:db8::1]"] {
+    // Universal Links and App Links require a registered domain, so the rule
+    // is stated positively — a host is admitted because it *is* a registered
+    // domain, not because a parser failed to recognise it as an address.
+    // Every spelling below was admitted by the negative rule this replaced:
+    //
+    // - `0x` and `0x.0x.0x.0x`: a browser reads an empty hexadecimal tail as
+    //   0, so both dial `0.0.0.0`, which is the machine it is already on.
+    // - the fullwidth digits: UTS-46 maps them back to `127.0.0.1`.
+    // - `[::1%25lo0]`: a zone id names an interface only one machine has.
+    // - `[foo]` and `[::1`: a bracketed authority is an IPv6 literal or it is
+    //   nothing, and an unclosed bracket classified as *loopback*.
+    for (host, expected) in [
+        ("93.184.216.34", "registered domain"),
+        ("134744072", "registered domain"),
+        ("0x08080808", "registered domain"),
+        ("[2001:db8::1]", "registered domain"),
+        ("0x", "registered domain"),
+        ("0x.0x.0x.0x", "registered domain"),
+        ("１２７．０．０．１", "xn--"),
+        ("[::1%25lo0]", "bracketed authority"),
+        ("[foo]", "bracketed authority"),
+        ("[::1", "bracketed authority"),
+    ] {
         let error = RedirectUri::try_new(format!("https://{host}/callback")).unwrap_err();
-        assert!(error.to_string().contains("registered domain"), "{host}: {error}");
+        assert!(error.to_string().contains(expected), "{host}: {error}");
     }
+}
+
+#[test]
+fn a_registered_domain_has_at_least_two_labels() {
+    // A single-label name is whatever the resolver in front of the browser
+    // decides it is — an intranet search domain, a hosts file, a wildcard
+    // resolver — so it is not something an entitlement can be stated against.
+    assert!(!accepts("https://intranet/cb"));
+    assert!(accepts("https://intranet.example.com/cb"));
+}
+
+#[test]
+fn an_underscore_is_not_a_hostname_character() {
+    // Legal in a DNS record, never in a hostname, and a browser will not
+    // claim an App Link against one.
+    assert!(!accepts("https://my_host.example.com/cb"));
+    assert!(!accepts("https://-example.com/cb"));
+    assert!(!accepts("https://example-.com/cb"));
+}
+
+#[test]
+fn plain_http_on_a_public_host_names_the_boundary_rather_than_a_typo() {
+    // Not a parse failure: the value is well-formed and outside the rule.
+    // "must start and end with an alphanumeric character" — what this used to
+    // say — sends its author looking for a typo that is not there.
+    let error = RedirectUri::try_new("http://www.example.com/callback").unwrap_err();
+
+    assert!(error.to_string().contains("https for a public host"), "{error}");
+    assert!(error.to_string().contains(".internal"), "{error}");
+}
+
+#[test]
+fn a_scheme_with_no_authority_is_told_that_and_not_that_its_scheme_is_wrong() {
+    // `https:` is a scheme this model classifies, so naming the scheme would
+    // point its author at the one part of the URI that is right.
+    let error = RedirectUri::try_new("https:foo").unwrap_err();
+
+    assert!(
+        error.to_string().contains("an authority after the scheme"),
+        "{error}"
+    );
+}
+
+#[test]
+fn a_digit_straight_after_the_colon_is_a_port_and_the_refusal_names_both_readings() {
+    // `nz.fieldstate.slipway:8080/cb` is a native application's scheme with a
+    // port that does not belong to it; `www.example.com:8080/cb` is a host
+    // that lost its `https://`. Only the author knows which, so both are
+    // named. `www.example.com:/cb` has no digit and stays private-use — see
+    // the migrator, which is where an operator meets that reading.
+    let error = RedirectUri::try_new("nz.fieldstate.slipway:8080/cb").unwrap_err();
+
+    assert!(error.to_string().contains("reads as a port"), "{error}");
+    assert!(error.to_string().contains("nz.fieldstate.slipway:/cb"), "{error}");
+    assert!(error.to_string().contains("https://www.example.com"), "{error}");
+    assert_eq!(kind("www.example.com:/cb"), RedirectUriKind::PrivateUseScheme);
 }
 
 #[test]

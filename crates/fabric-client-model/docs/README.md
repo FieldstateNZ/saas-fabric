@@ -143,8 +143,11 @@ It enforces:
 - every application client declares at least one redirect URI;
 - every redirect URI's **kind** is one its strategy admits — a URI outside the
   strategy is refused, never reclassified into a strategy that would take it;
-- wildcards: a trailing path `*` and a wildcard port only under `development`,
-  because RFC 9700 §2.1 requires exact matching everywhere else;
+- wildcards: a trailing path `*` only under `development`, because RFC 9700
+  §2.1 requires exact matching everywhere else. There is no wildcard **port**:
+  `:*` is refused by the parser, because Keycloak 26.0.8 matches nothing
+  against it, while a loopback callback registered without a port over `http`
+  already matches any port;
 - `customScheme` is refused, naming `Lane E phase 2`. The shape is in the model
   so documents do not have to change again when it lands.
 
@@ -161,3 +164,12 @@ Loopback is `127.0.0.1`, `::1` and `localhost`, and nothing else. `127.0.0.2`,
 `[::ffff:127.0.0.1]` and `localhost.localdomain` all reach loopback on some
 machine and are all refused, with a message naming the boundary: an entitlement
 that can only be recognised by resolving a name is not a declaration.
+
+The production kind is stated **positively**: a host is `Https` because it is a
+registered domain — ASCII, two labels or more, hostname characters only, and a
+final label that is neither all-numeric nor `0x`-prefixed. It is not `Https`
+because no parser recognised it as an address; that phrasing admitted `0x`,
+`0x.0x.0x.0x`, the fullwidth spelling of `127.0.0.1`, and every bracketed
+authority that is not `[::1]`. An internationalised host is refused and asked
+for its `xn--` A-label, because that is the name a browser resolves and the
+name an App Link is claimed against.

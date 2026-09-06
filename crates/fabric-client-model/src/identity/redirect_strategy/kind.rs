@@ -24,7 +24,13 @@ pub enum RedirectStrategyKind {
     /// `http` or `https`.
     PrivateNetwork,
 
-    /// Loopback, over `http` or `https`, on any port.
+    /// Loopback. Over `http`, a URI registered without a port matches any port
+    /// (Keycloak compares no port for it, RFC 8252 §7.3); over `https`, and
+    /// whenever a port is written, the match is exact.
+    ///
+    /// The asymmetry is observed rather than assumed — Keycloak 26.0.8,
+    /// 2026-09-06 — and it is why there is no `:*` spelling: that one matches
+    /// nothing at all.
     Development,
 
     /// A native application's own private-use URI scheme.
@@ -33,6 +39,25 @@ pub enum RedirectStrategyKind {
     /// again when it lands, and refused at validation until they do — see
     /// `identity::client_rules`.
     CustomScheme(AppScheme),
+}
+
+impl RedirectStrategyKind {
+    /// What this strategy admits, phrased for the message a refusal produces.
+    ///
+    /// Beside [`Display`](fmt::Display) rather than in `rules`, for the same
+    /// reason: both are how a kind describes *itself* to an operator, and a
+    /// refusal that names the strategy has to be able to say in the same
+    /// breath what that strategy would have taken. `rules` keeps the table of
+    /// which URI kinds are admitted, which is the decision; this is its
+    /// wording.
+    pub(crate) const fn admitted(&self) -> &'static str {
+        match self {
+            Self::ClaimedHttps => "only public https callbacks",
+            Self::PrivateNetwork => "only .internal callbacks, over http or https",
+            Self::Development => "only loopback callbacks — 127.0.0.1, ::1 or localhost",
+            Self::CustomScheme(_) => "only callbacks on the scheme it declares",
+        }
+    }
 }
 
 impl fmt::Display for RedirectStrategyKind {

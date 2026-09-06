@@ -70,12 +70,25 @@ fn mixed() -> DesiredStateError {
 }
 
 /// The refusal a private-use scheme produces.
+///
+/// It names **both** readings, because the classifier cannot tell them apart
+/// and only the operator can. `nz.fieldstate.slipway:/cb` is a native
+/// application's scheme; `www.example.com:/cb` is a host that lost its
+/// `https://`, and it reaches this arm because a forward domain is as
+/// syntactically valid a scheme as a reversed one. (The spelling with a port,
+/// `www.example.com:8080/cb`, does not reach here at all — the digit after the
+/// colon makes it a parse failure, which is a sharper answer.) Telling an
+/// operator only the first would send the author of the second to write a
+/// `customScheme` strategy for a typo.
 fn private_use() -> DesiredStateError {
     DesiredStateError::Migration {
         field: FIELD,
         replacement: REPLACEMENT,
-        detail: "it declares a private-use scheme, which v1 had no way to describe; migrate it to \
-                 v2 by hand under the customScheme strategy"
+        detail: "it declares something this model reads as a private-use scheme, which v1 had no \
+                 way to describe. If that is what it is — a native application's own scheme, in \
+                 reverse-domain form — migrate the client to v2 by hand under the customScheme \
+                 strategy. If it is a host that lost its https:// prefix, such as \
+                 www.example.com:/cb, write the scheme instead"
             .to_owned(),
     }
 }

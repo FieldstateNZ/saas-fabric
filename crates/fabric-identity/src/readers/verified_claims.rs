@@ -1,8 +1,16 @@
 //! Turning a presented token into claims the defence-in-depth posture trusts.
+//!
+//! The one line this file writes to the log carries a library's rendering of
+//! why a token failed, and that rendering can quote the token — a `kid`, an
+//! algorithm name, a claim value. So it goes through
+//! [`logging::sanitise`](crate::logging::sanitise), which is the platform's
+//! single enforcement point for the rule that a token-derived value is logged
+//! bounded and printable or not at all. Nothing here re-derives that rule.
 
 use fabric_core::Clock;
 use jsonwebtoken::{decode, decode_header, Validation};
 
+use crate::logging::sanitise;
 use crate::readers::{rejection, window, LeewaySeconds};
 use crate::{IdentityError, TokenClaims, VerificationKeys};
 
@@ -50,10 +58,15 @@ pub(crate) fn verify(
 
     let decoded = decode::<serde_json::Value>(token, key, validation).map_err(|error| {
         // The specific reason goes to the log, never to the caller: telling an
-        // attacker which check failed narrows their search for free.
+        // attacker which check failed narrows their search for free. It is
+        // sanitised on the way, because the reason is a library's rendering of
+        // a value the attacker supplied.
+        let reason = sanitise(&error.to_string());
+
         tracing::debug!(
             event = "identity.token_rejected",
-            reason = %error,
+            reason = %reason,
+            reason_truncated = reason.truncated,
             "bearer token failed verification"
         );
 

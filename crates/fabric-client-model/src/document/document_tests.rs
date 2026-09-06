@@ -232,6 +232,21 @@ fn a_v1_client_with_a_private_use_scheme_must_be_migrated_by_hand() {
 }
 
 #[test]
+fn a_v1_callback_that_reads_as_a_private_use_scheme_is_told_both_readings() {
+    // `www.example.com:/cb` classifies as a private-use scheme, and the
+    // classifier is right to: a forward domain is as syntactically valid a
+    // scheme as a reversed one, and there is no digit after the colon to say
+    // otherwise. So the migrator cannot know which the operator meant, and
+    // says so — telling them only "migrate it under customScheme" would send
+    // the author of a missing `https://` to write a strategy for a typo.
+    let text = v1_client_with(&["www.example.com:/cb"]);
+    let error = ClientDocument::parse(&text).unwrap_err();
+
+    assert!(error.to_string().contains("customScheme"), "{error}");
+    assert!(error.to_string().contains("lost its https://"), "{error}");
+}
+
+#[test]
 fn a_v1_client_carrying_a_redirect_block_is_refused_rather_than_read_two_ways() {
     let text = ACME.replace(
         "        redirectUris:\n",
@@ -255,10 +270,17 @@ fn a_v1_client_carrying_a_pkce_key_is_refused_rather_than_silently_overwritten()
         "        pkce: s256\n        redirectUris:\n",
     );
 
-    assert!(matches!(
-        ClientDocument::parse(&text),
-        Err(DesiredStateError::Migration { .. })
-    ));
+    let error = ClientDocument::parse(&text).unwrap_err();
+
+    assert!(matches!(error, DesiredStateError::Migration { .. }), "{error}");
+
+    // The message has to name the key that is actually in the way. It used to
+    // borrow the callback list's replacement text and say `pkce` "was replaced
+    // by redirect", which is false and sends an operator editing the one part
+    // of their client that is fine.
+    assert!(error.to_string().contains("pkce"), "{error}");
+    assert!(!error.to_string().contains("replaced by redirect"), "{error}");
+    assert!(error.to_string().contains("fabric.fieldstate.nz/v2"), "{error}");
 }
 
 #[test]

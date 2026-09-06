@@ -17,6 +17,15 @@ const KIND: &str = "redirect uri";
 /// What this model expects in place of a scheme it does not classify.
 const EXPECTED_SCHEME: &str = "https, http, or a private-use scheme in reverse-domain form";
 
+/// What this model expects when the scheme is one it classifies and nothing
+/// follows the colon that could be an authority.
+///
+/// Its own message rather than [`EXPECTED_SCHEME`]'s, which would be false
+/// here: `https:foo` names a scheme this model does classify, and telling its
+/// author the scheme is wrong sends them to the one part of the URI that is
+/// right.
+const EXPECTED_AUTHORITY: &str = "an authority after the scheme, as in https://host/path";
+
 /// What kind of callback a redirect URI is.
 ///
 /// The partition a redirect *strategy* is stated against: a client declares
@@ -78,9 +87,10 @@ impl fmt::Display for RedirectUriKind {
 ///
 /// Returns [`IdentifierError::Unadmitted`], naming the schemes this model
 /// classifies, for a scheme it does not — `javascript:`, `data:` and `file:`
-/// among them, and a `www.example.com:8080/cb` missing its scheme entirely —
-/// or an authority carrying userinfo, and whatever [`host_kind::classify`]
-/// refuses.
+/// among them — or an authority that is missing, carries userinfo, or is
+/// bracketed without being an IPv6 literal; whatever
+/// [`private_use_scheme::is_private_use`] refuses, which is a host and port
+/// wearing a scheme's shape; and whatever [`host_kind::classify`] refuses.
 pub(super) fn classify(value: &str) -> Result<RedirectUriKind, IdentifierError> {
     let unadmitted = || IdentifierError::Unadmitted {
         kind: KIND,
@@ -90,7 +100,7 @@ pub(super) fn classify(value: &str) -> Result<RedirectUriKind, IdentifierError> 
     let (scheme, rest) = value.split_once(':').ok_or_else(unadmitted)?;
     let scheme = scheme.to_ascii_lowercase();
 
-    if private_use_scheme::is_private_use(&scheme, rest) {
+    if private_use_scheme::is_private_use(&scheme, rest)? {
         return Ok(RedirectUriKind::PrivateUseScheme);
     }
 
@@ -99,8 +109,12 @@ pub(super) fn classify(value: &str) -> Result<RedirectUriKind, IdentifierError> 
         return Err(unadmitted());
     }
 
-    let authority = authority::of(rest.strip_prefix("//").ok_or_else(unadmitted)?);
+    let authority = authority::of(rest.strip_prefix("//").ok_or(IdentifierError::Unadmitted {
+        kind: KIND,
+        expected: EXPECTED_AUTHORITY,
+    })?);
     authority::reject_userinfo(authority)?;
+    authority::reject_brackets(authority)?;
 
     host_kind::classify(&authority::host(authority).to_ascii_lowercase(), secure)
 }

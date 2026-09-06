@@ -36,7 +36,9 @@ pub(crate) enum RedirectStrategyShape {
         uris: Vec<RedirectUri>,
     },
 
-    /// Loopback, on any port.
+    /// Loopback. Over `http`, a URI registered without a port matches any port
+    /// (Keycloak compares no port for it, RFC 8252 §7.3); over `https`, and
+    /// whenever a port is written, the match is exact.
     Development {
         /// The callbacks the identity provider should register.
         uris: Vec<RedirectUri>,

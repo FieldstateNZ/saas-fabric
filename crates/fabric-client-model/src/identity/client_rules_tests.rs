@@ -82,12 +82,16 @@ fn refuses_client(kind: &RedirectStrategyKind, uris: &[&str]) -> bool {
 /// Asserts a refusal's detail names the strategy, the URI's kind, and what
 /// the strategy admits — matrix D1's expectation for every row this helper
 /// covers.
+///
+/// The third assertion is against `kind.admitted()` itself rather than the
+/// word "admits". An operator is not helped by being told a strategy admits
+/// *something*; the point of the row is that the message says what.
 fn assert_names_strategy_kind_and_admission(kind: &RedirectStrategyKind, uris: &[&str], uri_kind: &str) {
     let detail = refusal_detail(kind, uris).unwrap_or_else(|| panic!("{kind} must refuse {uris:?}"));
 
     assert!(detail.contains(&kind.to_string()), "{detail}");
     assert!(detail.contains(uri_kind), "{detail}");
-    assert!(detail.contains("admits"), "{detail}");
+    assert!(detail.contains(kind.admitted()), "{detail}");
 }
 
 /// Whether validating this pairing was accepted.
@@ -222,33 +226,15 @@ fn a_trailing_path_wildcard_is_the_one_place_a_development_callback_may_use_one(
 #[test]
 fn a_loopback_callback_with_no_port_admits_any_port() {
     // RFC 8252 §7.3: a native application binds an ephemeral port, so the
-    // authorization server has to allow whichever one it got.
+    // authorization server has to allow whichever one it got. Observed on
+    // Keycloak 26.0.8, 2026-09-06: over `http` a loopback URI registered
+    // without a port matches the same path on any port. Over `https`, and
+    // whenever a port is written, the match is exact — which this model
+    // cannot enforce and does not claim to.
     assert!(accepts(
         &RedirectStrategyKind::Development,
         &["http://127.0.0.1/callback"]
     ));
-}
-
-#[test]
-fn a_wildcard_port_is_how_a_loopback_callback_says_any_port() {
-    assert!(accepts(
-        &RedirectStrategyKind::Development,
-        &["http://127.0.0.1:*/callback"]
-    ));
-}
-
-#[test]
-fn a_wildcard_port_is_only_meaningful_on_loopback() {
-    // The narrowing that pays for the parser's widening: a wildcard port on a
-    // public host is a redirect URI matching every port on that host.
-    let refusal = identity_with(
-        &RedirectStrategyKind::ClaimedHttps,
-        &["https://www.example.com:*/cb"],
-    )
-    .validate()
-    .unwrap_err();
-
-    assert!(refusal.to_string().contains("development"), "{refusal}");
 }
 
 #[test]

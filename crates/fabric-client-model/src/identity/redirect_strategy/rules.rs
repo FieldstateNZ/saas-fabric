@@ -32,7 +32,7 @@ fn complaint_about(kind: &RedirectStrategyKind, uri: &RedirectUri) -> Option<Str
         return Some(format!(
             "{uri} is {} and the {kind} strategy admits {}",
             uri.kind(),
-            admitted(kind)
+            kind.admitted()
         ));
     }
 
@@ -41,13 +41,6 @@ fn complaint_about(kind: &RedirectStrategyKind, uri: &RedirectUri) -> Option<Str
             "{uri} carries a path wildcard, which the {kind} strategy does not admit: RFC 9700 \
              §2.1 requires a redirect URI to be matched exactly, and a Universal Link or App Link \
              needs an exact URL in any case"
-        ));
-    }
-
-    if uri.has_wildcard_port() && !matches!(kind, RedirectStrategyKind::Development) {
-        return Some(format!(
-            "{uri} names every port, which only the development strategy admits: a wildcard port \
-             on any other host is a redirect URI matching every port on it"
         ));
     }
 
@@ -69,15 +62,5 @@ fn admits(kind: &RedirectStrategyKind, uri: &RedirectUri) -> bool {
             .split_once(':')
             .is_some_and(|(scheme, _)| scheme.eq_ignore_ascii_case(declared.as_str())),
         _ => false,
-    }
-}
-
-/// What a strategy admits, for the message a refusal produces.
-fn admitted(kind: &RedirectStrategyKind) -> &'static str {
-    match kind {
-        RedirectStrategyKind::ClaimedHttps => "only public https callbacks",
-        RedirectStrategyKind::PrivateNetwork => "only .internal callbacks, over http or https",
-        RedirectStrategyKind::Development => "only loopback callbacks — 127.0.0.1, ::1 or localhost",
-        RedirectStrategyKind::CustomScheme(_) => "only callbacks on the scheme it declares",
     }
 }

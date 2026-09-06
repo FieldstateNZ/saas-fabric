@@ -184,15 +184,15 @@ and none of it is re-narrated here; only the table above and the new section
 below reflect the later commit.
 
 The **Tests**, **Console tests** and **Console build** rows are newer still —
-counted on the lane rebased onto `e47d13a` (#66 merged), whose last code commit is "Harden the composed native-client test, and drain its
-background sweep"), the commit issue #61's identity-edge lane shipped on, in
-the `claude/m2-edge-trust-s4` worktree: `cargo test --workspace --exclude
-fabric-ndc-acceptance` (1921 passing, 0 failing, 1 ignored — the exclusion is
-a no-op today, since `fabric-ndc-acceptance` is not a member of this
-workspace), then `(cd apps/control-plane-ui && npm test -- --run && npm run
-build)` (91 passing, 0 failing; 229.27 kB / 70.24 kB gzipped). This
-documentation pass changes no code, so the numbers still hold on the commit
-it ships on.
+counted on issue #61's identity-edge lane rebased onto `e47d13a` (the tree
+after #66 merged), in the `claude/m2-edge-trust` worktree: `cargo test
+--workspace --exclude fabric-ndc-acceptance` (1940 passing, 0 failing,
+1 ignored — the exclusion is real on this tree: `fabric-ndc-acceptance` is a
+workspace member since #66, and its 44 tests are the `connector-acceptance`
+row's, run by CI in required mode), `npm test -- --run` (91 passing) and
+`npm run build` (229.27 kB, 70.24 kB gzipped). Everything else in the table
+is the M1-era run those rows superseded, or the connector-acceptance rows
+recorded under #66.
 
 The Architecture and Tests rows have moved once more since, for issue #62:
 this slice adds `fabric-ndc-acceptance`, a 22nd crate

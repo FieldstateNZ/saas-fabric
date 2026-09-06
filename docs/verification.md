@@ -33,7 +33,7 @@ is at the end, under "The control plane, end to end".
 | --- | --- | --- |
 | Formatting | `cargo fmt --all --check` | clean |
 | Lints | `cargo clippy --workspace --all-targets -- -D warnings` | 0 findings |
-| Tests | `cargo test --workspace --exclude fabric-ndc-acceptance` | TESTCOUNT passing, 0 failing, 1 ignored |
+| Tests | `cargo test --workspace --exclude fabric-ndc-acceptance` | 1940 passing, 0 failing, 1 ignored |
 | Docs | `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps` | 0 warnings |
 | Dependencies | `cargo deny check` | advisories, bans, licences, sources — all ok |
 | File sizes | `python3 scripts/check_file_sizes.py` | 0 over the 150-line limit (2 exempted, both explained) |
@@ -184,7 +184,7 @@ and none of it is re-narrated here; only the table above and the new section
 below reflect the later commit.
 
 The **Tests**, **Console tests** and **Console build** rows are newer still —
-counted on `deb5e59` ("Harden the composed native-client test, and drain its
+counted on the lane rebased onto `e47d13a` (#66 merged), whose last code commit is "Harden the composed native-client test, and drain its
 background sweep"), the commit issue #61's identity-edge lane shipped on, in
 the `claude/m2-edge-trust-s4` worktree: `cargo test --workspace --exclude
 fabric-ndc-acceptance` (1921 passing, 0 failing, 1 ignored — the exclusion is

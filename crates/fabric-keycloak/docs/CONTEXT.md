@@ -15,10 +15,14 @@ Three items, deliberately:
   -> Result<Self, String>`. Implements `fabric_reconciliation::IdentityProvider`.
 - `KeycloakConfig { base_url, admin_realm, client_id, http_timeout_seconds, audience }`
   — no credential; a provider is built per operator from the bearer they presented
-  + `validate()`. All non-secret; belongs in a `ConfigMap`. `audience` is the
-  string every declared client's mapper asserts — must equal the Data API's own
-  required audience in this deployment (ADR 0019 §1/§G5); this crate cannot
-  check that equality itself, since it is a cross-crate, cross-deployment fact.
+  + `validate()`. All non-secret; belongs in a `ConfigMap`. Every field but
+  `audience` has a `#[serde(default)]`; `audience` is **required** — a document
+  omitting it fails to deserialise rather than silently inheriting a guessed
+  value. It is the string every declared client's mapper asserts — must equal
+  the Data API's own required audience in this deployment, which is in turn
+  `IssuerRegistration.audience` in `fabric-fga-auth` (ADR 0019 §1 "The equality
+  constraint", and §G5); this crate cannot check that equality itself, since it
+  is a cross-crate, cross-deployment fact.
 - `AdminCredential::new(impl Into<String>)`. No `Display`; `Debug` prints
   `AdminCredential(redacted)`. `expose()` is `pub(crate)` and named to be
   conspicuous.
@@ -43,9 +47,15 @@ Everything else — `wire::*`, `admin::*` — is `pub(crate)`.
   `TokenResponse` (no `Debug`, holds a token). `ClientRepresentation` and
   `NewClientRepresentation` both carry `attributes` (the PKCE challenge method,
   `pkce.code.challenge.method`, and the post-logout redirect set,
-  `post.logout.redirect.uris`) and `protocolMappers` (the audience mapper,
-  `oidc-audience-mapper` / `included.custom.audience`) — the four Keycloak
-  vocabulary strings live as `const`s in `wire/oidc_client.rs` and nowhere else.
+  `post.logout.redirect.uris` — both `const`s in `wire/oidc_client.rs`) and
+  `protocolMappers` (the audience mapper, `oidc-audience-mapper` /
+  `included.custom.audience` — both `const`s in `wire/protocol_mapper.rs`,
+  split out because a protocol mapper's read shape and write shape are one
+  Keycloak concept but not one Rust type). All four vocabulary strings are
+  scanned for outside this crate's own `src`/`tests`/`benches`/`examples` by
+  `check_adapter_containment` — they are not absent from the workspace
+  entirely, and do appear in this crate's own tests, in
+  `scripts/e2e-services.sh`, and in ADR 0014.
 - `provider::declaration` — builds the representation a create or update
   sends, from an `OidcClient` and the adapter's configured audience. Refuses
   (`ProviderError::Rejected`) a `customScheme` client that reached the adapter

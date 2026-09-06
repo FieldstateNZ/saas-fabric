@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use fabric_client_model::{OidcClient, RedirectStrategyKind};
+use fabric_client_model::{OidcClient, RedirectStrategyKind, CUSTOM_SCHEME_PHASE};
 use fabric_reconciliation::ProviderError;
 
 use crate::wire::{
@@ -39,11 +39,14 @@ pub(super) fn declaration<'a>(
         RedirectStrategyKind::ClaimedHttps
         | RedirectStrategyKind::PrivateNetwork
         | RedirectStrategyKind::Development => {}
-        RedirectStrategyKind::CustomScheme(_) => {
+        RedirectStrategyKind::CustomScheme(scheme) => {
             return Err(ProviderError::Rejected {
-                detail: "a customScheme client reached the adapter, which cannot write one \
-                         (Lane E phase 2); this is a validation regression, not a Keycloak refusal"
-                    .to_owned(),
+                detail: format!(
+                    "{} declares the private-use scheme {scheme}, which reached the adapter; \
+                     writing a customScheme client is not yet reconciled ({CUSTOM_SCHEME_PHASE}), \
+                     so this is a validation regression, not a Keycloak refusal",
+                    client.id
+                ),
             });
         }
     }

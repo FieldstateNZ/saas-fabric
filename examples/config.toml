@@ -144,6 +144,14 @@ mode = "trusted_ingress"
 # is refused rather than skipping the issuer check. Omitting the setting
 # entirely means the claim is not examined at all.
 #
+# `audiences` is this deployment's Data API audience string (ADR 0019 §1 "The
+# equality constraint", and §G5) — the **same string**, not merely a similar
+# one, as `[identity_provider].audience` in `examples/control-plane.toml`, the
+# control plane's own configuration. That is a different process, loaded from
+# a different file, and required to agree on this one value: the Keycloak
+# client's audience mapper writes what that setting names, and this setting
+# is what a token is checked against on the way in.
+#
 # `issuers` here and [identity].trusted_issuers above are two lists of the same
 # issuers, for two different jobs: this one decides whose signature is accepted,
 # that one decides which tenant an issuer names. **They must name the same

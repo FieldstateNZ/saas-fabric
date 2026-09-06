@@ -19,9 +19,20 @@ admin token exchange are `pub(crate)`. Nothing outside this crate can name them,
 and `scripts/check_architecture.py` fails the build if anything tries. The same
 containment covers the four Keycloak-specific strings this crate writes and
 reads for a client's identity contract: the `pkce.code.challenge.method` and
-`post.logout.redirect.uris` attribute keys, and the `oidc-audience-mapper`
-mapper type with its `included.custom.audience` config key. All four are
-`const`s in `wire/oidc_client.rs` and appear nowhere else in the workspace.
+`post.logout.redirect.uris` attribute keys (`wire/oidc_client.rs`), and the
+`oidc-audience-mapper` mapper type with its `included.custom.audience` config
+key (`wire/protocol_mapper.rs`).
+
+**"Nowhere else" means nowhere else in this crate's own `src`, not nowhere in
+the workspace.** `check_adapter_containment` scans every *other* crate's `src`,
+`tests`, `benches` and `examples` for exactly these strings — it does not scan
+this crate's own tests, and it does not scan shell scripts or documentation at
+all. All four already appear in this crate's `tests/`, because a test has to
+name the wire format it is asserting against; `oidc-audience-mapper` also
+appears in `scripts/e2e-services.sh`'s Keycloak fixture setup and in
+[ADR 0014](../../../docs/decisions/0014-fabric-calls-openfga-as-the-operator.md).
+None of that is a containment failure — it is outside what the check is
+written to police, which is Rust code in a crate that is not this one.
 
 That is the same containment ADR 0001 applies to the NDC protocol in the runtime
 plane, for the same reason: a representation that escapes its adapter turns the

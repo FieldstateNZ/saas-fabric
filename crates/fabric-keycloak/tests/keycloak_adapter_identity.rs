@@ -177,6 +177,47 @@ async fn an_unmodellable_redirect_uri_is_counted_rather_than_dropped() {
 }
 
 #[tokio::test]
+async fn two_audience_mappers_are_observed_as_no_single_audience() {
+    // A second `oidc-audience-mapper` added out of band — this adapter never
+    // writes more than one, but Keycloak has no opinion about that, and it
+    // returns mappers in its own order rather than write order. "First"
+    // would silently pick whichever one Keycloak happens to list first;
+    // "exactly one" is the only reading that cannot hide a second mapper
+    // from every sweep (see `audience_mapper`'s rustdoc).
+    let keycloak = FakeKeycloak::start(Arc::new(|request: &RecordedRequest| match request.path.as_str() {
+        path if path.starts_with("/admin/realms/acme/roles") => (200, "[]".to_owned()),
+        path if path.starts_with("/admin/realms/acme/clients") => (
+            200,
+            format!(
+                r#"[{{"id":"uuid-1","clientId":"web","redirectUris":[],"publicClient":true,"protocolMappers":[
+                    {{"protocolMapper":"oidc-audience-mapper","config":{{"included.custom.audience":"{AUDIENCE}"}}}},
+                    {{"protocolMapper":"oidc-audience-mapper","config":{{"included.custom.audience":"an-out-of-band-audience"}}}}
+                ]}}]"#
+            ),
+        ),
+        "/admin/realms/acme" => (200, r#"{"displayName":"Acme"}"#.to_owned()),
+        _ => (404, "{}".to_owned()),
+    }))
+    .await;
+
+    let observed = provider(&keycloak)
+        .observe_realm(&realm())
+        .await
+        .unwrap()
+        .expect("the realm exists");
+
+    let client = observed
+        .clients
+        .get(&web_client().id)
+        .expect("the client is reported");
+
+    assert_eq!(
+        client.audience_mapper, None,
+        "two audience mappers must read as no single audience, not as either one of them"
+    );
+}
+
+#[tokio::test]
 async fn a_declared_native_client_round_trips_through_the_wire_unchanged() {
     let write = FakeKeycloak::start(Arc::new(|_: &RecordedRequest| (201, String::new()))).await;
 
@@ -287,6 +328,19 @@ async fn an_update_carries_the_mapper_and_attributes_again() {
         "an update must send the same declaration as a create, or the mapper and attributes \
          written once could silently fall out of step on the next sweep"
     );
+
+    // `post.body == put.body` alone would also pass if both calls dropped the
+    // mapper and attributes identically — it proves the two calls agree, not
+    // that either carries the right thing. Pin the PUT body's own content so
+    // this test is mutation-proof by itself, not only in combination with
+    // `a_declared_client_is_written_with_the_platform_audience_mapper` and its
+    // siblings.
+    assert!(put.body.contains(r#""pkce.code.challenge.method":"S256""#));
+    assert!(put.body.contains(r#""post.logout.redirect.uris":"+""#));
+    assert!(put.body.contains(r#""oidc-audience-mapper""#));
+    assert!(put
+        .body
+        .contains(&format!(r#""included.custom.audience":"{AUDIENCE}""#)));
 }
 
 #[tokio::test]

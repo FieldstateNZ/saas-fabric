@@ -1,4 +1,12 @@
 //! Reading a realm's application clients.
+//!
+//! In the 121–150 line band: this is one read (`read`) and the three small,
+//! pure decompositions it exists to keep readable — `partition_uris`,
+//! `challenge_method`, `audience_mapper` — each turning one field of
+//! Keycloak's wire shape into the one thing `ObservedOidcClient` needs from
+//! it. None of the four is reused, tested, or meaningful outside this read,
+//! so splitting them into their own files would scatter one concept across
+//! four, not separate two.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -61,7 +69,10 @@ pub(super) async fn read(
 /// An unparseable redirect URI is drift, not silence (ADR 0019 §6): the count
 /// travels so reconciliation can rewrite the client, but the value never
 /// does — it is attacker-influenced text with no reason to reach a plan, a
-/// log line, or an API response.
+/// log line, or an API response. The parsed side is a *set*, so two raw
+/// entries that parse to the same [`RedirectUri`] collapse into one member —
+/// the unmodellable count is not `raw.len() - parsed.len()`, it is exactly
+/// the number of entries that failed to parse.
 fn partition_uris(raw: &[String]) -> (BTreeSet<RedirectUri>, usize) {
     let mut parsed = BTreeSet::new();
     let mut unmodellable = 0_usize;
@@ -90,14 +101,35 @@ fn challenge_method(attributes: &BTreeMap<String, String>) -> Option<PkceMethod>
     (value == PkceMethod::S256.as_wire_value()).then_some(PkceMethod::S256)
 }
 
-/// The configured audience of a client's first `oidc-audience-mapper`, if it
-/// has one. "First": this adapter never writes more than one, but nothing
-/// stops an operator adding a second by hand — that is drift for the
-/// reconciler to notice some other way, not something this read enumerates.
+/// The configured audience of a client's `oidc-audience-mapper`, only when
+/// there is **exactly one**.
+///
+/// Zero mappers and several mappers both read as `None`, on purpose. This is
+/// not "first wins": Keycloak returns a client's mappers in its own order,
+/// unrelated to write order, so treating the first hit as *the* mapper would
+/// mean a second one added out of band — by hand, or by anything else that
+/// can reach the admin API — is invisible to every sweep. `matches` would
+/// report converged while a mapper this adapter never wrote sat right next to
+/// the one it did.
+///
+/// Collapsing "none" and "more than one" into the same `None` is safe because
+/// the correction is identical either way: `declaration()` always writes the
+/// full mapper set, and Keycloak's `PUT` **replaces** it rather than merging
+/// (verified against a real Keycloak 26.0.8; see `docs/verification.md`), so
+/// "not exactly one" is drift with the same fix as "absent" — a full rewrite
+/// down to one mapper, this adapter's. There is no other drift for the
+/// reconciler to notice some other way: observation stays a flat fact about
+/// what is currently true, not a count for a caller to interpret.
 fn audience_mapper(mappers: &[ProtocolMapperRepresentation]) -> Option<String> {
-    mappers
+    let mut matching = mappers
         .iter()
-        .find(|mapper| mapper.protocol_mapper == AUDIENCE_MAPPER_TYPE)
-        .and_then(|mapper| mapper.config.get(AUDIENCE_MAPPER_CONFIG_KEY))
-        .cloned()
+        .filter(|mapper| mapper.protocol_mapper == AUDIENCE_MAPPER_TYPE);
+
+    let only = matching.next()?;
+
+    if matching.next().is_some() {
+        return None;
+    }
+
+    only.config.get(AUDIENCE_MAPPER_CONFIG_KEY).cloned()
 }

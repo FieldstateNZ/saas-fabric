@@ -528,7 +528,7 @@ PKCE.** There is no representable alternative, at either end.
   and no `publicClient: false` path
   (`crates/fabric-client-model/src/identity/oidc_client.rs:20-27`), and
   `declaration()` hard-codes `public_client: true`
-  (`crates/fabric-keycloak/src/provider/mutate.rs:123`). Confidential clients
+  (`crates/fabric-keycloak/src/provider/declaration.rs:70`). Confidential clients
   are **out of scope** here: they need a secret, secrets never enter desired
   state (§4), and ADR 0008 left secret delivery undesigned. The follow-on is
   named under "What this does not decide".

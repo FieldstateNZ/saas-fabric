@@ -20,6 +20,7 @@ mod validation_tests;
 
 use crate::{RealmName, RoleName};
 
+pub use client_rules::CUSTOM_SCHEME_PHASE;
 pub use oidc_client::{ClientProtocol, OidcClient};
 pub use pkce_method::PkceMethod;
 pub use redirect_strategy::{RedirectStrategy, RedirectStrategyKind};

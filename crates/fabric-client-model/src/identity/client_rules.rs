@@ -11,7 +11,13 @@ use crate::{DesiredStateError, OidcClient, RedirectStrategyKind};
 const FIELD: &str = "spec.identity.clients";
 
 /// The phase that will carry a private-use scheme end to end.
-const CUSTOM_SCHEME_PHASE: &str = "Lane E phase 2";
+///
+/// `pub`, not `pub(crate)`: the Keycloak adapter's own refusal of a
+/// `customScheme` client that bypassed this validation (a regression, not a
+/// normal path — see `fabric_keycloak::provider::declaration`) names the same
+/// phase, and a hard-coded copy there is exactly the kind of string that
+/// drifts the moment this one changes.
+pub const CUSTOM_SCHEME_PHASE: &str = "Lane E phase 2";
 
 /// Checks one declared application client.
 ///

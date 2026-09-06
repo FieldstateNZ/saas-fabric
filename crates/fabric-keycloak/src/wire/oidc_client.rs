@@ -1,12 +1,14 @@
 //! Keycloak's client representation.
 //!
-//! In the 121–150 line band: a cohesive wire-format type per
-//! `docs/architecture/file-size-policy.md` — the read shape, the write shape
-//! and their one shared mapper type, plus the four vocabulary strings this
-//! crate exists to contain. Splitting read from write would separate one
-//! protocol's two directions, not two concepts.
+//! The read shape, the write shape, and the two vocabulary strings this file
+//! owns. Splitting read from write would separate one protocol's two
+//! directions, not two concepts. The mapper types both shapes embed live in
+//! `protocol_mapper.rs` instead — a concept of its own; see that module's doc
+//! for why a protocol mapper needed splitting out while a client did not.
 
 use std::collections::BTreeMap;
+
+use super::protocol_mapper::{AudienceMapper, ProtocolMapperRepresentation};
 
 /// Attribute key: the PKCE challenge method Keycloak enforces at its
 /// authorization endpoint (RFC 7636 §4.3). The *value* (`S256`) is not this
@@ -18,13 +20,6 @@ pub(crate) const PKCE_CHALLENGE_METHOD_ATTRIBUTE: &str = "pkce.code.challenge.me
 /// written as the literal value `+`, Keycloak's shorthand for "this client's
 /// registered redirect URIs" — one list, so a second cannot drift from it.
 pub(crate) const POST_LOGOUT_REDIRECT_URIS_ATTRIBUTE: &str = "post.logout.redirect.uris";
-
-/// Keycloak's built-in protocol mapper type that adds a fixed string to a
-/// token's `aud` claim.
-pub(crate) const AUDIENCE_MAPPER_TYPE: &str = "oidc-audience-mapper";
-
-/// The `oidc-audience-mapper`'s config key carrying the audience string.
-pub(crate) const AUDIENCE_MAPPER_CONFIG_KEY: &str = "included.custom.audience";
 
 /// An application client as Keycloak reports it.
 #[derive(Debug, serde::Deserialize)]
@@ -59,20 +54,6 @@ pub(crate) struct ClientRepresentation {
     /// exists.
     #[serde(rename = "protocolMappers", default)]
     pub(crate) protocol_mappers: Vec<ProtocolMapperRepresentation>,
-}
-
-/// One protocol mapper, as Keycloak reports it. Only the two fields
-/// observation needs — which mapper type it is, and its config — everything
-/// else Keycloak returns (`id`, `consentRequired`, …) is never read.
-#[derive(Debug, serde::Deserialize)]
-pub(crate) struct ProtocolMapperRepresentation {
-    /// Which kind of mapper this is, e.g. `oidc-audience-mapper`.
-    #[serde(rename = "protocolMapper")]
-    pub(crate) protocol_mapper: String,
-
-    /// The mapper's settings.
-    #[serde(default)]
-    pub(crate) config: BTreeMap<String, String>,
 }
 
 /// An application client as SaaS Fabric declares it.
@@ -119,32 +100,4 @@ pub(crate) struct NewClientRepresentation<'a> {
     /// The client's protocol mappers. Exactly one today: the audience mapper.
     #[serde(rename = "protocolMappers")]
     pub(crate) protocol_mappers: Vec<AudienceMapper<'a>>,
-}
-
-/// The audience mapper every declared client carries.
-///
-/// Keycloak's `oidc-audience-mapper` adds a fixed string to a token's `aud`
-/// claim. The edge's audience check (ADR 0019 §G5) refuses every genuine token
-/// until this mapper exists on the client that issued it.
-///
-/// `config` is a plain map, not a named type: of its three keys, only
-/// `included.custom.audience` (see [`AUDIENCE_MAPPER_CONFIG_KEY`]) is
-/// vocabulary this crate owns — `access.token.claim` and `id.token.claim` are
-/// Keycloak's generic "which token carries this claim" switches, shared by
-/// every mapper type.
-#[derive(Debug, serde::Serialize)]
-pub(crate) struct AudienceMapper<'a> {
-    /// A fixed, human-readable name. Keycloak requires one; nothing reads it
-    /// back.
-    pub(crate) name: &'static str,
-
-    /// Always `openid-connect`, matching the client's own protocol.
-    pub(crate) protocol: &'static str,
-
-    /// Keycloak's built-in mapper type that adds a custom audience string.
-    #[serde(rename = "protocolMapper")]
-    pub(crate) protocol_mapper: &'static str,
-
-    /// The mapper's settings — see the type-level note on its keys.
-    pub(crate) config: BTreeMap<&'static str, &'a str>,
 }

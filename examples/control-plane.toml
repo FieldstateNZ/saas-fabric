@@ -141,7 +141,7 @@ path = "examples/clients"
 #     base_url = "http://keycloak-http.identity.svc.cluster.local"
 #     admin_realm = "master"
 #     client_id = "saas-fabric"
-#     audience = "saas-fabric-data-api"
+#     audience = "saas-fabric"
 #
 # **There is no credential here, and that is the design.** The platform holds
 # no authority over Keycloak of its own: it acts as the operator who asked,
@@ -149,10 +149,15 @@ path = "examples/clients"
 # person in the master realm rather than to a service account (ADR 0012).
 #
 # `audience` is the string every declared client's mapper asserts, and it must
-# equal the Data API's own required audience in this deployment (ADR 0019
-# §1/§G5 — one API audience per deployment). Nothing here can check that the
-# two settings agree; a mismatch does not fail loudly, it makes the edge
-# refuse every genuine token from every client this adapter writes.
+# be the **same string** as the Data API's own required audience in this
+# deployment (ADR 0019 §1 "The equality constraint", and §G5 — one API
+# audience per deployment). That other setting is `[token].audiences` in
+# `examples/config.toml`, the runtime plane's own configuration — a different
+# process, loaded from a different file, required to agree on this one value.
+# Nothing here can check that the two settings agree; a mismatch does not fail
+# loudly, it makes the edge refuse every genuine token from every client this
+# adapter writes. `audience` has no built-in default for exactly this reason
+# — see `KeycloakConfig::audience`'s rustdoc in `fabric-keycloak`.
 #
 # Two things follow. The OIDC operator posture becomes required, because a
 # trusted header asserts a name and lends nothing. And convergence happens when

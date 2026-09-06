@@ -97,7 +97,38 @@ jobs:
       - run: rustup toolchain install
       - run: rustup show active-toolchain
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test --workspace
+      # fabric-ndc-acceptance is excluded so one job owns the claim "the
+      # connector acceptance suite passed" -- the connector-acceptance job
+      # below, which runs it with FABRIC_REQUIRE_CONNECTOR_ACCEPTANCE=1 so it
+      # can never go green without a real connector actually answering.
+      # Without the exclusion this job would also run those tests, but with
+      # the requirement unset -- silently skipped on a runner with no Docker
+      # daemon reachable the way this job expects, and silently run for real
+      # on one that does, either way without the honesty the dedicated job
+      # enforces.
+      - run: cargo test --workspace --exclude fabric-ndc-acceptance
+
+  connector-acceptance:
+    name: cargo test -p fabric-ndc-acceptance (real ndc-postgres)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # See "The toolchain" above: installs exactly what rust-toolchain.toml
+      # pins, then records which version ran.
+      - run: rustup toolchain install
+      - run: rustup show active-toolchain
+      - uses: Swatinem/rust-cache@v2
+      # GitHub-hosted `ubuntu-latest` ships Docker preinstalled and can pull
+      # normally, so this needs no `services:` block -- the suite drives
+      # `docker` itself (crates/fabric-ndc-acceptance/tests/support/docker/),
+      # which is also what lets it start a second connector configuration and
+      # the nginx impostor alongside the first. Required mode turns "no
+      # Docker" and "the pinned image isn't the one that ran" from a silent
+      # skip into a failure naming what was missing
+      # (tests/support/gate.rs, tests/support/docker/containers.rs).
+      - run: cargo test -p fabric-ndc-acceptance
+        env:
+          FABRIC_REQUIRE_CONNECTOR_ACCEPTANCE: "1"
 
   deny:
     name: cargo deny check

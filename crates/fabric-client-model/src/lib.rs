@@ -55,8 +55,11 @@ mod secrets;
 
 pub use authorization::{AuthorizationConfiguration, Relation, ResourceAuthorization};
 pub use client::Client;
-pub use document::{ClientDocument, API_VERSION, KIND};
+pub use document::{ClientDocument, API_VERSION, API_VERSION_V2, KIND};
 pub use errors::DesiredStateError;
-pub use identity::{required_roles, ClientProtocol, IdentityConfiguration, OidcClient, RedirectUri};
+pub use identity::{
+    required_roles, AppScheme, ClientProtocol, IdentityConfiguration, OidcClient, PkceMethod,
+    RedirectStrategy, RedirectStrategyKind, RedirectUri, RedirectUriKind,
+};
 pub use ids::{ClientId, ClientRevision, Host, OidcClientId, RealmName, RelationName, RoleName};
 pub use secrets::{SecretNamespace, SecretsConfiguration};

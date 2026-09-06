@@ -4,8 +4,8 @@
 //! from the shape being checked, and because every one of them is a rule an
 //! operator can break from the UI — so each deserves its own explanation.
 
-use crate::identity::required_roles;
-use crate::{DesiredStateError, IdentityConfiguration, OidcClient};
+use crate::identity::{client_rules, required_roles};
+use crate::{DesiredStateError, IdentityConfiguration};
 
 impl IdentityConfiguration {
     /// Checks everything the type system cannot.
@@ -62,29 +62,9 @@ impl IdentityConfiguration {
                 });
             }
 
-            check_client_is_usable(client)?;
+            client_rules::check(client)?;
         }
 
         Ok(())
     }
-}
-
-/// Refuses a client that could never complete an authentication flow.
-///
-/// A client with no redirect URI is not a client that is "not finished yet" —
-/// reconciliation would create it, Keycloak would accept it, and the first
-/// login attempt would fail with an error the operator sees weeks later and in
-/// a different system.
-fn check_client_is_usable(client: &OidcClient) -> Result<(), DesiredStateError> {
-    if client.redirect_uris.is_empty() {
-        return Err(DesiredStateError::InvalidField {
-            field: "spec.identity.clients",
-            detail: format!(
-                "{} declares no redirect URI, so it could never sign a user in",
-                client.id
-            ),
-        });
-    }
-
-    Ok(())
 }

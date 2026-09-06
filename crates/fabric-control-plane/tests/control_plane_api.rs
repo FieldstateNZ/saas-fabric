@@ -22,7 +22,11 @@ fn identity_with_extra_role() -> Body {
             "clients": [{
                 "id": "web",
                 "type": "oidc",
-                "redirectUris": ["https://www.example.com/callback"],
+                "pkce": "s256",
+                "redirect": {
+                    "strategy": "claimedHttps",
+                    "uris": ["https://www.example.com/callback"],
+                },
             }],
         })
         .to_string(),

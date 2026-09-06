@@ -9,7 +9,8 @@ mod support;
 
 use std::sync::{Arc, Mutex};
 
-use fabric_client_model::{ClientProtocol, OidcClient, OidcClientId, RealmName, RedirectUri, RoleName};
+use fabric_client_model::{ClientProtocol, OidcClient, OidcClientId, PkceMethod, RealmName, RoleName};
+use fabric_client_model::{RedirectStrategy, RedirectStrategyKind, RedirectUri};
 use fabric_keycloak::{KeycloakConfig, KeycloakIdentityProvider};
 use fabric_reconciliation::{IdentityProvider, ProviderError};
 use support::{FakeKeycloak, RecordedRequest};
@@ -22,7 +23,12 @@ fn web_client() -> OidcClient {
     OidcClient {
         id: OidcClientId::try_new("web").unwrap(),
         protocol: ClientProtocol::Oidc,
-        redirect_uris: vec![RedirectUri::try_new("https://www.example.com/callback").unwrap()],
+        pkce: PkceMethod::S256,
+        redirect: RedirectStrategy::try_new(
+            RedirectStrategyKind::ClaimedHttps,
+            vec![RedirectUri::try_new("https://www.example.com/callback").unwrap()],
+        )
+        .unwrap(),
     }
 }
 

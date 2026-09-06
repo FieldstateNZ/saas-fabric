@@ -74,7 +74,7 @@ pub fn plan(client: &Client, observed: Option<&ObservedRealm>) -> IdentityPlan {
 /// cannot be expressed — so a client the provider holds as confidential does
 /// not match, and gets corrected.
 fn matches(declared: &OidcClient, existing: &ObservedOidcClient) -> bool {
-    let declared_uris: BTreeSet<_> = declared.redirect_uris.iter().cloned().collect();
+    let declared_uris: BTreeSet<_> = declared.redirect.uris().iter().cloned().collect();
 
     existing.public && existing.redirect_uris == declared_uris
 }

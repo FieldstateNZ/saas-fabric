@@ -123,7 +123,8 @@ fn declaration(client: &OidcClient) -> NewClientRepresentation<'_> {
         public_client: true,
         standard_flow_enabled: true,
         redirect_uris: client
-            .redirect_uris
+            .redirect
+            .uris()
             .iter()
             .map(|uri| uri.as_str().to_owned())
             .collect(),

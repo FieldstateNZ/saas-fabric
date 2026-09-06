@@ -1,9 +1,10 @@
 //! Tests for reading and editing a stored client document.
 
 use crate::{ClientDocument, DesiredStateError, IdentityConfiguration, RealmName, RoleName};
+use crate::{RedirectStrategyKind, RedirectUriKind};
 
-/// A document with a section this model does not model, so preservation can be
-/// asserted rather than assumed.
+/// A `v1` document with a section this model does not model, so both
+/// preservation and the migrator are asserted rather than assumed.
 const ACME: &str = r"
 apiVersion: fabric.fieldstate.nz/v1
 kind: Client
@@ -31,8 +32,59 @@ spec:
       class: dedicated
 ";
 
+/// The same client, written in the shape this model now writes.
+const ACME_V2: &str = r"
+apiVersion: fabric.fieldstate.nz/v2
+kind: Client
+metadata:
+  name: acme
+spec:
+  displayName: Acme
+  identity:
+    realm: acme
+    roles:
+      - Client Realm Administrator
+      - Client Realm User
+    clients:
+      - id: web
+        type: oidc
+        pkce: s256
+        redirect:
+          strategy: claimedHttps
+          uris:
+            - https://www.example.com/callback
+";
+
 fn acme() -> ClientDocument {
     ClientDocument::parse(ACME).unwrap()
+}
+
+/// A `v1` document whose one client declares the given callbacks.
+fn v1_client_with(uris: &[&str]) -> String {
+    let mut listed = String::new();
+    for uri in uris {
+        listed.push_str("          - ");
+        listed.push_str(uri);
+        listed.push('\n');
+    }
+
+    ACME.replace(
+        "        redirectUris:\n          - https://www.example.com/callback\n",
+        &format!("        redirectUris:\n{listed}"),
+    )
+}
+
+/// The strategy the migrator read a `v1` client's callbacks as.
+fn migrated_strategy(uris: &[&str]) -> RedirectStrategyKind {
+    ClientDocument::parse(&v1_client_with(uris))
+        .unwrap_or_else(|error| panic!("{uris:?} must migrate: {error}"))
+        .into_client()
+        .identity
+        .clients
+        .swap_remove(0)
+        .redirect
+        .kind()
+        .clone()
 }
 
 #[test]
@@ -59,12 +111,145 @@ fn a_document_of_another_kind_is_refused_as_the_wrong_kind() {
 
 #[test]
 fn a_future_api_version_is_refused_rather_than_read_as_this_one() {
-    let text = ACME.replace("fabric.fieldstate.nz/v1", "fabric.fieldstate.nz/v2");
+    // Re-pointed at `v3` when `v2` shipped, so the rule it pins — an unknown
+    // version is refused, not read as the one this model understands —
+    // survives with its meaning intact.
+    let text = ACME.replace("fabric.fieldstate.nz/v1", "fabric.fieldstate.nz/v3");
 
     assert!(matches!(
         ClientDocument::parse(&text),
         Err(DesiredStateError::UnknownDocumentKind { .. })
     ));
+}
+
+#[test]
+fn a_v2_document_reads_as_what_it_declares() {
+    let client = ClientDocument::parse(ACME_V2).unwrap().into_client();
+    let web = &client.identity.clients[0];
+
+    assert_eq!(web.pkce, crate::PkceMethod::S256);
+    assert_eq!(web.redirect.kind(), &RedirectStrategyKind::ClaimedHttps);
+    assert_eq!(web.redirect.uris().len(), 1);
+}
+
+#[test]
+fn a_v2_client_must_state_its_pkce_method() {
+    // No default, following `type: oidc`'s precedent rather than
+    // contradicting it: a defaulted field is a meaning a document acquires
+    // without saying it, and the whole point of this one is that it is said.
+    let text = ACME_V2.replace("        pkce: s256\n", "");
+
+    assert!(matches!(
+        ClientDocument::parse(&text),
+        Err(DesiredStateError::Malformed { .. })
+    ));
+}
+
+#[test]
+fn a_plain_pkce_method_is_refused_by_the_document() {
+    let text = ACME_V2.replace("pkce: s256", "pkce: plain");
+
+    assert!(matches!(
+        ClientDocument::parse(&text),
+        Err(DesiredStateError::Malformed { .. })
+    ));
+}
+
+#[test]
+fn a_v2_document_carrying_the_replaced_field_is_told_what_replaced_it() {
+    // Checked beside the document kind, for the reason already recorded there:
+    // serde's "unknown field" would send an operator looking for a field their
+    // document was never supposed to have.
+    let text = ACME_V2.replace(
+        "        redirect:\n          strategy: claimedHttps\n          uris:\n",
+        "        redirectUris:\n",
+    );
+
+    let error = ClientDocument::parse(&text).unwrap_err();
+
+    assert!(matches!(error, DesiredStateError::Migration { .. }), "{error}");
+    assert!(error.to_string().contains("redirect"), "{error}");
+    assert!(error.to_string().contains("strategy"), "{error}");
+}
+
+#[test]
+fn a_v1_document_keeps_parsing_with_the_field_it_was_written_with() {
+    // The pre-check above applies to `v2` only. In a `v1` document
+    // `redirectUris` is not a mistake, it is the schema.
+    let client = acme().into_client();
+
+    assert_eq!(client.identity.clients[0].pkce, crate::PkceMethod::S256);
+    assert_eq!(client.identity.clients[0].redirect.uris().len(), 1);
+}
+
+#[test]
+fn a_v1_client_with_only_public_callbacks_reads_as_claimed_https() {
+    assert_eq!(
+        migrated_strategy(&["https://www.example.com/cb", "https://api.example.com/cb"]),
+        RedirectStrategyKind::ClaimedHttps
+    );
+}
+
+#[test]
+fn a_v1_client_with_only_internal_callbacks_reads_as_private_network() {
+    assert_eq!(
+        migrated_strategy(&["http://acme.lucentroot.internal/cb", "https://x.internal/cb"]),
+        RedirectStrategyKind::PrivateNetwork
+    );
+}
+
+#[test]
+fn a_v1_client_with_only_loopback_callbacks_reads_as_development() {
+    assert_eq!(
+        migrated_strategy(&["http://localhost:5173/cb", "http://127.0.0.1:8080/cb"]),
+        RedirectStrategyKind::Development
+    );
+}
+
+#[test]
+fn a_v1_client_mixing_callback_kinds_must_be_migrated_by_hand() {
+    // Refused rather than resolved: a client holding both a production
+    // callback and a loopback one is the exact ambiguity the strategy exists
+    // to remove, and picking the looser one would silently grant an
+    // entitlement the operator never stated.
+    let text = v1_client_with(&["https://www.example.com/cb", "http://localhost:5173/cb"]);
+    let error = ClientDocument::parse(&text).unwrap_err();
+
+    assert!(matches!(error, DesiredStateError::Migration { .. }), "{error}");
+    assert!(error.to_string().contains("redirect"), "{error}");
+}
+
+#[test]
+fn a_v1_client_with_a_private_use_scheme_must_be_migrated_by_hand() {
+    // Cannot arise from a document `v1` could hold, because those schemes did
+    // not parse before this change. The arm exists so the migrator stays total
+    // now that they do.
+    let text = v1_client_with(&["nz.fieldstate.slipway:/cb"]);
+    let error = ClientDocument::parse(&text).unwrap_err();
+
+    assert!(matches!(error, DesiredStateError::Migration { .. }), "{error}");
+    assert!(error.to_string().contains("customScheme"), "{error}");
+}
+
+#[test]
+fn a_v1_client_carrying_a_redirect_block_is_refused_rather_than_read_two_ways() {
+    let text = ACME.replace(
+        "        redirectUris:\n",
+        "        redirect:\n          strategy: claimedHttps\n        redirectUris:\n",
+    );
+
+    assert!(matches!(
+        ClientDocument::parse(&text),
+        Err(DesiredStateError::Migration { .. })
+    ));
+}
+
+#[test]
+fn a_migrated_callback_keeps_the_kind_it_was_written_as() {
+    let client = acme().into_client();
+    let web = &client.identity.clients[0];
+
+    assert_eq!(web.redirect.uris()[0].kind(), RedirectUriKind::Https);
 }
 
 #[test]
@@ -129,6 +314,54 @@ fn editing_identity_preserves_every_other_section() {
     assert!(rendered.contains("class: dedicated"));
     assert!(rendered.contains("Invoicing Approver"));
     assert!(rendered.contains("displayName: Acme"));
+}
+
+#[test]
+fn editing_a_v1_document_returns_a_v2_document() {
+    // Mechanically forced, not a preference: the edit writes the `v2` client
+    // shape and then re-parses what it rendered, and a `v2` identity block
+    // under a `v1` apiVersion cannot survive that. So the edit migrates the
+    // document or it fails, and failing would make `v1` documents read-only
+    // for no reason anybody asked for.
+    let updated = with_extra_role(&acme());
+    let rendered = updated.render().unwrap();
+
+    assert!(
+        rendered.contains("apiVersion: fabric.fieldstate.nz/v2"),
+        "{rendered}"
+    );
+    assert!(!rendered.contains("redirectUris"), "{rendered}");
+    assert!(rendered.contains("pkce: s256"), "{rendered}");
+    assert!(rendered.contains("strategy: claimedHttps"), "{rendered}");
+
+    // And it reads back as itself, which is what the re-parse guarantees.
+    assert_eq!(
+        ClientDocument::parse(&rendered).unwrap().client().identity,
+        updated.client().identity
+    );
+}
+
+#[test]
+fn the_migrated_version_keeps_its_position_in_the_file() {
+    // An ordered mapping's `insert` replaces in place, so the diff an operator
+    // reviews is a one-line version change rather than a moved key.
+    let rendered = with_extra_role(&acme()).render().unwrap();
+    let position = |key: &str| rendered.find(key).unwrap();
+
+    assert!(position("apiVersion") < position("kind:"));
+    assert!(position("kind:") < position("metadata"));
+    assert!(position("metadata") < position("spec"));
+}
+
+#[test]
+fn a_v1_document_nobody_edits_stays_v1() {
+    // Nothing reinterprets a document at rest. The migration happens on the
+    // way into the typed view and never reaches the stored text.
+    assert!(acme()
+        .render()
+        .unwrap()
+        .contains("apiVersion: fabric.fieldstate.nz/v1"));
+    assert!(acme().render().unwrap().contains("redirectUris:"));
 }
 
 #[test]

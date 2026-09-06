@@ -125,7 +125,11 @@ async fn a_write_against_an_unconfigured_platform_is_refused_before_anything_is_
                 "clients": [{
                     "id": "web",
                     "type": "oidc",
-                    "redirectUris": ["https://www.example.com/callback"],
+                    "pkce": "s256",
+                    "redirect": {
+                        "strategy": "claimedHttps",
+                        "uris": ["https://www.example.com/callback"],
+                    },
                 }],
             })
             .to_string(),

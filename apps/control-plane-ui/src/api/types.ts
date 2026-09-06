@@ -34,11 +34,29 @@ export interface Client {
   readonly revision: string
 }
 
+/** Which kind of callback an application client is entitled to. */
+export type RedirectStrategyName = 'claimedHttps' | 'privateNetwork' | 'development' | 'customScheme'
+
+/**
+ * Where an application client may be sent back to, and what it is entitled to.
+ *
+ * Replaces `v1`'s flat `redirectUris` list. The strategy is what the flat list
+ * could not say: a production client and a development client were previously
+ * indistinguishable, and either could hold the other's callback.
+ */
+export interface RedirectStrategy {
+  readonly strategy: RedirectStrategyName
+  readonly uris: readonly string[]
+  /** Present only under `customScheme`. */
+  readonly scheme?: string
+}
+
 /** An application belonging to a client. */
 export interface ApplicationClient {
   readonly id: string
   readonly type: 'oidc'
-  readonly redirectUris: readonly string[]
+  readonly pkce: 's256'
+  readonly redirect: RedirectStrategy
 }
 
 /** A client's identity configuration, and its reconciliation state. */

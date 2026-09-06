@@ -18,7 +18,7 @@ export function ApplicationClients({ clients }: { clients: readonly ApplicationC
         <li key={application.id}>
           <span className="applications__id">{application.id}</span>
           <ul className="applications__uris">
-            {application.redirectUris.map((uri) => (
+            {application.redirect.uris.map((uri) => (
               <li key={uri}>{uri}</li>
             ))}
           </ul>

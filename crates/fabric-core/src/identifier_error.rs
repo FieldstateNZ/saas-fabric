@@ -50,4 +50,21 @@ pub enum IdentifierError {
         /// The identifier type that rejected the value.
         kind: &'static str,
     },
+
+    /// The value is well-formed and still outside the boundary the rule draws
+    /// — a near-miss a reader would reasonably expect to be accepted.
+    ///
+    /// Its own variant rather than a [`Self::BadBoundary`] because the message
+    /// is the whole point. `127.0.0.2` reaches loopback on every operating
+    /// system and is not one of the three spellings this platform recognises;
+    /// telling its author that it "must start and end with an alphanumeric
+    /// character" sends them hunting for a typo in a value that has none. What
+    /// is wrong is the boundary, so the boundary is what gets named.
+    #[error("{kind} does not admit this value: {expected}")]
+    Unadmitted {
+        /// The identifier type that rejected the value.
+        kind: &'static str,
+        /// The boundary the value fell outside, in the author's own terms.
+        expected: &'static str,
+    },
 }

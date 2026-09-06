@@ -29,7 +29,10 @@ mod jwks;
 mod leeway;
 mod trusted_ingress;
 mod unsigned_token;
-mod validating;
+// `pub(crate)` for its `tests::insecure_reader`, which `resolver_tests` drives
+// to prove the tenant binding applies in this posture too. The type itself is
+// re-exported below either way.
+pub(crate) mod validating;
 mod validation_rules;
 mod verification_keys;
 mod verified_claims;

@@ -27,11 +27,7 @@ pub(crate) async fn get_identity(
     let stored = state.service.get(&client_id).await?;
     let reconciliation = state.service.reconciliation(&stored);
 
-    let body = IdentityResponse::new(
-        &stored.document.client().identity,
-        stored.revision.clone(),
-        reconciliation,
-    );
+    let body = IdentityResponse::new(&stored, reconciliation);
 
     let mut response = (StatusCode::OK, Json(body)).into_response();
 

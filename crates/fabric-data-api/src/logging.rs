@@ -1,6 +1,6 @@
 //! Structured log events for the Data API.
 //!
-//! The field set follows §29. Three rules shape it:
+//! The field set follows §29. Four rules shape it:
 //!
 //! - **Application-facing concepts stay logical.** `tenant_id`,
 //!   `logical_resource`, `logical_data_source`, and `operation` are the
@@ -13,11 +13,31 @@
 //! - **Secrets and connection strings never appear.** Not in a field, not in a
 //!   message, not inside an error being formatted. `ResolvedSecret` cannot print
 //!   itself, which makes that structurally hard to get wrong.
+//! - **A token-derived value is logged only through
+//!   [`fabric_identity::sanitise`].** [`operation_forbidden`]'s
+//!   subject is the token's `sub` claim, which nothing in this process
+//!   verified: a `sub` carrying a newline turns one audit record into two, and
+//!   one carrying a right-to-left override makes a record read as somebody
+//!   else. `fabric_identity` is the platform's single enforcement point for
+//!   that rule, and this module calls it rather than keeping a second copy.
+//!
+//! Over the 120-line advisory threshold. The reason is that this is one set of
+//! typed emitters for one domain's events, each a few lines of `tracing` call
+//! behind a name and the argument for what it is safe to put on the line. The
+//! four rules above are stated once, here, and apply to every one of them;
+//! splitting the emitters across files would leave a reader deciding which
+//! half the rules were about. The one pair that is genuinely its own concept —
+//! the two halves of a connector failure — is already in `request_failure`.
 
 use fabric_connector::ExecutionTarget;
 use fabric_core::{event_id, EventType, LogicalDataSourceName, LogicalResourceName, TenantId};
+use fabric_identity::sanitise;
 
 use crate::DOMAIN_ID;
+
+mod request_failure;
+
+pub(crate) use request_failure::{connector_refused, request_failed};
 
 /// An operation was dispatched to a connector.
 ///
@@ -49,13 +69,23 @@ pub(crate) fn operation_dispatched(
 ///
 /// Warning, not debug: a stream of these is either a misconfigured client or
 /// someone probing, and both are worth seeing.
+///
+/// `subject` is the token's `sub` claim, so it is sanitised and bounded before
+/// it reaches the line — see this module's fourth rule. `subject_truncated`
+/// and `subject_filtered` ride with it, because a subject cut at the bound and
+/// a subject that is genuinely that long are otherwise the same record, and so
+/// are a subject the filter emptied and a token that carried no `sub` at all.
 pub(crate) fn operation_forbidden(resource: &str, operation: &str, subject: &str) {
+    let subject = sanitise(subject);
+
     tracing::warn!(
         event = "data_api.operation_forbidden",
         event_id = event_id(DOMAIN_ID, EventType::Warning, 1),
         logical_resource = resource,
         operation,
-        subject,
+        subject = %subject,
+        subject_truncated = subject.truncated,
+        subject_filtered = subject.filtered,
         "identity is not permitted to perform this operation"
     );
 }
@@ -72,47 +102,6 @@ pub(crate) fn write_refused_by_data_source(resource: &LogicalResourceName, data_
         logical_resource = %resource,
         data_source,
         "refusing a write: this data source is not writable"
-    );
-}
-
-/// A request failed with a server error.
-///
-/// The single place every 5xx is recorded with its internal detail — the
-/// caller only receives a generic message, so if it is not logged here it is
-/// lost. `request_id` is the same id the caller was given in the response
-/// (§29, item 57), so a report that quotes it is one grep away from this
-/// line.
-pub(crate) fn request_failed(code: &str, detail: &str, request_id: &str) {
-    tracing::error!(
-        event = "data_api.request_failed",
-        event_id = event_id(DOMAIN_ID, EventType::Error, 1),
-        code,
-        detail,
-        request_id,
-        "data API request failed"
-    );
-}
-
-/// A connector refused an operation and the caller was told a 4xx.
-///
-/// Warn rather than error: the request is refused cleanly and nothing is
-/// broken in this process. Warn rather than debug because none of the reasons
-/// are the caller's fault — an unmapped collection, an operation the catalogue
-/// describes but the backend cannot express — so each is an operator's signal
-/// that a catalogue entry and a backend have drifted apart.
-///
-/// Its counterpart is [`request_failed`], which covers the 5xx half. Between
-/// them every connector failure is recorded exactly once, which matters
-/// because the caller receives a replaced message in both cases: `detail` is
-/// the only surviving copy of what the connector actually said.
-pub(crate) fn connector_refused(code: &str, detail: &str, request_id: &str) {
-    tracing::warn!(
-        event = "data_api.connector_refused",
-        event_id = event_id(DOMAIN_ID, EventType::Warning, 4),
-        code,
-        detail,
-        request_id,
-        "a connector refused the operation"
     );
 }
 

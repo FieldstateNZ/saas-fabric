@@ -86,12 +86,18 @@ impl ResourcePermissions {
 
 #[cfg(test)]
 mod tests {
-    use fabric_identity::{encode_unsigned_token, IdentityConfig, IdentityResolver, TrustedIngressReader};
+    use fabric_core::TenantId;
+    use fabric_identity::{
+        encode_unsigned_token, IdentityConfig, IdentityResolver, TrustedIngressReader, TrustedIssuer,
+    };
     use serde_json::json;
     use std::sync::Arc;
     use std::time::Instant;
 
     use super::*;
+
+    /// The issuer registered to `acme`, which every fixture below claims.
+    const ACME_ISSUER: &str = "https://identity.test.invalid/realms/acme";
 
     struct FixedClock;
 
@@ -108,9 +114,16 @@ mod tests {
     /// Builds an identity by going through the real resolver, so these tests
     /// exercise the same construction path production uses.
     fn identity_with(claims: serde_json::Value) -> TenantIdentity {
-        let serde_json::Value::Object(object) = claims else {
+        let serde_json::Value::Object(mut object) = claims else {
             panic!("claims must be an object");
         };
+
+        // The resolver binds the tenant through the issuer registry, so a
+        // fixture token has to come from an issuer this configuration knows.
+        object.insert(
+            "iss".to_owned(),
+            serde_json::Value::String(ACME_ISSUER.to_owned()),
+        );
 
         let mut headers = http::HeaderMap::new();
         headers.insert(
@@ -120,12 +133,18 @@ mod tests {
                 .unwrap(),
         );
 
-        IdentityResolver::new(
-            IdentityConfig::default(),
-            Arc::new(TrustedIngressReader::new(Arc::new(FixedClock))),
-        )
-        .resolve(&headers)
-        .unwrap()
+        let config = IdentityConfig {
+            trusted_issuers: vec![TrustedIssuer::new(
+                ACME_ISSUER,
+                TenantId::try_new("acme").unwrap(),
+            )],
+            ..IdentityConfig::default()
+        };
+
+        IdentityResolver::new(config, Arc::new(TrustedIngressReader::new(Arc::new(FixedClock))))
+            .unwrap()
+            .resolve(&headers)
+            .unwrap()
     }
 
     #[test]

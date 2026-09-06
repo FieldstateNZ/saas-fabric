@@ -31,10 +31,37 @@ fn versioned(uri: &str) -> String {
     format!("{API_PREFIX}{uri}")
 }
 
+/// The tenants this suite registers an issuer for -- the two whose rows
+/// share the one physical table.
+const REGISTERED_TENANTS: [&str; 2] = ["acme", "globex"];
+
+/// The issuer this suite binds to `tenant`. One issuer per tenant, because a
+/// registration binds one issuer to one tenant and this suite drives both
+/// tenants through a single resolver (ADR 0019 §1).
+pub fn issuer_for(tenant: &str) -> String {
+    format!("https://identity.example/realms/{tenant}")
+}
+
+/// The issuer registry the composed runtime starts with. Built from a JSON
+/// literal, as every fixture in this crate is, because the crate has no
+/// `fabric-core` edge to construct a `TenantId` with; `TrustedIssuer`
+/// deserialises from the same `issuer`/`tenant` shape `examples/config.toml`
+/// spells.
+pub fn trusted_issuers() -> Vec<fabric_identity::TrustedIssuer> {
+    let literal: Vec<Value> = REGISTERED_TENANTS
+        .iter()
+        .map(|tenant| serde_json::json!({ "issuer": issuer_for(tenant), "tenant": tenant }))
+        .collect();
+
+    serde_json::from_value(Value::Array(literal)).unwrap()
+}
+
 /// The claims a bearer token for `tenant` carries. The canonical `tenant_id`
-/// claim is the only thing that ever selects a tenant.
+/// claim is the only thing that ever selects a tenant, and since ADR 0019 the
+/// runtime also requires the token's issuer to be the one registered for that
+/// tenant -- so every token here names it.
 pub fn claims_for(tenant: &str) -> Value {
-    serde_json::json!({ "tenant_id": tenant })
+    serde_json::json!({ "tenant_id": tenant, "iss": issuer_for(tenant) })
 }
 
 /// A GET request carrying a bearer token and no body.

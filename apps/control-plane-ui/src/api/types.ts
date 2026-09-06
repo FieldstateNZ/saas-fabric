@@ -34,23 +34,68 @@ export interface Client {
   readonly revision: string
 }
 
+/** Which kind of callback an application client is entitled to. */
+export type RedirectStrategyName = 'claimedHttps' | 'privateNetwork' | 'development' | 'customScheme'
+
+/**
+ * Where an application client may be sent back to, and what it is entitled to.
+ *
+ * Replaces `v1`'s flat `redirectUris` list. The strategy is what the flat list
+ * could not say: a production client and a development client were previously
+ * indistinguishable, and either could hold the other's callback.
+ */
+export interface RedirectStrategy {
+  readonly strategy: RedirectStrategyName
+  readonly uris: readonly string[]
+  /** Present only under `customScheme`. */
+  readonly scheme?: string
+}
+
 /** An application belonging to a client. */
 export interface ApplicationClient {
   readonly id: string
   readonly type: 'oidc'
-  readonly redirectUris: readonly string[]
+  readonly pkce: 's256'
+  readonly redirect: RedirectStrategy
 }
+
+/**
+ * The `v1` schema version string, exactly as `fabric-client-model`'s
+ * `API_VERSION` constant defines it
+ * (`crates/fabric-client-model/src/document/schema.rs`).
+ *
+ * Kept as a literal so the console can say which version is deprecated
+ * without guessing at a spelling -- see `Identity.apiVersion`.
+ */
+export const V1_API_VERSION = 'fabric.fieldstate.nz/v1'
 
 /** A client's identity configuration, and its reconciliation state. */
 export interface Identity {
   readonly realm: string
   readonly roles: readonly string[]
   readonly clients: readonly ApplicationClient[]
+  /**
+   * The document's schema version, such as `fabric.fieldstate.nz/v1`.
+   *
+   * ADR 0019: "the console shows the document's version, and says that an
+   * edit will migrate it" -- an operator should not discover the version
+   * change in a Git diff. A plain `string`, not a union of the versions this
+   * build knows about: a future version must still render, not crash a
+   * console that has not been updated for it.
+   */
+  readonly apiVersion: string
   readonly revision: string
   readonly reconciliation: Reconciliation
 }
 
-/** The identity an operator submits. A replacement, not a patch. */
+/**
+ * The identity an operator submits. A replacement, not a patch.
+ *
+ * No `apiVersion` here, deliberately: a write's version is not the operator's
+ * to choose. Editing a `v1` document migrates it to `v2` on the server,
+ * mechanically, and a request field that looked like it controlled that would
+ * be a promise the API does not keep.
+ */
 export interface IdentityRequest {
   readonly realm: string
   readonly roles: readonly string[]

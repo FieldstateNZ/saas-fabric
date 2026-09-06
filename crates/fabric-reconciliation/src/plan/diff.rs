@@ -1,8 +1,14 @@
 //! Comparing desired state with observed state.
+//!
+//! In the 121–150 line band: one concept, `plan` and the `matches` predicate
+//! it calls, and `matches`'s nine terms each need a sentence saying which
+//! kind of drift they catch. Splitting the predicate from the function that
+//! calls it, or the terms from their explanation, would separate one
+//! comparison from the reasons it exists.
 
 use std::collections::BTreeSet;
 
-use fabric_client_model::{Client, OidcClient};
+use fabric_client_model::{Client, OidcClient, RedirectStrategy, RedirectUri};
 
 use crate::plan::{IdentityAction, IdentityPlan};
 use crate::provider::{ObservedOidcClient, ObservedRealm};
@@ -15,8 +21,15 @@ use crate::provider::{ObservedOidcClient, ObservedRealm};
 /// has been there for a year — a new realm is simply one whose observed roles
 /// and clients are empty, so there is no separate "first time" branch to drift
 /// out of step with the steady-state one.
+///
+/// `configured_audience` is the identity provider's own deployment
+/// configuration (ADR 0019 §1, §G5) — the value every declared client's
+/// mapper is written to assert. It is a parameter rather than a field on
+/// `client` or `observed` because it belongs to neither: it is not something
+/// a desired-state document says, and it is not a fact a realm holds about
+/// itself, but adapter configuration threaded into this comparison.
 #[must_use]
-pub fn plan(client: &Client, observed: Option<&ObservedRealm>) -> IdentityPlan {
+pub fn plan(client: &Client, observed: Option<&ObservedRealm>, configured_audience: &str) -> IdentityPlan {
     let identity = &client.identity;
     let mut actions = Vec::new();
 
@@ -52,7 +65,7 @@ pub fn plan(client: &Client, observed: Option<&ObservedRealm>) -> IdentityPlan {
     for declared in &identity.clients {
         match current.clients.get(&declared.id) {
             None => actions.push(IdentityAction::CreateOidcClient(declared.clone())),
-            Some(existing) if !matches(declared, existing) => {
+            Some(existing) if !matches(declared, existing, configured_audience) => {
                 actions.push(IdentityAction::UpdateOidcClient(declared.clone()));
             }
             Some(_) => {}
@@ -64,17 +77,59 @@ pub fn plan(client: &Client, observed: Option<&ObservedRealm>) -> IdentityPlan {
 
 /// Whether an existing application client already matches its declaration.
 ///
-/// Compares the declaration's redirect URIs as a **set**: the provider is free
-/// to return them in any order, and treating a reordering as a difference
-/// would make every pass rewrite the client and every client permanently
-/// "drifted".
+/// Nine terms, and every one of them is a way a client can have drifted:
 ///
-/// A declared client is always public — see
-/// [`OidcClient`](fabric_client_model::OidcClient) for why a confidential one
-/// cannot be expressed — so a client the provider holds as confidential does
-/// not match, and gets corrected.
-fn matches(declared: &OidcClient, existing: &ObservedOidcClient) -> bool {
-    let declared_uris: BTreeSet<_> = declared.redirect_uris.iter().cloned().collect();
+/// - `existing.public` — a declared client is always public (see
+///   [`OidcClient`] for why a confidential one cannot be expressed), so one
+///   the provider now holds as confidential does not match.
+/// - `existing.unmodellable_redirect_uris == 0` — a redirect URI the provider
+///   holds that this model cannot parse is drift, not silence (ADR 0019 §6).
+///   A client whose declared set is fully present *and* carries one extra,
+///   unmodellable entry has still drifted from its declaration.
+/// - `existing.redirect_uris == declared_uris(&declared.redirect)` — compared
+///   as **sets**, so an extra entry the provider holds beyond what is
+///   declared is drift too, exactly as a missing one is (D13b).
+/// - `existing.challenge_method == Some(declared.pkce)` — `challenge_method`
+///   is `Option<PkceMethod>`, so an attribute the provider holds that this
+///   model cannot read and an attribute that is simply absent both read
+///   `None`, which is not `Some(S256)`. No `Plain` variant exists anywhere in
+///   this model, and none is needed for a downgrade to be seen as drift.
+/// - `existing.audience_mapper.as_deref() == Some(configured_audience)` — a
+///   mapper that was removed by hand, or that names a different audience,
+///   stops matching. `audience_mapper` also reads `None` when the provider
+///   holds more than one mapper (see its own rustdoc); either way, without
+///   this term the mapper would be written once and could silently
+///   disappear, taking the edge's `aud` check down with it.
+/// - `existing.other_protocol_mappers == 0` — a client-level mapper nobody
+///   declared, added out of band, is the same drift as the audience mapper
+///   going missing: `declaration()` writes a client's whole mapper set and
+///   the provider's `PUT` replaces it, so an extra mapper is corrected the
+///   same way. Without this term a mapper nobody wrote through this platform
+///   would sit unnoticed beside the one it did write.
+/// - `existing.enabled` — a declared client is always enabled, so one
+///   switched off by hand answers nobody while every other term still
+///   matches.
+/// - `existing.standard_flow_enabled` — a declared client exists to run the
+///   authorization-code flow, so one with it switched off has silently
+///   stopped being able to authenticate anyone through it.
+/// - `existing.post_logout_redirect_uris_is_every_registered_uri` — the
+///   provider always writes this as the shorthand for "every registered
+///   redirect URI"; an operator narrowing it by hand is narrowing where a
+///   user can land after logging out.
+fn matches(declared: &OidcClient, existing: &ObservedOidcClient, configured_audience: &str) -> bool {
+    existing.public
+        && existing.unmodellable_redirect_uris == 0
+        && existing.redirect_uris == declared_uris(&declared.redirect)
+        && existing.challenge_method == Some(declared.pkce)
+        && existing.audience_mapper.as_deref() == Some(configured_audience)
+        && existing.other_protocol_mappers == 0
+        && existing.enabled
+        && existing.standard_flow_enabled
+        && existing.post_logout_redirect_uris_is_every_registered_uri
+}
 
-    existing.public && existing.redirect_uris == declared_uris
+/// The redirect URIs a declaration carries, as the set [`matches`] compares
+/// against what the provider reports.
+fn declared_uris(redirect: &RedirectStrategy) -> BTreeSet<RedirectUri> {
+    redirect.uris().iter().cloned().collect()
 }

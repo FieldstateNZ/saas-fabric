@@ -1,5 +1,6 @@
 //! The Keycloak implementation of the identity-provider port.
 
+mod declaration;
 mod mutate;
 mod observe;
 
@@ -21,6 +22,10 @@ use crate::KeycloakConfig;
 pub struct KeycloakIdentityProvider {
     /// The admin API client.
     admin: KeycloakAdmin,
+
+    /// The audience every declared client's mapper asserts. See
+    /// [`KeycloakConfig::audience`].
+    audience: String,
 }
 
 impl KeycloakIdentityProvider {
@@ -33,6 +38,7 @@ impl KeycloakIdentityProvider {
     pub fn new(config: &KeycloakConfig, authority: &str) -> Result<Self, String> {
         Ok(Self {
             admin: KeycloakAdmin::new(config, authority)?,
+            audience: config.audience.clone(),
         })
     }
 }
@@ -60,11 +66,15 @@ impl IdentityProvider for KeycloakIdentityProvider {
     }
 
     async fn create_oidc_client(&self, realm: &RealmName, client: &OidcClient) -> Result<(), ProviderError> {
-        mutate::create_oidc_client(&self.admin, realm, client).await
+        mutate::create_oidc_client(&self.admin, realm, client, &self.audience).await
     }
 
     async fn update_oidc_client(&self, realm: &RealmName, client: &OidcClient) -> Result<(), ProviderError> {
-        mutate::update_oidc_client(&self.admin, realm, client).await
+        mutate::update_oidc_client(&self.admin, realm, client, &self.audience).await
+    }
+
+    fn configured_audience(&self) -> Option<&str> {
+        Some(&self.audience)
     }
 
     fn describe(&self) -> String {

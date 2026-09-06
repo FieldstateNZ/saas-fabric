@@ -366,6 +366,26 @@ tenantId = token.claims["tenant_id"]
 binding = tenantRuntime.resolve(tenantId)
 ```
 
+> **Implementation note — how the tenant is actually decided.**
+> [ADR 0019](../decisions/0019-the-edge-proves-the-token-and-the-issuer-names-the-tenant.md)
+> refines the resolution above without changing this section's requirement.
+> The tenant is taken from the registration selected by the token's verified
+> `iss`; the `tenant_id` claim remains **required** and must **agree** with that
+> registration, or the token is refused. The claim is a consistency check, never
+> the source. §11's rule is unaffected — there is still a single authoritative
+> tenant context and it is still derived from the bearer token; what ADR 0019
+> settles is which claim in that token is authoritative, and why a claim alone
+> was never enough.
+>
+> The same ADR writes down §9's other half as a contract the platform ingress
+> implements: what the edge validates, forwards and strips before a request
+> reaches a runtime service.
+>
+> [The identity edge test matrix](identity-edge-test-matrix.md) is the row-by-row
+> evidence for both — which layer refuses each case, whether it can be proven in
+> the runtime repository, and what the caller is told. Its section G is the
+> checklist the platform repository owes.
+
 ## 11. No Tenant Header
 
 Tenant identity MUST NOT be selected through a caller-provided header such as:

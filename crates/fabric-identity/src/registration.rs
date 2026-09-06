@@ -4,12 +4,16 @@ use std::sync::Arc;
 
 use crate::{logging, IdentityConfig, IdentityResolver, TokenReader};
 
-/// Validates identity configuration and builds the resolver.
+/// Builds the resolver, then records the identity posture.
 ///
 /// The token reader is passed in rather than chosen here. Which reader a
 /// deployment runs is a security decision, and it should be legible in the
 /// composition root next to everything else the process trusts — not selected
 /// by a string in a config file three layers down.
+///
+/// Validation itself belongs to [`IdentityResolver::new`] — a resolver cannot
+/// exist without a validated registry, as a property of the type — so this
+/// function keeps only the logging.
 ///
 /// # Errors
 ///
@@ -20,9 +24,12 @@ pub fn build_identity(
     config: IdentityConfig,
     reader: Arc<dyn TokenReader>,
 ) -> Result<Arc<IdentityResolver>, String> {
-    config.validate()?;
+    let description = reader.describe();
+    let tenant_claim = config.tenant_claim.clone();
 
-    logging::reader_configured(reader.describe(), &config.tenant_claim);
+    let resolver = IdentityResolver::new(config, reader)?;
 
-    Ok(Arc::new(IdentityResolver::new(config, reader)))
+    logging::reader_configured(description, &tenant_claim);
+
+    Ok(Arc::new(resolver))
 }

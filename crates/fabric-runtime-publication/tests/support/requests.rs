@@ -26,11 +26,39 @@ fn versioned(uri: &str) -> String {
     format!("{API_PREFIX}{uri}")
 }
 
-/// The claims a bearer token for `tenant` carries. The canonical `tenant_id`
-/// claim is the only thing that ever selects a tenant (ADR 0018, "The
+/// The tenants this suite drives through one resolver.
+const REGISTERED_TENANTS: [&str; 2] = ["acme", "globex"];
+
+/// The issuer registered to `tenant`.
+fn issuer_for(tenant: &str) -> String {
+    format!("https://identity.test.invalid/realms/{tenant}")
+}
+
+/// The identity registry these tests run against: one issuer per tenant.
+///
+/// A registration binds one issuer to one tenant, and this suite drives two
+/// tenants through a single resolver, so a shared issuer could only name one
+/// of them.
+pub fn trusted_issuers() -> Vec<fabric_identity::TrustedIssuer> {
+    REGISTERED_TENANTS
+        .iter()
+        .map(|tenant| {
+            fabric_identity::TrustedIssuer::new(
+                issuer_for(tenant),
+                fabric_core::TenantId::try_new(tenant).unwrap(),
+            )
+        })
+        .collect()
+}
+
+/// The claims a bearer token for `tenant` carries.
+///
+/// The tenant comes from the issuer's registration (ADR 0019 §2), and the
+/// canonical `tenant_id` claim is required to agree with it — so both are
+/// written here, and nothing else ever selects a tenant (ADR 0018, "The
 /// Synthesis Cloud record-isolation seam", item 4).
 pub fn claims_for(tenant: &str) -> Value {
-    serde_json::json!({ "tenant_id": tenant })
+    serde_json::json!({ "iss": issuer_for(tenant), "tenant_id": tenant })
 }
 
 /// A request carrying a bearer token and no body.

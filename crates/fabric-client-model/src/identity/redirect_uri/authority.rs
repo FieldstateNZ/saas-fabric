@@ -1,108 +1,148 @@
-//! Which schemes and hosts a redirect URI may name.
+//! Splitting a redirect URI into the parts the rules are stated about.
 //!
-//! Split from the newtype because this is the security rule, and it deserves
-//! to be read on its own rather than found among length checks.
+//! Split from the newtype because getting the authority out of a URI is where
+//! a substring test would quietly do the wrong thing, and that deserves to be
+//! read on its own rather than found among length checks. The decision about
+//! *which* schemes and hosts are permitted lives in [`super::kind`], which is
+//! the only copy of it; this module hands that decision the right substrings.
+//!
+//! Over the 120-line advisory threshold. The reason is that splitting a URI
+//! and refusing a URI that cannot be split honestly are the same concept read
+//! from two sides: `reject_brackets` exists precisely because `host_and_port`
+//! would otherwise return a plausible host for `[::1`, and the argument for
+//! one is unreadable without the other in front of it. What is here is six
+//! short functions over one string, none of which would be reused or tested
+//! apart from the rest.
 
 use fabric_core::IdentifierError;
 
 /// The label used in error messages when parsing fails.
 const KIND: &str = "redirect uri";
 
-/// Hosts that are the machine the browser is already on.
-const LOOPBACK: [&str; 2] = ["localhost", "127.0.0.1"];
+/// What this model expects in place of userinfo in the authority.
+const EXPECTED_NO_USERINFO: &str =
+    "no userinfo in the authority — a redirect URI has no legitimate use for credentials";
 
-/// The top-level domain ICANN reserved for private-use applications.
-///
-/// Its board resolved in July 2024 to withhold `.internal` from delegation
-/// permanently, for exactly this purpose: names that resolve only inside an
-/// organisation. It is what makes the plain-HTTP exception below a rule rather
-/// than a favour to one deployment.
-const PRIVATE_TLD: &str = "internal";
+/// What this model expects of a bracketed authority.
+const EXPECTED_BRACKETS: &str = "a bracketed authority closed with ], holding an IPv6 address \
+                                 literal and no zone id, followed by a port or nothing";
 
-/// Checks the scheme and host of a redirect URI.
+/// The authority: everything before the path, query, or fragment.
 ///
-/// # Why plain HTTP is permitted at all
-///
-/// A redirect URI is where an authorisation code is delivered, and over plain
-/// HTTP that code is readable by anything on the path. So `https://` is the
-/// rule, and the exceptions are the two cases where requiring TLS would
-/// require a certificate that **cannot exist**:
-///
-/// - **Loopback.** The code never leaves the machine. This is what RFC 8252
-///   recommends for native applications, for the same reason.
-/// - **The `.internal` top-level domain.** ICANN resolved in July 2024 to
-///   withhold it from delegation permanently, reserving it for private-use
-///   applications. Because it will never exist in the public DNS root, it
-///   cannot resolve on the internet and no public certificate authority will
-///   issue for it — so an internal environment reached over plain HTTP is not
-///   a deployment that *should* have TLS and skipped it; it is one where the
-///   public TLS ecosystem does not apply.
-///
-/// Everything else must be `https://`. `http://www.example.com` is refused, and
-/// that is the case this rule exists for.
-///
-/// # What the host check must not be
+/// # What this must not be
 ///
 /// A substring test. `.internal` appearing *anywhere* in the URI is not the
 /// question — `http://evil.example.com/.internal` contains it and is a public
-/// host. Only the authority is examined, with any port and any path, query or
-/// fragment removed first.
-///
-/// Userinfo is refused outright rather than parsed around. `http://x.internal@
-/// evil.example.com/` is a public host wearing an internal-looking prefix, and
-/// a redirect URI has no legitimate use for credentials in it.
-///
-/// # Errors
-///
-/// Returns [`IdentifierError::BadBoundary`] if the scheme is not permitted, if
-/// the authority carries userinfo, or if a plain-HTTP URI names a host that is
-/// neither loopback nor `.internal`.
-pub(super) fn check(value: &str) -> Result<(), IdentifierError> {
-    let refused = || IdentifierError::BadBoundary { kind: KIND };
-
-    if let Some(rest) = value.strip_prefix("https://") {
-        return reject_userinfo(authority(rest));
-    }
-
-    let rest = value.strip_prefix("http://").ok_or_else(refused)?;
-    let authority = authority(rest);
-    reject_userinfo(authority)?;
-
-    if is_permitted_over_plain_http(host(authority)) {
-        Ok(())
-    } else {
-        Err(refused())
-    }
-}
-
-/// The authority: everything before the path, query, or fragment.
-fn authority(rest: &str) -> &str {
+/// host. Only the authority is examined, with any path, query or fragment
+/// removed first, and the port removed after that by [`host`].
+pub(super) fn of(rest: &str) -> &str {
     rest.split(['/', '?', '#']).next().unwrap_or(rest)
 }
 
-/// The host: the authority with any port removed.
+/// The host: the authority with any port removed, and any IPv6 brackets with
+/// it.
 ///
-/// Splitting on the *last* colon would be wrong for a bracketed IPv6 literal,
-/// and splitting on the first is wrong for the same reason. Neither matters
-/// here: an IPv6 literal is not loopback-by-name and not `.internal`, so it is
-/// refused over plain HTTP whichever way it is cut.
-fn host(authority: &str) -> &str {
-    authority.split(':').next().unwrap_or(authority)
+/// Bracket-aware, because it has to be. A bracketed IPv6 literal carries
+/// colons of its own, so splitting `[::1]:5173` on the first colon yields `[`
+/// and splitting it on the last yields `[::1]`, and neither is the host. This
+/// used to be argued away — an IPv6 literal was never loopback-by-name and so
+/// was refused over plain HTTP whichever way it was cut — and that argument
+/// stopped being true when `::1` joined the loopback set. The rule replaces
+/// it: inside brackets the host runs to the closing bracket, and a port, if
+/// there is one, follows it.
+pub(super) fn host(authority: &str) -> &str {
+    host_and_port(authority).0
+}
+
+/// The host and the port, split apart with brackets accounted for.
+pub(super) fn host_and_port(authority: &str) -> (&str, Option<&str>) {
+    if let Some(inside) = authority.strip_prefix('[') {
+        return match inside.split_once(']') {
+            Some((host, after)) => (host, after.strip_prefix(':')),
+            None => (inside, None),
+        };
+    }
+
+    match authority.split_once(':') {
+        Some((host, port)) => (host, Some(port)),
+        None => (authority, None),
+    }
+}
+
+/// Whether a `*` stands where a port belongs.
+///
+/// Asked so the spelling can be **refused**, not admitted: a `*` in the port
+/// position is a spelling Keycloak matches nothing against (observed on
+/// 26.0.8), and `characters::check` needs to tell it apart from the trailing
+/// wildcard it does permit. `https://example.com/a:*/b` has a `*` after a
+/// colon and it is in the path, which is the mistake a looser test would make.
+///
+/// A predicate rather than the byte index this used to return. Only
+/// `.is_some()` was ever read of that index, and an index nobody reads is
+/// arithmetic that can be wrong without anything noticing.
+pub(super) fn has_wildcard_in_port_position(value: &str) -> bool {
+    let Some((_, rest)) = value.split_once("://") else {
+        return false;
+    };
+
+    host_and_port(of(rest)).1 == Some("*")
 }
 
 /// Refuses an authority carrying userinfo.
-fn reject_userinfo(authority: &str) -> Result<(), IdentifierError> {
+///
+/// Refused outright rather than parsed around. `http://x.internal@evil.example.com/`
+/// is a public host wearing an internal-looking prefix, and a redirect URI has
+/// no legitimate use for credentials in it.
+///
+/// # Errors
+///
+/// Returns [`IdentifierError::Unadmitted`] if the authority contains `@`.
+pub(super) fn reject_userinfo(authority: &str) -> Result<(), IdentifierError> {
     if authority.contains('@') {
-        return Err(IdentifierError::BadBoundary { kind: KIND });
+        return Err(IdentifierError::Unadmitted {
+            kind: KIND,
+            expected: EXPECTED_NO_USERINFO,
+        });
     }
 
     Ok(())
 }
 
-/// Whether a host may be reached over plain HTTP.
-fn is_permitted_over_plain_http(host: &str) -> bool {
-    let loopback = LOOPBACK.contains(&host);
-    let private = host == PRIVATE_TLD || host.ends_with(&format!(".{PRIVATE_TLD}"));
+/// Refuses a bracketed authority this model cannot read as one.
+///
+/// RFC 3986 puts brackets around exactly one thing: an IP literal. Three
+/// spellings get past a split that only looks for the closing bracket, and all
+/// three matter because what is inside decides the kind.
+///
+/// - `[::1` never closes, so [`host_and_port`] hands back `::1` and the URI
+///   classifies as **loopback** on the strength of a bracket whose other half
+///   nobody wrote.
+/// - `[::1%25lo0]` carries a zone id — an interface name, meaningful only on
+///   the machine holding it. `::1%25lo0` is not `::1`, and a callback naming a
+///   scope no other machine shares is not a declaration.
+/// - `[foo.example.com]` holds no colon, so it is not an IPv6 address at all.
+///   Left alone it would reach the registered-domain rule and pass it, which
+///   is a bracketed authority being read as a domain.
+///
+/// # Errors
+///
+/// Returns [`IdentifierError::Unadmitted`] naming what a bracketed authority
+/// is.
+pub(super) fn reject_brackets(authority: &str) -> Result<(), IdentifierError> {
+    let Some(inside) = authority.strip_prefix('[') else {
+        return Ok(());
+    };
 
-    loopback || private
+    let well_formed = inside.split_once(']').is_some_and(|(literal, after)| {
+        literal.contains(':') && !literal.contains('%') && (after.is_empty() || after.starts_with(':'))
+    });
+
+    if well_formed {
+        return Ok(());
+    }
+
+    Err(IdentifierError::Unadmitted {
+        kind: KIND,
+        expected: EXPECTED_BRACKETS,
+    })
 }

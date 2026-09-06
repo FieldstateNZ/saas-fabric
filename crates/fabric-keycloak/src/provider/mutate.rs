@@ -4,9 +4,8 @@ use fabric_client_model::{OidcClient, OidcClientId, RealmName, RoleName};
 use fabric_reconciliation::ProviderError;
 
 use crate::admin::KeycloakAdmin;
-use crate::wire::{
-    ClientRepresentation, NewClientRepresentation, NewRealmRepresentation, NewRoleRepresentation, RealmUpdate,
-};
+use crate::provider::declaration::declaration;
+use crate::wire::{ClientRepresentation, NewRealmRepresentation, NewRoleRepresentation, RealmUpdate};
 
 /// Creates a realm, or does nothing if it already exists.
 pub(super) async fn create_realm(
@@ -59,12 +58,13 @@ pub(super) async fn create_oidc_client(
     admin: &KeycloakAdmin,
     realm: &RealmName,
     client: &OidcClient,
+    audience: &str,
 ) -> Result<(), ProviderError> {
     admin
         .create(
             "creating an application client",
             admin.paths().clients(realm),
-            &declaration(client),
+            &declaration(client, audience)?,
         )
         .await
 }
@@ -81,16 +81,17 @@ pub(super) async fn update_oidc_client(
     admin: &KeycloakAdmin,
     realm: &RealmName,
     client: &OidcClient,
+    audience: &str,
 ) -> Result<(), ProviderError> {
     let Some(internal_id) = internal_id(admin, realm, &client.id).await? else {
-        return create_oidc_client(admin, realm, client).await;
+        return create_oidc_client(admin, realm, client, audience).await;
     };
 
     admin
         .update(
             "updating an application client",
             admin.paths().client(realm, &internal_id),
-            &declaration(client),
+            &declaration(client, audience)?,
         )
         .await
 }
@@ -109,23 +110,4 @@ async fn internal_id(
         .await?;
 
     Ok(matches.into_iter().next().map(|found| found.id))
-}
-
-/// The representation SaaS Fabric writes for a declared client.
-///
-/// The same body for create and update, which is what makes an update
-/// idempotent: writing the declaration twice produces the same object.
-fn declaration(client: &OidcClient) -> NewClientRepresentation<'_> {
-    NewClientRepresentation {
-        client_id: client.id.as_str(),
-        enabled: true,
-        protocol: "openid-connect",
-        public_client: true,
-        standard_flow_enabled: true,
-        redirect_uris: client
-            .redirect_uris
-            .iter()
-            .map(|uri| uri.as_str().to_owned())
-            .collect(),
-    }
 }

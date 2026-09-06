@@ -8,11 +8,30 @@
 //! already been authenticated (specification §8, §9).
 //!
 //! What this crate does is answer the *next* question: **which tenant does this
-//! established identity represent?** That answer comes from one place and one
-//! place only — the `tenant_id` claim inside the bearer token (§10).
+//! established identity represent?**
 //!
 //! Parsing a claim out of a token does not make this crate responsible for
 //! authentication; the specification says so explicitly in §12.
+//!
+//! # The issuer names the tenant; the claim only agrees
+//!
+//! The answer comes from [`IdentityConfig::trusted_issuers`]: the token's `iss`
+//! is looked up in a registry this deployment configured, and **the tenant is
+//! the registration's**. An unregistered issuer is refused, and a token with no
+//! `iss` is refused rather than treated as unregistered-but-harmless.
+//!
+//! The `tenant_id` claim is still **required**, and it must equal the tenant the
+//! registration names or the token is refused. It is a consistency check and
+//! never the source. This crate verifies nothing itself, so a disagreement is
+//! the only signal it will ever get that the edge and this registry have
+//! diverged — and a token whose issuer says `acme` while its claim says `globex`
+//! is not a request to disambiguate, it is a request to pick, and picking is the
+//! bug. See ADR 0019 §2, and [`TrustedIssuer`] for why the tenant is
+//! registry-derived rather than claimed.
+//!
+//! An earlier version of this paragraph said the tenant came "from one place and
+//! one place only — the `tenant_id` claim". That was true, and it was the
+//! cross-tenant hole ADR 0019 closes.
 //!
 //! # No tenant header, ever
 //!
@@ -48,6 +67,12 @@
 //! that would make this crate a partial identity provider. Even in
 //! defence-in-depth mode, keys arrive as a snapshot built outside the request
 //! path.
+//!
+//! The tenant binding above is a property of the **resolver**, not of either
+//! reader, so both postures reach it by the same path and neither can be
+//! deployed without it. Matching the issuer against a registry is not
+//! verification: it is a comparison against a string the deployment configured,
+//! and it fetches nothing (§24).
 
 mod bearer;
 mod claims;
@@ -66,7 +91,8 @@ mod token_reader;
 pub use claims::TokenClaims;
 pub use config::IdentityConfig;
 pub use errors::IdentityError;
-pub use identity::TenantIdentity;
+pub use identity::{TenantIdentity, TrustedIssuer};
+pub use logging::{sanitise, Sanitised};
 pub use readers::{
     encode_unsigned_token, LeewaySeconds, TrustedIngressReader, ValidatingReader, VerificationKeys,
 };

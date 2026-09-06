@@ -44,13 +44,20 @@ impl IdentityReconciler {
     /// # Errors
     ///
     /// Returns [`ProviderError`] if the provider's current state could not be
-    /// read. There is nothing to compare against, so there is no plan — an
-    /// empty one would be indistinguishable from "already converged", which is
-    /// the most dangerous possible answer to give here.
+    /// read, or if the provider names no configured audience at all
+    /// ([`ProviderError::NoAudienceConfigured`]). Either way there is nothing
+    /// safe to compare against, so there is no plan — an empty one would be
+    /// indistinguishable from "already converged", which is the most
+    /// dangerous possible answer to give here.
     pub async fn plan(&self, client: &Client) -> Result<IdentityPlan, ProviderError> {
         let observed = self.provider.observe_realm(&client.identity.realm).await?;
 
-        Ok(plan::plan(client, observed.as_ref()))
+        let audience = self
+            .provider
+            .configured_audience()
+            .ok_or(ProviderError::NoAudienceConfigured)?;
+
+        Ok(plan::plan(client, observed.as_ref(), audience))
     }
 
     /// Brings the provider in line with the desired state.
@@ -60,6 +67,10 @@ impl IdentityReconciler {
     pub async fn reconcile(&self, client: &Client) -> ReconciliationOutcome {
         let plan = match self.plan(client).await {
             Ok(plan) => plan,
+            Err(error @ ProviderError::NoAudienceConfigured) => {
+                logging::planning_refused(client, &error);
+                return ReconciliationOutcome::failed(&error);
+            }
             Err(error) => {
                 logging::observation_failed(client, &error);
                 return ReconciliationOutcome::failed(&error);

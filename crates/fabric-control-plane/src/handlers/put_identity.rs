@@ -54,11 +54,7 @@ pub(crate) async fn put_identity(
     crate::converge::in_background(&state, &operator);
 
     let reconciliation = state.service.reconciliation(&stored);
-    let body = IdentityResponse::new(
-        &stored.document.client().identity,
-        stored.revision.clone(),
-        reconciliation,
-    );
+    let body = IdentityResponse::new(&stored, reconciliation);
 
     let mut response = (StatusCode::OK, Json(body)).into_response();
 

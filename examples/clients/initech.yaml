@@ -1,0 +1,42 @@
+# A third example client, still on the deprecated v1 schema.
+#
+# Deliberately not migrated. v1 is read through a narrow migrator that
+# classifies every entry in `redirectUris` and refuses a list whose entries do
+# not all agree — and without a shipped document that actually reaches it, the
+# migrator would have no coverage in the example corpus at all. This one's
+# callbacks are all `.internal` hosts, so it reads as `strategy: privateNetwork`.
+#
+# A v1 document nobody edits stays v1 and stays labelled v1. Editing this
+# client's identity through the control plane would return a v2 document, with
+# `apiVersion` rewritten in place — see
+# docs/architecture/client-desired-state.md.
+apiVersion: fabric.fieldstate.nz/v1
+kind: Client
+
+metadata:
+  name: initech
+
+spec:
+  displayName: Initech
+
+  hosts:
+    - portal.initech.internal
+
+  identity:
+    realm: initech
+
+    roles:
+      - Client Realm Administrator
+      - Client Realm User
+
+    clients:
+      - id: portal
+        type: oidc
+        # v1 has no way to say which kind of callback this client is entitled
+        # to, and no way to require a proof key. Both are what v2 added.
+        redirectUris:
+          - http://portal.initech.internal/callback
+          - http://portal.initech.internal/silent
+
+  features:
+    invoicing: false

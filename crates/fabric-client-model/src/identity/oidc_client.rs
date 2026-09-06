@@ -1,6 +1,6 @@
 //! An application client within a realm.
 
-use crate::{OidcClientId, RedirectUri};
+use crate::{OidcClientId, PkceMethod, RedirectStrategy};
 
 /// The authentication protocol an application client speaks.
 ///
@@ -25,6 +25,11 @@ pub enum ClientProtocol {
 /// document would be the first step toward Git holding credentials. Supporting
 /// confidential clients means designing secret delivery first — see ADR 0008's
 /// "What this does not decide".
+///
+/// That is also why [`Self::pkce`] is required rather than defaulted. A public
+/// client with no proof key is a client whose authorisation code is redeemable
+/// by whoever intercepts it, and a defaulted field would be a meaning the
+/// document acquired without saying it.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct OidcClient {
@@ -38,10 +43,18 @@ pub struct OidcClient {
     #[serde(rename = "type")]
     pub protocol: ClientProtocol,
 
-    /// Where the identity provider may redirect back to after authentication.
+    /// The proof-key method the identity provider must require of it.
     ///
-    /// Must not be empty — a client with no permitted callback cannot complete
-    /// a browser flow, so an empty list is a document that reconciles into
-    /// something unusable rather than an intentional state.
-    pub redirect_uris: Vec<RedirectUri>,
+    /// Required in `v2`, and supplied as `S256` by the `v1` migrator, so no
+    /// declared client can exist without one.
+    pub pkce: PkceMethod,
+
+    /// Which kind of callback this client is entitled to, and the callbacks
+    /// themselves.
+    ///
+    /// Replaces `v1`'s flat `redirectUris` list. Every URI in that list was
+    /// individually acceptable and the *set* still said nothing about what the
+    /// client was, so a production client could quietly hold a development
+    /// callback and pass every check.
+    pub redirect: RedirectStrategy,
 }

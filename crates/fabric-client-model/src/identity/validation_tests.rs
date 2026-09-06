@@ -2,7 +2,7 @@
 
 use crate::identity::required_roles::REQUIRED_ROLES;
 use crate::{ClientProtocol, DesiredStateError, IdentityConfiguration, OidcClient, RedirectUri};
-use crate::{OidcClientId, RealmName, RoleName};
+use crate::{OidcClientId, PkceMethod, RealmName, RedirectStrategy, RedirectStrategyKind, RoleName};
 
 fn role(name: &str) -> RoleName {
     RoleName::try_new(name).unwrap()
@@ -20,7 +20,12 @@ fn web_client() -> OidcClient {
     OidcClient {
         id: OidcClientId::try_new("web").unwrap(),
         protocol: ClientProtocol::Oidc,
-        redirect_uris: vec![RedirectUri::try_new("https://www.example.com/callback").unwrap()],
+        pkce: PkceMethod::S256,
+        redirect: RedirectStrategy::try_new(
+            RedirectStrategyKind::ClaimedHttps,
+            vec![RedirectUri::try_new("https://www.example.com/callback").unwrap()],
+        )
+        .unwrap(),
     }
 }
 
@@ -63,20 +68,6 @@ fn two_application_clients_may_not_share_an_id() {
     assert!(matches!(
         identity.validate(),
         Err(DesiredStateError::Duplicate { field, .. }) if field == "spec.identity.clients"
-    ));
-}
-
-#[test]
-fn an_application_client_with_no_redirect_uri_is_refused() {
-    let mut identity = valid();
-    identity.clients = vec![OidcClient {
-        redirect_uris: Vec::new(),
-        ..web_client()
-    }];
-
-    assert!(matches!(
-        identity.validate(),
-        Err(DesiredStateError::InvalidField { field, .. }) if field == "spec.identity.clients"
     ));
 }
 

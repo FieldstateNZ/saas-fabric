@@ -242,8 +242,13 @@ pub async fn build_stack(snapshot: &RuntimeSnapshot) -> Stack {
 
     let connector = RecordingConnector::new();
 
+    // The issuer registry is required configuration (ADR 0019 §2), and this
+    // suite drives two tenants through one resolver, so each gets its own.
     let identity = build_identity(
-        IdentityConfig::default(),
+        IdentityConfig {
+            trusted_issuers: requests::trusted_issuers(),
+            ..IdentityConfig::default()
+        },
         Arc::new(TrustedIngressReader::new(Arc::new(FixedClock))),
     )
     .unwrap();

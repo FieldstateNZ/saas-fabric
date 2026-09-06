@@ -7,7 +7,8 @@
 
 use fabric_client_model::{
     AuthorizationConfiguration, Client, ClientId, ClientProtocol, ClientRevision, IdentityConfiguration,
-    OidcClient, OidcClientId, RealmName, RedirectUri, RoleName,
+    OidcClient, OidcClientId, PkceMethod, RealmName, RedirectStrategy, RedirectStrategyKind, RedirectUri,
+    RoleName,
 };
 
 /// The role names every fixture client declares.
@@ -28,10 +29,15 @@ pub(crate) fn web_client() -> OidcClient {
     OidcClient {
         id: OidcClientId::try_new("web").unwrap(),
         protocol: ClientProtocol::Oidc,
-        redirect_uris: vec![
-            RedirectUri::try_new("https://www.example.com/callback").unwrap(),
-            RedirectUri::try_new("https://www.example.com/silent").unwrap(),
-        ],
+        pkce: PkceMethod::S256,
+        redirect: RedirectStrategy::try_new(
+            RedirectStrategyKind::ClaimedHttps,
+            vec![
+                RedirectUri::try_new("https://www.example.com/callback").unwrap(),
+                RedirectUri::try_new("https://www.example.com/silent").unwrap(),
+            ],
+        )
+        .unwrap(),
     }
 }
 

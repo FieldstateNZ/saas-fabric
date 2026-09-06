@@ -9,10 +9,20 @@ use std::collections::BTreeMap;
 use fabric_connector::{ConnectionName, ConnectionSelector, ConnectorId, FieldName, IsolationModel};
 use fabric_core::{BindingRevision, DataSourceId, LogicalDataSourceName, TenantId};
 use fabric_data_api::ResourceCatalog;
+use fabric_identity::TrustedIssuer;
 use fabric_tenant_runtime::{
     DataResidency, DataSource, DataSourceCapabilities, PlacementClass, PoolSettings, TenantDataBinding,
     TenantRuntimeBinding,
 };
+
+/// Every tenant any suite in this crate names in a `tenant_id` claim.
+///
+/// `ghost` is deliberately here and deliberately absent from [`tenants`]: the
+/// failure-mode suites need a tenant the *identity* layer will bind and the
+/// *runtime registry* will not know, which is what `unknown_tenant` is about.
+/// If it were unregistered here it would be refused as a credential instead,
+/// and those suites would stop testing what they were written to test.
+const REGISTERED_TENANTS: [&str; 6] = ["acme", "globex", "ghost", "orphan", "reader", "stayer"];
 
 /// A validated field name.
 pub fn field(name: &str) -> FieldName {
@@ -22,6 +32,40 @@ pub fn field(name: &str) -> FieldName {
 /// A validated tenant id.
 pub fn tenant(name: &str) -> TenantId {
     TenantId::try_new(name).unwrap()
+}
+
+/// The issuer registered to `tenant` in the test registry.
+pub fn issuer_for(tenant: &str) -> String {
+    format!("https://identity.test.invalid/realms/{tenant}")
+}
+
+/// The identity registry these suites run against: one issuer per tenant.
+///
+/// One each, not one shared issuer, because `tenant_isolation` drives `acme`
+/// **and** `globex` through a single resolver — and a registration binds one
+/// issuer to one tenant, so a shared issuer could only ever name one of them.
+/// That is the production shape too: one runtime service, many tenant realms.
+pub fn trusted_issuers() -> Vec<TrustedIssuer> {
+    REGISTERED_TENANTS
+        .iter()
+        .map(|name| TrustedIssuer::new(issuer_for(name), tenant(name)))
+        .collect()
+}
+
+/// The issuer a token claiming `tenant` should carry, for a test that does not
+/// care which issuer minted it.
+///
+/// Where the claim names a registered tenant, that tenant's issuer — so an
+/// ordinary request resolves the tenant it asked for. Where it does not (no
+/// tenant claim at all, or a value that is not an identifier), `acme`'s
+/// registration, so the token still comes from a *registered* issuer and the
+/// test exercises the refusal it was written for rather than an unregistered
+/// issuer refused one step earlier.
+pub fn issuer_naming(tenant: Option<&str>) -> String {
+    match tenant {
+        Some(name) if REGISTERED_TENANTS.contains(&name) => issuer_for(name),
+        _ => issuer_for("acme"),
+    }
 }
 
 /// Builds a DataSource with the given connection.

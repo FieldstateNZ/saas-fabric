@@ -21,6 +21,7 @@ use fabric_tenant_runtime::{
     build_runtime, DataSource as RuntimeDataSource, JsonFileSource, RuntimeConfig, TenantRuntimeBinding,
 };
 
+use crate::support::requests;
 use crate::support::tempdir::TempDir;
 use crate::support::unsigned_reader::UnsignedTokenReader;
 
@@ -89,7 +90,14 @@ pub async fn compose(connector: Arc<NdcConnector>, snapshot: &RuntimeSnapshot) -
     let catalog_bytes = std::fs::read(tempdir.catalog_path()).unwrap();
     let catalog: ResourceCatalog = serde_json::from_slice(&catalog_bytes).unwrap();
 
-    let identity = build_identity(IdentityConfig::default(), Arc::new(UnsignedTokenReader)).unwrap();
+    // A runtime that trusts no issuer refuses to start (ADR 0019 §1), so the
+    // composed one registers an issuer for each of the two tenants whose rows
+    // share the table; `requests::claims_for` mints every token against it.
+    let identity_config = IdentityConfig {
+        trusted_issuers: requests::trusted_issuers(),
+        ..IdentityConfig::default()
+    };
+    let identity = build_identity(identity_config, Arc::new(UnsignedTokenReader)).unwrap();
 
     let app = build_data_api(
         &DataApiConfig::default(),

@@ -18,10 +18,12 @@ use axum::Router;
 use fabric_client_model::{ClientDocument, ClientRevision};
 use fabric_control_plane::testing::AcceptingOperator;
 use fabric_control_plane::{
-    build_control_plane, ControlPlaneConfig, ControlPlaneDeps, DesiredStateBinding, InMemoryClientRepository,
+    build_control_plane, ControlPlaneConfig, ControlPlaneDeps, DesiredStateBinding, IdentityProviderFactory,
+    InMemoryClientRepository, OperatorToken,
 };
 use fabric_core::Clock;
-use fabric_reconciliation::ReconciliationStatusStore;
+use fabric_reconciliation::testing::FakeIdentityProvider;
+use fabric_reconciliation::{IdentityProvider, ReconciliationStatusStore};
 use http::{header, Request, Response};
 use tower::ServiceExt as _;
 
@@ -172,6 +174,24 @@ pub const SECRET_VALUE: &str = "a-value-that-must-not-leak";
 
 /// Builds a control plane holding one client.
 pub fn control_plane() -> TestControlPlane {
+    build(None)
+}
+
+/// Builds a control plane holding one client, converging against `provider`
+/// when an operator asks it to.
+///
+/// Every other test in this crate asserts against `plane.statuses` directly,
+/// which is cheaper when nothing needs a real reconciliation pass to have
+/// happened. The composed proof does need one — it drives `POST
+/// /api/reconciliation`, the real door an operator uses — so it is the one
+/// caller of this function.
+pub fn control_plane_with_identity_provider(provider: Arc<FakeIdentityProvider>) -> TestControlPlane {
+    build(Some(Arc::new(FakeIdentityProviderFactory(provider))))
+}
+
+/// Shared by both constructors above; only what lends the identity provider
+/// its authority differs between them.
+fn build(identity_provider: Option<Arc<dyn IdentityProviderFactory>>) -> TestControlPlane {
     let repository = Arc::new(InMemoryClientRepository::new());
     let revision = repository
         .insert(ClientDocument::parse(ACME).expect("the fixture document must parse"))
@@ -198,7 +218,7 @@ pub fn control_plane() -> TestControlPlane {
             desired_state: Arc::clone(&binding),
             clock: Arc::new(FixedClock),
             keys: fabric_control_plane::KeyHolder::empty(),
-            identity_provider: None,
+            identity_provider,
             sign_in: None,
             git_integration: None,
 
@@ -216,6 +236,24 @@ pub fn control_plane() -> TestControlPlane {
         revision,
         statuses: services.statuses,
         binding,
+    }
+}
+
+/// Lends the same fake identity provider to every operator.
+///
+/// A real deployment builds one provider per operator, from the bearer they
+/// presented (`crate::identity_authority`'s whole reason for existing). These
+/// tests have one operator and one fake behind it, so "acting as" ignores the
+/// authority it is handed and returns the same fake every time.
+struct FakeIdentityProviderFactory(Arc<FakeIdentityProvider>);
+
+impl IdentityProviderFactory for FakeIdentityProviderFactory {
+    fn acting_as(&self, _authority: &OperatorToken) -> Arc<dyn IdentityProvider> {
+        self.0.clone()
+    }
+
+    fn describe(&self) -> String {
+        "a fake identity provider for tests".to_owned()
     }
 }
 

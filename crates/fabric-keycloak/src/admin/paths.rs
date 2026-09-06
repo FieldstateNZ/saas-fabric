@@ -59,8 +59,23 @@ impl Paths {
     }
 
     /// A realm's application clients.
+    ///
+    /// Unbounded — used for the create call, whose collection is addressed
+    /// once and never paged. Reading the collection back goes through
+    /// [`Self::clients_page`] instead, for the same reason roles do.
     pub(crate) fn clients(&self, realm: &RealmName) -> String {
         format!("{}/admin/realms/{realm}/clients", self.base)
+    }
+
+    /// A realm's application clients, bounded so a truncated page can be
+    /// detected.
+    ///
+    /// Mirrors [`Self::roles_page`]. `GET` on this collection already returns
+    /// `attributes` and `protocolMappers` in full — observed against a real
+    /// Keycloak 26.0.8, see `docs/verification.md` — so no per-client read is
+    /// needed.
+    pub(crate) fn clients_page(&self, realm: &RealmName, max: usize) -> String {
+        format!("{}/admin/realms/{realm}/clients?first=0&max={max}", self.base)
     }
 
     /// One application client, looked up by the id an application presents.

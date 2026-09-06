@@ -195,6 +195,16 @@ body {
   text-transform: capitalize;
 }
 
+/*
+ * A wire spelling shown verbatim, such as a redirect strategy or a schema
+ * version -- `.badge__status`'s capitalize would render `claimedHttps` as
+ * `ClaimedHttps`, a spelling the API refuses. No colour: this is about case,
+ * not status.
+ */
+.badge__status--literal {
+  text-transform: none;
+}
+
 .badge__when,
 .badge__detail,
 .identity__note {

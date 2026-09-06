@@ -6,6 +6,14 @@
 //! this one is the surface *reconciliation* drives. The house convention for
 //! that split is an impl block in its own module (see `config::loading` in the
 //! runtime host), not one long file.
+//!
+//! # Why this file is over 120 lines
+//!
+//! One `impl IdentityProvider` block covering all eight methods the trait
+//! declares, the `write_client` helper two of those methods share, and the
+//! `PROVIDER_OWNED_ROLES` constant `create_realm` seeds a new realm with.
+//! Splitting the trait impl across files would separate methods that are one
+//! concept precisely because they are one impl.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -89,6 +97,10 @@ impl IdentityProvider for FakeIdentityProvider {
         Ok(())
     }
 
+    fn configured_audience(&self) -> Option<&str> {
+        Some(&self.audience)
+    }
+
     fn describe(&self) -> String {
         "in-memory identity provider".to_owned()
     }
@@ -96,13 +108,31 @@ impl IdentityProvider for FakeIdentityProvider {
 
 impl FakeIdentityProvider {
     /// Stores an application client exactly as it was declared.
+    ///
+    /// `audience_mapper` carries this fake's own configured audience — the
+    /// same value [`IdentityProvider::configured_audience`] reports —
+    /// mirroring a real provider's write-then-read-back. Leaving it `None`
+    /// here would make every client written through this fake permanently
+    /// drifted the moment `matches()` started comparing it. `enabled`,
+    /// `standard_flow_enabled`, `other_protocol_mappers`, and the post-logout
+    /// term are always written to the value a real declaration always
+    /// asserts — `true`, `true`, `0`, `true` — for the same reason: a fake
+    /// that did not echo them back would drift on fields no test here ever
+    /// touches.
     fn write_client(&self, realm: &RealmName, client: &OidcClient) {
         if let Some(existing) = lock(&self.realms).get_mut(realm) {
             existing.clients.insert(
                 client.id.clone(),
                 ObservedOidcClient {
-                    redirect_uris: client.redirect_uris.iter().cloned().collect(),
+                    redirect_uris: client.redirect.uris().iter().cloned().collect(),
                     public: true,
+                    challenge_method: Some(client.pkce),
+                    audience_mapper: Some(self.audience.clone()),
+                    other_protocol_mappers: 0,
+                    unmodellable_redirect_uris: 0,
+                    enabled: true,
+                    standard_flow_enabled: true,
+                    post_logout_redirect_uris_is_every_registered_uri: true,
                 },
             );
         }

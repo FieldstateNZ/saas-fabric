@@ -236,8 +236,22 @@ The reasoning, the licence audit, and the consequences are recorded in
 | [0001](docs/decisions/0001-ndc-as-connector-boundary.md) | NDC as the internal connector boundary, as a protocol only |
 | [0002](docs/decisions/0002-trusted-ingress-is-the-canonical-identity-model.md) | Trusted ingress is the canonical identity model |
 | [0003](docs/decisions/0003-data-sources-are-first-class-resources.md) | DataSources are first-class resources |
+| [0004](docs/decisions/0004-write-support-in-the-first-release.md) | Write support ships in the first release, with a named gap |
+| [0005](docs/decisions/0005-tls-trust-roots-come-from-the-host.md) | TLS trust roots come from the host, not from a compiled-in bundle |
+| [0006](docs/decisions/0006-a-shared-data-source-can-only-serve-discriminator-isolation.md) | A shared DataSource can only serve discriminator isolation |
+| [0007](docs/decisions/0007-isolation-is-checked-against-an-observed-fact-not-a-label.md) | Isolation is checked against an observed fact, not a declared label |
 | [0008](docs/decisions/0008-desired-state-is-the-authority.md) | Control-plane mutations write desired state; platform services are reconciliation targets |
 | [0009](docs/decisions/0009-operator-identity-is-not-tenant-identity.md) | Operator identity is separate from tenant identity |
+| [0010](docs/decisions/0010-operators-authenticate-against-the-platform-realm.md) | Operators authenticate against the platform's own realm |
+| [0011](docs/decisions/0011-the-platform-creates-its-own-git-application.md) | The platform creates its own Git application |
+| [0012](docs/decisions/0012-the-platform-acts-on-keycloak-as-the-operator.md) | The platform acts on Keycloak as the operator |
+| [0013](docs/decisions/0013-authorization-is-declared-in-the-platforms-words.md) | Authorization is declared in the platform's words |
+| [0014](docs/decisions/0014-fabric-calls-openfga-as-the-operator.md) | Fabric calls OpenFGA as the operator, in the control plane only |
+| [0015](docs/decisions/0015-a-subject-is-named-by-its-realm.md) | A subject is named by its realm |
+| [0016](docs/decisions/0016-fabric-owns-the-authorization-front-door.md) | Fabric owns the authorization front door |
+| [0017](docs/decisions/0017-fabric-decides-which-client-secret-boundary-an-operation-reaches.md) | Fabric decides which client secret boundary an operation reaches |
+| [0018](docs/decisions/0018-runtime-state-is-published-as-three-versioned-documents.md) | Runtime state is published as three independently versioned documents |
+| [0019](docs/decisions/0019-the-edge-proves-the-token-and-the-issuer-names-the-tenant.md) | The edge proves the token, the issuer names the tenant, and a public client proves its code |
 
 ## Running it
 

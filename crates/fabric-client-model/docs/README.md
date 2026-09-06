@@ -9,7 +9,7 @@ look like and how to read and write the document that says so.
 ## The document
 
 ```yaml
-apiVersion: fabric.fieldstate.nz/v1
+apiVersion: fabric.fieldstate.nz/v2
 kind: Client
 metadata:
   name: acme
@@ -25,12 +25,47 @@ spec:
     clients:
       - id: web
         type: oidc
-        redirectUris:
-          - https://www.example.com/callback
+        pkce: s256
+        redirect:
+          strategy: claimedHttps
+          uris:
+            - https://www.example.com/callback
 ```
 
 The full contract, including what the platform requires and what it refuses, is
 [`docs/architecture/client-desired-state.md`](../../../docs/architecture/client-desired-state.md).
+
+## Two schema versions, and the migrator between them
+
+`v2` ships **beside** `v1`, which is the policy this crate already wrote down
+(`src/document/schema.rs`) being exercised rather than amended. `v1` is
+deprecated and still read.
+
+`v2` says two things `v1` could not: `pkce: s256`, required with no default,
+and a `redirect` block carrying the **strategy** — which kind of callback the
+client is entitled to. A `v1` document's flat `redirectUris` list was
+individually validated and still said nothing about what the client *was*, so a
+production client could quietly hold a loopback callback and pass every check.
+
+A `v1` document is read through one narrow migrator (`src/document/migration.rs`).
+Every entry is classified, and the whole list must agree:
+
+| All entries are | Read as |
+|---|---|
+| public `https://` | `claimedHttps` |
+| `.internal` hosts | `privateNetwork` |
+| loopback | `development` |
+| a **mix**, or a private-use scheme | **refused** — migrate the document by hand |
+
+The mix is refused rather than resolved because there is no honest resolution:
+picking the looser strategy would silently grant an entitlement the operator
+never stated.
+
+**An edit migrates the document, in place.** `with_identity` rewrites
+`apiVersion` to `v2` and writes the `v2` client shape. That is forced rather
+than chosen: the edit re-parses what it rendered, and a `v2` identity block
+under a `v1` `apiVersion` cannot survive that. A file nobody edits stays `v1` —
+nothing reinterprets a document at rest.
 
 ## The one design decision worth knowing
 
@@ -78,7 +113,8 @@ disagree about which strings are legal.
 | `OidcClientId` | identifier (allows `_`) | written by a platform engineer, not derived from tenant input |
 | `RoleName` | letters, digits, single interior spaces, `-_.` | a human phrase, compared against what the identity provider returns |
 | `Host` | DNS labels separated by dots | no scheme, no port, no path — a host that carried `https://` would produce a route that never matches |
-| `RedirectUri` | `https://` anywhere, `http://` only on loopback, one trailing `*` | the security boundary of an OAuth flow |
+| `RedirectUri` | classified into one of four kinds, scheme first then host; one trailing `*`, and `*` as the whole port | the security boundary of an OAuth flow |
+| `AppScheme` | RFC 8252 §7.1 reverse domain, lower-cased | a private-use scheme any other app on the device can also register |
 | `ClientRevision` | opaque, entity-tag safe | compared for equality and nothing else |
 
 `RoleName` refusing a doubled interior space is not fussiness. The reconciler
@@ -104,4 +140,36 @@ It enforces:
 
 - roles are unique, and include every entry in `required_roles::REQUIRED_ROLES`;
 - application clients are uniquely named;
-- every application client declares at least one redirect URI.
+- every application client declares at least one redirect URI;
+- every redirect URI's **kind** is one its strategy admits — a URI outside the
+  strategy is refused, never reclassified into a strategy that would take it;
+- wildcards: a trailing path `*` only under `development`, because RFC 9700
+  §2.1 requires exact matching everywhere else. There is no wildcard **port**:
+  `:*` is refused by the parser, because Keycloak 26.0.8 matches nothing
+  against it, while a loopback callback registered without a port over `http`
+  already matches any port;
+- `customScheme` is refused, naming `Lane E phase 2`. The shape is in the model
+  so documents do not have to change again when it lands.
+
+### The partition a strategy is stated against
+
+**Scheme first, then host, both lower-cased.** A private-use scheme is a
+private-use scheme whatever its authority, so
+`nz.fieldstate.slipway://localhost/cb` is *not* a loopback callback — a
+host-first rule would hand a native application's callback the entitlement a
+development HTTP callback has. Within `http`/`https` the host decides:
+`https://localhost:5173/cb` is **loopback**, not the production kind.
+
+Loopback is `127.0.0.1`, `::1` and `localhost`, and nothing else. `127.0.0.2`,
+`[::ffff:127.0.0.1]` and `localhost.localdomain` all reach loopback on some
+machine and are all refused, with a message naming the boundary: an entitlement
+that can only be recognised by resolving a name is not a declaration.
+
+The production kind is stated **positively**: a host is `Https` because it is a
+registered domain — ASCII, two labels or more, hostname characters only, and a
+final label that is neither all-numeric nor `0x`-prefixed. It is not `Https`
+because no parser recognised it as an address; that phrasing admitted `0x`,
+`0x.0x.0x.0x`, the fullwidth spelling of `127.0.0.1`, and every bracketed
+authority that is not `[::1]`. An internationalised host is refused and asked
+for its `xn--` A-label, because that is the name a browser resolves and the
+name an App Link is claimed against.

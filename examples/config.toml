@@ -72,6 +72,44 @@ scope_claim = "scope"
 # attempt to use one is a 400 or is silent.
 reject_tenant_header = true
 
+# The issuer -> tenant registry. One entry per tenant realm this service serves.
+#
+# This is what decides the tenant. A token's `iss` is matched here — exactly,
+# never by prefix — and the tenant is the one this file names. The `tenant_id`
+# claim is still required and must agree, but it is a consistency check and
+# never the source: an identity provider that minted that claim from a
+# user-editable attribute would otherwise hand every one of its users a
+# cross-tenant read. See ADR 0019 §2.
+#
+# **The runtime will not start without at least one entry.** An empty registry
+# is refused at build_identity, which is step 1 of the application graph, so a
+# deployment that has not stated its tenant binding fails where the pipeline
+# catches it rather than refusing every request later.
+#
+# Two registrations for one issuer are refused too: which one won would depend
+# on ordering, and the two may name different tenants.
+#
+# The gateway in front of this service carries the same issuer set as its JWT
+# policy, and the two are separate artefacts that can drift. Both drifts fail
+# closed — an issuer only one of them knows means the token is refused at that
+# hop. What neither catches is an entry here binding an issuer to the *wrong*
+# tenant, because the gateway has no opinion about tenants and this list is the
+# authority. Generate both from one tenant list; do not maintain them twice.
+#
+# The issuer strings match examples/authorization.toml's [[issuers]], because a
+# deployment that runs both reads the same realms from both.
+[[identity.trusted_issuers]]
+issuer = "https://identity.fabric.example/realms/acme"
+tenant = "acme"
+
+[[identity.trusted_issuers]]
+issuer = "https://identity.fabric.example/realms/globex"
+tenant = "globex"
+
+[[identity.trusted_issuers]]
+issuer = "https://identity.fabric.example/realms/initech"
+tenant = "initech"
+
 [token]
 # The canonical posture (§8, §9). The gateway authenticates the caller and
 # validates the bearer token; the runtime consumes the identity it established
@@ -95,12 +133,31 @@ mode = "trusted_ingress"
 #   [token]
 #   mode = "validating"
 #   jwks_path = "/etc/fabric/jwks.json"
-#   issuers = ["https://id.example.com/realms/platform"]
+#   issuers = [
+#     "https://identity.fabric.example/realms/acme",
+#     "https://identity.fabric.example/realms/globex",
+#     "https://identity.fabric.example/realms/initech",
+#   ]
 #   audiences = ["saas-fabric"]
 #
 # Setting either allowlist makes that claim mandatory: a token omitting `iss`
 # is refused rather than skipping the issuer check. Omitting the setting
 # entirely means the claim is not examined at all.
+#
+# `audiences` is this deployment's Data API audience string (ADR 0019 §1 "The
+# equality constraint", and §G5) — the **same string**, not merely a similar
+# one, as `[identity_provider].audience` in `examples/control-plane.toml`, the
+# control plane's own configuration. That is a different process, loaded from
+# a different file, and required to agree on this one value: the Keycloak
+# client's audience mapper writes what that setting names, and this setting
+# is what a token is checked against on the way in.
+#
+# `issuers` here and [identity].trusted_issuers above are two lists of the same
+# issuers, for two different jobs: this one decides whose signature is accepted,
+# that one decides which tenant an issuer names. **They must name the same
+# set** — AppConfig::validate refuses a divergence at startup. An issuer in one
+# and not the other is either a token that verifies and cannot be placed, or a
+# tenant binding for an issuer whose signature nobody will accept.
 #
 # There is no third state. `issuers = []` is a startup failure, not a way to
 # switch the check off, and a blank entry is refused with it — as an unrendered

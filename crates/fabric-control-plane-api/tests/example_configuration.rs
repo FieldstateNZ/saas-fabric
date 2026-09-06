@@ -8,7 +8,7 @@
 
 use std::path::PathBuf;
 
-use fabric_client_model::ClientDocument;
+use fabric_client_model::{ClientDocument, API_VERSION, API_VERSION_V2};
 use fabric_control_plane::OperatorConfig;
 use fabric_control_plane_api::config::{ControlPlaneAppConfig, DesiredStateConfig, IdentityProviderConfig};
 
@@ -93,6 +93,7 @@ fn the_example_client_directory_is_the_one_the_example_documents_live_in() {
 fn every_example_client_document_parses() {
     let directory = repository_root().join("examples/clients");
     let mut parsed = 0;
+    let mut versions = std::collections::BTreeSet::new();
 
     for entry in std::fs::read_dir(&directory).expect("the example clients directory must exist") {
         let path = entry.expect("a readable directory entry").path();
@@ -101,12 +102,24 @@ fn every_example_client_document_parses() {
         }
 
         let text = std::fs::read_to_string(&path).expect("a readable document");
-        ClientDocument::parse(&text)
+        let document = ClientDocument::parse(&text)
             .unwrap_or_else(|error| panic!("{} does not parse: {error}", path.display()));
         parsed += 1;
+        versions.insert(document.api_version());
     }
 
-    assert!(parsed >= 2, "the examples should show more than one client");
+    assert!(
+        parsed >= 3,
+        "the examples should include at least three client documents"
+    );
+
+    // Both schema versions, because the `v1` migrator is only exercised by the
+    // shipped corpus if a shipped document actually reaches it.
+    assert_eq!(
+        versions,
+        [API_VERSION, API_VERSION_V2].into_iter().collect(),
+        "the examples should cover both schema versions"
+    );
 }
 
 #[test]

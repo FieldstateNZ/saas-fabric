@@ -49,7 +49,7 @@ where
 mod tests {
     use axum::body::Body;
     use fabric_connector::ConnectorRegistry;
-    use fabric_identity::{build_identity, IdentityConfig, TrustedIngressReader};
+    use fabric_identity::{build_identity, IdentityConfig, TrustedIngressReader, TrustedIssuer};
     use fabric_tenant_runtime::{DataSourceRegistry, RuntimeResolver, TenantRegistry};
     use http::Request as HttpRequest;
     use std::sync::Arc;
@@ -74,8 +74,16 @@ mod tests {
             Arc::new(TenantRegistry::new()),
             Arc::new(DataSourceRegistry::new()),
         ));
+        // Nothing here resolves an identity, but the registry is required
+        // configuration, so a resolver cannot be built without one.
         let identity = build_identity(
-            IdentityConfig::default(),
+            IdentityConfig {
+                trusted_issuers: vec![TrustedIssuer::new(
+                    "https://identity.test.invalid/realms/acme",
+                    fabric_core::TenantId::try_new("acme").unwrap(),
+                )],
+                ..IdentityConfig::default()
+            },
             Arc::new(TrustedIngressReader::new(Arc::new(FixedClock))),
         )
         .unwrap();

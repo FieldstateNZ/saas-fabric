@@ -3,8 +3,10 @@
 use std::path::PathBuf;
 
 use fabric_connector_ndc::NdcConnectorConfig;
+use fabric_core::TenantId;
+use fabric_identity::{IdentityConfig, TrustedIssuer};
 
-use crate::config::AppConfig;
+use crate::config::{Allowlist, AppConfig, TokenConfig};
 
 fn connector(id: &str) -> NdcConnectorConfig {
     serde_json::from_str(&format!(r#"{{"id":"{id}","endpoint":"http://connector"}}"#)).unwrap()
@@ -137,6 +139,107 @@ fn a_zero_connector_retry_interval_is_rejected() {
         .validate()
         .unwrap_err()
         .contains("connector_retry_interval_seconds"));
+}
+
+// -------------------------------------------- the two issuer lists (ADR 0019)
+
+/// An identity registry binding each of `tenants` to its own realm issuer.
+fn bound(tenants: &[&str]) -> IdentityConfig {
+    IdentityConfig {
+        trusted_issuers: tenants
+            .iter()
+            .map(|tenant| TrustedIssuer::new(issuer(tenant), TenantId::try_new(tenant).unwrap()))
+            .collect(),
+        ..IdentityConfig::default()
+    }
+}
+
+fn issuer(tenant: &str) -> String {
+    format!("https://identity.fabric.example/realms/{tenant}")
+}
+
+/// A defence-in-depth posture verifying signatures for exactly `tenants`.
+fn validating(tenants: &[&str]) -> TokenConfig {
+    TokenConfig::Validating {
+        jwks_path: PathBuf::from("/etc/fabric/jwks.json"),
+        issuers: Some(Allowlist::try_new(tenants.iter().map(|tenant| issuer(tenant)).collect()).unwrap()),
+        audiences: None,
+    }
+}
+
+#[test]
+fn a_validating_deployment_must_name_the_same_issuers_twice() {
+    // An issuer whose signature is accepted but which binds no tenant is a
+    // token that verifies and cannot be placed; the reverse is a tenant
+    // binding for an issuer nobody will accept. Both are startup errors.
+    let config = AppConfig {
+        token: validating(&["acme", "globex"]),
+        identity: bound(&["acme", "initech"]),
+        ..config_with(vec![connector("postgres")])
+    };
+
+    let error = config.validate().unwrap_err();
+
+    assert!(error.contains("[token].issuers"));
+    assert!(error.contains("[identity].trusted_issuers"));
+    assert!(error.contains(&issuer("globex")));
+    assert!(error.contains(&issuer("initech")));
+}
+
+#[test]
+fn a_validating_deployment_naming_one_set_twice_is_accepted() {
+    let config = AppConfig {
+        token: validating(&["acme", "globex"]),
+        identity: bound(&["globex", "acme"]),
+        ..config_with(vec![connector("postgres")])
+    };
+
+    assert!(config.validate().is_ok(), "order is not part of the set");
+}
+
+#[test]
+fn the_canonical_posture_has_no_second_issuer_list_to_diverge_from() {
+    // The edge holds the allowlist in this posture, so there is nothing here
+    // to compare against and this check must not invent a requirement.
+    let config = AppConfig {
+        token: TokenConfig::TrustedIngress {},
+        identity: bound(&["acme"]),
+        ..config_with(vec![connector("postgres")])
+    };
+
+    assert!(config.validate().is_ok());
+}
+
+#[test]
+fn an_unexamined_iss_under_the_validating_posture_is_still_a_valid_deployment() {
+    // Omitting `[token].issuers` means "do not examine `iss` when verifying
+    // the signature". The tenant binding still refuses an unregistered issuer,
+    // so this fails closed and is not this check's business.
+    let config = AppConfig {
+        token: TokenConfig::Validating {
+            jwks_path: PathBuf::from("/etc/fabric/jwks.json"),
+            issuers: None,
+            audiences: None,
+        },
+        identity: bound(&["acme"]),
+        ..config_with(vec![connector("postgres")])
+    };
+
+    assert!(config.validate().is_ok());
+}
+
+#[test]
+fn an_empty_issuer_registry_is_not_this_checks_business() {
+    // It is `IdentityConfig::validate`'s, reached from `build_identity` — so
+    // `AppConfig::validate` passing is not evidence the process will start.
+    // `composed_surface.rs` is what proves that.
+    let config = AppConfig {
+        identity: IdentityConfig::default(),
+        ..config_with(vec![connector("postgres")])
+    };
+
+    assert!(config.validate().is_ok());
+    assert!(config.identity.validate().is_err());
 }
 
 #[test]

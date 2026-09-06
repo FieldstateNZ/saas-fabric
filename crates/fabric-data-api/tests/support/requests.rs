@@ -6,11 +6,28 @@ use fabric_identity::encode_unsigned_token;
 use http::Request;
 use serde_json::Value;
 
-/// Encodes claims into an unsigned bearer token.
+use super::fixtures::issuer_naming;
+
+/// Encodes claims into an unsigned bearer token, supplying a registered `iss`
+/// when the caller did not name one.
+///
+/// **This is the choke point for every suite in this crate.** All fifteen build
+/// their tokens here, so the issuer that ADR 0019 §2 makes the tenant binding
+/// hinge on is added in one function rather than in fifteen files. A test that
+/// cares which issuer minted the token — the cross-tenant and unregistered-issuer
+/// cases — passes `iss` itself, and that value is used unchanged.
+///
+/// The default is derived from the token's own `tenant_id`, because the registry
+/// registers one issuer per tenant: see `fixtures::issuer_naming`.
 fn token_for(claims: Value) -> String {
-    let Value::Object(object) = claims else {
+    let Value::Object(mut object) = claims else {
         panic!("claims must be an object");
     };
+
+    if !object.contains_key("iss") {
+        let issuer = issuer_naming(object.get("tenant_id").and_then(Value::as_str));
+        object.insert("iss".to_owned(), Value::String(issuer));
+    }
 
     encode_unsigned_token(&object)
 }

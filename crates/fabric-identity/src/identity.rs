@@ -1,6 +1,10 @@
 //! The established identity context that the rest of the runtime consumes.
 
+mod trusted_issuer;
+
 use fabric_core::TenantId;
+
+pub use trusted_issuer::TrustedIssuer;
 
 /// The tenant identity context for one request.
 ///

@@ -282,11 +282,25 @@ PUT identity declaring a v2 native client: pkce s256, strategy development,
 → 200, reconciliation pending
 sweep against the fake provider
 → the provider holds one public client with the S256 challenge method, the
-  audience mapper, the post-logout attribute, and exactly the declared callback
+  audience mapper, and exactly the declared callback
 GET identity → the strategy and method come back as written
 PUT the same client with strategy claimedHttps and the loopback callback
 → 400 invalid_request, naming the strategy and the URI
 ```
+
+**The post-logout set is not part of what this composed proof asserts through
+the reconciliation port.** `ObservedOidcClient`
+(`crates/fabric-reconciliation/src/provider/observed.rs:36-47`) does not carry
+it at this commit, so the sweep step above has nothing to read it back from —
+a prior version of this row named it among what the sweep assertion checks,
+which cannot be true until that field exists. The post-logout set is proved
+today at the Keycloak wire, by D16's
+`a_declared_client_is_written_with_the_registered_uris_as_its_post_logout_set`
+(`crates/fabric-keycloak/tests/keycloak_adapter_identity.rs:129-138`), which
+asserts the POST body's `attributes` carries `post.logout.redirect.uris: "+"`.
+Once an observed `post_logout_redirect_uris_is_every_registered_uri: bool`
+lands on `ObservedOidcClient`, the planner can prove it as well; until then,
+D16 is where this fact is proved, not here.
 
 **Existing test** — `a_declared_native_client_round_trips_through_the_wire_unchanged`
 (`crates/fabric-keycloak/tests/keycloak_adapter_identity.rs:221-263`): write the

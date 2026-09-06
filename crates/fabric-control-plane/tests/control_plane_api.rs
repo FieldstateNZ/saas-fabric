@@ -662,3 +662,53 @@ async fn a_native_client_is_declared_reconciled_and_read_back_with_its_pkce_and_
     assert!(message.contains("claimedHttps"), "{message}");
     assert!(message.contains("loopback"), "{message}");
 }
+
+/// ADR 0019: "the console shows the document's version, and says that an edit
+/// will migrate it." This proves the wire half of that at the API the console
+/// calls — the `acme` fixture (`ACME` in `tests/support/mod.rs`) is `v1`, and
+/// an edit through this endpoint migrates it to `v2` in place (`with_identity`
+/// re-parses the rendered document, so there is no path that writes a `v2`
+/// client shape under a `v1` `apiVersion`).
+#[tokio::test]
+async fn identity_reports_the_document_s_schema_version_before_and_after_an_edit() {
+    let plane = control_plane();
+
+    let before = json(
+        send(
+            &plane.router,
+            as_operator("GET", "/api/clients/acme/identity")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(before["apiVersion"], fabric_client_model::API_VERSION);
+
+    let put_response = send(
+        &plane.router,
+        as_operator("PUT", "/api/clients/acme/identity")
+            .header(header::IF_MATCH, format!("\"{}\"", plane.revision))
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(identity_with_extra_role())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(put_response.status(), StatusCode::OK);
+    assert_eq!(
+        json(put_response).await["apiVersion"],
+        fabric_client_model::API_VERSION_V2
+    );
+
+    let after = json(
+        send(
+            &plane.router,
+            as_operator("GET", "/api/clients/acme/identity")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(after["apiVersion"], fabric_client_model::API_VERSION_V2);
+}

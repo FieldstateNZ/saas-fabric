@@ -9,6 +9,7 @@ const IDENTITY: Identity = {
   realm: 'acme',
   roles: ['Client Realm Administrator', 'Client Realm User'],
   clients: [],
+  apiVersion: 'fabric.fieldstate.nz/v2',
   revision: 'rev-1',
   reconciliation: { status: 'pending', observedAtUnix: null, detail: null },
 }

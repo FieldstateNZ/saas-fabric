@@ -78,7 +78,7 @@ export function IdentityPanel({ client }: { client: Client }) {
       </div>
 
       <h3>Applications</h3>
-      <ApplicationClients clients={current.clients} />
+      <ApplicationClients clients={current.clients} apiVersion={current.apiVersion} />
     </section>
   )
 }

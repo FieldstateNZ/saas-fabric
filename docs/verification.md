@@ -33,16 +33,16 @@ is at the end, under "The control plane, end to end".
 | --- | --- | --- |
 | Formatting | `cargo fmt --all --check` | clean |
 | Lints | `cargo clippy --workspace --all-targets -- -D warnings` | 0 findings |
-| Tests | `cargo test --workspace` | 1745 passing, 0 failing, 1 ignored |
+| Tests | `cargo test --workspace --exclude fabric-ndc-acceptance` | 1767 passing, 0 failing, 1 ignored |
 | Docs | `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps` | 0 warnings |
 | Dependencies | `cargo deny check` | advisories, bans, licences, sources — all ok |
 | File sizes | `python3 scripts/check_file_sizes.py` | 0 over the 150-line limit (2 exempted, both explained) |
-| Architecture | `python3 scripts/check_architecture.py` | 11 invariants hold across 21 crates |
+| Architecture | `python3 scripts/check_architecture.py` | 11 invariants hold across 22 crates |
 | Console lint | `npm run lint` | 0 findings |
 | Console types | `npm run typecheck` | 0 errors |
 | Console tests | `npm test` | 81 passing, 0 failing |
 | Console build | `npm run build` | 228 kB, 70 kB gzipped |
-| Connector acceptance | `cargo test -p fabric-ndc-acceptance` | 44 passing, 0 failing across two integration binaries — **default mode**, Docker up (server `29.1.3`), all 14 container-backed tests reached a real connector and postgres (see below for the breakdown) |
+| Connector acceptance | `cargo test -p fabric-ndc-acceptance` | 44 passing, 0 failing across two integration binaries — **default mode**, Docker up (server `29.1.3`); of the 14 container-backed tests, 13 reached a real connector and postgres and 1 reached the nginx impostor (see below for the breakdown) |
 | Connector acceptance, required mode | `FABRIC_REQUIRE_CONNECTOR_ACCEPTANCE=1 cargo test -p fabric-ndc-acceptance` | **Pending the first green `connector-acceptance` CI run.** Not observed on this machine — see below |
 
 Twelve of the thirteen rows above run in CI on every push and pull request
@@ -68,17 +68,27 @@ tests — because both files declare `mod support;`. Of the 26 and 18: 11 and
 3 respectively (14 in total) are container-backed — the composed acceptance
 test and the container harness's own smoke test — and call
 `support::gate::docker_available_or_skip` first. On this run Docker was up,
-so all 14 actually reached a running connector and postgres rather than
-skipping as pass. The remaining 15 in *each* binary are harness unit tests —
-pure-function tests of `tests/support/docker/image_reference.rs`,
-`tests/support/go_timestamp.rs`, and `tests/support/names.rs` — which never
-call that gate and run unconditionally, with or without Docker; that is the
-same 15 tests, compiled and executed once per binary, not 30 distinct ones.
+so all 14 actually ran against real Docker rather than skipping as pass —
+but "reached a running connector and postgres" is only true of 13 of them.
+The 14th, `a_connector_that_answers_http_but_not_ndc_is_refused_rather_than_believed`,
+deliberately starts only `support::impostor::Impostor` (a reconfigured
+nginx) and never a connector or postgres at all — see "Connector acceptance
+(issue #62)" below for what it proves instead. The remaining 15 in *each*
+binary are harness unit tests — pure-function tests of
+`tests/support/docker/image_reference.rs` and its sibling
+`image_reference_tests.rs`, `tests/support/go_timestamp.rs`, and
+`tests/support/names.rs` — which never call that gate and run
+unconditionally, with or without Docker; that is the same 15 tests,
+compiled and executed once per binary, not 30 distinct ones.
 
 **This run: Docker up, default mode, real containers throughout.** At
-commit `88ee7bf` ("Bound the pull to a deadline, and pay it once per
-process"), with a real Docker daemon reachable (`docker version` reports
-server `29.1.3`) and `FABRIC_REQUIRE_CONNECTOR_ACCEPTANCE` unset:
+commit `a3f3274` ("Bound the reader-join too, so a lingering grandchild
+can't turn a clean exit into a hang" -- the code half of this closure pass,
+whose bounded reader-join and richer timeout error are exactly what this
+row needed re-measured against), with a real
+Docker daemon reachable (`docker version` reports server `29.1.3`) and
+`FABRIC_REQUIRE_CONNECTOR_ACCEPTANCE` unset. Timed with `date +%s`
+immediately before and after the whole invocation, 252 seconds apart:
 
 ```
 $ cargo test -p fabric-ndc-acceptance -- --nocapture
@@ -86,10 +96,16 @@ $ cargo test -p fabric-ndc-acceptance -- --nocapture
 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 
      Running tests/published_state_reaches_a_real_connector.rs (target/debug/deps/published_state_reaches_a_real_connector-...)
-test result: ok. 26 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 127.14s
+# [elided: 26 individual `test ... ok` lines, several "has been running for
+# over 60 seconds" progress notices, and the fallback stderr line quoted
+# below -- all present in the real --nocapture output, reproduced here only
+# as the summary line]
+test result: ok. 26 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 127.96s
 
      Running tests/the_stack_comes_up.rs (target/debug/deps/the_stack_comes_up-...)
-test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 123.24s
+# [elided the same way: 18 `test ... ok` lines, three `Stack::up` timing
+# eprintln!s, and this binary's own copy of the fallback stderr line]
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 123.33s
 
    Doc-tests fabric_ndc_acceptance
 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
@@ -101,26 +117,45 @@ that never answers, per `tests/support/images.rs` — but it no longer hangs
 the suite the way it did before this round of review closed that finding:
 each binary's own pull deadline (`image_reference::PULL_DEADLINE`, 120
 seconds) fired exactly once, then fell back to the bare tag already present
-locally under a different digest. Its stderr line, verbatim:
+locally under a different digest. Its stderr line, verbatim -- now carrying
+the tail of the pull's own stderr alongside the deadline, per this pass's
+fix to `process/deadline.rs`; empty here only because this particular hang
+produced no output at all before the kill:
 
-> fabric-ndc-acceptance: ghcr.io/hasura/ndc-postgres@sha256:f91910ef5107aa80d31d82639e149b7f41f4a5bb3af9a369397d7d5965d79a57 could not be pulled within 120s (`docker pull ghcr.io/hasura/ndc-postgres@sha256:f91910ef5107aa80d31d82639e149b7f41f4a5bb3af9a369397d7d5965d79a57` failed: did not complete within 120s and was killed); falling back to the bare tag ghcr.io/hasura/ndc-postgres:v3.1.0 (see images.rs for why)
+> fabric-ndc-acceptance: ghcr.io/hasura/ndc-postgres@sha256:f91910ef5107aa80d31d82639e149b7f41f4a5bb3af9a369397d7d5965d79a57 could not be pulled within 120s (`docker pull ghcr.io/hasura/ndc-postgres@sha256:f91910ef5107aa80d31d82639e149b7f41f4a5bb3af9a369397d7d5965d79a57` failed: did not complete within 120s and was killed; stderr so far: ); falling back to the bare tag ghcr.io/hasura/ndc-postgres:v3.1.0 (see images.rs for why)
 
 That line appeared exactly twice in the whole run's output — once per test
 *binary*, each its own process with its own resolution cache — never once
 per test. Every container-backed test after the first one in a binary
 reused the cached fallback and paid no further wait, which is the whole
 point of `image_reference.rs`'s per-reference cache: the composed binary's
-11 container-backed tests plus 15 unit tests still finished in 127.14s
+11 container-backed tests plus 15 unit tests still finished in 127.96s
 total, and the stack binary's 3 container-backed tests plus 15 unit tests
-in 123.24s — one deadline per binary, not one per test, and certainly not
+in 123.33s — one deadline per binary, not one per test, and certainly not
 one per container-backed test (which would have been 14 deadlines, over 28
-minutes, on this machine). All 14 container-backed tests actually reached a
-running connector and postgres this time: no "skipped -- no Docker daemon
-available" line appears anywhere in this run's output, and
-`docker ps -a --filter name=fabric-ndc-acc` was empty again immediately
-afterward, confirming every `Stack`'s `Drop` tore its own containers and
-network down. Wall-clock for the whole `cargo test -p fabric-ndc-acceptance`
-invocation, start to finish: 4 minutes 8 seconds.
+minutes, on this machine).
+
+Of the 14 container-backed tests, 13 actually reached a running connector
+and postgres this time: no "skipped -- no Docker daemon available" line
+appears anywhere in this run's output. The 14th,
+`a_connector_that_answers_http_but_not_ndc_is_refused_rather_than_believed`,
+reached only the nginx impostor it starts on purpose
+(`support::impostor::Impostor`, deliberately not a `support::stack::Stack`
+-- it never touches postgres or the real connector image at all) and passed
+by refusing it, exactly what it exists to prove. Two separate checks
+immediately afterward, not one, because a container check cannot stand in
+for a network check: `docker ps -a --filter name=fabric-ndc-acc` was empty,
+confirming the thirteen `Stack`s' and the one `Impostor`'s `Drop` each
+removed its own container(s); `docker network ls --filter
+name=fabric-ndc-acc` was empty too, separately confirming the same `Drop`s
+removed their networks (`docker ps` lists containers, never networks, so it
+cannot carry that half of the claim on its own). `pgrep -f
+docker-credential-desktop` was also empty afterward -- the bounded
+reader-join this pass adds to `process/deadline.rs` is what makes that true
+despite the credential helper the pull deadline observes lingering past its
+own parent's exit (see that file's `kill_process_group` doc). Wall-clock for
+the whole `cargo test -p fabric-ndc-acceptance` invocation, start to finish:
+4 minutes 12 seconds.
 
 This is still the **default mode** row, not the required mode: the
 bare-tag fallback that made this run possible is exactly what
@@ -146,6 +181,15 @@ the growth outside `fabric-runtime-publication` is this slice's work — it is
 the accumulated increments between the two runs — and none of it is
 re-narrated here; only the table above and the new section below reflect the
 later commit.
+
+The Architecture and Tests rows have moved once more since, for issue #62:
+this slice adds `fabric-ndc-acceptance`, a 22nd crate
+(`python3 scripts/check_architecture.py` now reports 11 invariants across 22
+crates, not 21), and excluding it from the workspace suite the way CI already
+does (`cargo test --workspace --exclude fabric-ndc-acceptance`) now reports
+1767 passing, 0 failing, 1 ignored, not 1745. The Gates table above already
+carries both updated numbers; the `9e7c83b` figures just above stay as
+recorded for the M1 increment they describe.
 
 ## Runtime publication (M1)
 

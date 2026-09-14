@@ -20,15 +20,19 @@ entirely under `tests/`.
   `ghcr.io/hasura/ndc-postgres:v3.1.0`, builds the real
   `fabric_tenant_runtime::build_runtime` and
   `fabric_data_api::build_data_api` over it, and drives the router with
-  `tower::ServiceExt::oneshot`. Eleven tests: two-tenant isolation on both
+  `tower::ServiceExt::oneshot`. Fifteen tests: two-tenant isolation on both
   the list and keyed routes, a direct `psql` proof both physical rows exist,
   the `x-tenant-id` header refusal, no response naming the connector id or
   the discriminator, a connector refused for declaring no routing argument,
   an HTTP impostor (nginx) refused as malformed rather than believed, a
-  stopped connector answering `503`, the version-floor handshake, and a real
-  insert reporting the connector's own `affected` count. A twelfth,
-  `a_delete_scoped_to_another_tenant_affects_nothing_and_the_row_survives`,
-  is not implemented -- see "F3" below.
+  stopped connector answering `503`, the version-floor handshake, a real
+  insert reporting the connector's own `affected` count, and -- since issue
+  #67's slice 2 -- a keyed delete scoped to another tenant leaving the row
+  untouched, a keyed delete removing only the acting tenant's physical row
+  under a logical key the two tenants share, a keyed update changing only
+  the acting tenant's row, and no write response naming either procedure's
+  key arguments, predicate argument, or `_set` wrapping. See "F3" below for
+  what closed the gap this last group used to fill.
 - `tests/the_stack_comes_up.rs` (slice 3) -- the container harness's own
   proof it comes up and answers, one layer below the composed test.
 
@@ -168,21 +172,26 @@ deliberately **not** added to `DOMAIN_CRATES`, `RUNTIME_PLANE`, or
 publisher fence (`check_runtime_plane_cannot_reach_the_publisher`,
 `check_plane_reachability_is_transitive`) holds exactly as before.
 
-## F3: what this crate does not, and cannot yet, prove
+## F3: closed
 
-`a_delete_scoped_to_another_tenant_affects_nothing_and_the_row_survives` is
-named in the issue #62 plan and not implemented. The real
+`a_delete_scoped_to_another_tenant_affects_nothing_and_the_row_survives` was
+named in the issue #62 plan and, until issue #67, not implemented: the real
 `delete_articles_by_id_and_tenant_key` and
 `update_articles_by_id_and_tenant_key` procedures require `key_id` and
 `key_tenant_key` arguments alongside their predicate, and
-`fabric_connector_ndc::CollectionProcedures` has nowhere to carry a required
+`fabric_connector_ndc::CollectionProcedures` had nowhere to carry a required
 key argument -- a neutral `MutationSpec::Delete { filter }` or
-`MutationSpec::Update` cannot be expressed against this connector's
-generated procedures as they stand. This is out of scope for this crate: it
-needs a production change in `fabric-connector-ndc`, tracked as its own
-follow-up issue that supersedes ADR 0004 rather than amending it further.
-`docs/verification.md`'s "Connector acceptance (issue #62)" section records
-the same deferral as "F3."
+`MutationSpec::Update` could not be expressed against this connector's
+generated procedures as they stood. Issue #67 slice 1 gave `ProcedureBinding`
+a `key_arguments` map and a `payload_shape` for `update_columns`'s
+`{"_set": value}` wrapping; slice 2 (this crate) wires `writable_config` to
+the real keyed procedures and proves them here: a keyed delete scoped to
+another tenant leaves the row untouched, a keyed delete removes only the
+acting tenant's physical row under a logical key two tenants share, and a
+keyed update changes only the acting tenant's row -- all through the real
+HTTP surface, against the real connector. `docs/verification.md`'s
+"Connector acceptance (issue #62)" section recorded F3 as a deferral; that
+entry is the lead's to update to reflect this closure.
 
 ## Invariants to preserve
 

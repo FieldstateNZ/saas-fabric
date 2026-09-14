@@ -128,8 +128,10 @@ pub fn read_only_snapshot() -> RuntimeSnapshot {
 }
 
 /// The write-enabled twin of [`read_only_snapshot`]: the DataSource declares
-/// `writable: true` and the catalogue adds `create` -- the two independent
-/// switches ADR 0004 requires before any write is possible at all.
+/// `writable: true` and the catalogue adds `create`, `update` and `delete` --
+/// the two independent switches ADR 0004 requires before any write is
+/// possible at all, plus every verb the real keyed procedures now serve
+/// (issue #67).
 #[must_use]
 pub fn writable_snapshot() -> RuntimeSnapshot {
     RuntimeSnapshot {
@@ -143,7 +145,7 @@ pub fn writable_snapshot() -> RuntimeSnapshot {
         data_sources: DocumentInput::new(DocumentRevision::new(1), vec![shared_data_source(true)]),
         catalog: DocumentInput::new(
             DocumentRevision::new(1),
-            articles_catalog(&["read", "list", "create"]),
+            articles_catalog(&["read", "list", "create", "update", "delete"]),
         ),
     }
 }

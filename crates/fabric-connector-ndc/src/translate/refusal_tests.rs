@@ -17,7 +17,7 @@ use fabric_connector::{
 };
 use fabric_core::{BindingRevision, DataSourceId, TenantId};
 
-use crate::config::{CollectionProcedures, ProcedureBinding};
+use crate::config::{CollectionProcedures, PayloadShape, ProcedureBinding};
 use crate::translate::{to_capabilities, to_mutation_request, to_query_request};
 use crate::wire::{NdcCapabilitiesResponse, NdcSchemaResponse};
 use crate::{NdcConnectorConfig, SchemaIndex};
@@ -173,6 +173,8 @@ fn an_unmapped_verb_refusal_names_the_capability_not_the_table() {
                 procedure: "update_customer_records_v2".to_owned(),
                 payload_argument: Some("set".to_owned()),
                 filter_argument: Some("filter".to_owned()),
+                key_arguments: BTreeMap::new(),
+                payload_shape: PayloadShape::Values,
             }),
             ..CollectionProcedures::default()
         },

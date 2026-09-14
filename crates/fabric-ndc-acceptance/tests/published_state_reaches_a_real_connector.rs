@@ -30,7 +30,9 @@ mod support;
 use std::collections::BTreeMap;
 
 use fabric_connector::ConnectorId;
-use fabric_connector_ndc::{build_ndc_connector, CollectionProcedures, NdcConnectorConfig, ProcedureBinding};
+use fabric_connector_ndc::{
+    build_ndc_connector, CollectionProcedures, NdcConnectorConfig, PayloadShape, ProcedureBinding,
+};
 use http::StatusCode;
 use serde_json::Value;
 use support::compose::compose;
@@ -77,6 +79,8 @@ fn writable_config(endpoint: String) -> NdcConnectorConfig {
                 procedure: "insert_articles".to_owned(),
                 payload_argument: Some("objects".to_owned()),
                 filter_argument: None,
+                key_arguments: BTreeMap::new(),
+                payload_shape: PayloadShape::Values,
             }),
             update: None,
             delete: None,

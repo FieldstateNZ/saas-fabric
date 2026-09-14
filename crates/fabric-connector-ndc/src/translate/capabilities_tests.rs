@@ -1,7 +1,7 @@
 //! Tests for capabilities.
 
 use super::capabilities::*;
-use crate::config::{CollectionProcedures, ProcedureBinding};
+use crate::config::{CollectionProcedures, PayloadShape, ProcedureBinding};
 use crate::wire::NdcCapabilitiesResponse;
 use crate::wire::NdcSchemaResponse;
 use crate::{NdcConnectorConfig, SchemaIndex};
@@ -65,6 +65,8 @@ fn a_configured_mapping_enables_writes() {
                 procedure: "insert_customers".to_owned(),
                 payload_argument: Some("objects".to_owned()),
                 filter_argument: None,
+                key_arguments: BTreeMap::new(),
+                payload_shape: PayloadShape::Values,
             }),
             ..CollectionProcedures::default()
         },

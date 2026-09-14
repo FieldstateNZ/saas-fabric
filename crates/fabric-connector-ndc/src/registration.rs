@@ -1,8 +1,14 @@
 //! Startup negotiation and wiring for an NDC connector.
 
+mod key_arguments;
+#[cfg(test)]
+mod key_arguments_tests;
 mod procedure_arguments;
 #[cfg(test)]
 mod procedure_arguments_tests;
+mod required_arguments;
+#[cfg(test)]
+mod required_arguments_tests;
 mod routing_arguments;
 #[cfg(test)]
 mod routing_arguments_tests;
@@ -15,7 +21,9 @@ use std::sync::Arc;
 use fabric_connector::SecretResolver;
 
 use crate::client::NdcHttpClient;
+use crate::registration::key_arguments::check_key_arguments;
 use crate::registration::procedure_arguments::check_procedure_arguments;
+use crate::registration::required_arguments::check_required_arguments;
 use crate::registration::routing_arguments::check_routing_arguments;
 use crate::registration::version::{check_version, VersionOutcome};
 use crate::translate::to_capabilities;
@@ -29,7 +37,7 @@ use crate::{logging, NdcConnector, NdcConnectorConfig, SchemaIndex, NDC_MINIMUM_
 /// request path: §6's principle that discovery belongs before request handling
 /// applies to connectors just as it does to tenant bindings.
 ///
-/// Four things are checked, in the order the answers arrive:
+/// Six things are checked, in the order the answers arrive:
 ///
 /// 1. **The specification version**, against the floor this client requires —
 ///    see `version::check_version`.
@@ -44,10 +52,19 @@ use crate::{logging, NdcConnector, NdcConnectorConfig, SchemaIndex, NDC_MINIMUM_
 ///    declares — see `procedure_arguments::check_procedure_arguments`. This is
 ///    the check that stops a tenant predicate being sent under a name the
 ///    procedure never declared, which is an unscoped delete.
+/// 5. **Every key argument**, against the same schema — see
+///    `key_arguments::check_key_arguments`. The mirror of check 4 for the
+///    arguments a keyed procedure reads its key from, rather than its
+///    predicate.
+/// 6. **Every argument the procedure requires**, against what the whole
+///    mapping supplies between its payload, its filter, and its keys — see
+///    `required_arguments::check_required_arguments`. This is the check that
+///    would have turned issue #62's F3 into a boot failure instead of a
+///    first-write failure.
 ///
-/// Checks 2 and 4 are the same idea applied to the two halves of the request:
-/// an argument a connector never declared is not promised to do anything, and
-/// in both cases the silence is what makes it dangerous.
+/// Checks 2, 4 and 5 are the same idea applied to different arguments: one a
+/// connector never declared is not promised to do anything, and in each case
+/// the silence is what makes it dangerous.
 ///
 /// # Errors
 ///
@@ -87,6 +104,8 @@ pub async fn build_ndc_connector(
     let index = SchemaIndex::build(&schema);
 
     check_procedure_arguments(&config, &index)?;
+    check_key_arguments(&config, &index)?;
+    check_required_arguments(&config, &index)?;
 
     let neutral_capabilities = to_capabilities(&capabilities, &index, &config);
 

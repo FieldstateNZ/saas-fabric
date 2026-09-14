@@ -7,7 +7,7 @@ use fabric_connector::{
 };
 use serde_json::Value;
 
-use crate::config::{CollectionProcedures, ProcedureBinding};
+use crate::config::{CollectionProcedures, PayloadShape, ProcedureBinding};
 use crate::translate::to_mutation_request;
 use crate::wire::{NdcMutationOperation, NdcSchemaResponse};
 use crate::{NdcConnectorConfig, SchemaIndex};
@@ -53,6 +53,8 @@ fn insert_binding() -> ProcedureBinding {
         procedure: "insert_customers".to_owned(),
         payload_argument: Some("objects".to_owned()),
         filter_argument: None,
+        key_arguments: BTreeMap::new(),
+        payload_shape: PayloadShape::Values,
     }
 }
 
@@ -61,6 +63,8 @@ fn update_binding() -> ProcedureBinding {
         procedure: "update_customers".to_owned(),
         payload_argument: Some("update_columns".to_owned()),
         filter_argument: Some("filter".to_owned()),
+        key_arguments: BTreeMap::new(),
+        payload_shape: PayloadShape::Values,
     }
 }
 
@@ -69,6 +73,8 @@ fn delete_binding() -> ProcedureBinding {
         procedure: "delete_customers".to_owned(),
         payload_argument: None,
         filter_argument: Some("filter".to_owned()),
+        key_arguments: BTreeMap::new(),
+        payload_shape: PayloadShape::Values,
     }
 }
 
@@ -337,6 +343,8 @@ fn an_insert_request_matches_the_real_connectors_accepted_shape() {
             procedure: "insert_articles".to_owned(),
             payload_argument: Some("objects".to_owned()),
             filter_argument: None,
+            key_arguments: BTreeMap::new(),
+            payload_shape: PayloadShape::Values,
         }),
         ..CollectionProcedures::default()
     });
@@ -421,4 +429,358 @@ fn a_mapping_naming_a_procedure_the_connector_lacks_is_refused() {
         to_mutation_request(&spec, None, &config, &index()).unwrap_err(),
         ConnectorError::InvalidOperation(_)
     ));
+}
+
+// -- Keyed procedures (issue #67) --------------------------------------
+//
+// `ndc-postgres` v3.1.0 generates update and delete procedures keyed by
+// primary key rather than accepting a bare predicate — see
+// `docs/decisions/0004-write-support-in-the-first-release.md`'s addendum on
+// F3. Everything below exercises `key_arguments` and `payload_shape` against
+// a schema shaped like that real connector's `articles` collection.
+
+fn articles_collection() -> CollectionName {
+    CollectionName::try_new("articles").unwrap()
+}
+
+fn articles_config(procedures: CollectionProcedures) -> NdcConnectorConfig {
+    NdcConnectorConfig::for_test(BTreeMap::from([("articles".to_owned(), procedures)]))
+}
+
+/// A schema mirroring the real `ndc-postgres` v3.1.0 **keyed** `articles`
+/// procedures observed for issue #67 — see
+/// `tests/fixtures/ndc-postgres-v3.1.0/schema-named.json`. `key_id` and
+/// `key_tenant_key` are plain, non-nullable `text` arguments; `pre_check` and
+/// `post_check` are nullable predicates, exactly as that schema declares them.
+fn keyed_articles_index() -> SchemaIndex {
+    let schema: NdcSchemaResponse = serde_json::from_str(
+        r#"{
+            "scalar_types": {"text": {"comparison_operators": {"_eq": {"type": "equal"}}}},
+            "object_types": {"articles": {"fields": {
+                "id": {"type": {"type": "named", "name": "text"}},
+                "tenant_key": {"type": {"type": "named", "name": "text"}},
+                "title": {"type": {"type": "named", "name": "text"}}
+            }}},
+            "collections": [{"name": "articles", "type": "articles"}],
+            "procedures": [
+                {"name": "delete_articles_by_id_and_tenant_key", "arguments": {
+                    "key_id": {"type": {"type": "named", "name": "text"}},
+                    "key_tenant_key": {"type": {"type": "named", "name": "text"}},
+                    "pre_check": {"type": {"type": "nullable", "underlying_type":
+                        {"type": "predicate", "object_type_name": "articles"}}}
+                }},
+                {"name": "update_articles_by_id_and_tenant_key", "arguments": {
+                    "key_id": {"type": {"type": "named", "name": "text"}},
+                    "key_tenant_key": {"type": {"type": "named", "name": "text"}},
+                    "update_columns": {"type": {"type": "named",
+                        "name": "update_articles_by_id_and_tenant_key_update_columns"}},
+                    "pre_check": {"type": {"type": "nullable", "underlying_type":
+                        {"type": "predicate", "object_type_name": "articles"}}},
+                    "post_check": {"type": {"type": "nullable", "underlying_type":
+                        {"type": "predicate", "object_type_name": "articles"}}}
+                }}
+            ]
+        }"#,
+    )
+    .unwrap();
+
+    SchemaIndex::build(&schema)
+}
+
+fn keyed_delete_binding() -> ProcedureBinding {
+    ProcedureBinding {
+        procedure: "delete_articles_by_id_and_tenant_key".to_owned(),
+        payload_argument: None,
+        filter_argument: Some("pre_check".to_owned()),
+        key_arguments: BTreeMap::from([
+            ("id".to_owned(), "key_id".to_owned()),
+            ("tenant_key".to_owned(), "key_tenant_key".to_owned()),
+        ]),
+        payload_shape: PayloadShape::Values,
+    }
+}
+
+fn keyed_update_binding() -> ProcedureBinding {
+    ProcedureBinding {
+        procedure: "update_articles_by_id_and_tenant_key".to_owned(),
+        payload_argument: Some("update_columns".to_owned()),
+        filter_argument: Some("pre_check".to_owned()),
+        key_arguments: BTreeMap::from([
+            ("id".to_owned(), "key_id".to_owned()),
+            ("tenant_key".to_owned(), "key_tenant_key".to_owned()),
+        ]),
+        payload_shape: PayloadShape::SetOperations,
+    }
+}
+
+/// A filter shaped like what `MutationSpec::for_target` leaves behind: the
+/// primary key's two columns, both equalities, flattened into one `And`.
+fn keyed_filter(id: &str, tenant_key: &str) -> Filter {
+    Filter::And {
+        clauses: vec![
+            Filter::Compare {
+                field: FieldName::try_new("id").unwrap(),
+                operator: ComparisonOperator::Equal,
+                value: Value::String(id.to_owned()),
+            },
+            Filter::Compare {
+                field: FieldName::try_new("tenant_key").unwrap(),
+                operator: ComparisonOperator::Equal,
+                value: Value::String(tenant_key.to_owned()),
+            },
+        ],
+    }
+}
+
+/// The real request the connector accepted for a keyed delete —
+/// `tests/fixtures/ndc-postgres-v3.1.0/request-delete-other-tenant.json`,
+/// extracted verbatim from the plan's `probe6.sh`. Its `pre_check` is a
+/// hand-built cross-tenant probe: the key names tenant `acme-482`, but the
+/// predicate names tenant `globex-915` — deliberately mismatched, to prove
+/// the delete touched nothing (`affected_rows: 0`, in the paired response
+/// capture) even when the permission predicate disagreed with the key. This
+/// crate's own translation can never reproduce that mismatch, because it
+/// reads both the key values and the predicate off the *same* filter — so
+/// this test does not compare the whole body. It pins what does not depend on
+/// that: the argument names, that both key values came through, and the
+/// `fields` selection.
+#[test]
+fn a_keyed_delete_matches_the_real_connectors_argument_shape() {
+    let config = articles_config(CollectionProcedures {
+        delete: Some(keyed_delete_binding()),
+        ..CollectionProcedures::default()
+    });
+
+    let spec = MutationSpec::Delete {
+        collection: articles_collection(),
+        filter: Some(keyed_filter("9", "tenant-acme-482")),
+    };
+
+    let request = to_mutation_request(&spec, None, &config, &keyed_articles_index()).unwrap();
+    let NdcMutationOperation::Procedure {
+        name,
+        arguments,
+        fields,
+    } = request.operations.first().unwrap();
+
+    let expected = fixture("request-delete-other-tenant.json");
+    let expected_operation = &expected["operations"][0];
+    let expected_arguments = expected_operation["arguments"].as_object().unwrap();
+
+    assert_eq!(name, "delete_articles_by_id_and_tenant_key");
+    assert_eq!(
+        arguments.keys().collect::<std::collections::BTreeSet<_>>(),
+        expected_arguments
+            .keys()
+            .collect::<std::collections::BTreeSet<_>>(),
+        "argument names must match the real connector's accepted shape"
+    );
+    assert!(arguments["key_id"].is_string(), "key_id must be sent");
+    assert!(
+        arguments["key_tenant_key"].is_string(),
+        "key_tenant_key must be sent"
+    );
+    assert_eq!(
+        serde_json::to_value(fields).unwrap(),
+        expected_operation["fields"],
+        "fields selection must match the real connector's accepted shape"
+    );
+}
+
+#[test]
+fn a_keyed_delete_carries_both_key_values_and_the_full_predicate() {
+    let config = articles_config(CollectionProcedures {
+        delete: Some(keyed_delete_binding()),
+        ..CollectionProcedures::default()
+    });
+
+    let spec = MutationSpec::Delete {
+        collection: articles_collection(),
+        filter: Some(keyed_filter("9", "tenant-acme-482")),
+    };
+
+    let request = to_mutation_request(&spec, None, &config, &keyed_articles_index()).unwrap();
+    let NdcMutationOperation::Procedure { arguments, .. } = request.operations.first().unwrap();
+
+    assert_eq!(arguments["key_id"], "9");
+    assert_eq!(arguments["key_tenant_key"], "tenant-acme-482");
+    // The tenant discriminator reaches the connector twice — once as a key
+    // argument, once inside `pre_check` — by design; see
+    // `ProcedureBinding::key_arguments`'s rustdoc.
+    assert_eq!(arguments["pre_check"]["type"], "and");
+}
+
+/// `payload_shape: set_operations` wraps every field the caller changed —
+/// including the stamped discriminator — in `{"_set": value}`, which is what
+/// `ndc-postgres`'s `update_columns` argument expects on a keyed update
+/// procedure (`update_articles_by_id_and_tenant_key_update_columns`, in
+/// `schema-named.json`).
+#[test]
+fn a_keyed_update_shapes_its_payload_as_set_operations() {
+    let config = articles_config(CollectionProcedures {
+        update: Some(keyed_update_binding()),
+        ..CollectionProcedures::default()
+    });
+
+    let spec = MutationSpec::Update {
+        collection: articles_collection(),
+        filter: Some(keyed_filter("9", "tenant-acme-482")),
+        changes: Row::new()
+            .with(
+                FieldName::try_new("title").unwrap(),
+                Value::String("Updated".to_owned()),
+            )
+            .with(
+                FieldName::try_new("tenant_key").unwrap(),
+                Value::String("tenant-acme-482".to_owned()),
+            ),
+    };
+
+    let request = to_mutation_request(&spec, None, &config, &keyed_articles_index()).unwrap();
+    let NdcMutationOperation::Procedure { arguments, .. } = request.operations.first().unwrap();
+
+    assert_eq!(
+        arguments["update_columns"]["title"],
+        serde_json::json!({"_set": "Updated"})
+    );
+    assert_eq!(
+        arguments["update_columns"]["tenant_key"],
+        serde_json::json!({"_set": "tenant-acme-482"})
+    );
+    assert_eq!(arguments["key_id"], "9");
+    assert_eq!(arguments["key_tenant_key"], "tenant-acme-482");
+}
+
+#[test]
+fn a_keyed_delete_missing_a_key_equality_is_refused() {
+    let config = articles_config(CollectionProcedures {
+        delete: Some(keyed_delete_binding()),
+        ..CollectionProcedures::default()
+    });
+
+    // Only `id` has an equality; `tenant_key` — the discriminator itself —
+    // has none, so the key argument mapped to it has nothing to read.
+    let spec = MutationSpec::Delete {
+        collection: articles_collection(),
+        filter: Some(Filter::Compare {
+            field: FieldName::try_new("id").unwrap(),
+            operator: ComparisonOperator::Equal,
+            value: Value::String("9".to_owned()),
+        }),
+    };
+
+    let error = to_mutation_request(&spec, None, &config, &keyed_articles_index()).unwrap_err();
+
+    assert!(matches!(error, ConnectorError::InvalidOperation(_)));
+}
+
+#[test]
+fn a_keyed_delete_with_the_key_only_reachable_through_an_or_is_refused() {
+    let config = articles_config(CollectionProcedures {
+        delete: Some(keyed_delete_binding()),
+        ..CollectionProcedures::default()
+    });
+
+    // `id` only holds along one branch of the `Or`, so it is not a key value
+    // — treating it as one would let either of two rows be reached when only
+    // one was named.
+    let filter = Filter::And {
+        clauses: vec![
+            Filter::Or {
+                clauses: vec![
+                    Filter::Compare {
+                        field: FieldName::try_new("id").unwrap(),
+                        operator: ComparisonOperator::Equal,
+                        value: Value::String("9".to_owned()),
+                    },
+                    Filter::Compare {
+                        field: FieldName::try_new("id").unwrap(),
+                        operator: ComparisonOperator::Equal,
+                        value: Value::String("10".to_owned()),
+                    },
+                ],
+            },
+            Filter::Compare {
+                field: FieldName::try_new("tenant_key").unwrap(),
+                operator: ComparisonOperator::Equal,
+                value: Value::String("tenant-acme-482".to_owned()),
+            },
+        ],
+    };
+    let spec = MutationSpec::Delete {
+        collection: articles_collection(),
+        filter: Some(filter),
+    };
+
+    let error = to_mutation_request(&spec, None, &config, &keyed_articles_index()).unwrap_err();
+
+    assert!(matches!(error, ConnectorError::InvalidOperation(_)));
+}
+
+#[test]
+fn a_keyed_delete_with_contradictory_key_equalities_is_refused() {
+    let config = articles_config(CollectionProcedures {
+        delete: Some(keyed_delete_binding()),
+        ..CollectionProcedures::default()
+    });
+
+    let filter = Filter::And {
+        clauses: vec![
+            Filter::Compare {
+                field: FieldName::try_new("id").unwrap(),
+                operator: ComparisonOperator::Equal,
+                value: Value::String("9".to_owned()),
+            },
+            Filter::Compare {
+                field: FieldName::try_new("id").unwrap(),
+                operator: ComparisonOperator::Equal,
+                value: Value::String("10".to_owned()),
+            },
+            Filter::Compare {
+                field: FieldName::try_new("tenant_key").unwrap(),
+                operator: ComparisonOperator::Equal,
+                value: Value::String("tenant-acme-482".to_owned()),
+            },
+        ],
+    };
+    let spec = MutationSpec::Delete {
+        collection: articles_collection(),
+        filter: Some(filter),
+    };
+
+    let error = to_mutation_request(&spec, None, &config, &keyed_articles_index()).unwrap_err();
+
+    assert!(matches!(error, ConnectorError::InvalidOperation(_)));
+}
+
+#[test]
+fn a_keyed_delete_with_an_in_of_one_value_for_the_key_is_not_accepted() {
+    let config = articles_config(CollectionProcedures {
+        delete: Some(keyed_delete_binding()),
+        ..CollectionProcedures::default()
+    });
+
+    // A single-value `In` is the same predicate as an equality, but this
+    // crate keeps the key extraction strict rather than treating it as one.
+    let filter = Filter::And {
+        clauses: vec![
+            Filter::In {
+                field: FieldName::try_new("id").unwrap(),
+                values: vec![Value::String("9".to_owned())],
+            },
+            Filter::Compare {
+                field: FieldName::try_new("tenant_key").unwrap(),
+                operator: ComparisonOperator::Equal,
+                value: Value::String("tenant-acme-482".to_owned()),
+            },
+        ],
+    };
+    let spec = MutationSpec::Delete {
+        collection: articles_collection(),
+        filter: Some(filter),
+    };
+
+    let error = to_mutation_request(&spec, None, &config, &keyed_articles_index()).unwrap_err();
+
+    assert!(matches!(error, ConnectorError::InvalidOperation(_)));
 }

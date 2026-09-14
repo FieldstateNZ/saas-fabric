@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use fabric_connector::{ConnectorError, Filter, MutationSpec, Row, UnsupportedFeature};
 use serde_json::Value;
 
-use crate::config::ProcedureBinding;
+use crate::config::{PayloadShape, ProcedureBinding};
 use crate::translate::to_expression;
 use crate::SchemaIndex;
 
@@ -63,10 +63,14 @@ pub(super) fn for_insert(
     payload(binding, Value::Array(rows.iter().map(row_to_json).collect()))
 }
 
-/// Places the predicate under its configured argument name.
+/// Places the predicate under its configured argument name, and returns the
+/// predicate that was sent.
 ///
 /// The predicate is sent as an NDC expression, which is what a procedure
-/// argument of NDC's `predicate` type expects.
+/// argument of NDC's `predicate` type expects. The unwrapped [`Filter`] is
+/// handed back so a keyed procedure's caller can read its key values out of
+/// the same predicate — see `key_arguments::add_key_arguments` — without this
+/// function re-deriving "is there actually a predicate here" a second time.
 ///
 /// # Errors
 ///
@@ -76,13 +80,13 @@ pub(super) fn for_insert(
 /// this at startup too; this is the second line of defence.
 ///
 /// A mutation arriving with no predicate at all is refused for the same reason.
-pub(super) fn add_predicate(
+pub(super) fn add_predicate<'spec>(
     arguments: &mut BTreeMap<String, Value>,
     binding: &ProcedureBinding,
-    filter: Option<&Filter>,
+    filter: Option<&'spec Filter>,
     spec: &MutationSpec,
     index: &SchemaIndex,
-) -> Result<(), ConnectorError> {
+) -> Result<&'spec Filter, ConnectorError> {
     let Some(name) = binding.filter_argument.as_ref() else {
         return Err(ConnectorError::InvalidOperation(format!(
             "procedure {} has no filter_argument, so the tenant predicate could not be sent",
@@ -106,7 +110,27 @@ pub(super) fn add_predicate(
 
     arguments.insert(name.clone(), encoded);
 
-    Ok(())
+    Ok(filter)
+}
+
+/// Converts a neutral row to a JSON object, shaped for the argument that will
+/// carry it.
+///
+/// [`PayloadShape::Values`] sends the row's fields as-is — `{col: value}`,
+/// what [`row_to_json`] alone has always produced and what an insert's
+/// `objects` argument is ever observed to take. [`PayloadShape::SetOperations`]
+/// wraps each field in `{"_set": value}`, which is what `ndc-postgres`'s
+/// `update_columns` argument on a keyed update procedure expects.
+pub(super) fn shaped_row_to_json(row: &Row, shape: PayloadShape) -> Value {
+    match shape {
+        PayloadShape::Values => row_to_json(row),
+        PayloadShape::SetOperations => Value::Object(
+            row.as_map()
+                .iter()
+                .map(|(field, value)| (field.to_string(), serde_json::json!({ "_set": value.clone() })))
+                .collect(),
+        ),
+    }
 }
 
 /// Converts a neutral row to a JSON object.

@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use crate::wire::{NdcSchemaResponse, NdcType};
 
 /// Procedure name to the arguments it declares.
-pub(super) type ProcedureIndex = BTreeMap<String, BTreeMap<String, ArgumentKind>>;
+pub(super) type ProcedureIndex = BTreeMap<String, BTreeMap<String, ArgumentInfo>>;
 
 /// What a declared argument's type permits it to carry.
 ///
@@ -17,6 +17,12 @@ pub(super) type ProcedureIndex = BTreeMap<String, BTreeMap<String, ArgumentKind>
 /// argument should be is connector-defined (an array of objects here, a named
 /// input type there), so no equivalent claim can be made about it, and this
 /// type deliberately does not pretend otherwise.
+///
+/// Nullability is tracked separately, on [`ArgumentInfo`], rather than
+/// widening this into a three-way split. Whether an argument is nullable is a
+/// question about *presence* — must the caller supply it at all — orthogonal
+/// to what it may carry when supplied, and folding the two together would
+/// make "is this a predicate" stop being a single pattern match.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ArgumentKind {
     /// NDC's `predicate` type. A filter may be sent here.
@@ -35,6 +41,27 @@ impl ArgumentKind {
     }
 }
 
+/// What a procedure declares about one of its arguments: what it may carry,
+/// and whether the procedure can be called without it.
+///
+/// The `required` half exists for one check: a procedure's non-nullable
+/// argument that no part of a mapping supplies is refused at startup, rather
+/// than left to fail on the connector's first call. `ndc-postgres`'s
+/// `key_id` and `key_tenant_key` are exactly this shape — plain, non-nullable
+/// `text` arguments a mapping has to know to fill via `key_arguments`, with
+/// nothing in the type system forcing it to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ArgumentInfo {
+    /// What the argument may carry.
+    pub(crate) kind: ArgumentKind,
+    /// Whether the procedure can be called without this argument.
+    ///
+    /// `false` for anything wrapped in NDC's `nullable` type; `true`
+    /// otherwise. A nullable predicate is still absent-able, not
+    /// non-predicate — this field says nothing about [`Self::kind`].
+    pub(crate) required: bool,
+}
+
 /// Indexes every procedure in a schema response.
 pub(super) fn build(schema: &NdcSchemaResponse) -> ProcedureIndex {
     schema
@@ -44,7 +71,15 @@ pub(super) fn build(schema: &NdcSchemaResponse) -> ProcedureIndex {
             let arguments = procedure
                 .arguments
                 .iter()
-                .map(|(name, info)| (name.clone(), kind_of(&info.argument_type)))
+                .map(|(name, info)| {
+                    (
+                        name.clone(),
+                        ArgumentInfo {
+                            kind: kind_of(&info.argument_type),
+                            required: !is_nullable(&info.argument_type),
+                        },
+                    )
+                })
                 .collect();
 
             (procedure.name.clone(), arguments)
@@ -66,6 +101,15 @@ fn kind_of(argument_type: &NdcType) -> ArgumentKind {
     }
 }
 
+/// Whether a declared type is wrapped in NDC's `nullable`.
+///
+/// Only the outermost wrapper matters: `nullable<nullable<T>>` is not a shape
+/// any observed schema uses, and this crate has no reason to define what a
+/// second layer of absence would mean.
+const fn is_nullable(argument_type: &NdcType) -> bool {
+    matches!(argument_type, NdcType::Nullable { .. })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -85,7 +129,7 @@ mod tests {
             }}]"#,
         );
 
-        assert_eq!(index["delete_customers"]["filter"], ArgumentKind::Predicate);
+        assert_eq!(index["delete_customers"]["filter"].kind, ArgumentKind::Predicate);
     }
 
     #[test]
@@ -97,7 +141,7 @@ mod tests {
             }}]"#,
         );
 
-        assert_eq!(index["delete_customers"]["filter"], ArgumentKind::Predicate);
+        assert_eq!(index["delete_customers"]["filter"].kind, ArgumentKind::Predicate);
     }
 
     #[test]
@@ -108,6 +152,32 @@ mod tests {
             }}]"#,
         );
 
-        assert_eq!(index["insert_customers"]["objects"], ArgumentKind::Value);
+        assert_eq!(index["insert_customers"]["objects"].kind, ArgumentKind::Value);
+    }
+
+    #[test]
+    fn a_plain_named_argument_is_required() {
+        // `ndc-postgres`'s `key_id`: `{"type": "named", "name": "text"}`, no
+        // `nullable` wrapper — the shape a mapping must cover or the
+        // connector refuses every call.
+        let index = indexed(
+            r#"[{"name": "delete_articles", "arguments": {
+                "key_id": {"type": {"type": "named", "name": "text"}}
+            }}]"#,
+        );
+
+        assert!(index["delete_articles"]["key_id"].required);
+    }
+
+    #[test]
+    fn a_nullable_argument_is_not_required() {
+        let index = indexed(
+            r#"[{"name": "delete_articles", "arguments": {
+                "pre_check": {"type": {"type": "nullable", "underlying_type":
+                    {"type": "predicate", "object_type_name": "articles"}}}
+            }}]"#,
+        );
+
+        assert!(!index["delete_articles"]["pre_check"].required);
     }
 }

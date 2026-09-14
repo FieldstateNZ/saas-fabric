@@ -21,13 +21,26 @@ Wire types are hand-written in `src/wire/` from the published spec.
   the field docs on `http_timeout_seconds`.
 - `CollectionProcedures { insert, update, delete: Option<ProcedureBinding> }`,
   `is_writable()`.
-- `ProcedureBinding { procedure, payload_argument, filter_argument }`.
+- `ProcedureBinding { procedure, payload_argument, filter_argument,
+  key_arguments: BTreeMap<String, String>, payload_shape: PayloadShape }`.
+  `key_arguments` maps a physical field name (as it appears in the neutral
+  `Filter`) to a keyed procedure's own argument for that field's value — empty
+  by default, and must stay empty on an insert. `payload_shape` says how the
+  payload argument's value is shaped; see `PayloadShape` below.
+- `PayloadShape { Values, SetOperations }` — closed enum, `#[serde(default)]`
+  (`Values`). `Values` sends `{col: value}`; `SetOperations` sends
+  `{col: {"_set": value}}`, what `ndc-postgres`'s `update_columns` argument on
+  a keyed update procedure expects. Only an update mapping may declare
+  `SetOperations` — checked at config validation.
 - `SchemaIndex` — `neutral()`, `supported_operators()`, `has_procedure()`,
   `procedure_argument(procedure, argument) -> Option<ArgumentKind>`,
-  `declared_arguments(procedure)`,
-  `operator_name(collection, field, SemanticOperator)`.
+  `declared_arguments(procedure)`, `has_field(collection, field)`,
+  `operator_name(collection, field, SemanticOperator)`. `pub(crate)
+  required_arguments(procedure) -> Vec<&str>` feeds the required-argument
+  coverage check and is not part of the public surface.
 - `ArgumentKind { Predicate, Value }` — the one distinction NDC makes checkable
-  about a procedure argument. A `filter_argument` must be `Predicate`.
+  about a procedure argument. A `filter_argument` must be `Predicate`; every
+  `key_arguments` value must be `Value`.
 - `SemanticOperator { Equal, In, LessThan, LessThanOrEqual, GreaterThan,
   GreaterThanOrEqual, Contains }` — **no NotEqual**; `for_neutral()` maps
   `ComparisonOperator::NotEqual` to `Equal` (negated at translation).
@@ -39,12 +52,24 @@ Wire types are hand-written in `src/wire/` from the published spec.
   `capabilities.rs`, `schema.rs`, `ndc_type.rs`, `procedure.rs`. All
   `pub(crate)`. Field names mirror NDC exactly.
 - `translate/` — `query.rs`, `expression.rs`, `membership.rs`, `mutation.rs`,
-  `procedure_arguments.rs`, `response.rs`, `capabilities.rs`. Refusals are built
-  as `UnsupportedFeature::…refused_because(detail)` — see invariant 8.
+  `procedure_arguments.rs`, `key_arguments.rs`, `response.rs`, `capabilities.rs`.
+  Refusals are built as `UnsupportedFeature::…refused_because(detail)` — see
+  invariant 8. `key_arguments.rs` reads a keyed procedure's key values off the
+  predicate's *direct* equality clauses only (see invariant 3c).
 - `schema_index/` — `schema_index_type.rs`, `semantic_operator.rs`,
   `operator_index.rs`, `collection_index.rs`, `procedure_index.rs`.
+  `procedure_index.rs`'s `ArgumentInfo { kind: ArgumentKind, required: bool }`
+  carries nullability *beside* `ArgumentKind`, not inside it — `ArgumentKind`
+  stays a two-way kind split on purpose (see its rustdoc).
 - `config/` — `connector_config.rs`, `connector_validation.rs`,
-  `argument_validation.rs`, `procedures.rs`.
+  `argument_validation.rs` (payload/filter checks), `key_argument_validation.rs`
+  (key argument and `payload_shape` checks), `procedures.rs`
+  (`CollectionProcedures`), `procedure_binding.rs` (`ProcedureBinding`),
+  `payload_shape.rs` (`PayloadShape`).
+- `registration/` — `procedure_arguments.rs` (payload/filter vs. schema),
+  `key_arguments.rs` (key arguments vs. schema, and key field vs. collection),
+  `required_arguments.rs` (every required argument is supplied by *some* part
+  of the mapping), `routing_arguments.rs`, `version.rs`.
 - `client/` — `http_client.rs`, `error_mapping.rs`, `response_decoding.rs`,
   `fake_connector.rs` (test-only, a real socket).
 - `routing.rs` — `request_arguments(config, selector, secrets)`.
@@ -88,6 +113,21 @@ Wire types are hand-written in `src/wire/` from the published spec.
    Checked at startup in `registration::procedure_arguments`; the predicate half
    is re-checked in `translate::mutation`. An argument a connector never declared
    may be silently ignored, and for a filter that means an unscoped write.
+3c. **A key value is read only from an equality in the predicate the platform
+   already built — never from the caller's payload, never guessed.**
+   `translate::key_arguments` looks only at a filter's *direct* clauses (a bare
+   `Filter::Compare`, or a top-level `Filter::And`'s own clauses); it never
+   descends into `Or`, `Not`, or a nested `And`, and `Filter::In` is never
+   accepted as an equality even with one value. No equality, or more than one
+   with differing values, is refused. `key_arguments` values are also
+   re-checked at startup (`registration::key_arguments`): every one must be an
+   argument the procedure declares as `ArgumentKind::Value`, never
+   `Predicate`.
+3d. **A procedure's required (non-nullable) argument that no part of the
+   mapping supplies is refused at startup**, not left to fail on the
+   connector's first call. `registration::required_arguments` checks every
+   mapped procedure's non-nullable arguments against payload, filter, and
+   every key argument combined.
 4. **A mutation reaching translation with no predicate is refused.**
 5. **`ResolvedSecret::expose()` is called in exactly one place** —
    `routing.rs`, straight into the request body. Never logged, never in a span,

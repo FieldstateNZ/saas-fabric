@@ -7,6 +7,7 @@ use serde_json::Value;
 
 use crate::config::ProcedureBinding;
 use crate::schema_index::ArgumentKind;
+use crate::translate::key_arguments::add_key_arguments;
 use crate::translate::procedure_arguments as arguments;
 use crate::wire::{NdcMutationFields, NdcMutationOperation, NdcMutationRequest};
 use crate::{NdcConnectorConfig, SchemaIndex};
@@ -25,6 +26,9 @@ use crate::{NdcConnectorConfig, SchemaIndex};
 /// - [`ConnectorError::InvalidOperation`] if the mapping is incomplete or names
 ///   a procedure the connector does not expose.
 /// - [`ConnectorError::Unsupported`] if the predicate cannot be expressed.
+/// - [`ConnectorError::InvalidOperation`] if an update or delete maps a key
+///   field the predicate has no equality for, or more than one with
+///   differing values — see `key_arguments::add_key_arguments`.
 pub(crate) fn to_mutation_request(
     spec: &MutationSpec,
     request_arguments: Option<BTreeMap<String, Value>>,
@@ -52,14 +56,17 @@ pub(crate) fn to_mutation_request(
         }
         MutationSpec::Update { filter, changes, .. } => {
             let binding = arguments::require(procedures.update.as_ref(), feature, verb, collection.as_str())?;
-            let mut built = arguments::payload(binding, arguments::row_to_json(changes))?;
-            arguments::add_predicate(&mut built, binding, filter.as_ref(), spec, index)?;
+            let shaped = arguments::shaped_row_to_json(changes, binding.payload_shape);
+            let mut built = arguments::payload(binding, shaped)?;
+            let predicate = arguments::add_predicate(&mut built, binding, filter.as_ref(), spec, index)?;
+            add_key_arguments(&mut built, binding, predicate, spec)?;
             (binding, built)
         }
         MutationSpec::Delete { filter, .. } => {
             let binding = arguments::require(procedures.delete.as_ref(), feature, verb, collection.as_str())?;
             let mut built = BTreeMap::new();
-            arguments::add_predicate(&mut built, binding, filter.as_ref(), spec, index)?;
+            let predicate = arguments::add_predicate(&mut built, binding, filter.as_ref(), spec, index)?;
+            add_key_arguments(&mut built, binding, predicate, spec)?;
             (binding, built)
         }
     };

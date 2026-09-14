@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::config::{CollectionProcedures, ProcedureBinding};
+use crate::config::{CollectionProcedures, PayloadShape, ProcedureBinding};
 use crate::registration::procedure_arguments::check_procedure_arguments;
 use crate::wire::NdcSchemaResponse;
 use crate::{NdcConnectorConfig, SchemaIndex};
@@ -42,6 +42,8 @@ fn delete_with(filter_argument: &str) -> NdcConnectorConfig {
             procedure: "delete_customers".to_owned(),
             payload_argument: None,
             filter_argument: Some(filter_argument.to_owned()),
+            key_arguments: BTreeMap::new(),
+            payload_shape: PayloadShape::Values,
         }),
         ..CollectionProcedures::default()
     })
@@ -54,16 +56,22 @@ fn a_mapping_matching_the_declared_arguments_is_accepted() {
             procedure: "insert_customers".to_owned(),
             payload_argument: Some("objects".to_owned()),
             filter_argument: None,
+            key_arguments: BTreeMap::new(),
+            payload_shape: PayloadShape::Values,
         }),
         update: Some(ProcedureBinding {
             procedure: "update_customers".to_owned(),
             payload_argument: Some("update_columns".to_owned()),
             filter_argument: Some("filter".to_owned()),
+            key_arguments: BTreeMap::new(),
+            payload_shape: PayloadShape::Values,
         }),
         delete: Some(ProcedureBinding {
             procedure: "delete_customers".to_owned(),
             payload_argument: None,
             filter_argument: Some("filter".to_owned()),
+            key_arguments: BTreeMap::new(),
+            payload_shape: PayloadShape::Values,
         }),
     });
 
@@ -92,6 +100,8 @@ fn a_filter_argument_pointing_at_a_non_predicate_argument_is_refused() {
             procedure: "update_customers".to_owned(),
             payload_argument: Some("filter".to_owned()),
             filter_argument: Some("update_columns".to_owned()),
+            key_arguments: BTreeMap::new(),
+            payload_shape: PayloadShape::Values,
         }),
         ..CollectionProcedures::default()
     });
@@ -111,6 +121,8 @@ fn a_payload_argument_pointing_at_a_predicate_argument_is_refused() {
             procedure: "delete_customers".to_owned(),
             payload_argument: Some("filter".to_owned()),
             filter_argument: Some("filter".to_owned()),
+            key_arguments: BTreeMap::new(),
+            payload_shape: PayloadShape::Values,
         }),
         ..CollectionProcedures::default()
     });
@@ -139,6 +151,8 @@ fn a_mapping_naming_a_procedure_the_connector_lacks_is_refused_at_startup() {
             procedure: "delete_custmers".to_owned(),
             payload_argument: None,
             filter_argument: Some("filter".to_owned()),
+            key_arguments: BTreeMap::new(),
+            payload_shape: PayloadShape::Values,
         }),
         ..CollectionProcedures::default()
     });

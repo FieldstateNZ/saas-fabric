@@ -84,7 +84,7 @@ mod schema_index;
 mod translate;
 mod wire;
 
-pub use config::{CollectionProcedures, NdcConnectorConfig, ProcedureBinding};
+pub use config::{CollectionProcedures, NdcConnectorConfig, PayloadShape, ProcedureBinding};
 pub use connector::NdcConnector;
 pub use registration::build_ndc_connector;
 // Not `pub`. `SchemaIndex` holds the connector's own operator vocabulary --

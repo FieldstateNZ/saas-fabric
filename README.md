@@ -236,7 +236,7 @@ The reasoning, the licence audit, and the consequences are recorded in
 | [0001](docs/decisions/0001-ndc-as-connector-boundary.md) | NDC as the internal connector boundary, as a protocol only |
 | [0002](docs/decisions/0002-trusted-ingress-is-the-canonical-identity-model.md) | Trusted ingress is the canonical identity model |
 | [0003](docs/decisions/0003-data-sources-are-first-class-resources.md) | DataSources are first-class resources |
-| [0004](docs/decisions/0004-write-support-in-the-first-release.md) | Write support ships in the first release, with a named gap |
+| [0004](docs/decisions/0004-write-support-in-the-first-release.md) | Write support ships in the first release, with a named gap — superseded by 0020 |
 | [0005](docs/decisions/0005-tls-trust-roots-come-from-the-host.md) | TLS trust roots come from the host, not from a compiled-in bundle |
 | [0006](docs/decisions/0006-a-shared-data-source-can-only-serve-discriminator-isolation.md) | A shared DataSource can only serve discriminator isolation |
 | [0007](docs/decisions/0007-isolation-is-checked-against-an-observed-fact-not-a-label.md) | Isolation is checked against an observed fact, not a declared label |
@@ -252,6 +252,7 @@ The reasoning, the licence audit, and the consequences are recorded in
 | [0017](docs/decisions/0017-fabric-decides-which-client-secret-boundary-an-operation-reaches.md) | Fabric decides which client secret boundary an operation reaches |
 | [0018](docs/decisions/0018-runtime-state-is-published-as-three-versioned-documents.md) | Runtime state is published as three independently versioned documents |
 | [0019](docs/decisions/0019-the-edge-proves-the-token-and-the-issuer-names-the-tenant.md) | The edge proves the token, the issuer names the tenant, and a public client proves its code |
+| [0020](docs/decisions/0020-keyed-writes-name-their-key-arguments.md) | Keyed writes name their key arguments; the tenant predicate is still sent whole |
 
 ## Running it
 

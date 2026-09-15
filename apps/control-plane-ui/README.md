@@ -4,13 +4,23 @@ The SaaS Fabric operator console.
 
 ## Phase-one UI
 
-The console now follows the supplied v2 prototype: an overview dashboard,
-searchable clients, applications, components and platform navigation. See
-[PHASE_ONE.md](PHASE_ONE.md) for the implemented surface, remaining backend gaps,
-and the isolated sample-data preview:
+The console follows the supplied v2 prototype: an overview dashboard, searchable
+clients, applications, components and platform navigation. What each screen
+does, and what is still missing underneath it, is in [PHASE_ONE.md](PHASE_ONE.md).
+The decisions it makes, and the ones still owed, are in
+[ADR 0020](../../docs/decisions/0020-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md), which is proposed.
+
+`npm run preview:ui` is **not** a sample-data preview. It serves the console on
+`127.0.0.1:5174` and proxies `/api` to the loopback workbench API on
+`127.0.0.1:8082`, adding the test-operator header to every request. It needs that
+API running, and every save is a real write to the workbench's local storage:
 
 ```bash
-npm run preview:ui
+# Terminal 1, from the repository root — the workbench API.
+cargo run -p fabric-control-plane-api --example console_workbench
+
+# Terminal 2 — the console against it.
+npm run preview:ui --prefix apps/control-plane-ui
 # http://127.0.0.1:5174
 ```
 
@@ -93,6 +103,12 @@ than offering a field that cannot be saved.
 identity needs to know which applications can sign its users in; not editable in
 this increment.
 
+**Product configuration, elsewhere.** Creating a client, its application
+assignments and configuration, and the catalogue are edited through the product
+workflows in [PHASE_ONE.md](PHASE_ONE.md). None of them edits identity directly:
+the API projects each assigned application into the client's identity as a
+public client, and a product save rewrites those entries (ADR 0020 §4).
+
 ## Concurrency
 
 The console reads a client's identity along with its **revision**, and sends
@@ -125,8 +141,12 @@ the same 150-line limit with the same exemption for tests.
 ```text
 src/
   api/          the only thing that touches the network
-  components/   presentation, no fetching
-  hooks/        loading and saving
+  components/   identity, secrets, integration and platform panels
+  console/      the shell: navigation, dashboard, client directory, reconciliation
+  hooks/        loading and saving for those panels
+  product/      the catalogue, application definitions and client workflows
+  session/      sign-in: PKCE, the pending session, silent renewal
+preview/        the loopback workbench entry and proxy; not in the production build
 ```
 
 Navigation uses hash URLs without an additional router dependency. The server
@@ -140,4 +160,8 @@ API calls to `VITE_CONTROL_PLANE` (default `http://localhost:8081`).
 
 For a standalone local workbench with persistent storage, see [PHASE_ONE.md](PHASE_ONE.md).
 That explicit loopback-only example uses a test operator and has no external
-providers. It is excluded from the production entry and deployment configuration.
+providers, so nothing it accepts can be authorised or converged. It is excluded
+from the production entry and from every image. It is also proposed rather than
+settled: the control-plane architecture says local development needs a Keycloak,
+and [ADR 0020](../../docs/decisions/0020-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md) records the contradiction and leaves keeping the workbench
+to the product owner.

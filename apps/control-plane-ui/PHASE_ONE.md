@@ -1,8 +1,9 @@
 # Phase-one operator application
 
 React and TypeScript UI, using the supplied SaaS Fabric prototype review v2 as
-the design reference, backed by the Rust control-plane API. Instructions embedded
-in the prototype are reference material, not deployment authorization.
+the design reference, backed by the Rust control-plane API. The decisions this
+surface makes, and the ones still owed to the product owner, are recorded in
+[ADR 0020](../../docs/decisions/0020-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md), which is proposed.
 
 ## Run the functional local workbench
 
@@ -23,14 +24,17 @@ npm run preview:ui
 Open http://127.0.0.1:5174. This uses real API handlers and domain validation.
 Writes persist in `.local/workbench/.fabric-state.json`; set
 `FABRIC_WORKBENCH_DATA` to choose another directory. An exclusive file lock
-prevents concurrent processes, and writes replace a flushed snapshot atomically.
+refuses a second process, and a write replaces a flushed snapshot by rename; the
+directory itself is not flushed.
 Existing local-directory YAML clients are imported only until the first snapshot
 is written; the snapshot then becomes the local development authority.
 
 The example API binds to loopback port 8082 and accepts the explicit test operator
-supplied by the local proxy. No external providers are connected. Production
+supplied by the local proxy. No external providers are connected, so nothing it
+accepts can be authorised against an identity provider or converged. Production
 continues to use OIDC authentication; the workbench entry and authenticator setup
-are excluded from the production UI bundle and normal server configuration.
+are excluded from the production UI bundle, normal server configuration and every
+image.
 
 ## Screen behavior
 
@@ -45,21 +49,28 @@ are excluded from the production UI bundle and normal server configuration.
 | Client definition | Edit typed custom fields, defaults and required values; increment shared definition version. |
 | Environments | Inspect current deployment and register links to other independently authenticated operator consoles. |
 | Integrations | Existing Git application installation, repository selection and platform connection workflows. |
-| Reconciliation | Trigger the existing identity reconciler with operator authority, inspect per-client outcomes and persistent pass activity. |
+| Reconciliation | Trigger the existing identity reconciler with operator authority and inspect each client's latest outcome. Passes are observations and are not recorded as activity. In the workbench no identity provider is connected, so a pass is refused as unavailable. |
 | Settings | Persist platform display name, new-client defaults and show authenticated operator identity. |
 
 ## API and storage
 
 Authenticated additions: GET/POST `/api/catalogue`, POST `/api/clients`,
 GET/PUT `/api/clients/{id}/product`, GET `/api/activity`, GET `/api/operator`.
-Catalogue creation requires `If-None-Match: *`; edits require the strong
-`If-Match` revision. Duplicate clients and stale writes are rejected.
+The first catalogue write requires `If-None-Match: *`; every later one, and every
+product save, requires the strong `If-Match` revision. Product responses and a
+created client carry an `ETag`. A duplicate client id and a stale write are both
+refused with `409`.
 
-The Git adapter stores `fabric-catalogue.yaml` at repository root, and client
-product state inside the existing client YAML documents. Each write records the
-operator in its commit message. Unknown client document sections are preserved.
-Assignments project public OIDC clients with PKCE S256 into the existing identity
-reconciliation contract. Existing unrelated OIDC identifiers cannot be claimed.
+The Git adapter stores `fabric-catalogue.yaml` at the repository root, and each
+client's product state as `spec.product` inside its existing client document; in
+Git, each write's commit message carries a `Requested-by:` trailer. The catalogue
+file carries `apiVersion: fabric.fieldstate.nz/v1` and `kind: Catalogue`, with the
+catalogue under `spec`, and both are checked before the rest is parsed. The
+envelope is storage only; the API's JSON does not include it. Unknown client
+document sections are preserved, except that `spec.product` must be exactly the
+product shape. Assignments project public OIDC clients with PKCE S256 into the
+existing identity reconciliation contract. Existing unrelated OIDC identifiers
+cannot be claimed.
 
 ## Remaining infrastructure work
 
@@ -72,10 +83,18 @@ platform adapters perform their operations when connected in a deployment.
 Application removal is refused until a deprovisioning workflow exists. Environment
 registrations link consoles; they do not provision environments. The client shell
 is an entitlement preview; permission enforcement remains the application's duty.
-Client schema changes are applied on reconfiguration; there is no bulk migration.
-Activity is durable history of product/identity writes and reconciliation passes,
-not a complete security audit log of every external-provider action. Failed history
-writes after reconciliation are logged without changing the provider outcome.
+Client schema changes are applied on reconfiguration; there is no bulk migration,
+and a client keeps its release snapshot until an operator saves it.
+
+Activity is the history of operator-authored product and identity writes, stored
+in the same write as the change. Reconciliation passes are not recorded: they are
+observations, not desired state. Activity is not a security audit log, and nothing
+bounds it.
+
+A client with a `.internal` or loopback host cannot yet be assigned an
+application, because projected identity clients are `claimedHttps` only. A product
+save rewrites the projected identity clients, so a hand edit to their callbacks
+does not survive it.
 
 ## Validation
 

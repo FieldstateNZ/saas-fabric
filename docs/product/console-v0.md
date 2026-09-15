@@ -1,5 +1,28 @@
 # Fabric Console v0 — the screen contract
 
+> **Superseded in part by pull request #69.** This is the v0 screen contract,
+> kept as it was written. Three of its statements no longer describe the
+> console, and [ADR 0020](../decisions/0020-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md), which is proposed, records
+> why each changed and what it costs:
+>
+> - **"No Add client."** The console creates clients through
+>   `POST /api/clients`. What that creates is a desired-state document — a
+>   realm, the required roles, product configuration — and not the workflow
+>   this page meant: nothing is routed, no data is placed, and no secret
+>   boundary is made.
+> - **Modules — "no enablement model exists."** Enablement is now application
+>   assignment: a published application release and a plan, recorded in the
+>   client document's `spec.product`. Deployment of those applications is not
+>   observed.
+> - **Config — "the client's desired-state document as stored. Read-only."**
+>   The client page shows and edits typed, non-secret product configuration
+>   through `PUT /api/clients/{clientId}/product`. The stored document is not
+>   shown as text.
+>
+> Everything below is unchanged. Where the live console differs from it,
+> [`apps/control-plane-ui/PHASE_ONE.md`](../../apps/control-plane-ui/PHASE_ONE.md)
+> describes the console as built.
+
 Not a design. A list of what each screen shows, where each value comes from,
 and which values do not exist yet. Ugly and information-dense is the intent:
 open Acme and immediately answer *what exists, what is configured, what is

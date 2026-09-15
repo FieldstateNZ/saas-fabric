@@ -252,6 +252,7 @@ The reasoning, the licence audit, and the consequences are recorded in
 | [0017](docs/decisions/0017-fabric-decides-which-client-secret-boundary-an-operation-reaches.md) | Fabric decides which client secret boundary an operation reaches |
 | [0018](docs/decisions/0018-runtime-state-is-published-as-three-versioned-documents.md) | Runtime state is published as three independently versioned documents |
 | [0019](docs/decisions/0019-the-edge-proves-the-token-and-the-issuer-names-the-tenant.md) | The edge proves the token, the issuer names the tenant, and a public client proves its code |
+| [0020](docs/decisions/0020-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md) | The product catalogue is desired state, and the console creates clients |
 
 ## Running it
 
@@ -335,6 +336,11 @@ the console; the change is written to a client document in Git with optimistic
 concurrency; reconciliation converges a Keycloak realm onto it; and the console
 shows whether that has actually happened.
 
+Pull request #69 adds a product catalogue, client creation and per-client
+product configuration, all as desired-state writes, and a loopback workbench for
+developing the console against them. They are implemented and **proposed** —
+see [ADR 0020](docs/decisions/0020-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md).
+
 Not yet built:
 
 - The Configuration, Feature, Storage, Events, and Secrets APIs (§27). The
@@ -347,9 +353,14 @@ Not yet built:
 - **The other platform capabilities**: authorization (OpenFGA), secrets
   (OpenBao), routing (Envoy), observability (Grafana). Each follows the shape
   identity established.
-- **Client creation and deletion.** Creating a client is a workflow — routing,
-  data placement, secrets, a database — and this increment is the identity slice
-  of it. Deletion needs its own confirmation semantics (ADR 0008).
+- **Client deletion, and the rest of client creation.** The console creates a
+  client's document — realm, roles and product configuration — and nothing
+  else. Routing, data placement, secrets and a database are still a workflow
+  nobody has designed. Deletion, and removing an application from a client,
+  need their own confirmation semantics (ADR 0008, ADR 0020).
+- **Deploying what the product catalogue describes.** No controller deploys an
+  application's components, issues their DNS names or certificates, or observes
+  their health; the console reports all three as not observed.
 - **Operator authentication beyond a trusted network boundary.** The posture is
   the runtime plane's, and carries the same obligation (ADR 0009).
 - A JWKS refresher. `VerificationKeys` is a snapshot, so rotation in the opt-in

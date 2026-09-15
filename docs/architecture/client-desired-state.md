@@ -1,10 +1,13 @@
 # The client desired-state document
 
-- **Status:** Implemented
+- **Status:** Implemented. `spec.product` and the catalogue document are
+  implemented and **Proposed** in [ADR 0020](../decisions/0020-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md)
 - **Owned by:** [`fabric-client-model`](../../crates/fabric-client-model)
-- **Stored in:** `saas-fabric-clients`, at `clients/<client id>/client.yaml`
+- **Stored in:** `saas-fabric-clients`, at `clients/<client id>/client.yaml`;
+  the product catalogue beside them, at `fabric-catalogue.yaml`
 - **Related:** [ADR 0008](../decisions/0008-desired-state-is-the-authority.md),
   [ADR 0019](../decisions/0019-the-edge-proves-the-token-and-the-issuer-names-the-tenant.md),
+  [ADR 0020](../decisions/0020-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md),
   [the identity edge test matrix](identity-edge-test-matrix.md),
   the platform specification §4
 
@@ -165,6 +168,7 @@ everything else is the same in both.
 | `spec.identity.clients[].redirect.strategy` | yes (**`v2` only**) | one of `claimedHttps`, `privateNetwork`, `development`, `customScheme` |
 | `spec.identity.clients[].redirect.uris` | yes (**`v2` only**) | non-empty; every entry's kind must be admitted by the strategy — see below |
 | `spec.identity.clients[].redirectUris` | yes (**`v1` only**) | `https://` anywhere; `http://` only on loopback or under `.internal`; at most one trailing `*`. Replaced by `redirect` in `v2`, and refused in a `v2` document |
+| `spec.product` | no | owned: refused unless exactly the shape under [`spec.product`](#specproduct) |
 | anything else under `spec` | — | preserved untouched |
 
 ### What each redirect strategy admits
@@ -197,10 +201,11 @@ recognised by resolving a name is not a declaration.
 strategy, the URI's kind, and what the strategy admits — never reclassified
 into a strategy that would accept it.
 
-Unknown fields **inside `spec.identity`** are refused. Unknown fields
-**elsewhere under `spec`** are preserved. That asymmetry is deliberate: the
-identity block is the part this model owns and must understand completely, while
-the rest belongs to capabilities that do not exist yet.
+Unknown fields **inside `spec.identity`** and **inside `spec.product`** are
+refused. Unknown fields **elsewhere under `spec`** are preserved. That asymmetry
+is deliberate: the identity and product blocks are the parts this model owns and
+must understand completely, while the rest belongs to capabilities that do not
+exist yet.
 
 ### The required roles
 
@@ -267,6 +272,114 @@ Userinfo is refused outright rather than parsed around, because
 `http://x.internal@evil.example.com/` is a public host wearing an
 internal-looking prefix.
 
+## `spec.product`
+
+**Proposed** in [ADR 0020](../decisions/0020-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md). The product configuration an operator gives
+a client through the console, written by client creation and by
+`PUT /api/clients/{clientId}/product`.
+
+```yaml
+spec:
+  product:
+    legalName: Acme Ltd
+    region: New Zealand
+    timezone: Pacific/Auckland
+    definitionVersion: 3
+    configuration:
+      costCentre: "4410"
+    applications:
+      - applicationId: analytics
+        release:
+          version: 1
+          note: Initial release
+          publishedAt: 1789000000
+          definition:
+            name: Analytics
+            # abbreviated here: description, domain, components, features,
+            # plans, fields and navigation, copied whole from the release
+        planId: standard
+        configuration:
+          team: Finance
+    activity:
+      - at: 1789000000
+        operator: operator-subject
+        action: Client configuration updated
+        resource: acme
+```
+
+| Path | Required | Rule, as the control plane writes it |
+|---|---|---|
+| `legalName` | yes | non-empty, ≤256 bytes, no control characters |
+| `region`, `timezone` | yes | non-empty, ≤128 bytes, no control characters |
+| `definitionVersion` | yes | the catalogue's `definitionVersion` when the client was last saved |
+| `configuration` | yes | a value per catalogue `clientFields` entry: undeclared keys refused, required ones enforced, defaults filled in, each checked against its field's type |
+| `applications[].applicationId` | yes | a catalogue application, at most once per client |
+| `applications[].release` | yes | a whole published release, copied by the server from the version the request named |
+| `applications[].planId` | yes | a plan in that release |
+| `applications[].configuration` | yes | values for that release's `fields`, under the same rules as `configuration` |
+| `activity[]` | yes | `{at, operator, action, resource}`, appended by the server |
+
+**Absent reads as empty; present means complete.** A document with no
+`spec.product` reads as a client with no product configuration. A document with
+one must carry all seven keys, and an unknown key at any depth is refused. The
+rules in the right-hand column are applied when the control plane writes;
+reading checks the shape only, so a hand edit that breaks a rule reads without
+complaint.
+
+**Why it is owned rather than preserved.** For the reason `spec.identity` is:
+the control plane writes it, resolves entitlement from it and projects identity
+from it, so it has to understand all of it. The cost falls on any repository
+whose documents already held a `spec.product` of another shape. That section was
+preserved untouched before; now every path that reads the product refuses the
+client — its product endpoints, an identity edit, and the platform-wide activity
+listing.
+
+**A release is copied, not referenced.** A client keeps exactly the definition
+it was assigned until an operator saves it with another version. A later
+publication, a hand edit to the catalogue, or a catalogue that cannot be read
+changes nothing here. The price is a whole release per assignment in every
+client's file, and no bulk migration: a client moves only when it is saved.
+
+**Removing an assigned application is refused** until deprovisioning exists
+(ADR 0020 §5). A save may change an assignment's version, plan and
+configuration; it may not drop it.
+
+**An identity edit writes this section.** Every identity edit appends an
+`Identity updated` entry, so a document with no `spec.product` gains one — with
+empty `legalName`, `region` and `timezone`, and `definitionVersion: 0` — the
+first time its roles change.
+
+**Non-secret is a declaration.** Every value here is a string in Git, and a
+`text` field holds whatever an operator types into it. Nothing below applies to
+this section's contents except the rule that nothing secret belongs in them.
+
+### What an assignment writes into `spec.identity`
+
+Creation and every product save write, for each assigned application, an entry
+in `spec.identity.clients`, replacing any entry with the same id:
+
+```yaml
+    clients:
+      - id: analytics
+        type: oidc
+        pkce: s256
+        redirect:
+          strategy: claimedHttps
+          uris:
+            - https://acme.example.com/callback            # from the template {client}.example.com
+            - https://www.example.com/analytics/callback   # one per entry in spec.hosts
+```
+
+| Rule | What follows |
+|---|---|
+| `id` is the application id | an application cannot be assigned if a client declared by hand already holds that id; an entry the product projected earlier is replaced |
+| the template callback exists only when the release has a hostname template | an assignment with no template and no client host is refused |
+| every client host adds a callback, template or not | a client with any `.internal` or loopback host cannot be assigned an application at all, because `claimedHttps` admits public hosts only |
+| the entry is replaced whole on every product save | an edit to its callbacks, strategy or PKCE — through the identity API or by hand — is reverted by the next product save, and the realm converged back |
+
+An identity edit does not project. A projected client that an identity edit
+removes is written back by the next product save.
+
 ## What may never appear
 
 **No secrets.** Not a client secret, not a database password, not a token, not a
@@ -278,8 +391,11 @@ Supporting confidential clients means designing secret delivery first.
 
 ## Preservation
 
-An identity edit through the control plane rewrites `spec.identity` and
-preserves **every other key and value in the document, and their order**. That
+An identity edit through the control plane rewrites `spec.identity` — and
+appends to `spec.product.activity`, creating that section if it is absent — and
+preserves **every other key and value in the document, and their order**. A
+product save rewrites `spec.displayName`, `spec.hosts`, `spec.product` and the
+projected entries of `spec.identity.clients` under the same rule. That
 is the reason `ClientDocument` keeps the whole parsed document rather than
 round-tripping through a struct: a struct would silently drop every section it
 has no field for, and the only evidence would be a Git diff nobody reads until
@@ -311,6 +427,54 @@ If comment-preserving edits become a requirement, that is a change of parser
 and it is worth knowing that before the repository fills with comments somebody
 expects to survive.
 
+## The catalogue document
+
+**Proposed** in [ADR 0020](../decisions/0020-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md). One per repository, at
+`fabric-catalogue.yaml` in the repository root — beside `clients/`, not under
+the client documents' path prefix.
+
+```yaml
+apiVersion: fabric.fieldstate.nz/v1
+kind: Catalogue
+spec:
+  applications: []
+  clientFields: []
+  settings:
+    platformName: SaaS Fabric
+    defaultRegion: New Zealand
+    timezone: Pacific/Auckland
+  environments: []
+  activity: []
+  definitionVersion: 0
+```
+
+**The envelope is checked first, and is storage only.** `apiVersion` and `kind`
+must be exactly `fabric.fieldstate.nz/v1` and `Catalogue`, and are checked
+before `spec` is parsed, for the reason given for `kind: Client` above: a file
+that is not a catalogue is told so, rather than read as a catalogue missing
+every field. The API never sends or receives the envelope. `GET /api/catalogue`
+answers the body and a revision, and its JSON did not change when the envelope
+was added. Versioning the file is what lets a later change to its shape ship
+beside `v1` rather than reinterpret documents already stored.
+
+**`spec` is owned throughout.** Unknown keys are refused at every level. What
+each section holds, and the commands that change them, are in ADR 0020 §1.
+
+**An absent file is an empty catalogue with no revision**, and the write that
+creates it must say so with `If-None-Match: *`. The Git adapter tells an absent
+file from a repository it can no longer read by checking the repository root,
+so an unreachable repository is not mistaken for an empty catalogue.
+
+**Every read re-validates every release.** Parsing applies the publication rules
+to every stored release, so a rule tightened in a later version of this model
+makes a catalogue that was valid when written unreadable — and with it the
+catalogue page, client creation, every product save and the activity listing,
+which all read it. A change to those rules is a schema change.
+
+**It is rendered whole.** Every catalogue change reprints the file with every
+release and every activity entry in it, and the formatting costs under
+[Preservation](#preservation) apply to all of it.
+
 ## Revisions
 
 The control plane identifies a version of a document by an opaque **revision** —
@@ -322,3 +486,6 @@ Deliberately not shaped like the runtime plane's `BindingRevision`, which is a
 counter and can be compared with `>`. A content hash cannot answer "is this
 newer?", and a type that invited the question would produce a bug that only
 appears under concurrent edits.
+
+The catalogue's revision is the same kind of value, with one addition: before
+its first write there is none, and the API reports its revision as `null`.

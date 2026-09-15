@@ -4,7 +4,9 @@ mod support;
 use std::sync::Arc;
 
 use axum::{body::Body, Router};
-use fabric_client_model::catalogue::{Catalogue, ClientProduct, ClientProductRequest, ProductActivity};
+use fabric_client_model::catalogue::{
+    Catalogue, ClientProduct, ClientProductRequest, ConfigurationField, FieldKind, ProductActivity,
+};
 use fabric_client_model::{ClientDocument, ClientId, Host};
 use fabric_control_plane::{ChangeContext, ClientRepository};
 use fabric_reconciliation::testing::FakeIdentityProvider;
@@ -1069,6 +1071,98 @@ async fn an_unrelated_save_succeeds_even_when_the_kept_releases_plan_was_removed
     assert_eq!(body["product"]["applications"][0]["planId"], "standard");
 }
 
+#[tokio::test]
+async fn an_unrelated_save_succeeds_even_when_the_kept_releases_field_was_renamed_in_the_catalogue() {
+    // `resolve()`'s configuration check runs against the same `release` its
+    // plan check does — `values(&release.definition.fields, ...)` — so the
+    // kept-copy direction matters here too. Every other test in this file
+    // leaves the kept copy and the catalogue's copy carrying the same
+    // fields, which would still pass if the check ran against the wrong
+    // one; renaming the field only in the catalogue's own copy is what
+    // makes the two actually disagree.
+    let app = control_plane();
+    let first = command(
+        &app.router,
+        &Value::Null,
+        json!({"action":"createApplication","id":"analytics","name":"Analytics"}),
+    )
+    .await;
+    let saved = command(
+        &app.router,
+        &first["revision"],
+        json!({"action":"saveApplication","id":"analytics","definition":definition()}),
+    )
+    .await;
+    command(
+        &app.router,
+        &saved["revision"],
+        json!({"action":"publishApplication","id":"analytics","note":"Initial release"}),
+    )
+    .await;
+
+    let created = send(
+        &app.router,
+        as_operator("POST", "/api/clients")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({"id":"newco","configuration":client()}).to_string(),
+            ))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(created.status(), StatusCode::CREATED);
+    let created = support::json(created).await;
+    let revision = created["client"]["revision"].as_str().unwrap().to_owned();
+    assert_eq!(
+        created["product"]["applications"][0]["configuration"]["team"], "Finance",
+        "{created}"
+    );
+
+    // Edited directly in the repository — a hand-edit no command exposes:
+    // the published release's own "team" field, renamed. The stored
+    // assignment's "team":"Finance" configuration is now undeclared
+    // against the catalogue's copy of the release, but still declared
+    // against the kept one.
+    let stored = app.repository.catalogue().await.unwrap();
+    let mut edited = stored.catalogue.clone();
+    edited
+        .applications
+        .first_mut()
+        .unwrap()
+        .releases
+        .first_mut()
+        .unwrap()
+        .definition
+        .fields
+        .first_mut()
+        .unwrap()
+        .key = "department".into();
+    app.repository
+        .save_catalogue(&edited, stored.revision.as_ref(), &change())
+        .await
+        .unwrap();
+
+    let mut unrelated = client();
+    unrelated["legalName"] = json!("Newco Holdings Ltd");
+
+    let response = send(
+        &app.router,
+        as_operator("PUT", "/api/clients/newco/product")
+            .header("content-type", "application/json")
+            .header("if-match", format!("\"{revision}\""))
+            .body(Body::from(unrelated.to_string()))
+            .unwrap(),
+    )
+    .await;
+    let status = response.status();
+    let body = support::json(response).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        body["product"]["applications"][0]["configuration"]["team"],
+        "Finance"
+    );
+}
+
 /// A padding entry for a client's or the catalogue's own activity feed.
 /// Not something a later write resubmits — `activity` is server-appended,
 /// never part of a request body — so padding through it, unlike through a
@@ -1141,10 +1235,60 @@ async fn a_catalogue_saved_until_it_is_refused_for_size() {
     assert_eq!(body["error"]["code"], "document_too_large", "{body}");
 }
 
+/// `create_client` checks the ordinary limit too, same as `set_product` and
+/// `change_catalogue` — deleting that one check fails nothing else, so it
+/// needs its own test.
+///
+/// Grown through the catalogue's own custom-field defaults rather than
+/// through the created client's request body, for the same reason the
+/// other size tests seed directly: a single request body is capped at
+/// 64 KiB, far short of the limit this test needs to cross, but a
+/// *default* a client never submits is not part of that body at all — only
+/// the resolved value it fills in is, on the far side of the request.
+#[tokio::test]
+async fn a_create_whose_resolved_document_is_too_large_is_refused() {
+    let app = control_plane();
+    let stored = app.repository.catalogue().await.unwrap();
+
+    let mut catalogue = stored.catalogue.clone();
+    catalogue.client_fields = (0..230)
+        .map(|i| ConfigurationField {
+            key: format!("field{i}"),
+            label: "Padding".into(),
+            kind: FieldKind::Text,
+            required: false,
+            default: Some("a".repeat(4096)),
+            options: vec![],
+            description: String::new(),
+        })
+        .collect();
+    app.repository
+        .save_catalogue(&catalogue, stored.revision.as_ref(), &change())
+        .await
+        .unwrap();
+
+    // An empty submission: every field's default fills in unasked, and
+    // that is enough on its own to cross the limit.
+    let response = send(
+        &app.router,
+        as_operator("POST", "/api/clients")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({"id":"newco","configuration":empty_client()}).to_string(),
+            ))
+            .unwrap(),
+    )
+    .await;
+    let status = response.status();
+    let body = support::json(response).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert_eq!(body["error"]["code"], "document_too_large", "{body}");
+}
+
 /// The client document's size sits behind two different limits depending on
 /// which write produced it (see `document_size`'s own rustdoc): an
 /// ordinary write is refused past 900 KiB, but an identity edit — the write
-/// security remediation depends on — is allowed up to 1000 KiB.
+/// security remediation depends on — is allowed up to 960 KiB.
 ///
 /// The document under test is padded, and seeded, directly through the
 /// repository rather than through a sequence of HTTP writes: a single
@@ -1159,20 +1303,20 @@ async fn a_document_between_the_two_size_limits_blocks_a_product_save_but_not_an
     let acme = ClientId::try_new("acme").unwrap();
     let current = app.repository.get(&acme).await.unwrap();
 
-    // Fifty-thousand-byte steps: fine enough, against the ~124 KiB window
+    // Twenty-thousand-byte steps: fine enough, against the ~60 KiB window
     // between the two limits, that a step cannot cross both at once, and
-    // few enough (about eighteen) that padding stays fast — each step
+    // few enough (about forty-six) that padding stays fast — each step
     // re-renders and re-parses the whole document so far.
     let mut padded = current.document.clone();
     loop {
-        padded = padded.with_activity(padding_activity(50_000)).unwrap();
+        padded = padded.with_activity(padding_activity(20_000)).unwrap();
 
         if padded.render().unwrap().len() > 900 * 1024 {
             break;
         }
     }
     assert!(
-        padded.render().unwrap().len() < 1000 * 1024,
+        padded.render().unwrap().len() < 960 * 1024,
         "the seeded document overshot the remediation limit; reduce the padding step"
     );
 

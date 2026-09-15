@@ -1,4 +1,13 @@
 //! Changing a client's identity, which means writing a document to Git.
+//!
+//! In the 121–150 line band. The reason is that this is one method,
+//! `set_identity`, whose own rustdoc is the load-bearing part of the file:
+//! the eight ordered steps, and specifically why steps 2 and 7 have to come
+//! where they do, are a single piece of reasoning about one write. Splitting
+//! the merge, the size check or the write into their own functions would
+//! not shrink that reasoning — it would just make it harder to see that the
+//! order across all eight steps is the thing being protected, not any one
+//! of them alone.
 
 use fabric_client_model::{ClientId, ClientRevision, IdentityConfiguration};
 

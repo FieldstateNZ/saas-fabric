@@ -9,6 +9,7 @@
 //! rest); what stays here is the struct those files all share and the
 //! handful of methods too small to be their own rule.
 
+mod application_id_available;
 mod catalogue;
 mod create_client;
 mod realm_available;

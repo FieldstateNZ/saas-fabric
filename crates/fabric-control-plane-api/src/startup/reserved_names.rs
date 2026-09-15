@@ -97,6 +97,16 @@ fn operator_realm(operator: &OperatorConfig) -> Result<String, String> {
 /// Plain strings, not [`OidcClientId`](fabric_client_model::OidcClientId):
 /// what matters here is an exact match against an application id someone
 /// typed, which is a string comparison regardless of either side's shape.
+///
+/// Case-folded, the same as [`realms`] and for the same reason: an
+/// application id is lowercase ASCII by construction
+/// ([`ClientId`](fabric_client_model::ClientId)'s own DNS-label rule), so
+/// the comparison side of this check can never be anything else — but a
+/// configured `client_id` is not a `ClientId` and carries no such
+/// guarantee. An operator naming their console `Fabric-Console` would
+/// otherwise make this check compare `"Fabric-Console"` against an
+/// application id that can only ever read `"fabric-console"`, silently
+/// admitting the exact id this check exists to refuse.
 pub(super) fn client_ids(
     control_plane: &ControlPlaneConfig,
     identity_provider: &IdentityProviderConfig,
@@ -104,10 +114,10 @@ pub(super) fn client_ids(
     let mut ids = BTreeSet::new();
 
     let OperatorConfig::Oidc { client_id, .. } = &control_plane.operator;
-    ids.insert(client_id.clone());
+    ids.insert(client_id.to_lowercase());
 
     if let IdentityProviderConfig::Keycloak(KeycloakConfig { client_id, .. }) = identity_provider {
-        ids.insert(client_id.clone());
+        ids.insert(client_id.to_lowercase());
     }
 
     ids
@@ -115,7 +125,7 @@ pub(super) fn client_ids(
 
 #[cfg(test)]
 mod tests {
-    use super::{operator_realm, realms};
+    use super::{client_ids, operator_realm, realms};
     use crate::config::IdentityProviderConfig;
     use fabric_control_plane::{ControlPlaneConfig, OperatorConfig, ReconciliationConfig};
     use fabric_keycloak::KeycloakConfig;
@@ -227,5 +237,39 @@ mod tests {
             reserved,
             std::collections::BTreeSet::from(["master".to_owned(), "acme".to_owned()])
         );
+    }
+
+    #[test]
+    fn a_mixed_case_configured_client_id_is_folded_to_lowercase() {
+        let control_plane = ControlPlaneConfig {
+            public_base_url: String::new(),
+            operator: OperatorConfig::Oidc {
+                issuer: "https://auth.example.test/realms/master".to_owned(),
+                reachable_at: String::new(),
+                client_id: "Fabric-Console".to_owned(),
+                required_role: "fabric-operator".to_owned(),
+                redirect_uri: "https://console.example.test/".to_owned(),
+                leeway_seconds: 60,
+                jwks_refresh_seconds: 300,
+            },
+            reconciliation: ReconciliationConfig::default(),
+        };
+
+        let reserved = client_ids(&control_plane, &IdentityProviderConfig::InMemory);
+
+        assert!(reserved.contains("fabric-console"), "{reserved:?}");
+    }
+
+    #[test]
+    fn a_mixed_case_converged_keycloak_client_id_is_folded_to_lowercase() {
+        let reserved = client_ids(
+            &control_plane("https://auth.example.test/realms/master"),
+            &IdentityProviderConfig::Keycloak(KeycloakConfig {
+                client_id: "Svc-Fabric".to_owned(),
+                ..keycloak("master")
+            }),
+        );
+
+        assert!(reserved.contains("svc-fabric"), "{reserved:?}");
     }
 }

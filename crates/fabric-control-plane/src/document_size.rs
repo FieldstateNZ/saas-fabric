@@ -8,6 +8,15 @@
 //! refused before it is ever written, rather than committed and discovered
 //! unreadable the next time somebody tries to read it.
 //!
+//! GitHub's own docs never say whether that "1 MB" is the decimal
+//! 1,000,000 bytes or the binary 1,048,576 — both readings are common
+//! usage, and nothing on the page settles it. Every limit in this module is
+//! chosen to be safely under **either** reading rather than pinned to a
+//! number that could be wrong: a limit that only cleared the binary
+//! reading would accept a document GitHub's contents API cannot actually
+//! read back, if the decimal one turned out to be the true ceiling — the
+//! exact failure this module exists to prevent.
+//!
 //! # Why there are two limits, not one
 //!
 //! Every publish adds another full definition snapshot to the catalogue,
@@ -37,7 +46,16 @@ const MAX_DOCUMENT_BYTES: usize = 900 * 1024;
 
 /// The largest rendered document an identity edit may produce. See this
 /// module's own rustdoc for why this is higher than [`MAX_DOCUMENT_BYTES`].
-const MAX_REMEDIATION_DOCUMENT_BYTES: usize = 1000 * 1024;
+///
+/// 960 KiB (983,040 bytes) rather than something closer to 1000 KiB
+/// (1,024,000 bytes): the latter is *larger* than the decimal reading of
+/// GitHub's "1 MB" (1,000,000 bytes), so a document between the two would
+/// pass this check and then be exactly the unreadable-once-written case
+/// this whole module exists to refuse before it happens — for the one kind
+/// of write, remediation, this module was widened to let through in the
+/// first place. 960 KiB leaves comfortable margin under either reading of
+/// "1 MB", not just the more generous one.
+const MAX_REMEDIATION_DOCUMENT_BYTES: usize = 960 * 1024;
 
 /// Refuses a document whose rendered text would not round-trip through
 /// GitHub's contents API, against the ordinary limit — see

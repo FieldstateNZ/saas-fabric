@@ -69,6 +69,21 @@ impl ClientService {
         // there after a `Rejected` means the request really was invalid,
         // and stays `Rejected` — not retryable, because nothing about
         // asking again would change the answer.
+        //
+        // One case still answers the wrong status: a `Rejected` whose
+        // "file already exists" cause was real, but whose follow-up
+        // `get` lands on a lagging read replica that has not yet seen the
+        // document the race just created. `NotFound` there is read as the
+        // request having been genuinely invalid, so the operator sees this
+        // platform's own 502 rather than the 409 that would tell them to
+        // pick a different id. Left this way deliberately: the only other
+        // information available at that point is `Rejected` itself, which
+        // covers a genuine validation failure far more often than a lost
+        // race, and answering every `Rejected` as retryable — the only way
+        // to make this rare case a 409 — would tell an operator hitting
+        // the ordinary case to retry a write that will never succeed. A
+        // 502 nobody could act on for one rare race is a smaller cost than
+        // advice that cannot help for the common one.
         let revision = match repository.create(&document, &change).await {
             Ok(revision) => revision,
             Err(lost_race @ (RepositoryError::Conflict | RepositoryError::Rejected { .. })) => {

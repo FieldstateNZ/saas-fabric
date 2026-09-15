@@ -58,8 +58,11 @@ Authenticated additions: GET/POST `/api/catalogue`, POST `/api/clients`,
 GET/PUT `/api/clients/{id}/product`, GET `/api/activity`, GET `/api/operator`.
 The first catalogue write requires `If-None-Match: *`; every later one, and every
 product save, requires the strong `If-Match` revision. Product responses and a
-created client carry an `ETag`. A duplicate client id and a stale write are both
-refused with `409`.
+created client carry an `ETag`. A duplicate client id is refused with
+`409 client_exists`, and a stale write with `409 revision_conflict`. Stored data
+that will not parse — a client's `spec.product`, or the catalogue — answers
+`500 desired_state_invalid`, which is not retryable, and one unreadable client
+fails the whole activity listing.
 
 The Git adapter stores `fabric-catalogue.yaml` at the repository root, and each
 client's product state as `spec.product` inside its existing client document; in
@@ -88,8 +91,9 @@ and a client keeps its release snapshot until an operator saves it.
 
 Activity is the history of operator-authored product and identity writes, stored
 in the same write as the change. Reconciliation passes are not recorded: they are
-observations, not desired state. Activity is not a security audit log, and nothing
-bounds it.
+observations, not desired state. Activity is a view, not the audit trail: client
+creation, product saves, identity edits and catalogue commands each also emit a
+structured audit event to the log pipeline. Nothing bounds activity.
 
 A client with a `.internal` or loopback host cannot yet be assigned an
 application, because projected identity clients are `claimedHttps` only. A product

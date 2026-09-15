@@ -140,9 +140,11 @@ This reverses Fabric Console v0 and the port's former "no `create`".
    the client id, both required roles, the requested display name and hosts,
    and `spec.product` (§3) carrying a `Client created` activity entry;
 3. projects the assigned applications into `spec.identity.clients` (§4);
-4. writes it **only if no document has that id**, and answers `409` otherwise —
-   in Git, a contents write with no expected blob, which the host refuses for a
-   file that exists;
+4. writes it **only if no document has that id**, and answers
+   `409 client_exists` otherwise — its own code beside `revision_conflict`,
+   because a taken id is fixed by choosing another rather than by re-reading. In
+   Git it is a contents write with no expected blob, which the host refuses for
+   a file that exists;
 5. marks the client `pending`, answers `201` with an `ETag`, and — where an
    identity provider is configured — starts a background convergence as the
    creating operator.
@@ -267,6 +269,15 @@ change it describes, and one commit is both or neither. Inside desired state,
 because the control plane has nowhere else durable to put it, and ADR 0008 keeps
 it stateless.
 
+**Activity is a view, not the audit trail.** Each of these writes also emits a
+structured audit event to the log pipeline, carrying the operator, the operation
+and the resulting revision: `control_plane.audit.client_created`,
+`control_plane.audit.product_updated`, `control_plane.audit.identity_updated`
+and `control_plane.audit.catalogue_changed`. The catalogue event names no
+client; it reads its operation and entry back from the activity entry the
+command appended, so the audit record and the console cannot disagree about
+what happened. Where those events are durably retained is not built here.
+
 **Reconciliation passes are not recorded.** An earlier revision of this pull
 request appended a "pass completed" entry to the catalogue after every sweep. It
 was removed for three reasons, any one of which was enough:
@@ -340,9 +351,12 @@ than a feature gate.
 **A document holding a `spec.product` of another shape becomes unreadable to
 every path that reads the product.** Before this pull request an unknown
 `spec.product` was preserved untouched. Now `GET` and
-`PUT /api/clients/{clientId}/product` refuse that client; so does an **identity
-edit**, which appends activity (§6) and so reads the product first; and so does
-`GET /api/activity` — **for every client**, because it reads them all. Listing
+`PUT /api/clients/{clientId}/product` answer `500 desired_state_invalid` for that
+client — the code an unreadable client document already gets, and not retryable.
+So does an **identity edit**, which appends activity (§6) and so reads the
+product first. So does `GET /api/activity`, which fails **whole** rather than
+leaving that client's entries out, as `GET /api/clients` already fails whole on
+one unreadable document: a partial feed would read as a quiet day. Listing
 clients, a client's overview, reading identity and reconciliation still work,
 because parsing a client does not read its product. A survey of
 `saas-fabric-clients` for `spec.product` before deployment costs minutes.
@@ -361,8 +375,8 @@ every product save rewrites the client's document with its release copies. In
 Git each of those is a commit whose `Requested-by:` trailer already names the
 operator, so the lists are a second copy of attribution kept for the console's
 convenience. They are also desired state that anyone with write access to the
-repository can edit: a view, not evidence, and not the structured audit record
-§24 asks for.
+repository can edit: a view, not evidence. The structured audit record §24 asks
+for is the separate event each of these writes emits (§6).
 
 **A product save reverts a hand edit to a projected client.** The projection
 replaces the entry by id, whole: callbacks, strategy and PKCE. An edit to it
@@ -384,7 +398,7 @@ read parses and re-validates every stored release with the publication rules.
 Remove a capability name, or narrow the route or hostname-template rule, and a
 release published under the old rule makes the whole document unreadable — the
 catalogue page, client creation, every product save and the activity listing
-all read it — until the file is corrected by hand, which means editing a release
+all read it — answered `500 desired_state_invalid` until the file is corrected by hand, which means editing a release
 that was meant to be immutable. Client documents' copies are not re-validated,
 so existing clients stay readable.
 
@@ -436,8 +450,10 @@ application enforces its own permissions.
 
 **Acting across environments.** A registration is a link.
 
-**A durable audit store.** Activity is not §24's structured audit record and
-does not replace one.
+**A durable audit store.** Client creation, a product save, an identity edit and
+a catalogue command each emit a structured audit event, but to the log pipeline;
+where those events are retained, and for how long, is not decided here. Activity
+is not that record and does not replace one.
 
 **Replicas.** Every write here is a conditional write the Git host checks
 atomically, so none of it rests on process-local coordination. The local

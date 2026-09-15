@@ -161,7 +161,7 @@ Recorded in [ADR 0020](../decisions/0020-the-product-catalogue-is-desired-state-
   and activity entries are the server's to assign.
 - **Creating a client** writes one `v2` document — its realm the client id, the
   two required roles, and `spec.product` — only if no document holds that id,
-  and answers `409` if one does. It provisions nothing.
+  and answers `409 client_exists` if one does. It provisions nothing.
 - **A client's product configuration** is `spec.product` in its own document,
   with every assigned release copied in whole, and each assigned application
   projected into `spec.identity.clients` as a public client. The shape is in
@@ -791,13 +791,21 @@ console reads on load.
 
 Distinct codes, because an operator needs to tell the cases apart (§23); among them:
 `unauthenticated`, `unknown_client`, `invalid_request`, `desired_state_invalid`,
-`revision_required`, `revision_conflict`, `realm_immutable`,
+`revision_required`, `revision_conflict`, `client_exists`, `realm_immutable`,
 `repository_unavailable`, `repository_denied`, `repository_rejected`.
 
-The catalogue and client creation add no codes of their own. A duplicate client
-id and a stale catalogue both answer `409 revision_conflict`, and a catalogue
-write carrying neither `If-Match` nor `If-None-Match: *` answers
-`428 revision_required`.
+The catalogue and client creation add one code. A duplicate client id answers
+`409 client_exists` — its own code beside `revision_conflict`, because a taken id
+is fixed by choosing another and a stale edit by re-reading. A stale catalogue
+revision answers `409 revision_conflict`, and a catalogue write carrying neither
+`If-Match` nor `If-None-Match: *` answers `428 revision_required`.
+
+Stored data that will not parse answers `500 desired_state_invalid`, with no
+`Retry-After`, whether it is a client document, a client's `spec.product` — read
+by the product routes, an identity edit and the activity listing — or the
+catalogue. `GET /api/activity` fails whole on one unreadable client, as
+`GET /api/clients` does on one unreadable document: a partial feed would read as
+a quiet day.
 
 Two things no error says: anything an upstream system said verbatim, and
 anything about the repository's internals.
@@ -1015,6 +1023,20 @@ Every control-plane mutation is attributable (§24). `fabric-control-plane`
 emits a structured audit event carrying who requested it, which client, the
 domain operation, and the resulting revision; the log pipeline supplies the
 time.
+
+| Write | Event |
+|---|---|
+| an identity edit | `control_plane.audit.identity_updated` |
+| client creation | `control_plane.audit.client_created` |
+| a product save | `control_plane.audit.product_updated` |
+| a catalogue command | `control_plane.audit.catalogue_changed` |
+| a secret operation | `control_plane.audit.client_secret` |
+
+The catalogue event names no client, because the catalogue has none: it carries
+`resource = "catalogue"` and the entry the command changed, and takes its
+operation from the activity entry the command appended, so the audit record and
+what `GET /api/activity` shows cannot disagree. That activity is a view kept in
+desired state ([ADR 0020](../decisions/0020-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md) §6), not a replacement for these events.
 
 Git history is a **second** copy: the commit message carries a `Requested-by:`
 trailer, because every commit is authored by the platform's machine identity and

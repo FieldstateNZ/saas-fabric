@@ -330,9 +330,10 @@ complaint.
 the control plane writes it, resolves entitlement from it and projects identity
 from it, so it has to understand all of it. The cost falls on any repository
 whose documents already held a `spec.product` of another shape. That section was
-preserved untouched before; now every path that reads the product refuses the
-client — its product endpoints, an identity edit, and the platform-wide activity
-listing.
+preserved untouched before; now every path that reads the product answers
+`500 desired_state_invalid` for the client — its product endpoints, an identity
+edit, and the platform-wide activity listing, which fails whole rather than
+leaving that client out.
 
 **A release is copied, not referenced.** A client keeps exactly the definition
 it was assigned until an operator saves it with another version. A later
@@ -469,7 +470,8 @@ so an unreachable repository is not mistaken for an empty catalogue.
 to every stored release, so a rule tightened in a later version of this model
 makes a catalogue that was valid when written unreadable — and with it the
 catalogue page, client creation, every product save and the activity listing,
-which all read it. A change to those rules is a schema change.
+which all read it and answer `500 desired_state_invalid`, which no retry fixes.
+A change to those rules is a schema change.
 
 **It is rendered whole.** Every catalogue change reprints the file with every
 release and every activity entry in it, and the formatting costs under

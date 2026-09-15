@@ -25,8 +25,11 @@ function state(overrides: Partial<CatalogueState> = {}): CatalogueState {
     saving: false,
     saveError: null,
     conflict: false,
+    navigatedAwayNotice: null,
+    dismissNavigatedAwayNotice: vi.fn(),
     refresh: vi.fn(),
     clearSaveError: vi.fn(),
+    setCurrentPage: vi.fn(),
     save: vi.fn().mockResolvedValue(true),
     ...overrides,
   }

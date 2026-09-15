@@ -1,3 +1,5 @@
+import { useEffect, useRef } from 'react'
+
 import type { ClientProductRequest, ConfigurationField } from '../api/catalogue-types'
 import { ConfigurationInputs } from './ConfigurationInputs'
 import { Field } from './Field'
@@ -26,6 +28,13 @@ interface ClientDetailsStepProps {
  * array would either drop the trailing fragment or fight their cursor.
  * `id` is only editable when there is no `existing` client: a client's ID is
  * permanent once created.
+ *
+ * `idRef` exists for one refusal: `client_exists`, from submitting step 2,
+ * sends the operator back here (`ClientForm`'s `onIdTaken`) with `idError`
+ * already set. Landing on the right step is not enough on its own — nothing
+ * else puts the keyboard focus back on the field the error is about — so
+ * this component focuses it itself whenever it mounts with an `idError`
+ * already present.
  */
 export function ClientDetailsStep({
   id,
@@ -38,11 +47,20 @@ export function ClientDetailsStep({
   onHostTextChange,
   clientFields,
 }: ClientDetailsStepProps) {
+  const idRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    if (idError) {
+      idRef.current?.focus()
+    }
+  }, [idError])
+
   return (
     <div className="panel panel-body">
       <div className="form-grid">
         {!existing && (
           <Field
+            ref={idRef}
             label="Client ID"
             required
             value={id}

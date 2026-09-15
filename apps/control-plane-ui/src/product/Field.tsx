@@ -1,3 +1,5 @@
+import type { Ref } from 'react'
+
 /** What a {@link Field} needs: a label and a value always, the rest optional. */
 interface FieldProps {
   readonly label: string
@@ -8,6 +10,8 @@ interface FieldProps {
   readonly hint?: string
   /** A refusal specific to this field, such as an ID the server already has. Replaces `hint` when present. */
   readonly error?: string | null | undefined
+  /** Forwarded to the underlying `<input>` — for a caller that needs to move focus onto this field itself, such as `ClientDetailsStep` after a taken Client ID. Every other caller leaves it unset. */
+  readonly ref?: Ref<HTMLInputElement>
 }
 
 /**
@@ -20,6 +24,10 @@ interface FieldProps {
  * to the first 4096 characters without asking. Either way it only ever
  * saves an operator from a refusal the control plane would send anyway; it
  * cannot warn them a paste was cut short.
+ *
+ * `ref`, when a caller passes one, is a plain prop — React 19 forwards it to
+ * a function component without `forwardRef`, so this needs no wrapper the
+ * way it would have under React 18.
  */
 export function Field({
   label,
@@ -29,6 +37,7 @@ export function Field({
   type = 'text',
   hint,
   error,
+  ref,
 }: FieldProps) {
   return (
     <label className="form-field">
@@ -37,6 +46,7 @@ export function Field({
         {required && ' *'}
       </span>
       <input
+        ref={ref}
         type={type}
         value={value}
         required={required}

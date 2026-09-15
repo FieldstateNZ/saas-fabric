@@ -23,14 +23,16 @@ const STEPS = ['Client details', 'Applications', 'Review'] as const
  * not this component: see that hook's own doc for a conflict, a taken ID,
  * and the in-flight guard. This component owns only the wizard's own state
  * (which step, and the three steps' draft values) and wires the hook's
- * outcomes to it — `onIdTaken` sends the operator back to step 0, the same
- * way `ClientWorkspace`'s `useConfigureClient` keeps its read separate from
- * that component's render tree.
+ * outcomes to it — `onIdTaken` sends the operator back to step 0, and
+ * `ClientDetailsStep` puts the keyboard focus back on the Client ID field
+ * itself, the same way `ClientWorkspace`'s `useConfigureClient` keeps its
+ * read separate from that component's render tree.
  *
- * This file sits in file-size-policy.md's 121-150 line band: three steps to
- * hold state for, each with its own file already (`ClientDetailsStep`,
- * `ClientReviewStep`, `ClientFormActions`), is one wizard, not several
- * components sharing a lifecycle.
+ * Each of the three steps already has its own file — `ClientDetailsStep`,
+ * `Assignments`, `ClientReviewStep` — and `ClientFormActions` is the footer
+ * they share, not a step of its own. Splitting this component's own state
+ * apart by step would turn one wizard's lifecycle into several components
+ * secretly sharing it.
  */
 export function ClientForm({
   catalogue,

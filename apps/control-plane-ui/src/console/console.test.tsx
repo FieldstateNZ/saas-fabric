@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -127,6 +127,48 @@ const catalogueBody = () => ({
   },
   revision: 'rev-1',
 })
+
+const emptyApplicationDefinition = (name: string) => ({
+  name,
+  description: '',
+  domain: '',
+  components: [],
+  features: [],
+  plans: [],
+  fields: [],
+  navigation: [],
+})
+
+const catalogueBodyWithApplications = () => ({
+  catalogue: {
+    ...catalogueBody().catalogue,
+    applications: [
+      { id: 'app-a', draft: emptyApplicationDefinition('App A'), releases: [] },
+      { id: 'app-b', draft: emptyApplicationDefinition('App B'), releases: [] },
+    ],
+  },
+  revision: 'rev-1',
+})
+
+/** The three fixed stubs almost every `<Console />` test needs regardless of what it is testing. */
+function platformStub(url: string): Response | undefined {
+  if (url === '/api/integrations/git') {
+    return jsonResponse(200, {
+      status: 'not_configured',
+      connection: null,
+      last_success_at: null,
+      managed: true,
+      application: null,
+    })
+  }
+  if (url === '/api/integrations/platform') {
+    return jsonResponse(200, { managed: false, application: null })
+  }
+  if (url === '/api/platform') {
+    return jsonResponse(404, { error: { code: 'platform_not_managed', message: 'not managed' } })
+  }
+  return undefined
+}
 
 describe('Console: a save refusal does not follow an operator to another page', () => {
   let saveStatus = 200
@@ -275,5 +317,119 @@ describe('Console: identity is not re-read on pages that do not show it', () => 
     }
 
     expect(identityReads).toBe(1)
+  })
+})
+
+describe('Console: a save refusal does not follow an operator to another application', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('offers no Reload for application B once a 409 on application A put it there', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: string, init?: RequestInit) => {
+        const url = input
+        const method = init?.method ?? 'GET'
+        if (url === '/api/clients' && method === 'GET') {
+          return Promise.resolve(jsonResponse(200, { clients: [] }))
+        }
+        if (url === '/api/catalogue' && method === 'GET') {
+          return Promise.resolve(jsonResponse(200, catalogueBodyWithApplications()))
+        }
+        if (url === '/api/catalogue' && method === 'POST') {
+          return Promise.resolve(
+            jsonResponse(409, {
+              error: { code: 'revision_conflict', message: 'the catalogue changed since it was read' },
+            }),
+          )
+        }
+        const stub = platformStub(url)
+        if (stub) {
+          return Promise.resolve(stub)
+        }
+        return Promise.resolve(jsonResponse(404, { error: { code: 'not_found', message: 'unused' } }))
+      }),
+    )
+
+    window.history.replaceState({}, '', '/#/applications/app-a')
+    render(<Console />)
+    const user = userEvent.setup()
+
+    await screen.findByRole('heading', { name: 'App A' })
+    await user.type(screen.getByRole('textbox', { name: 'Name *' }), ' Renamed')
+    await user.click(screen.getByRole('button', { name: 'Save draft' }))
+    await screen.findByRole('button', { name: /Reload latest version/ })
+
+    // `applications` is one route shared by every application, told apart
+    // only by `applicationId` — B's `ApplicationWorkspace` reads the same
+    // `saveError` A's did, unless `Console` clears it on this change too.
+    window.location.hash = '/applications/app-b'
+
+    await screen.findByRole('heading', { name: 'App B' })
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: /Reload latest version/ })).not.toBeInTheDocument()
+    })
+  })
+})
+
+describe('Console: a save that lands after the operator has moved on names the page it happened on', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('shows a one-line notice for Settings, with no Reload, once Definition is current', async () => {
+    let resolveSave: (response: Response) => void = () => {
+      throw new Error('resolveSave called before the delayed POST was issued')
+    }
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: string, init?: RequestInit) => {
+        const url = input
+        const method = init?.method ?? 'GET'
+        if (url === '/api/clients' && method === 'GET') {
+          return Promise.resolve(jsonResponse(200, { clients: [] }))
+        }
+        if (url === '/api/catalogue' && method === 'GET') {
+          return Promise.resolve(jsonResponse(200, catalogueBody()))
+        }
+        if (url === '/api/catalogue' && method === 'POST') {
+          return new Promise<Response>((resolve) => {
+            resolveSave = resolve
+          })
+        }
+        const stub = platformStub(url)
+        if (stub) {
+          return Promise.resolve(stub)
+        }
+        return Promise.resolve(jsonResponse(404, { error: { code: 'not_found', message: 'unused' } }))
+      }),
+    )
+
+    window.history.replaceState({}, '', '/#/settings')
+    render(<Console />)
+    const user = userEvent.setup()
+
+    await screen.findByRole('heading', { name: 'Settings' })
+    await user.click(screen.getByRole('button', { name: 'Save settings' }))
+
+    // The operator moves to Definition before that save's response lands.
+    window.location.hash = '/definition'
+    await screen.findByRole('heading', { name: 'Client definition' })
+
+    await act(async () => {
+      resolveSave(
+        jsonResponse(409, {
+          error: { code: 'revision_conflict', message: 'the catalogue changed since it was read' },
+        }),
+      )
+      await Promise.resolve()
+    })
+
+    expect(
+      await screen.findByText('Your change to Settings was not saved: the catalogue changed since it was read'),
+    ).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Reload latest version/ })).not.toBeInTheDocument()
   })
 })

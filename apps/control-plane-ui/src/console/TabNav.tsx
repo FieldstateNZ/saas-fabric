@@ -7,8 +7,11 @@
  * accessibility fix here reaches both without needing to be made twice.
  *
  * `disabled` exists for `ClientWorkspace`'s Configure: while a fresh read is
- * in flight for the form about to open, switching tabs underneath it would
- * read a client that is mid-navigation to somewhere else entirely.
+ * in flight for the form about to open, this stops the operator switching to
+ * a tab this component is about to replace out from under them. Switching a
+ * tab reads nothing itself — `current` picks which already-loaded section to
+ * show — so there is no race here for `disabled` to prevent; it is a
+ * harmless precaution, not a fix for one.
  */
 export function TabNav<T extends string>({
   label,

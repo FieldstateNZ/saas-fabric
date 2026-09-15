@@ -32,13 +32,21 @@ import { useConfigureClient } from './useConfigureClient'
  * product before switching into edit mode, so the form is always seeded
  * from what the server holds right now — see `ClientForm`'s own doc for the
  * other half of this: what happens when the revision moves again while the
- * form is open. That hook's `opening` disables Preview and the tab bar for
- * the same reason it disables the Configure button itself: switching to
- * another view of this client while that read is still deciding what
- * `data` is would be a second place for the same race, and its
- * `staleNotice` covers the read's other outcome — `onStale` returning here
- * instead of ever reaching the form — so the operator is told their edits
- * were not saved rather than the workspace just quietly showing newer data.
+ * form is open. The Configure button's own `disabled={configure.opening}`
+ * stops a second read: `open` already refuses to start one while another is
+ * in flight, but a second click getting through to a no-op is still a click
+ * that looks like it did nothing. Preview and the tab bar are disabled for a
+ * different reason — neither performs a read of its own (see `TabNav`'s own
+ * doc), so there is no race to stop there. Disabling them is a precaution
+ * against navigating to a view this component is about to replace out from
+ * under the operator, the moment `onOpened` swaps it into `editing`.
+ *
+ * `staleNotice` has nothing to do with that read at all. It is set by
+ * `noteStale`, called from `onStale` below (`:127-131`) when `ClientForm`'s
+ * own reload-after-conflict — a save refused as stale, then re-read — finds
+ * the client has moved again while the form was open. It exists so the
+ * operator is told their edits there were not saved, rather than the
+ * workspace just quietly showing newer data.
  *
  * This file sits in file-size-policy.md's 121-150 line band. It is one
  * state machine — loading, an error, editing, previewing, or the workspace

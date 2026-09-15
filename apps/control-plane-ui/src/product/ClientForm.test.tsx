@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -90,6 +90,34 @@ describe('ClientForm: no multi-click and no stray Enter can create or save', () 
     expect(document.activeElement).not.toBe(screen.queryByRole('button', { name: 'Create client' }))
   })
 
+  it('Enter x2 from Client details stops on Applications, not Review', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: string, init?: RequestInit) => {
+        calls.push({ method: init?.method ?? 'GET', url: input })
+        return Promise.resolve(jsonResponse(404, { error: { code: 'not_found', message: 'unused' } }))
+      }),
+    )
+
+    render(<ClientForm catalogue={catalogue} onSaved={vi.fn()} />)
+    const user = userEvent.setup()
+
+    await fillClientDetails(user)
+    screen.getByRole('button', { name: 'Continue' }).focus()
+
+    // The first Enter activates the focused Continue and advances to
+    // Applications, whose own Continue is a new element — keyed to that
+    // step, not reused from Client details — so it does not inherit focus.
+    // A second Enter, landing on whatever the browser moved focus to
+    // instead, activates nothing: it must not carry the operator past a
+    // step they have not seen yet.
+    await user.keyboard('{Enter}')
+    await user.keyboard('{Enter}')
+
+    expect(screen.getByText(/No published applications yet/)).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Acme' })).not.toBeInTheDocument()
+  })
+
   it('Enter on a focused Create client sends exactly one POST', async () => {
     vi.stubGlobal(
       'fetch',
@@ -153,6 +181,33 @@ describe('ClientForm: no multi-click and no stray Enter can create or save', () 
     await user.dblClick(screen.getByRole('button', { name: 'Continue' }))
 
     expect(screen.getByRole('heading', { name: 'Acme' })).toBeInTheDocument()
+    expect(calls).toHaveLength(0)
+  })
+
+  it('a trusted double-click landing on the final button itself sends no second request', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: string, init?: RequestInit) => {
+        calls.push({ method: init?.method ?? 'GET', url: input })
+        return Promise.resolve(jsonResponse(200, existing))
+      }),
+    )
+
+    render(<ClientForm catalogue={catalogue} existing={existing} onSaved={vi.fn()} />)
+    const user = userEvent.setup()
+
+    await user.click(screen.getByRole('button', { name: 'Continue' }))
+    await user.click(screen.getByRole('button', { name: 'Continue' }))
+
+    // Unlike a double-click on Continue, the final button's key does not
+    // change from one click to the next — there is no step transition to
+    // carry it away — so a trusted double-click's second `click` event,
+    // reporting `detail: 2`, really does land on this exact element. Fired
+    // directly, with no preceding click in this test, it isolates the
+    // guard itself: with it in place the event is refused before
+    // `onSubmitFinal` is ever called, so nothing reaches `fetch`.
+    fireEvent.click(screen.getByRole('button', { name: 'Save client configuration' }), { detail: 2 })
+
     expect(calls).toHaveLength(0)
   })
 
@@ -230,6 +285,9 @@ describe('ClientForm: creating with a taken ID returns to where the ID is', () =
     // beside, and Review's summary is gone.
     expect(screen.getByRole('textbox', { name: /Client ID/ })).toBeInTheDocument()
     expect(screen.queryByText('Application assignments')).not.toBeInTheDocument()
+    // Landing on the right step is not enough on its own to fix a typo — the
+    // field the refusal is about should already have the keyboard focus.
+    expect(document.activeElement).toBe(screen.getByRole('textbox', { name: /Client ID/ }))
   })
 })
 

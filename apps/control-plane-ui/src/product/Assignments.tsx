@@ -31,9 +31,11 @@ import { Select } from './Select'
  * A version change keeps the current plan when the new release still has a
  * plan with that id, and keeps every configuration value whose key is still
  * one of the new release's fields — dropping only what no longer exists
- * there. When either was reset, {@link resetNotice} says so, until the
- * operator unchecks and re-checks the assignment — a deliberate change of
- * mind about the version being wrong is not still "a moment ago".
+ * there. When either was reset, {@link resetNotice} says so, until whatever
+ * the operator does next to this assignment: unchecking and re-checking it,
+ * picking a plan by hand, or editing a configuration value. Any of those is
+ * a deliberate change made after seeing the note, not still the version
+ * switch it was about.
  *
  * This file sits in file-size-policy.md's 121-150 line band. `retarget` is
  * a pure function with exactly one caller, and the two together are one

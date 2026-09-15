@@ -60,9 +60,9 @@ h1, h2, h3, p { overflow-wrap: anywhere; }
    not `--applied`'s green, which means "the platform observed this took
    effect". A published application definition is neither observed nor
    unobserved; nothing reconciles it. Blue keeps it visibly out of the
-   green/amber/red vocabulary the reconciliation statuses own, rather than
-   sitting a shade away from `--applied` where the difference would only
-   show up in a colour picker. */
+   green/amber/red/purple vocabulary the reconciliation statuses own —
+   applied, pending, failed, drifted — rather than sitting a shade away from
+   one of them where the difference would only show up in a colour picker. */
 .status--published { color: #35547a; background: #dbe4f0; }
 .attention { border: 1px solid #c9c1ae; border-radius: 12px; padding: 20px; background: var(--surface); margin-bottom: 24px; }
 .attention .eyebrow { color: var(--failed); }

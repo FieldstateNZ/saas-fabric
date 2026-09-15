@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { changeCatalogue, getCatalogue } from '../api/catalogue'
 import type { CatalogueCommand, StoredCatalogue } from '../api/catalogue-types'
@@ -12,21 +12,31 @@ export interface CatalogueState {
   readonly loadError: string | null
   readonly loading: boolean
   readonly saving: boolean
-  /** Why the last `save` failed. Cleared by the next `save` and by `refresh`. */
+  /** Why the last `save` failed, while the operator is still on the page that started it. Cleared by the next `save` and by `refresh`. */
   readonly saveError: string | null
   /** Whether `saveError` was a stale write — the one case a reload actually fixes. */
   readonly conflict: boolean
+  /** A refusal that arrived after the operator had already moved to a different page. Names the page it belongs to; there is nothing here to reload. */
+  readonly navigatedAwayNotice: string | null
+  readonly dismissNavigatedAwayNotice: () => void
   readonly refresh: () => void
   /**
    * Clears `saveError` and `conflict` without touching anything else.
    *
-   * `useCatalogue` is one hook shared by every catalogue-editing page — see
-   * the note on `Console` — so a failure on one page is still sitting in
-   * `saveError` when an operator navigates to another. `Console` calls this
-   * on every route change so a page never opens already showing a refusal
-   * that happened somewhere else.
+   * `useCatalogue` is one hook shared by every catalogue-editing page, so a
+   * failure on one page is still sitting in `saveError` when an operator
+   * navigates to another. `Console` calls this whenever the route changes —
+   * page, client or application — so a page never opens already showing a
+   * refusal that happened somewhere else.
    */
   readonly clearSaveError: () => void
+  /**
+   * Tells this hook which page is currently showing, by whatever label a
+   * refusal for it should be reported under. `Console` keeps this current;
+   * `save` reads it once, at the moment it is called, to remember where the
+   * write came from — see {@link navigatedAwayNotice}.
+   */
+  readonly setCurrentPage: (label: string) => void
   /** Applies one command, conditioned on the last-read revision. Resolves to whether it was applied. */
   readonly save: (command: CatalogueCommand) => Promise<boolean>
 }
@@ -47,10 +57,23 @@ export interface CatalogueState {
  * `saveError` and `conflict` are not scoped per editor, because this one
  * hook instance — and the one `saveError` it holds — is shared by every
  * catalogue-editing page. Left alone, a refusal on Settings would still be
- * sitting there when an operator navigated to Definition. `clearSaveError`
- * exists for exactly that: `Console` calls it on every route change, so an
- * editor never opens already showing a failure from a page the operator has
- * left.
+ * sitting there when an operator navigated to Definition, or from one
+ * application to another (`applications` is one route for every application,
+ * told apart only by `applicationId`). `clearSaveError` exists for exactly
+ * that: `Console` calls it whenever the page, client or application changes,
+ * so an editor never opens already showing a failure from somewhere else.
+ *
+ * # A refusal that arrives after the operator has moved on is not dropped
+ *
+ * `clearSaveError` only handles a refusal that was already showing when the
+ * operator navigated. It cannot help a `save` whose response has not landed
+ * yet — by the time it does, the route-change effect that would have
+ * cleared it has already run and moved on. `save` remembers, via
+ * `setCurrentPage`, which page it was called from; if the response lands
+ * after that page is no longer current, it is not a silent failure and it is
+ * not shown as though it still belonged to whatever page is on screen now —
+ * it becomes `navigatedAwayNotice`, naming the page it happened on, with
+ * nothing to reload.
  *
  * # `conflict` is what tells a caller whether reloading helps
  *
@@ -71,7 +94,13 @@ export function useCatalogue(): CatalogueState {
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
   const [conflict, setConflict] = useState(false)
+  const [navigatedAwayNotice, setNavigatedAwayNotice] = useState<string | null>(null)
   const [generation, setGeneration] = useState(0)
+
+  const currentPage = useRef('this page')
+  const setCurrentPage = useCallback((label: string) => {
+    currentPage.current = label
+  }, [])
 
   const clearSaveError = useCallback(() => {
     setSaveError(null)
@@ -119,21 +148,44 @@ export function useCatalogue(): CatalogueState {
       return false
     }
 
+    const startedOn = currentPage.current
     setSaving(true)
     setSaveError(null)
     setConflict(false)
+    setNavigatedAwayNotice(null)
 
     try {
-      setValue(await changeCatalogue(command, value.revision))
+      const next = await changeCatalogue(command, value.revision)
+      setValue(next)
       return true
     } catch (error: unknown) {
-      setSaveError(describe(error))
-      setConflict(isControlPlaneError(error) && error.isConflict)
+      const message = describe(error)
+      if (currentPage.current === startedOn) {
+        setSaveError(message)
+        setConflict(isControlPlaneError(error) && error.isConflict)
+      } else {
+        setNavigatedAwayNotice(`Your change to ${startedOn} was not saved: ${message}`)
+      }
       return false
     } finally {
       setSaving(false)
     }
   }
 
-  return { value, loading, loadError, saving, saveError, conflict, refresh, clearSaveError, save }
+  return {
+    value,
+    loading,
+    loadError,
+    saving,
+    saveError,
+    conflict,
+    navigatedAwayNotice,
+    dismissNavigatedAwayNotice: () => {
+      setNavigatedAwayNotice(null)
+    },
+    refresh,
+    clearSaveError,
+    setCurrentPage,
+    save,
+  }
 }

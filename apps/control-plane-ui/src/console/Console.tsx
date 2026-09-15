@@ -57,7 +57,20 @@ export function Console() {
   const clearCatalogueSaveError = catalogue.clearSaveError
   useEffect(() => {
     clearCatalogueSaveError()
-  }, [route.page, clearCatalogueSaveError])
+  }, [route.page, route.clientId, route.applicationId, clearCatalogueSaveError])
+
+  // What a save started from this route should be reported under if its
+  // response lands after the operator has moved on — see `useCatalogue`'s
+  // `navigatedAwayNotice`. An application is named individually, since
+  // `applications` is one route shared by every application.
+  const pageLabel =
+    route.page === 'applications' && app
+      ? app.draft.name
+      : (NAVIGATION.find(([key]) => key === route.page)?.[1] ?? 'this page')
+  const setCataloguePage = catalogue.setCurrentPage
+  useEffect(() => {
+    setCataloguePage(pageLabel)
+  }, [pageLabel, setCataloguePage])
 
   const unreachable = integration.value !== null && integration.value.status !== 'connected'
 
@@ -97,6 +110,12 @@ export function Console() {
             <div className="error" role="alert">
               {catalogue.loadError}
               <button onClick={catalogue.refresh}>Retry catalogue</button>
+            </div>
+          )}
+          {catalogue.navigatedAwayNotice && (
+            <div className="error" role="alert">
+              {catalogue.navigatedAwayNotice}
+              <button onClick={catalogue.dismissNavigatedAwayNotice}>Dismiss</button>
             </div>
           )}
           {catalogue.loading && !product && route.page !== 'integrations' ? (

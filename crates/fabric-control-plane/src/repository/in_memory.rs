@@ -7,7 +7,7 @@ use fabric_client_model::{ClientDocument, ClientId, ClientRevision};
 
 use crate::repository::{RepositoryError, StoredClient};
 
-/// A repository backed by a map, for development and tests.
+/// A repository backed by a map, for tests.
 ///
 /// # It implements the concurrency rule, not a shortcut past it
 ///
@@ -17,9 +17,16 @@ use crate::repository::{RepositoryError, StoredClient};
 /// revision, would make every test of the control plane's conflict handling
 /// pass regardless of whether the handling existed (specification §22).
 ///
-/// What it does **not** do is claim to be durable. Restarting loses everything,
-/// which is why the host only offers it as a development adapter and says so
-/// at startup.
+/// # Nothing but tests selects it
+///
+/// The host's development posture (`DesiredStateConfig::LocalDirectory`)
+/// opens the persistent `LocalClientRepository` in `fabric-control-plane-api`
+/// instead, precisely because restarting this one loses everything — a
+/// property worth keeping here, where a test *wants* a clean repository every
+/// run, and not worth keeping in anything a developer runs more than once.
+/// This type is `pub` only so integration tests outside this crate (a
+/// separate compilation unit, with no access to anything `pub(crate)`) can
+/// build a router against it.
 #[derive(Default)]
 pub struct InMemoryClientRepository {
     /// The stored clients, keyed by id.

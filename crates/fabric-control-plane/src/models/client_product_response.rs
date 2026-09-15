@@ -41,16 +41,24 @@ impl ClientProductResponse {
     ///
     /// # Errors
     ///
-    /// Returns [`ControlPlaneError::InvalidRequest`] if the stored product
-    /// section will not parse.
+    /// Returns [`ControlPlaneError::InvalidDesiredState`] if the stored
+    /// product section will not parse. `stored` came from the repository, not
+    /// from this request, so a document that will not parse is the platform's
+    /// problem — the same failure `GET /api/clients` reports for a client
+    /// document that will not parse at all, not
+    /// [`ControlPlaneError::InvalidRequest`].
     pub(crate) fn from_stored(
         stored: &StoredClient,
         reconciliation: ReconciliationResponse,
     ) -> Result<Self, ControlPlaneError> {
+        let client_id = stored.document.client().id.clone();
         let product = stored
             .document
             .product()
-            .map_err(ControlPlaneError::InvalidRequest)?;
+            .map_err(|source| ControlPlaneError::InvalidDesiredState {
+                client: client_id,
+                source,
+            })?;
         let resolved = product
             .applications
             .iter()

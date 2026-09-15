@@ -25,6 +25,7 @@ fn every_failure_has_its_own_machine_code() {
         },
         ControlPlaneError::RevisionRequired,
         ControlPlaneError::RevisionConflict,
+        ControlPlaneError::ClientExists { id: client() },
         ControlPlaneError::RealmImmutable {
             current: RealmName::try_new("acme").unwrap(),
         },
@@ -68,6 +69,24 @@ fn an_unreadable_stored_document_is_a_server_error_not_a_bad_request() {
     };
 
     assert_eq!(error.status(), StatusCode::INTERNAL_SERVER_ERROR);
+}
+
+#[test]
+fn an_unreadable_stored_catalogue_shares_the_client_documents_code_and_status() {
+    // Deliberate: a console reading either has one thing to do, stop and do
+    // not retry, so there is no second code for it to branch on. See
+    // `ControlPlaneError::InvalidCatalogue`'s rustdoc.
+    let client_document = ControlPlaneError::InvalidDesiredState {
+        client: client(),
+        source: DesiredStateError::MissingField { field: "spec" },
+    };
+    let catalogue = ControlPlaneError::InvalidCatalogue {
+        source: DesiredStateError::MissingField { field: "spec" },
+    };
+
+    assert_eq!(catalogue.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(catalogue.code(), client_document.code());
+    assert_eq!(catalogue.code(), "desired_state_invalid");
 }
 
 #[test]
@@ -144,6 +163,19 @@ fn an_integration_that_moved_is_a_conflict_rather_than_a_refusal_or_an_outage() 
             .is_none(),
         "a choice that has to be made again is not something to retry unchanged"
     );
+}
+
+#[test]
+fn a_duplicate_client_id_is_a_conflict_with_its_own_code_not_a_stale_revision() {
+    // `create` has no prior read to have gone stale, so its `Conflict` can
+    // only mean the id is taken — a different event from
+    // `RevisionConflict`, and one a console needs its own code to show the
+    // right message for.
+    let error = ControlPlaneError::ClientExists { id: client() };
+
+    assert_eq!(error.status(), StatusCode::CONFLICT);
+    assert_eq!(error.code(), "client_exists");
+    assert_ne!(error.code(), ControlPlaneError::RevisionConflict.code());
 }
 
 #[test]

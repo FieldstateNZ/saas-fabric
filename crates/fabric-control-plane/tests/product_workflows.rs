@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use axum::{body::Body, Router};
 use fabric_client_model::catalogue::{Catalogue, ClientProduct, ClientProductRequest, ProductActivity};
-use fabric_client_model::{ClientId, Host};
+use fabric_client_model::{ClientDocument, ClientId, Host};
 use fabric_control_plane::{ChangeContext, ClientRepository};
 use fabric_reconciliation::testing::FakeIdentityProvider;
 use http::{header, StatusCode};
@@ -110,6 +110,11 @@ async fn published_assignment_is_immutable_and_creates_identity() {
     )
     .await;
     assert_eq!(duplicate.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        support::json(duplicate).await["error"]["code"],
+        "client_exists",
+        "a taken id is not the same event as a stale revision"
+    );
     let stale = send(
         &app.router,
         as_operator("PUT", "/api/clients/newco/product")
@@ -417,6 +422,69 @@ async fn reconciliation_does_not_touch_the_catalogue_revision() {
 
     let after = plane.repository.catalogue().await.unwrap();
     assert_eq!(after.revision, None, "a sweep must not write to the catalogue");
+}
+
+/// A client document whose identity is fine but whose `spec.product` will not
+/// deserialize into [`ClientProduct`] — `legalName` is a number where every
+/// other required field is also absent. `ClientDocument::parse` never looks
+/// inside `product`, so this document is stored successfully and fails only
+/// when something later calls `.product()`.
+const MALFORMED_PRODUCT_CLIENT: &str = r"apiVersion: fabric.fieldstate.nz/v1
+kind: Client
+metadata:
+  name: broken
+spec:
+  displayName: Broken
+  hosts:
+    - broken.example.com
+  identity:
+    realm: broken
+    roles:
+      - Client Realm Administrator
+      - Client Realm User
+    clients: []
+  product:
+    legalName: 123
+";
+
+#[tokio::test]
+async fn a_stored_product_section_that_will_not_parse_is_the_platforms_problem_not_the_callers() {
+    // Regression: this used to answer 400 `invalid_request`, as though the
+    // caller had sent something wrong — but neither `GET .../product` nor
+    // `GET /api/activity` reads anything from the request. What is broken is
+    // already in the repository, which is exactly the case
+    // `desired_state_invalid` exists for (see `GET /api/clients`, which
+    // reports the same code for a client document that will not parse at
+    // all).
+    let plane = control_plane();
+    plane
+        .repository
+        .insert(ClientDocument::parse(MALFORMED_PRODUCT_CLIENT).unwrap())
+        .unwrap();
+
+    let product = send(
+        &plane.router,
+        as_operator("GET", "/api/clients/broken/product")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(product.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(
+        support::json(product).await["error"]["code"],
+        "desired_state_invalid"
+    );
+
+    let activity = send(
+        &plane.router,
+        as_operator("GET", "/api/activity").body(Body::empty()).unwrap(),
+    )
+    .await;
+    assert_eq!(activity.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(
+        support::json(activity).await["error"]["code"],
+        "desired_state_invalid"
+    );
 }
 
 /// Shared by the tests above that write to the repository directly rather

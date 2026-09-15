@@ -30,6 +30,10 @@
 //! Git at all, and a refused write leaves no commit but is still worth
 //! knowing about.
 
+mod product;
+
+pub(crate) use product::{catalogue_changed, client_created, product_updated};
+
 use fabric_client_model::{ClientId, ClientRevision};
 use fabric_core::{event_id, EventType};
 

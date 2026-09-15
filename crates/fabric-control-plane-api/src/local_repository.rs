@@ -98,7 +98,11 @@ impl Snapshot {
                 revision: None,
             }),
             Some(record) => Ok(StoredCatalogue {
-                catalogue: Catalogue::parse(&record.text).map_err(|_| unavailable("Invalid catalogue"))?,
+                // Not `unavailable`: retrying reads the same broken text
+                // again, so this carries the parse failure as
+                // `InvalidCatalogue` instead.
+                catalogue: Catalogue::parse(&record.text)
+                    .map_err(|source| RepositoryError::InvalidCatalogue { source })?,
                 revision: Some(
                     record
                         .revision()

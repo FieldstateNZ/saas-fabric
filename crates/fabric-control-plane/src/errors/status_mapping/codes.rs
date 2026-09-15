@@ -13,9 +13,19 @@ impl ControlPlaneError {
             Self::Unauthenticated(_) => "unauthenticated",
             Self::UnknownClient(_) => "unknown_client",
             Self::InvalidRequest(_) => "invalid_request",
-            Self::InvalidDesiredState { .. } => "desired_state_invalid",
+            // The catalogue shares this code with a client's document
+            // deliberately — see `ControlPlaneError::InvalidCatalogue` — so a
+            // console does not need a second code to know what to do with
+            // it.
+            Self::InvalidDesiredState { .. } | Self::InvalidCatalogue { .. } => "desired_state_invalid",
             Self::RevisionRequired => "revision_required",
             Self::RevisionConflict => "revision_conflict",
+            // Its own code beside `revision_conflict`: the two share a status
+            // but not a remedy. A stale write is fixed by re-reading and
+            // redoing the edit; a taken id is fixed by choosing a different
+            // one, and a console that could only see `409` could not tell
+            // which screen to show.
+            Self::ClientExists { .. } => "client_exists",
             Self::RealmImmutable { .. } => "realm_immutable",
             Self::RepositoryUnavailable => "repository_unavailable",
             Self::InvalidFlow => "invalid_flow",

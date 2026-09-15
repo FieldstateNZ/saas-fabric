@@ -41,8 +41,10 @@ impl ClientService {
     ///
     /// Returns [`ControlPlaneError`] if the client does not exist, the request
     /// would move the realm, the identity breaks a validation rule, the
-    /// revision has moved on — [`ControlPlaneError::RevisionConflict`] — or
-    /// the repository could not be written.
+    /// revision has moved on — [`ControlPlaneError::RevisionConflict`] — the
+    /// stored product section will not parse —
+    /// [`ControlPlaneError::InvalidDesiredState`] — or the repository could
+    /// not be written.
     pub async fn set_identity(
         &self,
         operator: &Operator,
@@ -68,13 +70,23 @@ impl ClientService {
             return Ok(current);
         }
 
-        let updated = current
+        let with_new_identity = current
             .document
             .with_identity(identity)
-            .and_then(|document| {
-                document.with_activity(self.product_event(operator, client, "Identity updated"))
-            })
             .map_err(ControlPlaneError::InvalidRequest)?;
+
+        // Split from the identity merge above on purpose. `with_activity`
+        // reads `spec.product` before appending to it, and that section came
+        // from the stored document, not from this request — a version of it
+        // that will not parse is the platform's problem, the same failure
+        // `GET /api/clients` reports for a client document that will not
+        // parse at all, not something this write asked for.
+        let updated = with_new_identity
+            .with_activity(self.product_event(operator, client, "Identity updated"))
+            .map_err(|source| ControlPlaneError::InvalidDesiredState {
+                client: client.clone(),
+                source,
+            })?;
 
         let change = ChangeContext {
             requested_by: operator.subject().to_owned(),

@@ -34,7 +34,27 @@ pub use unconfigured::UnconfiguredRepository;
 /// never "the blob sha of `clients/acme/client.yaml` moved" (specification
 /// §8).
 ///
-/// Client creation is conditional. Deletion requires a separate deprovisioning workflow.
+/// # `create` exists now; `delete` still does not
+///
+/// Client creation used to belong to a workflow this crate did not
+/// implement. It is now a desired-state write like any other — one document,
+/// written once, refused if the id is already taken — so [`create`](Self::create)
+/// is a real method here rather than a gap.
+///
+/// `delete` is still absent, and still deliberately: removing a client is a
+/// decision with consequences — application data, secrets, identity sessions
+/// — that no single call should be able to take, and there is no
+/// deprovisioning workflow yet to take it safely. Adding it later is an
+/// additive change; having it here unused would suggest the control plane
+/// can already do something it cannot.
+///
+/// [`create`](Self::create), [`catalogue`](Self::catalogue) and
+/// [`save_catalogue`](Self::save_catalogue) all carry a default body that
+/// answers [`RepositoryError::NotConfigured`]. That is not laziness: it means
+/// an implementation that forgets to override one of them still compiles,
+/// and reports itself unconfigured at run time rather than failing to build —
+/// the same trade the control plane already makes at its own boundary for a
+/// platform nothing has been connected to yet.
 ///
 /// # Concurrency is the implementation's job, not the caller's
 ///

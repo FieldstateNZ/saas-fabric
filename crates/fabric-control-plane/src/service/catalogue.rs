@@ -1,5 +1,5 @@
 //! Product catalogue operations over the current desired-state binding.
-use crate::{ChangeContext, ClientService, ControlPlaneError, Operator};
+use crate::{audit, ChangeContext, ClientService, ControlPlaneError, Operator};
 use fabric_client_model::{
     catalogue::{CatalogueCommand, StoredCatalogue},
     ClientRevision,
@@ -44,7 +44,19 @@ impl ClientService {
             .save_catalogue(&updated, expected, &change)
             .await
             .map_err(ControlPlaneError::from_repository)?;
-        tracing::info!(event = "control_plane.catalogue_updated", operator = operator.subject(), revision = %revision, "product catalogue updated");
+
+        // `apply` already decided the action and the entry it applies to —
+        // reading them back off the record it just appended, rather than
+        // matching on `command` a second time, is what keeps this event and
+        // the one `GET /api/activity` shows unable to disagree.
+        let (action, entry) = updated
+            .activity
+            .last()
+            .map_or(("catalogue command applied", "catalogue"), |event| {
+                (event.action.as_str(), event.resource.as_str())
+            });
+        audit::catalogue_changed(operator, action, entry, &revision);
+
         Ok(StoredCatalogue {
             catalogue: updated,
             revision: Some(revision),

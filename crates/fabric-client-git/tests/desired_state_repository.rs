@@ -360,3 +360,23 @@ async fn catalogue_roundtrips_and_rejects_stale_edits() {
         Err(RepositoryError::Conflict)
     ));
 }
+
+#[tokio::test]
+async fn a_stored_catalogue_that_will_not_parse_is_reported_as_invalid_not_unavailable() {
+    // `Unavailable` tells a caller to wait a moment and ask again. Nothing
+    // about asking again fixes a document with the wrong `kind`, so this must
+    // come back as `InvalidCatalogue` instead — the same non-retryable
+    // treatment a client document that will not parse already gets.
+    let host = FakeGitHost::start(&[(
+        "fabric-catalogue.yaml",
+        "apiVersion: fabric.fieldstate.nz/v1\nkind: Tenant\nspec: {}\n",
+    )])
+    .await;
+
+    let error = repository(&host).catalogue().await.unwrap_err();
+
+    assert!(
+        matches!(error, RepositoryError::InvalidCatalogue { .. }),
+        "{error}"
+    );
+}

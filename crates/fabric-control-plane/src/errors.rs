@@ -71,6 +71,23 @@ pub enum ControlPlaneError {
         source: DesiredStateError,
     },
 
+    /// The stored catalogue could not be read.
+    ///
+    /// [`Self::InvalidDesiredState`]'s sibling for the one document that is
+    /// not a client's: same cause — a repository humans also edit by hand
+    /// eventually holds a document that does not parse — and the same
+    /// machine code, because a console reading either has one thing to do
+    /// with it, stop and do not retry, not two different things to branch
+    /// on. Kept as its own variant rather than a placeholder client id in
+    /// [`Self::InvalidDesiredState`], because there is no client whose
+    /// document broke.
+    #[error("the stored catalogue could not be read: {source}")]
+    InvalidCatalogue {
+        /// What was wrong with it.
+        #[source]
+        source: DesiredStateError,
+    },
+
     /// The request did not say which revision it was editing.
     #[error("this request must state the revision it is editing")]
     RevisionRequired,
@@ -78,6 +95,23 @@ pub enum ControlPlaneError {
     /// The client changed between being read and being written.
     #[error("the client changed since it was read; re-read it and apply the change again")]
     RevisionConflict,
+
+    /// A client with this id already exists.
+    ///
+    /// Its own variant beside [`Self::RevisionConflict`] rather than a reuse
+    /// of it, because a create has no prior read to have gone stale: there
+    /// is no revision this request believed it was editing, so "the client
+    /// changed since it was read" would name a read that never happened.
+    /// [`ClientService::create_client`](crate::ClientService::create_client)
+    /// is the only place a repository [`Conflict`](crate::RepositoryError::Conflict)
+    /// means this, so the translation happens there rather than in
+    /// `ControlPlaneError::from_repository`, which every other write still
+    /// uses.
+    #[error("a client named {id} already exists")]
+    ClientExists {
+        /// The id that was already taken.
+        id: ClientId,
+    },
 
     /// The operator asked to move a client to a different realm.
     ///

@@ -75,11 +75,21 @@ impl ControlPlaneError {
             // now. Not a 400 — the request was well-formed and would have been
             // applied a moment earlier — and not a 503, which would advertise
             // an immediate retry that would be refused identically.
-            Self::RevisionConflict | Self::IntegrationMoved => StatusCode::CONFLICT,
+            //
+            // `ClientExists` joins them at 409 for a related but distinct
+            // reason: not "read again and redo it" but "this id is already
+            // taken", which is why it carries its own code below rather than
+            // `revision_conflict`.
+            Self::RevisionConflict | Self::IntegrationMoved | Self::ClientExists { .. } => {
+                StatusCode::CONFLICT
+            }
 
             // A stored document that will not parse is the platform's problem,
-            // not the caller's, and no retry fixes it.
-            Self::InvalidDesiredState { .. } => StatusCode::INTERNAL_SERVER_ERROR,
+            // not the caller's, and no retry fixes it — whether the document
+            // is a client's or the catalogue's.
+            Self::InvalidDesiredState { .. } | Self::InvalidCatalogue { .. } => {
+                StatusCode::INTERNAL_SERVER_ERROR
+            }
 
             // 503 and retryable: Git being briefly unreachable is the ordinary
             // transient failure of this API.

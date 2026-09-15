@@ -11,9 +11,11 @@ impl GitClientRepository {
                 revision: None,
             });
         };
-        let catalogue = Catalogue::parse(&stored.text).map_err(|_| RepositoryError::Unavailable {
-            detail: "The catalogue document is invalid".into(),
-        })?;
+        // Not `Unavailable`: a catalogue that will not parse is not fixed by
+        // asking Git again, so it is reported as `InvalidCatalogue`, carrying
+        // the parse failure rather than discarding it.
+        let catalogue =
+            Catalogue::parse(&stored.text).map_err(|source| RepositoryError::InvalidCatalogue { source })?;
         Ok(StoredCatalogue {
             catalogue,
             revision: Some(stored.revision),

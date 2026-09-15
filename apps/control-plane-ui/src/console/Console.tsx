@@ -19,10 +19,12 @@ import { useInventory } from './useInventory'
  * Every one of the hooks here loads from the control-plane API — see
  * README.md's "What it talks to". The client list, catalogue, integrations
  * and platform state stay mounted for the whole session and are not
- * re-fetched on navigation. The identity inventory is the exception: it is
- * re-read on entering a page that shows it, because an edit made elsewhere
- * (an identity change, a client write) can leave it stale, and there is
- * nowhere else this console currently invalidates it from.
+ * re-fetched on navigation. The identity inventory is the exception: this
+ * effect re-reads it on entering a page that shows it, because an edit made
+ * elsewhere (an identity change, a client write) can leave it stale.
+ * `Reconciliation`'s own "Refresh observations" button reads the same
+ * inventory on demand — this effect is what refreshes it on arrival,
+ * without an operator having to ask.
  */
 export function Console() {
   const route = useRoute()
@@ -51,6 +53,11 @@ export function Console() {
       refreshInventory()
     }
   }, [route.page, route.clientId, refreshInventory])
+
+  const clearCatalogueSaveError = catalogue.clearSaveError
+  useEffect(() => {
+    clearCatalogueSaveError()
+  }, [route.page, clearCatalogueSaveError])
 
   const unreachable = integration.value !== null && integration.value.status !== 'connected'
 

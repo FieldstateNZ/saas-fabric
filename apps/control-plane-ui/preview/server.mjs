@@ -5,10 +5,11 @@
  * (`cargo run -p fabric-control-plane-api --example console_workbench`) —
  * see PHASE_ONE.md. OIDC is the only posture production configuration
  * accepts; there is no trusted-header mode for this to stand in for.
- * `X-Test-Operator` is accepted only by that example's
- * `testing::AcceptingOperator`, which treats any request carrying it as a
- * fixed operator — a development shortcut recorded as a proposal in
- * ADR 0020 §7, not something a deployment could configure.
+ * `X-Test-Operator` is accepted only by `testing::AcceptingOperator`, in
+ * `crates/fabric-control-plane/src/testing.rs`, which the example composes
+ * in and which treats any request carrying it as a fixed operator — a
+ * development shortcut recorded as a proposal in ADR 0020 §7, not something
+ * a deployment could configure.
  */
 import { fileURLToPath } from 'node:url'
 

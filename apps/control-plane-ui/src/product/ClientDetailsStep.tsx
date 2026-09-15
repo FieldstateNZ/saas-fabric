@@ -6,6 +6,8 @@ import { Field } from './Field'
 interface ClientDetailsStepProps {
   readonly id: string
   readonly onIdChange: (id: string) => void
+  /** Set when the control plane refused this ID as already taken — shown on the field itself, not a page banner. */
+  readonly idError?: string | null
   readonly existing: boolean
   readonly value: ClientProductRequest
   readonly onValueChange: (value: ClientProductRequest) => void
@@ -28,6 +30,7 @@ interface ClientDetailsStepProps {
 export function ClientDetailsStep({
   id,
   onIdChange,
+  idError,
   existing,
   value,
   onValueChange,
@@ -45,6 +48,7 @@ export function ClientDetailsStep({
             value={id}
             onChange={onIdChange}
             hint="Permanent identifier: lowercase letters, numbers and hyphens."
+            error={idError}
           />
         )}
         <Field

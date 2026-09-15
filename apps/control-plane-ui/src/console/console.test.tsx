@@ -1,16 +1,23 @@
-import { render, screen, within } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { converge } from '../api/client'
 import type { Client, Identity } from '../api/types'
 import { ClientDirectory } from './ClientDirectory'
+import { Console } from './Console'
 import { Dashboard } from './Dashboard'
 import { clientHref, readRoute } from './navigation'
 import { Reconciliation } from './Reconciliation'
 import type { Inventory } from './useInventory'
 
-vi.mock('../api/client', () => ({ converge: vi.fn() }))
+// `converge` alone is mocked, not the whole module — the Console-level test
+// further down needs the real `request()` plumbing (`listClients`,
+// `getIntegration`, and the rest) to reach the `fetch` stub it installs.
+vi.mock('../api/client', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../api/client')>()
+  return { ...actual, converge: vi.fn() }
+})
 
 const clients: Client[] = [
   { id: 'acme', displayName: 'Acme', hosts: ['acme.example.test'], realm: 'acme', revision: 'r1' },
@@ -99,5 +106,174 @@ describe('phase-one console', () => {
   it('lands integration callbacks on Integrations', () => {
     window.history.replaceState({}, '', '/?platform=connected#/clients')
     expect(readRoute().page).toBe('integrations')
+  })
+})
+
+function jsonResponse(status: number, body: unknown): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { 'Content-Type': 'application/json' },
+  })
+}
+
+const catalogueBody = () => ({
+  catalogue: {
+    applications: [],
+    clientFields: [],
+    settings: { platformName: 'Fieldstate', defaultRegion: 'New Zealand', timezone: 'Pacific/Auckland' },
+    environments: [],
+    activity: [],
+    definitionVersion: 1,
+  },
+  revision: 'rev-1',
+})
+
+describe('Console: a save refusal does not follow an operator to another page', () => {
+  let saveStatus = 200
+
+  beforeEach(() => {
+    saveStatus = 200
+    window.history.replaceState({}, '', '/#/settings')
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('clears the reload prompt on Settings once the operator navigates to Definition', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: string, init?: RequestInit) => {
+        const url = input
+        const method = init?.method ?? 'GET'
+        if (url === '/api/clients' && method === 'GET') {
+          return Promise.resolve(jsonResponse(200, { clients: [] }))
+        }
+        if (url === '/api/catalogue' && method === 'GET') {
+          return Promise.resolve(jsonResponse(200, catalogueBody()))
+        }
+        if (url === '/api/catalogue' && method === 'POST') {
+          return Promise.resolve(
+            saveStatus === 200
+              ? jsonResponse(200, catalogueBody())
+              : jsonResponse(409, { error: { code: 'revision_conflict', message: 'stale' } }),
+          )
+        }
+        if (url === '/api/integrations/git') {
+          return Promise.resolve(
+            jsonResponse(200, {
+              status: 'not_configured',
+              connection: null,
+              last_success_at: null,
+              managed: true,
+              application: null,
+            }),
+          )
+        }
+        if (url === '/api/integrations/platform') {
+          return Promise.resolve(jsonResponse(200, { managed: false, application: null }))
+        }
+        if (url === '/api/platform') {
+          return Promise.resolve(
+            jsonResponse(404, { error: { code: 'platform_not_managed', message: 'not managed' } }),
+          )
+        }
+        return Promise.resolve(jsonResponse(404, { error: { code: 'not_found', message: 'unused' } }))
+      }),
+    )
+
+    render(<Console />)
+    const user = userEvent.setup()
+
+    await screen.findByRole('heading', { name: 'Settings' })
+
+    saveStatus = 409
+    await user.click(screen.getByRole('button', { name: 'Save settings' }))
+    await screen.findByRole('button', { name: /Reload latest version/ })
+
+    window.location.hash = '/definition'
+
+    await screen.findByRole('heading', { name: 'Client definition' })
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: /Reload latest version/ })).not.toBeInTheDocument()
+    })
+  })
+})
+
+describe('Console: identity is not re-read on pages that do not show it', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('reads identity once on mount, and not again navigating Settings, Definition and Environments', async () => {
+    let identityReads = 0
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: string, init?: RequestInit) => {
+        const url = input
+        const method = init?.method ?? 'GET'
+        if (url === '/api/clients' && method === 'GET') {
+          return Promise.resolve(
+            jsonResponse(200, {
+              clients: [{ id: 'acme', displayName: 'Acme', hosts: [], realm: 'acme', revision: 'r1' }],
+            }),
+          )
+        }
+        if (url === '/api/clients/acme/identity') {
+          identityReads += 1
+          return Promise.resolve(
+            jsonResponse(200, {
+              realm: 'acme',
+              roles: [],
+              clients: [],
+              apiVersion: 'v2',
+              revision: 'r1',
+              reconciliation: { status: 'applied', observedAtUnix: null, detail: null },
+            }),
+          )
+        }
+        if (url === '/api/catalogue' && method === 'GET') {
+          return Promise.resolve(jsonResponse(200, catalogueBody()))
+        }
+        if (url === '/api/integrations/git') {
+          return Promise.resolve(
+            jsonResponse(200, {
+              status: 'not_configured',
+              connection: null,
+              last_success_at: null,
+              managed: true,
+              application: null,
+            }),
+          )
+        }
+        if (url === '/api/integrations/platform') {
+          return Promise.resolve(jsonResponse(200, { managed: false, application: null }))
+        }
+        if (url === '/api/platform') {
+          return Promise.resolve(
+            jsonResponse(404, { error: { code: 'platform_not_managed', message: 'not managed' } }),
+          )
+        }
+        return Promise.resolve(jsonResponse(404, { error: { code: 'not_found', message: 'unused' } }))
+      }),
+    )
+
+    window.history.replaceState({}, '', '/#/overview')
+    render(<Console />)
+
+    await screen.findByRole('heading', { name: 'Fieldstate' })
+    await waitFor(() => {
+      expect(identityReads).toBe(1)
+    })
+
+    for (const hash of ['/settings', '/definition', '/environments']) {
+      window.location.hash = hash
+      await waitFor(() => {
+        expect(screen.getByRole('main')).toBeInTheDocument()
+      })
+    }
+
+    expect(identityReads).toBe(1)
   })
 })

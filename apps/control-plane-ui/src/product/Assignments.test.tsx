@@ -44,7 +44,7 @@ function Editor({ initial, locked = [] }: { initial: AssignmentRequest[]; locked
 }
 
 describe('Assignments: switching versions keeps what still applies', () => {
-  it('keeps the plan and drops only configuration keys the new release no longer fields', async () => {
+  it('resets the plan and drops configuration keys the new release no longer fields, with a note', async () => {
     render(
       <Editor
         initial={[{ applicationId: 'portal', version: 1, planId: 'pro', configuration: { seats: '10', legacy: 'x' } }]}
@@ -52,7 +52,8 @@ describe('Assignments: switching versions keeps what still applies', () => {
     )
     const user = userEvent.setup()
 
-    // Release 2 keeps `pro`... wait, release 2 only defines plan `starter`.
+    // Release 2 only defines plan `starter` — `pro` does not exist there,
+    // so the plan resets and the note appears.
     await user.selectOptions(screen.getByRole('combobox', { name: /version/ }), '2')
 
     expect(screen.getByRole('combobox', { name: /plan/ })).toHaveValue('starter')
@@ -61,7 +62,7 @@ describe('Assignments: switching versions keeps what still applies', () => {
     expect(screen.getByText(/reset the plan or configuration values/)).toBeInTheDocument()
   })
 
-  it('keeps the same plan without a note when the new release still has it', async () => {
+  it('keeps the plan without a note when the new release still has it', async () => {
     render(
       <Editor
         initial={[{ applicationId: 'portal', version: 1, planId: 'starter', configuration: { seats: '10' } }]}
@@ -80,6 +81,23 @@ describe('Assignments: switching versions keeps what still applies', () => {
 
     expect(screen.getByRole('checkbox', { name: 'Portal v2' })).toBeInTheDocument()
     expect(screen.queryByRole('checkbox', { name: 'Portal v3' })).not.toBeInTheDocument()
+  })
+
+  it('clears the reset note once the assignment is unchecked and checked again', async () => {
+    render(
+      <Editor
+        initial={[{ applicationId: 'portal', version: 1, planId: 'pro', configuration: { seats: '10', legacy: 'x' } }]}
+      />,
+    )
+    const user = userEvent.setup()
+
+    await user.selectOptions(screen.getByRole('combobox', { name: /version/ }), '2')
+    expect(screen.getByText(/reset the plan or configuration values/)).toBeInTheDocument()
+
+    await user.click(screen.getByRole('checkbox', { name: 'Portal v2' }))
+    await user.click(screen.getByRole('checkbox', { name: 'Portal v2' }))
+
+    expect(screen.queryByText(/reset the plan or configuration values/)).not.toBeInTheDocument()
   })
 })
 

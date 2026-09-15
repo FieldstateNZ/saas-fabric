@@ -2,28 +2,31 @@
  * The footer of every step of {@link ClientForm}'s wizard: Back, the primary
  * action, and Cancel.
  *
- * # One submit, and only one, per click
+ * # Continue and the final action are two different elements
  *
- * The primary action shares a screen position across every step, but not a
- * mechanism. Before the last step it is `type="submit"`, so "Continue" is
- * the form's own `submit` handler — harmless to fire more than once, since
- * advancing to the same step number again is a no-op. On the last step it
- * becomes `type="button"`, because creating or saving is not harmless to
- * repeat: it is a `POST` or `PUT` that cannot be undone, so it is wired to
- * this button's own `onClick` instead, and refused twice over.
+ * They share a screen position and a label slot, but they are rendered with
+ * different `key`s (`"continue"` and `"final"`) rather than one element whose
+ * `type` and label change with `step`. That is load-bearing, not cosmetic:
+ * React reuses a DOM node across a re-render when its key does not change,
+ * which means a node that had keyboard focus keeps it — so a shared node
+ * would let three presses of Enter (or one held down) walk Continue through
+ * every step and land on the final action while it is still focused, no
+ * mouse ever involved. A different key forces React to unmount the old node
+ * and mount a new one the moment the role changes, and an unmounted node
+ * cannot still be focused — the browser moves focus away from it as part of
+ * removing it, before the next keypress is handled. A stray Enter after that
+ * activates nothing.
  *
- * First, any click whose `detail` says it is not the first of a sequence is
- * ignored. A double-click's second event can land on this exact button
- * after the first click has already re-rendered it here from "Continue"
- * into its final-step role — `detail` counts by screen position, not by
- * which element received each click, so it still reports the second event
- * as part of the same gesture. Keyboard activation always reports
- * `detail === 0` and is unaffected. Second, `onSubmitFinal` itself is
- * expected to guard the actual request with something React's `disabled`
- * cannot: React does not disable this button synchronously with the click
- * that should have triggered the disable, so `busy` alone would arrive too
- * late to stop a second click landing before the first render commits — see
- * `ClientForm`'s `submitting` ref.
+ * # Two separate defences against a double-click
+ *
+ * Continue's own click handler calls `event.preventDefault()` when `detail`
+ * is greater than one, so the second click of a double-click at an early
+ * step is refused before it can submit the form and advance twice. The final
+ * action's click handler does the same thing by simply returning instead —
+ * it is not a submit button, so there is no default submission to prevent.
+ * Keyboard activation always reports `detail === 0` in both handlers and is
+ * never affected by this check; it is the key change above that stops a
+ * keyboard-only repeat.
  */
 export function ClientFormActions({
   step,
@@ -47,22 +50,34 @@ export function ClientFormActions({
           Back
         </button>
       )}
-      <button
-        type={step < 2 ? 'submit' : 'button'}
-        className="primary-button"
-        onClick={
-          step === 2
-            ? (event) => {
-                if (event.detail > 1) {
-                  return
-                }
-                onSubmitFinal()
-              }
-            : undefined
-        }
-      >
-        {busy ? 'Saving…' : step < 2 ? 'Continue' : existing ? 'Save client configuration' : 'Create client'}
-      </button>
+      {step < 2 ? (
+        <button
+          key="continue"
+          type="submit"
+          className="primary-button"
+          onClick={(event) => {
+            if (event.detail > 1) {
+              event.preventDefault()
+            }
+          }}
+        >
+          Continue
+        </button>
+      ) : (
+        <button
+          key="final"
+          type="button"
+          className="primary-button"
+          onClick={(event) => {
+            if (event.detail > 1) {
+              return
+            }
+            onSubmitFinal()
+          }}
+        >
+          {busy ? 'Saving…' : existing ? 'Save client configuration' : 'Create client'}
+        </button>
+      )}
       <button type="button" onClick={onCancel}>
         Cancel
       </button>

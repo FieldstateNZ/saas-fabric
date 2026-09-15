@@ -6,13 +6,20 @@ import { ClientFacts } from './ClientFacts'
 /**
  * The Overview tab of `ClientWorkspace`: three headline metrics, the
  * client's own facts, and a way into the shell preview.
+ *
+ * `previewDisabled` covers Configure's in-flight fresh read: opening a
+ * second view of this client while that read is still deciding what
+ * `ClientWorkspace`'s `data` even is would be one more place to leave
+ * behind.
  */
 export function ClientOverviewTab({
   data,
   onPreview,
+  previewDisabled = false,
 }: {
   data: ClientProductResponse
   onPreview: () => void
+  previewDisabled?: boolean
 }) {
   return (
     <>
@@ -35,7 +42,9 @@ export function ClientOverviewTab({
       <Panel title="Client details">
         <div className="panel-body">
           <ClientFacts data={data} />
-          <button onClick={onPreview}>Preview client shell →</button>
+          <button disabled={previewDisabled} onClick={onPreview}>
+            Preview client shell →
+          </button>
         </div>
       </Panel>
     </>

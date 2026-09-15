@@ -31,7 +31,15 @@ import { Select } from './Select'
  * A version change keeps the current plan when the new release still has a
  * plan with that id, and keeps every configuration value whose key is still
  * one of the new release's fields — dropping only what no longer exists
- * there. When either was reset, {@link resetNotice} says so.
+ * there. When either was reset, {@link resetNotice} says so, until the
+ * operator unchecks and re-checks the assignment — a deliberate change of
+ * mind about the version being wrong is not still "a moment ago".
+ *
+ * This file sits in file-size-policy.md's 121-150 line band. `retarget` is
+ * a pure function with exactly one caller, and the two together are one
+ * concept — what happens to an assignment when its version changes — the
+ * same way `ValuesEditor` keeps its own private `parseLimits` rather than
+ * splitting a single-caller helper into a file of its own.
  */
 export function Assignments({
   apps,
@@ -71,6 +79,7 @@ export function Assignments({
               value={Boolean(assignment)}
               disabled={isLocked}
               onChange={(checked) => {
+                setResetNotice((prev) => ({ ...prev, [app.id]: false }))
                 if (checked && latest?.definition.plans[0]) {
                   onChange([
                     ...value,

@@ -19,6 +19,12 @@ const empty: EnvironmentRegistration = { id: '', name: '', consoleUrl: '', descr
  * plane holds no credential for another deployment's console, so this is a
  * directory an operator maintains by hand, not a control that reaches out to
  * verify what it points at.
+ *
+ * This file sits in file-size-policy.md's 121-150 line band: the platform
+ * view, the registration form, and the list of already-registered
+ * environments are one page's worth of one small directory, not three
+ * concerns — the form and the list both exist only to edit and show the
+ * same `state.value?.catalogue.environments`.
  */
 export function Environments({
   state,

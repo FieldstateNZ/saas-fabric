@@ -5,20 +5,11 @@ import type { Catalogue, ClientProductResponse } from '../api/catalogue-types'
 import { PageHeader } from '../console/PageHeader'
 import { TabNav } from '../console/TabNav'
 import { describe } from '../hooks/useClients'
+import { CLIENT_TABS, type ClientTab } from './clientWorkspaceTabs'
 import { ClientForm } from './ClientForm'
 import { ClientShell } from './ClientShell'
 import { ClientWorkspaceTab } from './ClientWorkspaceTab'
-
-const tabs = [
-  'Overview',
-  'Applications',
-  'Configuration',
-  'Identity',
-  'Domains',
-  'Activity',
-  'Secrets',
-  'Health',
-] as const
+import { useConfigureClient } from './useConfigureClient'
 
 /**
  * One client's full workspace: its resolved product state, and every way an
@@ -32,22 +23,30 @@ const tabs = [
  * # Configure always opens on a fresh read
  *
  * `data` can go stale without this component ever changing it: an identity
- * edit on the Identity tab writes its own activity entry into the same
- * client document, moving its revision, and nothing here observes that.
- * Opening `ClientForm` against a cached `data` would seed it with a
- * revision the server has already moved past, and every save would be
- * refused as a conflict against an edit that never happened. `openConfigure`
- * re-reads the product before switching into edit mode, so the form is
- * always seeded from what the server holds right now — see `ClientForm`'s
- * own doc for the other half of this: what happens when the revision moves
- * again while the form is open.
+ * edit on the Identity tab is real and writes its own activity entry into
+ * the same client document, moving its revision, and nothing here observes
+ * that when it happens. Opening `ClientForm` against a cached `data` would
+ * seed it with a revision the server has already moved past, so the save
+ * would be refused as a conflict against a change that did happen, just not
+ * one this component knew about. `useConfigureClient`'s `open` re-reads the
+ * product before switching into edit mode, so the form is always seeded
+ * from what the server holds right now — see `ClientForm`'s own doc for the
+ * other half of this: what happens when the revision moves again while the
+ * form is open. That hook's `opening` disables Preview and the tab bar for
+ * the same reason it disables the Configure button itself: switching to
+ * another view of this client while that read is still deciding what
+ * `data` is would be a second place for the same race, and its
+ * `staleNotice` covers the read's other outcome — `onStale` returning here
+ * instead of ever reaching the form — so the operator is told their edits
+ * were not saved rather than the workspace just quietly showing newer data.
  *
  * This file sits in file-size-policy.md's 121-150 line band. It is one
  * state machine — loading, an error, editing, previewing, or the workspace
  * itself — and every branch needs the same `id`/`catalogue`/`onSaved` in
  * scope; splitting the branches apart would turn one component's states
- * into several components secretly sharing a lifecycle. The tab content
- * itself is already its own file, `ClientWorkspaceTab`.
+ * into several components secretly sharing a lifecycle. The tab content and
+ * the Configure-read behaviour are already their own files,
+ * `ClientWorkspaceTab` and `useConfigureClient`.
  */
 export function ClientWorkspace({
   id,
@@ -61,10 +60,18 @@ export function ClientWorkspace({
   const [data, setData] = useState<ClientProductResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [editing, setEditing] = useState(false)
-  const [opening, setOpening] = useState(false)
   const [preview, setPreview] = useState(false)
-  const [tab, setTab] = useState<(typeof tabs)[number]>('Overview')
+  const [tab, setTab] = useState<ClientTab>('Overview')
   const [generation, setGeneration] = useState(0)
+
+  const configure = useConfigureClient(id, {
+    onOpened: (fresh) => {
+      setData(fresh)
+      setError(null)
+      setEditing(true)
+    },
+    onFailed: setError,
+  })
 
   useEffect(() => {
     let active = true
@@ -87,23 +94,6 @@ export function ClientWorkspace({
       active = false
     }
   }, [id, generation])
-
-  async function openConfigure() {
-    if (opening) {
-      return
-    }
-
-    setOpening(true)
-    try {
-      setData(await getProduct(id))
-      setError(null)
-      setEditing(true)
-    } catch (thrown: unknown) {
-      setError(describe(thrown))
-    } finally {
-      setOpening(false)
-    }
-  }
 
   if (error) {
     return (
@@ -137,6 +127,7 @@ export function ClientWorkspace({
         onStale={(fresh) => {
           setData(fresh)
           setEditing(false)
+          configure.noteStale()
         }}
         onCancel={() => {
           setEditing(false)
@@ -167,20 +158,36 @@ export function ClientWorkspace({
         actions={
           <button
             className="primary-button"
-            disabled={opening}
+            disabled={configure.opening}
             onClick={() => {
-              void openConfigure()
+              void configure.open()
             }}
           >
-            {opening ? 'Loading…' : 'Configure client'}
+            {configure.opening ? 'Loading…' : 'Configure client'}
           </button>
         }
       />
-      <TabNav label="Client sections" tabs={tabs} current={tab} onChange={setTab} />
+      {configure.staleNotice && (
+        <p role="status">
+          This client changed while Configure was open, so it was re-read and your edits there
+          were not saved.
+        </p>
+      )}
+      <TabNav
+        label="Client sections"
+        tabs={CLIENT_TABS}
+        current={tab}
+        disabled={configure.opening}
+        onChange={(next) => {
+          setTab(next)
+          configure.dismissStaleNotice()
+        }}
+      />
       <ClientWorkspaceTab
         tab={tab}
         data={data}
         catalogue={catalogue}
+        previewDisabled={configure.opening}
         onPreview={() => {
           setPreview(true)
         }}

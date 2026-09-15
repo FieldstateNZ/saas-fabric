@@ -17,6 +17,16 @@ export interface CatalogueState {
   /** Whether `saveError` was a stale write — the one case a reload actually fixes. */
   readonly conflict: boolean
   readonly refresh: () => void
+  /**
+   * Clears `saveError` and `conflict` without touching anything else.
+   *
+   * `useCatalogue` is one hook shared by every catalogue-editing page — see
+   * the note on `Console` — so a failure on one page is still sitting in
+   * `saveError` when an operator navigates to another. `Console` calls this
+   * on every route change so a page never opens already showing a refusal
+   * that happened somewhere else.
+   */
+  readonly clearSaveError: () => void
   /** Applies one command, conditioned on the last-read revision. Resolves to whether it was applied. */
   readonly save: (command: CatalogueCommand) => Promise<boolean>
 }
@@ -31,8 +41,16 @@ export interface CatalogueState {
  * an edit was refused while the console still has a perfectly good catalogue
  * on screen. Conflating them under one `error` meant a save failure could
  * only be shown by replacing the whole page, or not shown at all — `Console`
- * needs `loadError` alone for its page-level banner, and each editor needs
- * `saveError` alone for its own.
+ * needs `loadError` alone for its page-level banner, and every catalogue
+ * editor reads `saveError` for its own `SaveNotice`.
+ *
+ * `saveError` and `conflict` are not scoped per editor, because this one
+ * hook instance — and the one `saveError` it holds — is shared by every
+ * catalogue-editing page. Left alone, a refusal on Settings would still be
+ * sitting there when an operator navigated to Definition. `clearSaveError`
+ * exists for exactly that: `Console` calls it on every route change, so an
+ * editor never opens already showing a failure from a page the operator has
+ * left.
  *
  * # `conflict` is what tells a caller whether reloading helps
  *
@@ -55,13 +73,17 @@ export function useCatalogue(): CatalogueState {
   const [conflict, setConflict] = useState(false)
   const [generation, setGeneration] = useState(0)
 
+  const clearSaveError = useCallback(() => {
+    setSaveError(null)
+    setConflict(false)
+  }, [])
+
   const refresh = useCallback(() => {
     // A reload is how a caller acts on a conflict; the stale-save banner it
     // was showing no longer applies to whatever comes back.
-    setSaveError(null)
-    setConflict(false)
+    clearSaveError()
     setGeneration((n) => n + 1)
-  }, [])
+  }, [clearSaveError])
 
   useEffect(() => {
     let active = true
@@ -113,5 +135,5 @@ export function useCatalogue(): CatalogueState {
     }
   }
 
-  return { value, loading, loadError, saving, saveError, conflict, refresh, save }
+  return { value, loading, loadError, saving, saveError, conflict, refresh, clearSaveError, save }
 }

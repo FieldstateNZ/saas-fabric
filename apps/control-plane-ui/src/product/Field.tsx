@@ -12,8 +12,10 @@ interface FieldProps {
  * A single labelled text input, used across every product editor.
  *
  * `maxLength={4096}` is a client-side courtesy, not the validation: the
- * control plane enforces its own limits on every field, and this exists only
- * so an operator sees the cap while typing rather than after a refusal.
+ * control plane enforces its own limits on every field. It works by
+ * silently truncating further keystrokes rather than refusing them, so it
+ * only ever saves an operator from a refusal for a value this long — it
+ * cannot warn them that a paste was cut short.
  */
 export function Field({
   label,

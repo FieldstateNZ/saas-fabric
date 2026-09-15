@@ -4,20 +4,10 @@ import type { ProductApplication } from '../api/catalogue-types'
 import { PageHeader } from '../console/PageHeader'
 import { Status } from '../console/Status'
 import { TabNav } from '../console/TabNav'
+import { APPLICATION_TABS, type ApplicationTab } from './applicationWorkspaceTabs'
 import { ApplicationWorkspaceTab } from './ApplicationWorkspaceTab'
 import { SaveNotice } from './SaveNotice'
 import type { CatalogueState } from './useCatalogue'
-
-const tabs = [
-  'Definition',
-  'Components',
-  'Features',
-  'Client configuration',
-  'Plans',
-  'Navigation',
-  'Entry points',
-  'Releases',
-] as const
 
 /**
  * Editing one application: its draft definition, and every version ever
@@ -29,10 +19,14 @@ const tabs = [
  * definition and come back to it. `publish` is the act that makes it
  * immutable: it copies the current draft into a new numbered
  * {@link ApplicationRelease}, and every client already assigned to an
- * earlier release keeps that exact version. `published` compares the draft
- * against the newest release by value, not by a flag the server sets, so the
- * badge reflects "nothing has changed since the last publish" rather than a
- * status that could drift from the definitions it describes.
+ * earlier release keeps that exact version.
+ *
+ * `published` compares the definition currently being edited — including
+ * unsaved local changes — against the newest release, by value rather than a
+ * flag the server sets. It is checked against `draft`, not `app.draft`
+ * (the last value actually saved): the header must stop claiming "Published"
+ * the moment a local edit diverges from that release, even before the
+ * operator has saved it.
  */
 export function ApplicationWorkspace({
   app,
@@ -42,7 +36,7 @@ export function ApplicationWorkspace({
   state: CatalogueState
 }) {
   const [draft, setDraft] = useState(app.draft)
-  const [tab, setTab] = useState<(typeof tabs)[number]>('Definition')
+  const [tab, setTab] = useState<ApplicationTab>('Definition')
   const [note, setNote] = useState('')
   const [success, setSuccess] = useState<string | null>(null)
 
@@ -51,7 +45,7 @@ export function ApplicationWorkspace({
   }, [app])
 
   const dirty = JSON.stringify(draft) !== JSON.stringify(app.draft)
-  const published = JSON.stringify(app.releases.at(-1)?.definition) === JSON.stringify(app.draft)
+  const published = JSON.stringify(app.releases.at(-1)?.definition) === JSON.stringify(draft)
 
   async function save() {
     if (await state.save({ action: 'saveApplication', id: app.id, definition: draft })) {
@@ -75,13 +69,17 @@ export function ApplicationWorkspace({
         eyebrow="Application"
         title={app.draft.name}
         actions={
-          <Status value={published ? 'applied' : 'neutral'}>
+          <Status value={published ? 'published' : 'neutral'}>
             {published ? 'Published' : 'Draft changes'}
           </Status>
         }
       />
-      <SaveNotice error={state.error} success={success} onReload={state.refresh} />
-      <TabNav label="Application sections" tabs={tabs} current={tab} onChange={setTab} />
+      <SaveNotice
+        error={state.saveError}
+        success={success}
+        onReload={state.conflict ? state.refresh : undefined}
+      />
+      <TabNav label="Application sections" tabs={APPLICATION_TABS} current={tab} onChange={setTab} />
       <form
         onSubmit={(event) => {
           event.preventDefault()

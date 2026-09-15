@@ -39,7 +39,7 @@ export function ClientReviewStep({ id, value }: { id: string; value: ClientProdu
       )}
       <p>
         Saving writes desired state. Identity reconciliation follows separately; deployment and
-        routing remain pending until observed.
+        routing are not observed.
       </p>
     </section>
   )

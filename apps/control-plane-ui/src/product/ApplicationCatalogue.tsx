@@ -17,6 +17,13 @@ import type { CatalogueState } from './useCatalogue'
  * request that names the application from here on, but nothing about the
  * application itself is locked in until it is published; see
  * `ApplicationWorkspace` for that boundary.
+ *
+ * This file sits in file-size-policy.md's 121-150 line band: the inline
+ * creation form, the search box, and the grid it filters are three small
+ * pieces of one page rather than three concerns, and none of them is
+ * reused or complex enough on its own to earn a file — splitting them out
+ * would trade this file's length for three thin ones that only ever have
+ * one caller between them.
  */
 export function ApplicationCatalogue({ state }: { state: CatalogueState }) {
   const [search, setSearch] = useState('')
@@ -51,7 +58,11 @@ export function ApplicationCatalogue({ state }: { state: CatalogueState }) {
           </button>
         }
       />
-      <SaveNotice error={state.error} success={null} onReload={state.refresh} />
+      <SaveNotice
+        error={state.saveError}
+        success={null}
+        onReload={state.conflict ? state.refresh : undefined}
+      />
       {creating && (
         <form
           className="panel panel-body"
@@ -113,7 +124,7 @@ export function ApplicationCatalogue({ state }: { state: CatalogueState }) {
               key={app.id}
               title={app.draft.name}
               action={
-                <Status value={app.releases.length ? 'applied' : 'neutral'}>
+                <Status value={app.releases.length ? 'published' : 'neutral'}>
                   {app.releases.length
                     ? `v${String(app.releases.at(-1)?.version)} published`
                     : 'Draft'}

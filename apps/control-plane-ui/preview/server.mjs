@@ -3,9 +3,12 @@
  *
  * Loopback only, and proxied to a real running control-plane API example
  * (`cargo run -p fabric-control-plane-api --example console_workbench`) —
- * see PHASE_ONE.md. `X-Test-Operator` stands in for the trusted-header
- * identity a production proxy would set; the production entry point keeps
- * OIDC and never sets this header itself.
+ * see PHASE_ONE.md. OIDC is the only posture production configuration
+ * accepts; there is no trusted-header mode for this to stand in for.
+ * `X-Test-Operator` is accepted only by that example's
+ * `testing::AcceptingOperator`, which treats any request carrying it as a
+ * fixed operator — a development shortcut recorded as a proposal in
+ * ADR 0020 §7, not something a deployment could configure.
  */
 import { fileURLToPath } from 'node:url'
 

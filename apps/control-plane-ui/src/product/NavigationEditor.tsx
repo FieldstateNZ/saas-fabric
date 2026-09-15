@@ -4,7 +4,9 @@ import { Field } from './Field'
 import { Select } from './Select'
 
 /**
- * Editing an application's entry points.
+ * Editing an application's navigation items — not to be confused with
+ * `ApplicationEntryPointsTab`'s "Entry points", the hostname template a
+ * client's callbacks are built from.
  *
  * `permission`'s hint says the application must enforce it, deliberately:
  * this console's client shell preview (see `ClientShell`) only reflects what

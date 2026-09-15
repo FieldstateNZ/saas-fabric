@@ -7,9 +7,10 @@ import type { IdentityEntry } from './useInventory'
  * One row of `ClientDirectory`'s table.
  *
  * `entry` is `undefined` until the shared identity inventory has read this
- * client — that is not the same as `loading` being false with no identity at
- * all (a read that failed), so the status column tells the two apart rather
- * than showing "Unavailable" while the inventory is still working.
+ * client, which is a different situation from `loading` being false with no
+ * identity at all (a read that failed) — but the status column does not
+ * currently tell them apart: both render "Unavailable" once loading is
+ * false. Only the loading state itself ("Loading") is distinguished.
  */
 export function ClientDirectoryRow({
   client,

@@ -17,9 +17,12 @@ import { useInventory } from './useInventory'
  * {@link ConsoleRoute} decides to show.
  *
  * Every one of the hooks here loads from the control-plane API — see
- * README.md's "What it talks to" — and stays mounted for the whole session
- * rather than being loaded per page, so switching pages never re-fetches
- * data the console already has.
+ * README.md's "What it talks to". The client list, catalogue, integrations
+ * and platform state stay mounted for the whole session and are not
+ * re-fetched on navigation. The identity inventory is the exception: it is
+ * re-read on entering a page that shows it, because an edit made elsewhere
+ * (an identity change, a client write) can leave it stale, and there is
+ * nowhere else this console currently invalidates it from.
  */
 export function Console() {
   const route = useRoute()
@@ -35,7 +38,18 @@ export function Console() {
 
   const refreshInventory = inventory.refresh
   useEffect(() => {
-    refreshInventory()
+    // Only the pages that actually render `inventory` need a fresh read on
+    // arrival — re-reading every client's identity on every route change
+    // (Settings, Definition, an application's editor) would cost a request
+    // wave for pages that show none of it.
+    const showsInventory =
+      route.page === 'overview' ||
+      route.page === 'reconciliation' ||
+      (route.page === 'clients' && route.clientId === null)
+
+    if (showsInventory) {
+      refreshInventory()
+    }
   }, [route.page, route.clientId, refreshInventory])
 
   const unreachable = integration.value !== null && integration.value.status !== 'connected'
@@ -72,9 +86,9 @@ export function Console() {
               {clients.error}
             </p>
           )}
-          {catalogue.error && route.page !== 'integrations' && (
+          {catalogue.loadError && route.page !== 'integrations' && (
             <div className="error" role="alert">
-              {catalogue.error}
+              {catalogue.loadError}
               <button onClick={catalogue.refresh}>Retry catalogue</button>
             </div>
           )}

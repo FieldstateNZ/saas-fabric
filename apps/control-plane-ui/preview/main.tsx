@@ -1,11 +1,13 @@
 /**
  * The entry point for the local workbench preview (`npm run preview:ui`).
  *
- * Renders the real {@link Console} against a real, running control-plane API
- * — see `preview/server.mjs` for the proxy that makes that true. The banner
- * is the only thing this entry adds: everything below it is the production
- * console, unmodified, so what an operator sees here is what they would see
- * anywhere else this console is deployed.
+ * Renders the real {@link Console} component against a real, running
+ * control-plane API — see `preview/server.mjs` for the proxy that makes that
+ * true. It is not what an operator would see anywhere else this console is
+ * deployed: there is no sign-in here (`App.tsx`'s `useSession` gate is
+ * skipped entirely), and the workbench connects no identity provider, secret
+ * store, Git integration, or platform management — every one of them is
+ * `None` behind the example API this proxies to (ADR 0020 §7).
  */
 import { createRoot } from 'react-dom/client'
 

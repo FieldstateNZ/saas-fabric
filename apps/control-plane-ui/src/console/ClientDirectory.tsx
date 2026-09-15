@@ -13,6 +13,13 @@ import type { Inventory } from './useInventory'
  * own fetch — the dashboard, this directory, and reconciliation all show the
  * same identity observations, and reading them three times would triple the
  * request count for no benefit an operator could see.
+ *
+ * This file sits in file-size-policy.md's 121-150 line band: the search,
+ * filter and sort state, the filtering pipeline that reads it, and the
+ * table it produces are one screen's worth of one concept — finding a
+ * client — and splitting the toolbar from the table it filters would
+ * separate two things that only make sense read together. The row itself
+ * is already its own file, `ClientDirectoryRow`.
  */
 export function ClientDirectory({
   clients,
@@ -113,8 +120,8 @@ export function ClientDirectory({
               <tr>
                 <th>Client</th>
                 <th>Domains</th>
-                <th>Identity</th>
-                <th>Configuration</th>
+                <th>Realm</th>
+                <th>Identity status</th>
                 <th>
                   <span className="sr-only">Open</span>
                 </th>

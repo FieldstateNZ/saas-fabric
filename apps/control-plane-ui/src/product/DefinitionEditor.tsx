@@ -32,7 +32,11 @@ export function DefinitionEditor({ state }: { state: CatalogueState }) {
         title="Client definition"
         description={`Shared client configuration · version ${String(version)}`}
       />
-      <SaveNotice error={state.error} success={success} onReload={state.refresh} />
+      <SaveNotice
+        error={state.saveError}
+        success={success}
+        onReload={state.conflict ? state.refresh : undefined}
+      />
       <Panel title="Core fields">
         <div className="panel-body">
           <p>

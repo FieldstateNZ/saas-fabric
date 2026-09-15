@@ -2,6 +2,7 @@ import type { ApplicationDefinition, ApplicationRelease } from '../api/catalogue
 import { ApplicationDefinitionTab } from './ApplicationDefinitionTab'
 import { ApplicationEntryPointsTab } from './ApplicationEntryPointsTab'
 import { ApplicationReleasesTab } from './ApplicationReleasesTab'
+import type { ApplicationTab } from './applicationWorkspaceTabs'
 import { ComponentEditor } from './ComponentEditor'
 import { FeatureEditor } from './FeatureEditor'
 import { FieldDefinitions } from './FieldDefinitions'
@@ -11,7 +12,7 @@ import { PlanEditor } from './PlanEditor'
 /** What every tab of `ApplicationWorkspace` needs, whether or not it uses all of it. */
 interface ApplicationWorkspaceTabProps {
   readonly appId: string
-  readonly tab: string
+  readonly tab: ApplicationTab
   readonly draft: ApplicationDefinition
   readonly onChange: (draft: ApplicationDefinition) => void
   readonly note: string
@@ -108,18 +109,16 @@ export function ApplicationWorkspaceTab({
     return <ApplicationEntryPointsTab draft={draft} onChange={onChange} />
   }
 
-  if (tab === 'Releases') {
-    return (
-      <ApplicationReleasesTab
-        note={note}
-        onNoteChange={onNoteChange}
-        dirty={dirty}
-        published={published}
-        onPublish={onPublish}
-        releases={releases}
-      />
-    )
-  }
-
-  return null
+  // `tab` is `ApplicationTab`, and every case above it has returned — this is
+  // the last one, 'Releases', not a fallback for one that does not exist.
+  return (
+    <ApplicationReleasesTab
+      note={note}
+      onNoteChange={onNoteChange}
+      dirty={dirty}
+      published={published}
+      onPublish={onPublish}
+      releases={releases}
+    />
+  )
 }

@@ -74,7 +74,7 @@ export function saveProduct(
   })
 }
 
-/** The platform's recorded product and identity activity, most recent first is the caller's job. */
+/** The platform's recorded product and identity activity. The API already sorts it newest first. */
 export function getActivity(): Promise<{ activity: ProductActivity[] }> {
   return request<{ activity: ProductActivity[] }>('/api/activity')
 }

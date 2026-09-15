@@ -52,7 +52,11 @@ export function SettingsEditor({ state }: { state: CatalogueState }) {
   return (
     <>
       <PageHeader title="Settings" description="Platform identity and defaults for new clients." />
-      <SaveNotice error={state.error} success={success} onReload={state.refresh} />
+      <SaveNotice
+        error={state.saveError}
+        success={success}
+        onReload={state.conflict ? state.refresh : undefined}
+      />
       <form
         onSubmit={(event) => {
           event.preventDefault()

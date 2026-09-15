@@ -1,9 +1,12 @@
 /**
  * The result of the last save: a refusal to act on, or a confirmation.
  *
- * `onReload` only appears on a conflict-shaped error — offering "reload the
- * latest version" beside an error that has nothing to do with a stale read
- * would suggest a fix that does not apply.
+ * `onReload` is a caller's choice, not something this component decides —
+ * but every caller passes it only for a conflict-shaped error (a stale
+ * write), because reloading is the fix for exactly one thing: fetching what
+ * changed. It does nothing for a validation failure, which is why the label
+ * says plainly what the button does — reloading discards whatever the
+ * operator has not yet saved, and they should know that before they click.
  */
 export function SaveNotice({
   error,
@@ -12,7 +15,7 @@ export function SaveNotice({
 }: {
   error: string | null
   success: string | null
-  onReload?: () => void
+  onReload?: (() => void) | undefined
 }) {
   return (
     <>
@@ -22,7 +25,7 @@ export function SaveNotice({
           {onReload && (
             <p>
               <button type="button" onClick={onReload}>
-                Reload latest version
+                Reload latest version — discards your unsaved changes
               </button>
             </p>
           )}

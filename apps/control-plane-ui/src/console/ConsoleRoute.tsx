@@ -45,9 +45,20 @@ interface ConsoleRouteProps {
  *
  * Split out from `Console` itself so the shell — sidebar, skip link, the
  * loading and error banners every page can show — stays readable as its own
- * concern, separate from the one-page-per-route decision made here. Every
- * case reads from state `Console` already loaded; nothing here starts a
- * request of its own.
+ * concern, separate from the one-page-per-route decision made here. This
+ * file itself starts nothing: every prop below is state `Console` already
+ * loaded. The pages it renders are a different matter — `ClientWorkspace`
+ * reads a client's product on mount, `ProductActivityFeed` reads activity,
+ * and more than one of these is its own request the moment it mounts.
+ *
+ * This file sits in file-size-policy.md's 121-150 line band, and stays a
+ * `switch` rather than a further-split lookup table on purpose: a route is
+ * a genuine decision with real per-case logic (a nested ternary for
+ * `applications`, an assembled fragment for `integrations`), not a uniform
+ * mapping that would compress into a table. Its own props are already a
+ * ten-field bag for the same reason `ApplicationWorkspaceTab`'s are — every
+ * page needs a different subset of what `Console` loaded, and there is no
+ * narrower prop shape that would not just move the bag one level up.
  */
 export function ConsoleRoute({
   route,

@@ -76,4 +76,39 @@ describe('product editors', () => {
 
     expect(input).toHaveValue(25)
   })
+
+  it('marks a required boolean or choice field required on the select itself, not just the label', () => {
+    function Editor() {
+      const [values, setValues] = useState<Values>({})
+      return (
+        <ConfigurationInputs
+          fields={[
+            { key: 'sso', label: 'SSO', kind: 'boolean', required: true, default: null, options: [], description: '' },
+            {
+              key: 'tier',
+              label: 'Tier',
+              kind: 'choice',
+              required: true,
+              default: null,
+              options: ['gold', 'silver'],
+              description: '',
+            },
+          ]}
+          values={values}
+          onChange={setValues}
+        />
+      )
+    }
+    render(<Editor />)
+
+    const boolean = screen.getByRole<HTMLSelectElement>('combobox', { name: 'SSO *' })
+    const choice = screen.getByRole<HTMLSelectElement>('combobox', { name: 'Tier *' })
+
+    expect(boolean).toBeRequired()
+    expect(choice).toBeRequired()
+    // Both start on the "Choose…" placeholder (an empty value), which is
+    // exactly the state native `required` validation must refuse.
+    expect(boolean.checkValidity()).toBe(false)
+    expect(choice.checkValidity()).toBe(false)
+  })
 })

@@ -135,7 +135,12 @@ export interface EnvironmentRegistration {
   readonly description: string
 }
 
-/** One recorded product or identity change, or reconciliation pass. */
+/**
+ * One recorded product or identity change: client creation, a product save,
+ * an identity edit, or a catalogue command. Reconciliation passes are
+ * deliberately not recorded here — ADR 0020 §6 removed that entry after it
+ * moved the catalogue's revision under an operator mid-edit.
+ */
 export interface ProductActivity {
   readonly at: number
   readonly operator: string

@@ -2,6 +2,7 @@ import type { ConfigurationField } from '../api/catalogue-types'
 import { Check } from './Check'
 import { Collection } from './Collection'
 import { Field } from './Field'
+import { FieldOptionsInput } from './FieldOptionsInput'
 import { Select } from './Select'
 
 /** Every kind of value a configuration field can hold. */
@@ -92,11 +93,10 @@ export function FieldDefinitions({
             }}
           />
           {field.kind === 'choice' && (
-            <Field
-              label="Options (comma separated)"
-              value={field.options.join(', ')}
+            <FieldOptionsInput
+              value={field.options}
               onChange={(options) => {
-                change({ ...field, options: options.split(',').map((v) => v.trim()) })
+                change({ ...field, options })
               }}
             />
           )}

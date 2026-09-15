@@ -86,8 +86,11 @@ export function ClientDetailsStep({
             onHostTextChange(hosts)
             onValueChange({
               ...value,
+              // Commas, whitespace and newlines all separate hostnames — a
+              // pasted list is as likely to be one per line, or space
+              // separated, as it is comma separated.
               hosts: hosts
-                .split(',')
+                .split(/[\s,]+/)
                 .map((h) => h.trim())
                 .filter(Boolean),
             })

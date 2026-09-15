@@ -4,13 +4,13 @@ import { Select } from './Select'
 
 /**
  * Renders one input per configuration field, typed by the field's own
- * `kind` — a checkbox-shaped choice for `boolean`, a dropdown for `choice`,
- * a plain input otherwise.
+ * `kind` — a dropdown for `boolean` and `choice` alike, a plain input
+ * otherwise.
  *
  * Shared by `ClientForm`, for a client's own fields, and `Assignments`, for
- * an assigned application's plan fields: both are editing a {@link Values}
- * map against a set of {@link ConfigurationField} definitions, and neither
- * needs to know anything about where those definitions came from.
+ * an assigned application's fields: both are editing a {@link Values} map
+ * against a set of {@link ConfigurationField} definitions, and neither needs
+ * to know anything about where those definitions came from.
  */
 export function ConfigurationInputs({
   fields,
@@ -35,6 +35,7 @@ export function ConfigurationInputs({
             label={field.label + (field.required ? ' *' : '')}
             value={value}
             onChange={change}
+            required={field.required}
             options={[
               { value: '', label: 'Choose…' },
               ...(field.kind === 'boolean' ? ['true', 'false'] : field.options).map((value) => ({

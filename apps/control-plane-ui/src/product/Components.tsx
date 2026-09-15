@@ -46,7 +46,11 @@ export function Components({
                     <td>{component.name}</td>
                     <td>{component.kind}</td>
                     <td className="mono">{component.reference}</td>
-                    <td>{component.version || 'Platform managed'}</td>
+                    <td>
+                      {component.kind === 'capability'
+                        ? 'Platform capability'
+                        : component.version || 'Not pinned'}
+                    </td>
                     <td>{component.policy}</td>
                   </tr>
                 ))}

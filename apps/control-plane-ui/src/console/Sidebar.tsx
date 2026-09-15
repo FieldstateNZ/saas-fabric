@@ -6,9 +6,10 @@ import { NAVIGATION, type Route } from './navigation'
  *
  * The divider after index 4 groups "Client definition" onward under
  * "Platform", and the one after index 8 separates Settings from everything
- * above it — both are fixed positions in {@link NAVIGATION}'s order rather
- * than a property on each entry, because there are exactly two groupings
- * here and adding a third page never needs to touch this component.
+ * above it — both are hard-coded positions in {@link NAVIGATION}'s order,
+ * not a property on each entry. That is a real cost, not a convenience:
+ * inserting a page anywhere but the end shifts every index after it, and
+ * whoever adds one has to notice these two numbers and update them by hand.
  */
 export function Sidebar({
   route,

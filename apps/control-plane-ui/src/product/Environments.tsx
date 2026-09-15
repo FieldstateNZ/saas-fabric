@@ -33,7 +33,11 @@ export function Environments({
   return (
     <>
       <PlatformViews platform={platform} environments />
-      <SaveNotice error={state.error} success={success} onReload={state.refresh} />
+      <SaveNotice
+        error={state.saveError}
+        success={success}
+        onReload={state.conflict ? state.refresh : undefined}
+      />
       <div className="collection-heading">
         <h2>Registered environments</h2>
         <button

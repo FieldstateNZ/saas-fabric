@@ -1,4 +1,8 @@
 //! The control-plane API's HTTP surface.
+//!
+//! At the 150-line limit: one function, `control_plane_routes`, with the
+//! table naming every path it serves kept beside the `.route(...)` calls it
+//! describes, so the two cannot drift apart.
 
 use axum::routing::{get, post, put};
 use axum::Router;
@@ -12,16 +16,14 @@ mod integrations;
 ///
 /// # Why this is not versioned, when the Data API's prefix is
 ///
-/// The Data API is consumed by *applications the platform does not own*, so a
-/// breaking change there has to ship as a second path served alongside the
-/// first — hence `/v1/data`. This API is consumed by exactly one client, the
-/// operator UI in this repository, and the two are built and deployed
-/// together. Versioning a path whose only caller ships in the same image would
-/// be ceremony, not compatibility.
+/// The Data API is consumed by applications the platform does not own, so a
+/// breaking change there ships as a second path alongside the first — hence
+/// `/v1/data`. This API has exactly one caller, the operator UI in this
+/// repository, built and deployed together — versioning a path whose only
+/// caller ships in the same image would be ceremony, not compatibility.
 ///
-/// That reasoning stops holding the moment anything else calls this API. If
-/// that day comes, the answer is the Data API's: mount `/api/v1` alongside
-/// `/api` rather than changing what `/api` means.
+/// That stops holding the moment anything else calls this API. The answer
+/// then is the Data API's: mount `/api/v1` alongside `/api`.
 pub const API_PREFIX: &str = "/api";
 
 /// Builds the control-plane router.
@@ -55,10 +57,9 @@ pub const API_PREFIX: &str = "/api";
 /// POST       /api/clients/{clientId}/secrets/reveal             reveal values   (path in the body)
 /// ```
 ///
-/// Note what is not here: nothing that names a file, nothing that edits a
-/// document as text, and nothing that reaches an identity provider (§8, ADR
-/// 0008). Note also what `PUT` means here and does not mean in the Data API —
-/// this is a genuine whole-resource replacement, so `PUT` is the honest verb.
+/// Not here: anything that names a file, edits a document as text, or reaches
+/// an identity provider (§8, ADR 0008). `PUT` means what the Data API does
+/// not: a genuine whole-resource replacement.
 pub(crate) fn control_plane_routes(state: ControlPlaneState) -> Router {
     // Mounted only when the deployment has a sign-in. Under the trusted-header
     // posture there is nothing to sign in to, and a route that exists in order
@@ -75,11 +76,9 @@ pub(crate) fn control_plane_routes(state: ControlPlaneState) -> Router {
     let clients = Router::new()
         .route("/reconciliation", post(handlers::converge))
         .route("/platform", get(handlers::get_platform))
-        // The component *is* named, and the environment still is not. A
+        // The component *is* named, and the environment still is not: a
         // component name is a key looked up in a manifest this platform
-        // already read and trusts; it reaches no path, no registry and no
-        // other locator, which is what makes it unlike the environment
-        // parameter that used to be here.
+        // already trusts, unlike the environment parameter that used to be here.
         .route(
             "/platform/components/{component}/hold",
             put(handlers::pause_component).delete(handlers::resume_component),

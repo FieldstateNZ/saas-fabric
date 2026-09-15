@@ -1,7 +1,7 @@
 //! Application references are checked before publication and assignment.
 use super::{config, invalid, text, unique, validate_fields};
 use crate::catalogue::{ApplicationDefinition, ComponentKind};
-use crate::{DesiredStateError, Host};
+use crate::DesiredStateError;
 impl ApplicationDefinition {
     /// Validates component, feature, plan and navigation references.
     /// # Errors
@@ -9,9 +9,7 @@ impl ApplicationDefinition {
     pub fn validate(&self, publishing: bool) -> Result<(), DesiredStateError> {
         text(&self.name, "Application name", true, 128)?;
         text(&self.description, "Description", false, 2048)?;
-        if !self.domain.is_empty() && Host::try_new(self.domain.replace("{client}", "example")).is_err() {
-            return Err(invalid("Invalid application hostname template"));
-        }
+        self.validate_domain(publishing)?;
         unique(self.components.iter().map(|c| c.id.as_str()), "component")?;
         unique(self.features.iter().map(|f| f.id.as_str()), "feature")?;
         unique(self.plans.iter().map(|p| p.id.as_str()), "plan")?;

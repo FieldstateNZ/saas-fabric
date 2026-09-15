@@ -76,13 +76,23 @@ impl ControlPlaneError {
             // applied a moment earlier — and not a 503, which would advertise
             // an immediate retry that would be refused identically.
             //
-            // `ClientExists` joins them at 409 for a related but distinct
-            // reason: not "read again and redo it" but "this id is already
-            // taken", which is why it carries its own code below rather than
-            // `revision_conflict`.
-            Self::RevisionConflict | Self::IntegrationMoved | Self::ClientExists { .. } => {
-                StatusCode::CONFLICT
-            }
+            // `CatalogueRevisionConflict` joins it for the reason its own
+            // rustdoc gives: same event, different document, same remedy.
+            //
+            // `ClientExists` and `RealmUnavailable` join them at 409 for a
+            // related but distinct reason: not "read again and redo it" but
+            // "this name is already taken", which is why each carries its
+            // own code below rather than `revision_conflict`.
+            Self::RevisionConflict
+            | Self::CatalogueRevisionConflict
+            | Self::IntegrationMoved
+            | Self::ClientExists { .. }
+            | Self::RealmUnavailable { .. } => StatusCode::CONFLICT,
+
+            // 413, and not retryable: GitHub's contents API cannot read this
+            // document back once it is this large, so nothing about waiting
+            // and asking again would help.
+            Self::DocumentTooLarge { .. } => StatusCode::PAYLOAD_TOO_LARGE,
 
             // A stored document that will not parse is the platform's problem,
             // not the caller's, and no retry fixes it — whether the document

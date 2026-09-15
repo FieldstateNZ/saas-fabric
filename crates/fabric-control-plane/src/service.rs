@@ -7,17 +7,20 @@
 //! be splitting rules that exist specifically so they cannot disagree.
 
 mod catalogue;
-mod product;
+mod create_client;
 mod reconciliation_view;
 #[cfg(test)]
 mod reconciliation_view_tests;
+mod reserved;
 #[cfg(test)]
 mod service_tests;
 mod set_identity;
+mod set_product;
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use fabric_client_model::ClientId;
+use fabric_client_model::{ClientId, RealmName};
 use fabric_core::Clock;
 use fabric_reconciliation::ReconciliationStatusStore;
 
@@ -56,6 +59,16 @@ pub struct ClientService {
 
     /// Stamps audit and reconciliation records.
     clock: Arc<dyn Clock>,
+
+    /// Realms a new client may never declare. Computed at startup by
+    /// whoever assembles this deployment — see
+    /// [`create_client`](Self::create_client) for what it protects.
+    reserved_realms: Arc<BTreeSet<RealmName>>,
+
+    /// Application ids the catalogue may never accept. Plain strings, not
+    /// [`ClientId`] — see `service::catalogue::change_catalogue` for why —
+    /// computed the same way, and for the same reason, as `reserved_realms`.
+    reserved_client_ids: Arc<BTreeSet<String>>,
 }
 
 impl ClientService {
@@ -81,11 +94,15 @@ impl ClientService {
         repository: Arc<DesiredStateBinding>,
         reconciliation: Arc<ReconciliationStatusStore>,
         clock: Arc<dyn Clock>,
+        reserved_realms: Arc<BTreeSet<RealmName>>,
+        reserved_client_ids: Arc<BTreeSet<String>>,
     ) -> Self {
         Self {
             repository,
             reconciliation,
             clock,
+            reserved_realms,
+            reserved_client_ids,
         }
     }
 

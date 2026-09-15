@@ -43,8 +43,8 @@ impl ClientService {
     /// would move the realm, the identity breaks a validation rule, the
     /// revision has moved on — [`ControlPlaneError::RevisionConflict`] — the
     /// stored product section will not parse —
-    /// [`ControlPlaneError::InvalidDesiredState`] — or the repository could
-    /// not be written.
+    /// [`ControlPlaneError::InvalidDesiredState`] — the rendered document is
+    /// too large to store, or the repository could not be written.
     pub async fn set_identity(
         &self,
         operator: &Operator,
@@ -87,6 +87,12 @@ impl ClientService {
                 client: client.clone(),
                 source,
             })?;
+
+        // Measured before the write, not left to the repository to
+        // discover: GitHub's contents API cannot read a file this size
+        // back, so a document that grows past it must be refused here
+        // rather than committed and then unreadable.
+        crate::document_size::check(&updated.render().map_err(ControlPlaneError::InvalidRequest)?)?;
 
         let change = ChangeContext {
             requested_by: operator.subject().to_owned(),

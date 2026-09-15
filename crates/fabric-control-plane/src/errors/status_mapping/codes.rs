@@ -19,13 +19,22 @@ impl ControlPlaneError {
             // it.
             Self::InvalidDesiredState { .. } | Self::InvalidCatalogue { .. } => "desired_state_invalid",
             Self::RevisionRequired => "revision_required",
-            Self::RevisionConflict => "revision_conflict",
+            // The catalogue shares this code with a client's revision
+            // conflict deliberately — see `ControlPlaneError::CatalogueRevisionConflict`
+            // — the same remedy either way: read again, redo the edit.
+            Self::RevisionConflict | Self::CatalogueRevisionConflict => "revision_conflict",
             // Its own code beside `revision_conflict`: the two share a status
             // but not a remedy. A stale write is fixed by re-reading and
             // redoing the edit; a taken id is fixed by choosing a different
             // one, and a console that could only see `409` could not tell
             // which screen to show.
             Self::ClientExists { .. } => "client_exists",
+            // Its own code too, beside `client_exists` and `realm_immutable`:
+            // three different reasons a name cannot be used, and three
+            // different next steps — pick a different id, pick a different
+            // realm, or accept the realm is fixed.
+            Self::RealmUnavailable { .. } => "realm_unavailable",
+            Self::DocumentTooLarge { .. } => "document_too_large",
             Self::RealmImmutable { .. } => "realm_immutable",
             Self::RepositoryUnavailable => "repository_unavailable",
             Self::InvalidFlow => "invalid_flow",

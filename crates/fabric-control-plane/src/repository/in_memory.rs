@@ -32,8 +32,17 @@ pub struct InMemoryClientRepository {
     /// The stored clients, keyed by id.
     pub(super) clients: Mutex<BTreeMap<ClientId, StoredClient>>,
 
-    /// Product catalogue with its compare-and-swap revision.
-    pub(super) catalogue: Mutex<Option<fabric_client_model::catalogue::StoredCatalogue>>,
+    /// The catalogue, rendered — never the typed struct.
+    ///
+    /// Storing text and parsing it back on every read is not the obvious
+    /// choice for an in-memory fake, but it is the one that keeps this
+    /// repository honest: the Git-backed and local stores both go through
+    /// `Catalogue::render`/`Catalogue::parse` on every write and read, which
+    /// is where an envelope, validation or size bug would actually be
+    /// caught. Holding the typed struct directly would make this the one
+    /// repository an HTTP test could drive without ever exercising that
+    /// round trip.
+    pub(super) catalogue: Mutex<Option<CatalogueRecord>>,
 
     /// The number of writes so far, which is where revisions come from.
     writes: Mutex<u64>,
@@ -110,4 +119,15 @@ impl InMemoryClientRepository {
 /// Takes a lock, recovering from a poisoned one rather than panicking.
 pub(super) fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// The catalogue as this repository actually keeps it: rendered text and the
+/// revision that write produced.
+pub(super) struct CatalogueRecord {
+    /// The revision this text was written at.
+    pub(super) revision: ClientRevision,
+
+    /// The rendered document — what `Catalogue::render` produced, and what
+    /// `Catalogue::parse` reads back.
+    pub(super) text: String,
 }

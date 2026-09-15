@@ -39,7 +39,7 @@ const EXPECTED_DOCUMENT: &str = "fabric.fieldstate.nz/v1/Catalogue";
 /// itself says what it is, the way every other desired-state document in this
 /// repository already does.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(super) struct Envelope {
     /// Identifies the schema this document is written against.
     pub(super) api_version: String,

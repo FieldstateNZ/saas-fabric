@@ -20,6 +20,27 @@ impl Catalogue {
                 if next.applications.iter().any(|a| a.id == id) {
                     return Err(invalid("Application already exists"));
                 }
+                // An application id becomes an OIDC client id in every realm
+                // it is assigned to (`with_application_identity`). `ClientId`
+                // admits a leading digit; `OidcClientId` does not — so
+                // without this, `1app` publishes cleanly and then fails
+                // every assignment instead of failing here, once, where the
+                // id is chosen.
+                crate::OidcClientId::try_new(id.as_str()).map_err(|error| {
+                    invalid(format!("Application id is not a valid OIDC client id: {error}"))
+                })?;
+                // Keycloak already has a client under each of these ids in
+                // every realm it manages — see
+                // [`reserved_client_ids::RESERVED_APPLICATION_IDS`]. A
+                // deployment-specific id (the console's own, or a converged
+                // Keycloak's admin client) is a separate, composition-root
+                // concern this catalogue knows nothing about; see
+                // `ClientService::check_application_id_available`.
+                if crate::reserved_client_ids::RESERVED_APPLICATION_IDS.contains(&id.as_str()) {
+                    return Err(invalid(format!(
+                        "Application id '{id}' is reserved by Keycloak's own realm-managed client"
+                    )));
+                }
                 let resource = id.to_string();
                 next.applications.push(Application {
                     id,
@@ -95,5 +116,65 @@ impl Catalogue {
         });
         next.validate()?;
         Ok(next)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ClientId;
+
+    #[test]
+    fn an_id_a_leading_digit_makes_invalid_as_an_oidc_client_id_is_refused() {
+        let error = Catalogue::default()
+            .apply(
+                CatalogueCommand::CreateApplication {
+                    id: ClientId::try_new("1app").unwrap(),
+                    name: "Numbers First".into(),
+                },
+                "brett@example.com",
+                1,
+            )
+            .unwrap_err();
+
+        assert!(
+            matches!(error, DesiredStateError::InvalidField { ref detail, .. } if detail.contains("OIDC client id")),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn a_realm_managed_keycloak_client_id_is_refused() {
+        let error = Catalogue::default()
+            .apply(
+                CatalogueCommand::CreateApplication {
+                    id: ClientId::try_new("account-console").unwrap(),
+                    name: "Shadowing Keycloak".into(),
+                },
+                "brett@example.com",
+                1,
+            )
+            .unwrap_err();
+
+        assert!(
+            matches!(error, DesiredStateError::InvalidField { ref detail, .. } if detail.contains("reserved")),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn an_ordinary_application_id_is_created() {
+        let catalogue = Catalogue::default()
+            .apply(
+                CatalogueCommand::CreateApplication {
+                    id: ClientId::try_new("analytics").unwrap(),
+                    name: "Analytics".into(),
+                },
+                "brett@example.com",
+                1,
+            )
+            .unwrap();
+
+        assert_eq!(catalogue.applications[0].id.as_str(), "analytics");
     }
 }

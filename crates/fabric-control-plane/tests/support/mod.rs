@@ -30,6 +30,11 @@ use tower::ServiceExt as _;
 /// The operator every test authenticates as.
 pub const OPERATOR: &str = "brett@example.com";
 
+/// The realm the fixture operator posture authenticates against — distinct
+/// from `master`, so a test can tell "reserved because it is `master`" apart
+/// from "reserved because it is the operator's own realm".
+pub const OPERATOR_REALM: &str = "platform-operators";
+
 /// A header these tests still set, so that "authenticated" is visible in each
 /// request rather than implied by the harness.
 ///
@@ -200,13 +205,24 @@ fn build(identity_provider: Option<Arc<dyn IdentityProviderFactory>>) -> TestCon
     let config: ControlPlaneConfig = serde_json::from_value(serde_json::json!({
         "operator": {
             "mode": "oidc",
-            "issuer": "https://auth.example.test/realms/master",
+            "issuer": format!("https://auth.example.test/realms/{OPERATOR_REALM}"),
             "redirect_uri": "https://fabric.example.test/",
         }
     }))
     .expect("the fixture configuration must load");
 
     let binding = DesiredStateBinding::to(repository.clone());
+
+    // What a real composition root computes and hands in — see
+    // `fabric-control-plane-api`'s `startup::application::build`. Named here
+    // rather than left empty so `create_client`'s realm-reservation rule has
+    // something real to refuse in a test that drives the real router.
+    let reserved_realms = [
+        fabric_client_model::RealmName::try_new("master").expect("valid"),
+        fabric_client_model::RealmName::try_new(OPERATOR_REALM).expect("valid"),
+    ]
+    .into_iter()
+    .collect();
 
     let services = build_control_plane(
         &config,
@@ -226,6 +242,9 @@ fn build(identity_provider: Option<Arc<dyn IdentityProviderFactory>>) -> TestCon
             // above it, and minting signed tokens here would make every one of
             // them a test about authentication.
             operators: Some(AcceptingOperator::accepting(OPERATOR)),
+
+            reserved_realms,
+            reserved_client_ids: std::collections::BTreeSet::new(),
         },
     )
     .expect("the control plane must build");

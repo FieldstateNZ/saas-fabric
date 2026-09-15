@@ -60,8 +60,8 @@ pub use client::Client;
 pub use document::{ClientDocument, API_VERSION, API_VERSION_V2, KIND};
 pub use errors::DesiredStateError;
 pub use identity::{
-    required_roles, AppScheme, ClientProtocol, IdentityConfiguration, OidcClient, PkceMethod,
-    RedirectStrategy, RedirectStrategyKind, RedirectUri, RedirectUriKind, CUSTOM_SCHEME_PHASE,
+    required_roles, reserved_client_ids, AppScheme, ClientProtocol, IdentityConfiguration, OidcClient,
+    PkceMethod, RedirectStrategy, RedirectStrategyKind, RedirectUri, RedirectUriKind, CUSTOM_SCHEME_PHASE,
 };
 pub use ids::{ClientId, ClientRevision, Host, OidcClientId, RealmName, RelationName, RoleName};
 pub use secrets::{SecretNamespace, SecretsConfiguration};

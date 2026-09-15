@@ -5,8 +5,10 @@ use std::sync::Arc;
 use fabric_reconciliation::ReconciliationStatusStore;
 
 mod contract;
+mod platform_binding;
 
-pub use contract::{ControlPlaneDeps, ControlPlaneServices, PlatformBinding};
+pub use contract::{ControlPlaneDeps, ControlPlaneServices};
+pub use platform_binding::PlatformBinding;
 
 use crate::routes::control_plane_routes;
 use crate::service::ClientService;
@@ -36,6 +38,8 @@ pub fn build_control_plane(
         operators,
         platform,
         platform_integration,
+        reserved_realms,
+        reserved_client_ids,
     } = deps;
 
     let repository = &repository;
@@ -52,6 +56,8 @@ pub fn build_control_plane(
         Arc::clone(repository),
         Arc::clone(&statuses),
         clock,
+        Arc::new(reserved_realms),
+        Arc::new(reserved_client_ids),
     ));
 
     let client_secrets =

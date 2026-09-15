@@ -20,6 +20,21 @@ pub enum DesiredStateError {
         detail: String,
     },
 
+    /// The catalogue document is not well-formed YAML, or does not have the
+    /// expected shape.
+    ///
+    /// [`Self::Malformed`]'s sibling for the one document that is not a
+    /// client's. Kept apart rather than reused with a generic message,
+    /// because "the client document could not be read" is actively
+    /// misleading on the one document in the repository that is not a
+    /// client's — an operator reading it on the Applications or Settings
+    /// page would go looking for the wrong file.
+    #[error("the catalogue could not be read: {detail}")]
+    CatalogueMalformed {
+        /// What was wrong with it.
+        detail: String,
+    },
+
     /// The document declares an `apiVersion` or `kind` this model does not
     /// understand.
     ///

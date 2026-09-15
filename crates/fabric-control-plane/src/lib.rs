@@ -53,6 +53,7 @@ mod audit;
 mod client_secrets;
 mod config;
 mod converge;
+mod document_size;
 mod errors;
 mod extraction;
 #[cfg(test)]

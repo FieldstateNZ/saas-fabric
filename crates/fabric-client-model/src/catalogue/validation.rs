@@ -1,9 +1,11 @@
 //! Structural validation shared by persisted and submitted product definitions.
 mod application;
 mod fields;
+mod hostname;
 use super::{Catalogue, ConfigurationValues};
 use crate::DesiredStateError;
-pub(super) use fields::{validate_fields, values};
+use fields::check_key;
+pub(super) use fields::{is_timezone, validate_fields, values};
 use std::collections::BTreeSet;
 
 pub(crate) fn invalid(detail: impl Into<String>) -> DesiredStateError {
@@ -36,10 +38,15 @@ pub(super) fn unique<'a>(
 pub(super) fn settings(settings: &super::ConsoleSettings) -> Result<(), DesiredStateError> {
     text(&settings.platform_name, "Platform name", true, 128)?;
     text(&settings.default_region, "Region", true, 128)?;
-    text(&settings.timezone, "Timezone", true, 128)
+    text(&settings.timezone, "Timezone", true, 128)?;
+    if !is_timezone(&settings.timezone) {
+        return Err(invalid("Timezone must be UTC or an Area/Location name"));
+    }
+    Ok(())
 }
 pub(super) fn config(values: &ConfigurationValues) -> Result<(), DesiredStateError> {
     for (key, value) in values {
+        check_key(key)?;
         text(key, "Configuration key", true, 128)?;
         text(value, "Configuration value", false, 4096)?;
     }

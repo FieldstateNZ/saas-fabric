@@ -380,3 +380,35 @@ async fn a_stored_catalogue_that_will_not_parse_is_reported_as_invalid_not_unava
         "{error}"
     );
 }
+
+#[tokio::test]
+async fn creating_a_client_document_sends_no_sha() {
+    // A create is unconditional by construction: there is no prior revision
+    // to name, and sending one would ask the host to compare against a blob
+    // that does not exist.
+    let host = FakeGitHost::start(&[]).await;
+    let repository = repository(&host);
+    let document = ClientDocument::parse(&ACME.replace("acme", "newco").replace("Acme", "Newco")).unwrap();
+
+    repository.create(&document, &change()).await.unwrap();
+
+    let write = host.requests_with("PUT").into_iter().next().expect("a write");
+    assert!(!write.body.contains("\"sha\""), "{}", write.body);
+}
+
+#[tokio::test]
+async fn a_missing_catalogue_file_is_no_catalogue_but_a_missing_repository_is_an_error() {
+    // The same 404 means two different things depending on what else 404s
+    // alongside it: `fabric-catalogue.yaml` absent from an otherwise
+    // reachable repository is a catalogue nobody has written yet, but the
+    // repository root 404ing too means the repository or branch itself is
+    // gone — retryable in neither case, but only one of them is "there is
+    // simply no catalogue".
+    let host = FakeGitHost::start(&[(ACME_PATH, ACME)]).await;
+    let stored = repository(&host).catalogue().await.unwrap();
+    assert_eq!(stored.revision, None);
+
+    let unreachable = FakeGitHost::start(&[]).await;
+    let error = repository(&unreachable).catalogue().await.unwrap_err();
+    assert!(matches!(error, RepositoryError::Unavailable { .. }), "{error}");
+}

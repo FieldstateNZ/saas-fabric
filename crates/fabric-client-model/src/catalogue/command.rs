@@ -44,3 +44,23 @@ pub enum CatalogueCommand {
         environment: EnvironmentRegistration,
     },
 }
+
+impl CatalogueCommand {
+    /// The stable, `snake_case` name of this command, for the audit trail.
+    ///
+    /// Not the wire tag above: that one is `camelCase`, matching every other
+    /// field name this crate writes over the API, and reusing it here would
+    /// make the audit log the one place whose field naming depended on which
+    /// command an operator happened to send.
+    #[must_use]
+    pub fn operation(&self) -> &'static str {
+        match self {
+            Self::CreateApplication { .. } => "create_application",
+            Self::SaveApplication { .. } => "save_application",
+            Self::PublishApplication { .. } => "publish_application",
+            Self::SaveDefinition { .. } => "update_client_definition",
+            Self::SaveSettings { .. } => "update_settings",
+            Self::SaveEnvironment { .. } => "save_environment",
+        }
+    }
+}

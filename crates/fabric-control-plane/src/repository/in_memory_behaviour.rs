@@ -7,9 +7,10 @@
 //! in two modules rather than one long file.
 
 use async_trait::async_trait;
+use fabric_client_model::catalogue::{Catalogue, StoredCatalogue};
 use fabric_client_model::{ClientDocument, ClientId, ClientRevision};
 
-use crate::repository::in_memory::{lock, InMemoryClientRepository};
+use crate::repository::in_memory::{lock, CatalogueRecord, InMemoryClientRepository};
 use crate::repository::{ChangeContext, ClientRepository, RepositoryError, StoredClient};
 
 #[async_trait]
@@ -78,31 +79,47 @@ impl ClientRepository for InMemoryClientRepository {
         Ok(revision)
     }
 
-    async fn catalogue(&self) -> Result<fabric_client_model::catalogue::StoredCatalogue, RepositoryError> {
+    async fn catalogue(&self) -> Result<StoredCatalogue, RepositoryError> {
         self.check_available()?;
-        Ok(lock(&self.catalogue)
-            .clone()
-            .unwrap_or(fabric_client_model::catalogue::StoredCatalogue {
-                catalogue: fabric_client_model::catalogue::Catalogue::default(),
+
+        let stored = lock(&self.catalogue);
+        let Some(record) = stored.as_ref() else {
+            return Ok(StoredCatalogue {
+                catalogue: Catalogue::default(),
                 revision: None,
-            }))
+            });
+        };
+
+        // Not `Unavailable`: a catalogue that will not parse is not fixed by
+        // asking again, so it is reported as `InvalidCatalogue`, the same
+        // failure the Git-backed and local stores report for the same cause.
+        let catalogue =
+            Catalogue::parse(&record.text).map_err(|source| RepositoryError::InvalidCatalogue { source })?;
+
+        Ok(StoredCatalogue {
+            catalogue,
+            revision: Some(record.revision.clone()),
+        })
     }
 
     async fn save_catalogue(
         &self,
-        catalogue: &fabric_client_model::catalogue::Catalogue,
+        catalogue: &Catalogue,
         expected: Option<&ClientRevision>,
         _change: &ChangeContext,
     ) -> Result<ClientRevision, RepositoryError> {
         self.check_available()?;
+        let text = catalogue.render().map_err(|_| RepositoryError::Rejected {
+            detail: "Invalid catalogue".into(),
+        })?;
         let mut stored = lock(&self.catalogue);
-        if stored.as_ref().and_then(|s| s.revision.as_ref()) != expected {
+        if stored.as_ref().map(|record| &record.revision) != expected {
             return Err(RepositoryError::Conflict);
         }
         let revision = self.next_revision()?;
-        *stored = Some(fabric_client_model::catalogue::StoredCatalogue {
-            catalogue: catalogue.clone(),
-            revision: Some(revision.clone()),
+        *stored = Some(CatalogueRecord {
+            revision: revision.clone(),
+            text,
         });
         Ok(revision)
     }

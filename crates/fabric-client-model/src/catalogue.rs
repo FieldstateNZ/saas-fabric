@@ -76,7 +76,7 @@ impl Catalogue {
     }
 }
 fn malformed(error: &serde_norway::Error) -> DesiredStateError {
-    DesiredStateError::Malformed {
+    DesiredStateError::CatalogueMalformed {
         detail: error.to_string(),
     }
 }
@@ -118,6 +118,20 @@ mod tests {
             matches!(error, DesiredStateError::UnknownDocumentKind { expected, .. } if expected == "fabric.fieldstate.nz/v1/Catalogue"),
             "{error}"
         );
+    }
+
+    #[test]
+    fn a_malformed_catalogue_does_not_say_it_is_a_client_document() {
+        let text =
+            "apiVersion: fabric.fieldstate.nz/v1\nkind: Catalogue\nspec:\n  applications: \"not a list\"\n";
+
+        let error = Catalogue::parse(text).unwrap_err();
+
+        assert!(
+            matches!(error, DesiredStateError::CatalogueMalformed { .. }),
+            "{error}"
+        );
+        assert!(!error.to_string().contains("client document"), "{error}");
     }
 
     #[test]

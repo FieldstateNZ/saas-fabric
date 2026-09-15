@@ -7,6 +7,7 @@ mod integration;
 mod operator_keys;
 mod platform;
 mod platform_target;
+mod reserved_names;
 mod serving;
 mod shutdown;
 

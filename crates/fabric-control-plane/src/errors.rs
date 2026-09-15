@@ -96,6 +96,30 @@ pub enum ControlPlaneError {
     #[error("the client changed since it was read; re-read it and apply the change again")]
     RevisionConflict,
 
+    /// The catalogue changed between being read and being written.
+    ///
+    /// [`Self::RevisionConflict`]'s sibling for the one document that is not
+    /// a client's — an operator sees this from the Applications or Settings
+    /// page, where "the *client* changed since it was read" names the wrong
+    /// noun. The two share a machine code: both mean "read it again and redo
+    /// the edit", and a console already knows which page it is showing, so
+    /// it does not need a second code to know what to do.
+    #[error("the catalogue changed since it was read; re-read it and apply the change again")]
+    CatalogueRevisionConflict,
+
+    /// A rendered document is larger than this platform will write.
+    ///
+    /// GitHub's contents API does not return the content of a file over
+    /// 1 MB, so a document that grows past that is a document a future read
+    /// could not recover — refused here, before the write, rather than
+    /// discovered the next time somebody tries to read it back. See
+    /// `document_size` for the exact limit and why it is short of GitHub's.
+    #[error("this document is too large to store; the limit is {limit} bytes")]
+    DocumentTooLarge {
+        /// The limit that was exceeded.
+        limit: usize,
+    },
+
     /// A client with this id already exists.
     ///
     /// Its own variant beside [`Self::RevisionConflict`] rather than a reuse
@@ -124,6 +148,27 @@ pub enum ControlPlaneError {
     RealmImmutable {
         /// The realm the client is in.
         current: RealmName,
+    },
+
+    /// A new client would take a realm that is reserved, or already used by
+    /// another client.
+    ///
+    /// Never says which. `ClientDocument::create` sets a new client's realm
+    /// to its own id, and Keycloak's realm-create treats finding the realm
+    /// already there as success — so a client id of `master`, or one
+    /// matching a realm another client document already declares, would let
+    /// the next reconciliation pass rewrite that realm using this
+    /// operator's own authority. See
+    /// [`ClientService::create_client`](crate::ClientService::create_client)
+    /// for the whole argument. The message names the realm, because an
+    /// operator has to know what to pick instead, but not whether it was
+    /// reserved or taken — either answer would confirm to a caller who
+    /// should not be able to tell that some *other* client's realm exists at
+    /// all.
+    #[error("the realm {realm} is unavailable; it is reserved, or already used by another client")]
+    RealmUnavailable {
+        /// The realm this id would have taken.
+        realm: RealmName,
     },
 
     /// The desired-state repository could not be reached.

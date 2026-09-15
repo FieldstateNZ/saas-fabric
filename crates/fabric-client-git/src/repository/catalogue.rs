@@ -1,5 +1,6 @@
 //! Product persistence uses the same desired-state authority as clients.
 use super::GitClientRepository;
+use crate::logging;
 use fabric_client_model::catalogue::{Catalogue, StoredCatalogue};
 use fabric_client_model::{ClientDocument, ClientRevision};
 use fabric_control_plane::{ChangeContext, RepositoryError};
@@ -30,7 +31,24 @@ impl GitClientRepository {
         let text = catalogue.render().map_err(|_| RepositoryError::Rejected {
             detail: "Invalid catalogue".into(),
         })?;
-        self.host.write_catalogue(&text, expected, &message(change)).await
+
+        // The same round-trip guarantee `write.rs::update` applies to a
+        // client document: the rendered text is parsed with exactly the
+        // code that will read it back, and a failure aborts before the
+        // write rather than leaving a catalogue in Git this platform can no
+        // longer read.
+        Catalogue::parse(&text).map_err(|_| RepositoryError::Rejected {
+            detail: "Invalid catalogue".into(),
+        })?;
+
+        let revision = self
+            .host
+            .write_catalogue(&text, expected, &message(change))
+            .await?;
+
+        logging::catalogue_written(&revision);
+
+        Ok(revision)
     }
     pub(super) async fn create_client(
         &self,
@@ -41,9 +59,22 @@ impl GitClientRepository {
             client: document.client().id.clone(),
             source,
         })?;
-        self.host
+
+        // Same guarantee as `write.rs::update`: parsed with exactly the code
+        // that will read it back, before the write, not after.
+        ClientDocument::parse(&text).map_err(|source| RepositoryError::Invalid {
+            client: document.client().id.clone(),
+            source,
+        })?;
+
+        let revision = self
+            .host
             .create_document(&document.client().id, &text, &message(change))
-            .await
+            .await?;
+
+        logging::client_written(&document.client().id, &revision);
+
+        Ok(revision)
     }
 }
 fn message(change: &ChangeContext) -> String {

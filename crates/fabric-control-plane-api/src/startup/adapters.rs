@@ -61,7 +61,11 @@ pub(super) async fn desired_state(
         }
 
         DesiredStateConfig::LocalDirectory { path } => {
-            let repository = Arc::new(LocalClientRepository::open(path).await?);
+            let repository = Arc::new(
+                LocalClientRepository::open(path)
+                    .await
+                    .map_err(|error| error.to_string())?,
+            );
             tracing::warn!(event = "control_plane.development_desired_state", path = %path.display(), "using persistent local development desired state");
 
             Ok(DesiredStateBinding::to(repository))

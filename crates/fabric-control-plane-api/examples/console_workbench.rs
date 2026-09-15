@@ -26,7 +26,22 @@
 //!    binaries only; an example is not a build target that command touches,
 //!    so this code cannot end up in a shipped image by a `Dockerfile` change
 //!    that forgets to exclude it — there is no line to forget.
+//!
+//! # Why it still checks `Host`, bound to loopback or not
+//!
+//! Binding to `127.0.0.1` keeps a network attacker out, but not a browser
+//! already running on this machine. DNS rebinding is exactly the gap: a page
+//! on some other origin points a hostname it controls at `127.0.0.1`, the
+//! browser resolves it and connects here, and the request arrives carrying
+//! that attacker's own choice of `Host` header — nothing about "only
+//! reachable from this machine" stops it, because the request genuinely did
+//! come from this machine. [`reject_unexpected_host`] is the one thing
+//! standing between that page and this loopback-only API.
 
+use axum::extract::Request;
+use axum::http::{header::HOST, StatusCode};
+use axum::middleware::{self, Next};
+use axum::response::{IntoResponse, Response};
 use fabric_control_plane::{
     build_control_plane, testing::AcceptingOperator, ControlPlaneConfig, ControlPlaneDeps,
     DesiredStateBinding, KeyHolder,
@@ -34,6 +49,26 @@ use fabric_control_plane::{
 use fabric_control_plane_api::local_repository::LocalClientRepository;
 use fabric_core::SystemClock;
 use std::{path::PathBuf, sync::Arc};
+
+/// The address this workbench serves — the only `Host` header it accepts,
+/// in either of the two spellings a browser might send for it.
+const ADDRESS: &str = "127.0.0.1:8082";
+
+/// The `Host` spellings [`reject_unexpected_host`] admits.
+const ALLOWED_HOSTS: [&str; 2] = [ADDRESS, "localhost:8082"];
+
+/// Refuses a request whose `Host` header names anything but this workbench's
+/// own address — see this module's own doc for why a loopback bind alone
+/// does not already guarantee that.
+async fn reject_unexpected_host(request: Request, next: Next) -> Response {
+    let host = request.headers().get(HOST).and_then(|value| value.to_str().ok());
+
+    if host.is_some_and(|host| ALLOWED_HOSTS.contains(&host)) {
+        next.run(request).await
+    } else {
+        (StatusCode::MISDIRECTED_REQUEST, "this Host is not served here").into_response()
+    }
+}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -57,13 +92,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             sign_in: None,
             git_integration: None,
             operators: Some(AcceptingOperator::accepting("local-workbench")),
+            // No Keycloak sits behind the workbench, so there is nothing to
+            // protect a name against — an empty set is honest, not a gap.
+            reserved_realms: std::collections::BTreeSet::new(),
+            reserved_client_ids: std::collections::BTreeSet::new(),
         },
     )?;
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:8082").await?;
+    let router = services.router.layer(middleware::from_fn(reject_unexpected_host));
+
+    let listener = tokio::net::TcpListener::bind(ADDRESS).await?;
     eprintln!(
-        "Local workbench API: http://127.0.0.1:8082; storage {}",
+        "Local workbench API: http://{ADDRESS}; storage {}",
         directory.display()
     );
-    axum::serve(listener, services.router).await?;
+    axum::serve(listener, router).await?;
     Ok(())
 }

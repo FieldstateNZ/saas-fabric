@@ -3,47 +3,47 @@
   font-style: normal;
   font-weight: 400;
   font-display: swap;
-  src: url(/fonts/fabric-0.ttf) format('truetype');
+  src: url(/fonts/Geist-Regular.ttf) format('truetype');
 }
 @font-face {
   font-family: 'Geist';
   font-style: normal;
   font-weight: 500;
   font-display: swap;
-  src: url(/fonts/fabric-1.ttf) format('truetype');
+  src: url(/fonts/Geist-Medium.ttf) format('truetype');
 }
 @font-face {
   font-family: 'Geist';
   font-style: normal;
   font-weight: 600;
   font-display: swap;
-  src: url(/fonts/fabric-2.ttf) format('truetype');
+  src: url(/fonts/Geist-SemiBold.ttf) format('truetype');
 }
 @font-face {
   font-family: 'Geist Mono';
   font-style: normal;
   font-weight: 400;
   font-display: swap;
-  src: url(/fonts/fabric-3.ttf) format('truetype');
+  src: url(/fonts/GeistMono-Regular.ttf) format('truetype');
 }
 @font-face {
   font-family: 'Geist Mono';
   font-style: normal;
   font-weight: 500;
   font-display: swap;
-  src: url(/fonts/fabric-4.ttf) format('truetype');
+  src: url(/fonts/GeistMono-Medium.ttf) format('truetype');
 }
 @font-face {
   font-family: 'Instrument Serif';
   font-style: italic;
   font-weight: 400;
   font-display: swap;
-  src: url(/fonts/fabric-5.ttf) format('truetype');
+  src: url(/fonts/InstrumentSerif-Italic.ttf) format('truetype');
 }
 @font-face {
   font-family: 'Instrument Serif';
   font-style: normal;
   font-weight: 400;
   font-display: swap;
-  src: url(/fonts/fabric-6.ttf) format('truetype');
+  src: url(/fonts/InstrumentSerif-Regular.ttf) format('truetype');
 }

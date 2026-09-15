@@ -39,9 +39,7 @@ pub(crate) async fn sweep(
         state.service.clock(),
     )
     .await;
-    if let Err(error) = state.service.record_convergence(operator, clients).await {
-        tracing::warn!(detail = %error, "could not persist reconciliation history");
-    }
+
     Ok(clients)
 }
 

@@ -1,4 +1,32 @@
-//! Explicit loopback-only UI workbench: real storage/API, test operator, no providers.
+//! A loopback-only workbench for developing the operator console against a
+//! real control plane, without a Keycloak, a Git host, or an identity
+//! provider to stand up first.
+//!
+//! # What is real, and what is not
+//!
+//! The router, the desired-state repository ([`LocalClientRepository`]) and
+//! every handler are exactly what a deployment runs. What is not real is who
+//! is allowed to call them: `operators` is
+//! [`AcceptingOperator`](fabric_control_plane::testing::AcceptingOperator),
+//! the same test-only authenticator `crate::testing` documents, wired here to
+//! a binary instead of a test harness.
+//!
+//! # Why that is not a hole in `testing`'s "nothing reaches a deployment"
+//!
+//! Three things hold at once, and all three are required:
+//!
+//! 1. **It listens on `127.0.0.1` only.** Nothing off this machine can reach
+//!    it, with or without a credential.
+//! 2. **It has no identity provider, no Git integration and no secrets
+//!    store.** `ControlPlaneDeps` for every one of those is `None`, so there
+//!    is nothing behind this process for an accepted request to reach beyond
+//!    the local development repository it also owns.
+//! 3. **It is an `[[example]]`, never a `[[bin]]`.** The `Dockerfile` at the
+//!    repository root builds `cargo build --release --bin ...` for named
+//!    binaries only; an example is not a build target that command touches,
+//!    so this code cannot end up in a shipped image by a `Dockerfile` change
+//!    that forgets to exclude it — there is no line to forget.
+
 use fabric_control_plane::{
     build_control_plane, testing::AcceptingOperator, ControlPlaneConfig, ControlPlaneDeps,
     DesiredStateBinding, KeyHolder,

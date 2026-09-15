@@ -1,4 +1,12 @@
 //! Creation and product edits preserve every unrelated client document section.
+//!
+//! Over the 120-line advisory threshold. The reason is that this is one impl
+//! block — `ClientDocument`'s three product operations — together with the
+//! `NewDocument`/`Metadata`/`Spec` wire shape that only `create` needs to
+//! write a brand-new `v2` document from nothing. That shape and the one
+//! function that produces it are inseparable: splitting the three structs
+//! into their own file would move the same fields one file over without
+//! making either easier to read.
 use super::{render, schema};
 use crate::catalogue::{ClientProduct, ClientProductRequest};
 use crate::{ClientDocument, ClientId, DesiredStateError, IdentityConfiguration, RealmName, RoleName};

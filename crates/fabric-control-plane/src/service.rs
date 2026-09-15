@@ -1,6 +1,11 @@
 //! The control plane's domain operations.
+//!
+//! Just over the 120-line advisory threshold. The reason is that this is one
+//! struct, [`ClientService`], together with its constructor and its trivial
+//! accessors — the struct's own doc below says why every rule about a client
+//! lives in exactly one copy here; splitting its methods across files would
+//! be splitting rules that exist specifically so they cannot disagree.
 
-mod activity;
 mod catalogue;
 mod product;
 mod reconciliation_view;

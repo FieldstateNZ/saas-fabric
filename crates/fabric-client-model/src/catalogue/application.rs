@@ -1,4 +1,14 @@
 //! Application building blocks. Published snapshots never refer back to mutable drafts.
+//!
+//! Over the 120-line advisory threshold. The reason is that this is one
+//! cohesive wire-format type: an application's definition, its components,
+//! features, plans, navigation and published releases are the desired-state
+//! document's shape for "what an application is", validated together in
+//! `catalogue::validation::application`. Each piece is too small to justify a
+//! file of its own and too entangled with the others to split cleanly — a
+//! `ApplicationComponent` moved out of `ApplicationDefinition`, the one place
+//! that lists it, would separate a field from its type for no reader's
+//! benefit.
 use super::{ConfigurationField, ConfigurationValues};
 use crate::ClientId;
 use serde::{Deserialize, Serialize};

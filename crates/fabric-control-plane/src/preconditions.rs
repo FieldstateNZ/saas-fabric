@@ -1,7 +1,7 @@
 //! Reading the revision a write claims to be editing.
 
 use fabric_client_model::ClientRevision;
-use http::header::IF_MATCH;
+use http::header::{IF_MATCH, IF_NONE_MATCH};
 use http::HeaderMap;
 
 use crate::ControlPlaneError;
@@ -58,6 +58,39 @@ pub(crate) fn required_revision(headers: &HeaderMap) -> Result<ClientRevision, C
         .unwrap_or(value);
 
     ClientRevision::try_new(unquoted).map_err(|_| ControlPlaneError::RevisionRequired)
+}
+
+/// Extracts the revision a conditional create-or-replace expects, or `None`
+/// when the caller declared "only if it does not yet exist".
+///
+/// # Why this differs from [`required_revision`]
+///
+/// Creating the catalogue for the first time has no prior revision to name —
+/// `If-Match` cannot express "nothing is here yet". `If-None-Match: *` is the
+/// header this situation exists for, so it is accepted here, and nowhere else
+/// in this crate: every other write in the API is a replace, which always has
+/// a revision to name.
+///
+/// `If-Match` wins whenever both are present. A caller sending both is asking
+/// for "replace this specific revision" and "create if absent" at once, and
+/// a document that exists at the named revision satisfies both readings — so
+/// there is no case where honouring `If-Match` disagrees with what
+/// `If-None-Match: *` alone would have meant.
+///
+/// # Errors
+///
+/// Returns [`ControlPlaneError::RevisionRequired`] under the same rules as
+/// [`required_revision`] whenever `If-Match` is the header that decides this
+/// request — including when neither header is present at all.
+pub(crate) fn optional_revision(headers: &HeaderMap) -> Result<Option<ClientRevision>, ControlPlaneError> {
+    let create_only =
+        headers.get(IF_NONE_MATCH).is_some_and(|value| value == "*") && !headers.contains_key(IF_MATCH);
+
+    if create_only {
+        return Ok(None);
+    }
+
+    required_revision(headers).map(Some)
 }
 
 /// Renders a revision as a strong entity tag.
@@ -129,5 +162,41 @@ mod tests {
         let tag = entity_tag(&revision);
 
         assert_eq!(required_revision(&if_match(&tag)).unwrap(), revision);
+    }
+
+    fn if_none_match_star() -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        headers.insert(IF_NONE_MATCH, http::HeaderValue::from_static("*"));
+        headers
+    }
+
+    #[test]
+    fn if_match_only_names_the_revision_to_replace() {
+        let revision = optional_revision(&if_match("\"abc123\"")).unwrap();
+
+        assert_eq!(revision.unwrap().as_str(), "abc123");
+    }
+
+    #[test]
+    fn if_none_match_star_only_means_create_if_absent() {
+        assert_eq!(optional_revision(&if_none_match_star()).unwrap(), None);
+    }
+
+    #[test]
+    fn both_present_lets_if_match_win() {
+        let mut headers = if_match("\"abc123\"");
+        headers.insert(IF_NONE_MATCH, http::HeaderValue::from_static("*"));
+
+        let revision = optional_revision(&headers).unwrap();
+
+        assert_eq!(revision.unwrap().as_str(), "abc123");
+    }
+
+    #[test]
+    fn neither_header_is_refused() {
+        assert!(matches!(
+            optional_revision(&HeaderMap::new()),
+            Err(ControlPlaneError::RevisionRequired)
+        ));
     }
 }

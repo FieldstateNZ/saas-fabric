@@ -25,34 +25,34 @@ mod integrations;
 pub const API_PREFIX: &str = "/api";
 
 /// Builds the control-plane router.
+///
+/// Every path this crate serves is visible here, in one file.
+///
 /// ```text
-/// POST /api/session                      redeem a code      (no operator)
-/// POST   /api/reconciliation                converge every client, as you
-/// GET    /api/integrations/git               can desired state be read?
-/// POST   /api/integrations/git/connect       describe the app to create
-/// GET    /api/integrations/git/created       host callback   (no operator)
-/// GET    /api/integrations/git/install       where to install it
-/// GET    /api/integrations/git/installed     host callback   (no operator)
-/// GET    /api/integrations/git/repositories  what the install reaches
-/// PUT    /api/integrations/git/repository    choose one
-/// DELETE /api/integrations/git               forget the integration
-/// GET    /api/integrations/platform            has an application been made?
-/// POST   /api/integrations/platform/connect    describe the app to create
-/// GET    /api/integrations/platform/created    host callback   (no operator)
-/// GET    /api/integrations/platform/install    where to install it
-/// GET    /api/integrations/platform/installed  host callback   (no operator)
-/// GET    /api/integrations/platform/repositories  what the install reaches
-/// PUT    /api/integrations/platform/repository    choose one
-/// DELETE /api/integrations/platform            forget the integration
-/// GET    /api/platform                        what this environment runs
-/// PUT    /api/platform/components/{c}/hold    stop it advancing
-/// DELETE /api/platform/components/{c}/hold    let it advance again
-/// GET    /api/platform/components/{c}/versions   what it could go back to
-/// POST   /api/platform/components/{c}/rollback   put it back on one
-/// GET /api/clients                       list clients
-/// GET /api/clients/{clientId}            one client's overview
-/// GET /api/clients/{clientId}/identity   its identity, and reconciliation state
-/// PUT /api/clients/{clientId}/identity   replace its identity  (If-Match required)
+/// GET/POST   /api/session                          sign-in start / redeem a code   (no operator)
+/// POST       /api/reconciliation                    converge every client, as you
+/// One handler set is mounted twice (routes::integrations); each line below is two real routes:
+/// GET/DELETE /api/integrations/{git,platform}             is it connected? / forget it
+/// POST       /api/integrations/{git,platform}/connect     describe the app to create
+/// GET        /api/integrations/{git,platform}/install     where to install it
+/// GET        /api/integrations/{git,platform}/repositories  what the install reaches
+/// PUT        /api/integrations/{git,platform}/repository  choose one
+/// GET        /api/integrations/{git,platform}/created     host callback   (no operator)
+/// GET        /api/integrations/{git,platform}/installed   host callback   (no operator)
+/// GET        /api/platform                          what this environment runs
+/// PUT/DELETE /api/platform/components/{c}/hold      stop it advancing / let it advance again
+/// GET        /api/platform/components/{c}/versions  what it could go back to
+/// POST       /api/platform/components/{c}/rollback  put it back on one
+/// GET/POST   /api/catalogue                         the product catalogue / apply one command
+/// GET        /api/activity                          every recorded action, newest first
+/// GET        /api/operator                          who is signed in
+/// GET/POST   /api/clients                           list clients / create one
+/// GET        /api/clients/{clientId}                one client's overview
+/// GET/PUT    /api/clients/{clientId}/product        its product config / replace it   (If-Match)
+/// GET/PUT    /api/clients/{clientId}/identity       its identity and reconciliation state / replace it
+/// GET        /api/clients/{clientId}/secrets                    list its secret paths
+/// GET/PUT/DELETE /api/clients/{clientId}/secrets/entry/{path}  metadata / write / delete a version
+/// POST       /api/clients/{clientId}/secrets/reveal             reveal values   (path in the body)
 /// ```
 ///
 /// Note what is not here: nothing that names a file, nothing that edits a
@@ -97,17 +97,17 @@ pub(crate) fn control_plane_routes(state: ControlPlaneState) -> Router {
         )
         .route(
             "/catalogue",
-            get(handlers::catalogue::get_catalogue).post(handlers::catalogue::change_catalogue),
+            get(handlers::get_catalogue).post(handlers::change_catalogue),
         )
-        .route("/activity", get(handlers::catalogue::activity))
-        .route("/operator", get(handlers::catalogue::operator_profile))
+        .route("/activity", get(handlers::list_activity))
+        .route("/operator", get(handlers::get_operator))
         .route(
             "/clients",
-            get(handlers::list_clients).post(handlers::catalogue::create_client),
+            get(handlers::list_clients).post(handlers::create_client),
         )
         .route(
             "/clients/{client_id}/product",
-            get(handlers::catalogue::get_product).put(handlers::catalogue::put_product),
+            get(handlers::get_product).put(handlers::put_product),
         )
         .route("/clients/{client_id}", get(handlers::get_client))
         .route(

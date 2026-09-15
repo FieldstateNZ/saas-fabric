@@ -31,14 +31,18 @@ pub(crate) async fn sweep(
 
     let reconciler = IdentityReconciler::new(factory.acting_as(operator.token()));
 
-    Ok(reconcile::run(
+    let clients = reconcile::run(
         state.desired_state.current().as_ref(),
         &reconciler,
         state.service.statuses(),
         state.health.as_ref(),
         state.service.clock(),
     )
-    .await)
+    .await;
+    if let Err(error) = state.service.record_convergence(operator, clients).await {
+        tracing::warn!(detail = %error, "could not persist reconciliation history");
+    }
+    Ok(clients)
 }
 
 /// Converges in the background, having already answered the operator.

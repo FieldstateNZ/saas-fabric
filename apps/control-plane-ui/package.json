@@ -10,7 +10,8 @@
     "build": "tsc -b && vite build",
     "typecheck": "tsc -b",
     "lint": "eslint .",
-    "test": "vitest run"
+    "test": "vitest run",
+    "preview:ui": "node preview/server.mjs"
   },
   "dependencies": {
     "react": "^19.1.0",

@@ -46,6 +46,8 @@
 //! for. Editing a client's roles must not delete its feature flags.
 
 mod authorization;
+/// Product catalogue and client entitlement contracts.
+pub mod catalogue;
 mod client;
 mod document;
 mod errors;

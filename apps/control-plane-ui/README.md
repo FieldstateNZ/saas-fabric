@@ -2,6 +2,20 @@
 
 The SaaS Fabric operator console.
 
+## Phase-one UI
+
+The console now follows the supplied v2 prototype: an overview dashboard,
+searchable clients, applications, components and platform navigation. See
+[PHASE_ONE.md](PHASE_ONE.md) for the implemented surface, remaining backend gaps,
+and the isolated sample-data preview:
+
+```bash
+npm run preview:ui
+# http://127.0.0.1:5174
+```
+
+The sections below describe the API and security contracts that remain in place.
+
 ```bash
 # Terminal 1 — the control-plane API, with development adapters.
 cargo run -p fabric-control-plane-api -- examples/control-plane.toml
@@ -115,20 +129,15 @@ src/
   hooks/        loading and saving
 ```
 
-No router and no state library. A list and a detail pane is the whole
-application, and the first increment of an operator console should be small
-enough that its correctness is obvious. It grows a router when there is a second
-thing to route to.
+Navigation uses hash URLs without an additional router dependency. The server
+continues to serve the root document without a history fallback. Shared console
+reads stay mounted while navigating; per-client editors retain their own hooks.
 
 ## Development identity
 
-In production the operator-plane proxy authenticates the human and states who
-they are in a header; the browser never sets it and could not be trusted to
-(ADR 0009).
+The production console uses OIDC bearer authentication. `npm run dev` proxies
+API calls to `VITE_CONTROL_PLANE` (default `http://localhost:8081`).
 
-Locally there is no such proxy, so the Vite dev server plays the same role —
-[`vite.config.ts`](vite.config.ts) adds the header to proxied requests. That
-keeps the application code identical in both environments, rather than growing a
-"development mode" that behaves differently from the thing being shipped.
-
-Override with `VITE_DEV_OPERATOR` and `VITE_CONTROL_PLANE`.
+For a standalone local workbench with persistent storage, see [PHASE_ONE.md](PHASE_ONE.md).
+That explicit loopback-only example uses a test operator and has no external
+providers. It is excluded from the production entry and deployment configuration.

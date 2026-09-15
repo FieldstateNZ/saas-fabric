@@ -59,7 +59,7 @@ describe('the client detail view', () => {
 
     expect(screen.getByText(/which platform modules are enabled/)).toBeDefined()
     // The requirement, stated on the screen rather than guessed at in a backlog.
-    expect(screen.getByText(/No module enablement model exists/)).toBeDefined()
+    expect(screen.getByText(/Module assignments are not available/)).toBeDefined()
   })
 
   it('keeps the tabs usable by naming the current one', async () => {

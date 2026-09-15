@@ -14,6 +14,7 @@
 //! they are how an operator obtains the token the extractor then demands.
 //! Neither can read or change anything.
 
+pub(crate) mod catalogue;
 mod converge;
 mod get_client;
 mod get_identity;

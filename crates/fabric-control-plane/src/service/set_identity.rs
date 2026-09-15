@@ -71,6 +71,9 @@ impl ClientService {
         let updated = current
             .document
             .with_identity(identity)
+            .and_then(|document| {
+                document.with_activity(self.product_event(operator, client, "Identity updated"))
+            })
             .map_err(ControlPlaneError::InvalidRequest)?;
 
         let change = ChangeContext {

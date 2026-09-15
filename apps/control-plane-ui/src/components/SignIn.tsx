@@ -1,3 +1,5 @@
+import { Brand } from '../console/primitives'
+
 /**
  * The screen an operator sees before they have signed in.
  *
@@ -14,11 +16,10 @@ interface SignInProps {
 export function SignIn({ error, onSignIn }: SignInProps) {
   return (
     <div className="signin">
-      <p className="signin__title">SaaS Fabric</p>
+      <p className="signin__title"><Brand /></p>
       <h1 className="signin__heading">Operator console</h1>
       <p className="signin__lead">
-        Administering this platform needs an operator identity. Signing in takes you to the
-        platform&rsquo;s identity provider and back.
+        Sign in with your operator identity. Your organisation&rsquo;s sign-in handles the rest.
       </p>
 
       {error !== null && <p className="error">{error}</p>}

@@ -1,11 +1,14 @@
 /** The tabs a client detail view offers, in the order they are shown. */
 export const CLIENT_TABS = [
   'Overview',
+  'Applications',
+  'Configuration',
+  'Identity',
+  'Domains',
+  'Activity',
   'Secrets',
   'Authorization',
-  'Identity',
   'Modules',
-  'Config',
   'Health',
 ] as const
 

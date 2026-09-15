@@ -336,3 +336,27 @@ async fn a_revision_the_host_reports_is_carried_opaquely() {
 
     assert_eq!(stored.revision, ClientRevision::try_new("sha-0").unwrap());
 }
+
+#[tokio::test]
+async fn catalogue_roundtrips_and_rejects_stale_edits() {
+    let catalogue = fabric_client_model::catalogue::Catalogue::default();
+    let text = catalogue.render().unwrap();
+    let host = FakeGitHost::start(&[("fabric-catalogue.yaml", &text)]).await;
+    let repository = repository(&host);
+    let stored = repository.catalogue().await.unwrap();
+    let mut updated = stored.catalogue;
+    updated.settings.platform_name = "Operator platform".into();
+    let revision = repository
+        .save_catalogue(&updated, stored.revision.as_ref(), &change())
+        .await
+        .unwrap();
+    let reread = repository.catalogue().await.unwrap();
+    assert_eq!(reread.revision, Some(revision));
+    assert_eq!(reread.catalogue.settings.platform_name, "Operator platform");
+    assert!(matches!(
+        repository
+            .save_catalogue(&updated, stored.revision.as_ref(), &change())
+            .await,
+        Err(RepositoryError::Conflict)
+    ));
+}

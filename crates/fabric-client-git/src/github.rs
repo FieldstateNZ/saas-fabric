@@ -1,5 +1,6 @@
 //! Talking to the Git host's contents API.
 
+mod catalogue;
 mod contents;
 mod decoding;
 mod errors;

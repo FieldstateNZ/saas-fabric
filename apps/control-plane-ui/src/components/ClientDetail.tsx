@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { ClientActivity, ClientApplications, ClientConfiguration, ClientDomains } from './tabs/ClientSections'
 
 import type { Client } from '../api/types'
 import { IdentityPanel } from './IdentityPanel'
@@ -55,6 +56,11 @@ function Panel({ tab, client }: { tab: ClientTab; client: Client }) {
     case 'Overview':
       return <Overview client={client} />
 
+    case 'Applications': return <ClientApplications client={client} />
+    case 'Configuration': return <ClientConfiguration client={client} />
+    case 'Domains': return <ClientDomains client={client} />
+    case 'Activity': return <ClientActivity client={client} />
+
     case 'Identity':
       return <IdentityPanel client={client} />
 
@@ -64,27 +70,19 @@ function Panel({ tab, client }: { tab: ClientTab; client: Client }) {
     case 'Authorization':
       return (
         <NotExposed
-          shows="the declared and live authorization model, its tuples, and a Check form"
-          needs="The declared model is parsed from desired state but not served, and there is no control-plane path to OpenFGA yet."
+          shows="client permissions and access checks"
+          needs="Permission management is not available in this deployment."
         />
       )
 
     case 'Modules':
-      return <NotExposed shows="which platform modules are enabled" needs="No module enablement model exists." />
-
-    case 'Config':
-      return (
-        <NotExposed
-          shows="this client's desired-state document exactly as Git holds it"
-          needs="The API serves the parts it models, never the document itself."
-        />
-      )
+      return <NotExposed shows="which platform modules are enabled" needs="Module assignments are not available in this deployment." />
 
     case 'Health':
       return (
         <NotExposed
           shows="provisioning and health for everything this client depends on"
-          needs="Only reconciliation status is observed, and it is shown under Identity."
+          needs="Check Identity for the latest reconciliation result. Broader service health is not available yet."
         />
       )
 

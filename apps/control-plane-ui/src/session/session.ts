@@ -21,6 +21,7 @@
  * claim about a redirect the console never made.
  */
 import { generate, randomState } from './pkce'
+import { consumeDestination, rememberDestination } from './destination'
 
 /** Where the verifier and state wait for the redirect to come back. */
 const VERIFIER = 'fabric.signin.verifier'
@@ -83,6 +84,7 @@ export async function beginSignIn(options: { silent?: boolean } = {}): Promise<v
     query.set('prompt', 'none')
   }
 
+  rememberDestination()
   window.location.assign(`${config.authorization_endpoint}?${query.toString()}`)
 }
 
@@ -143,5 +145,5 @@ export function discardPending(): void {
 
 /** Removes the authorization code from the address bar. */
 export function clearQuery(): void {
-  window.history.replaceState({}, '', window.location.pathname)
+  window.history.replaceState({}, '', window.location.pathname + consumeDestination())
 }

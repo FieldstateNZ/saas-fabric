@@ -57,6 +57,56 @@ impl ClientRepository for InMemoryClientRepository {
         Ok(revision)
     }
 
+    async fn create(
+        &self,
+        document: &ClientDocument,
+        _change: &ChangeContext,
+    ) -> Result<ClientRevision, RepositoryError> {
+        self.check_available()?;
+        let mut clients = lock(&self.clients);
+        if clients.contains_key(&document.client().id) {
+            return Err(RepositoryError::Conflict);
+        }
+        let revision = self.next_revision()?;
+        clients.insert(
+            document.client().id.clone(),
+            StoredClient {
+                document: document.clone(),
+                revision: revision.clone(),
+            },
+        );
+        Ok(revision)
+    }
+
+    async fn catalogue(&self) -> Result<fabric_client_model::catalogue::StoredCatalogue, RepositoryError> {
+        self.check_available()?;
+        Ok(lock(&self.catalogue)
+            .clone()
+            .unwrap_or(fabric_client_model::catalogue::StoredCatalogue {
+                catalogue: fabric_client_model::catalogue::Catalogue::default(),
+                revision: None,
+            }))
+    }
+
+    async fn save_catalogue(
+        &self,
+        catalogue: &fabric_client_model::catalogue::Catalogue,
+        expected: Option<&ClientRevision>,
+        _change: &ChangeContext,
+    ) -> Result<ClientRevision, RepositoryError> {
+        self.check_available()?;
+        let mut stored = lock(&self.catalogue);
+        if stored.as_ref().and_then(|s| s.revision.as_ref()) != expected {
+            return Err(RepositoryError::Conflict);
+        }
+        let revision = self.next_revision()?;
+        *stored = Some(fabric_client_model::catalogue::StoredCatalogue {
+            catalogue: catalogue.clone(),
+            revision: Some(revision.clone()),
+        });
+        Ok(revision)
+    }
+
     fn describe(&self) -> String {
         "in-memory desired state".to_owned()
     }

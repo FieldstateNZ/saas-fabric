@@ -52,11 +52,11 @@ function Missing({ field, why }: { field: string; why: string }) {
  * whole of the work when its API arrives.
  */
 const MISSING: readonly (readonly [string, string])[] = [
-  ['Issuer', 'derivable from the realm and platform configuration, not served'],
-  ['Secret partition', 'no per-client partition convention or API'],
-  ['Authorization store', 'no control-plane path to OpenFGA (ADR 0016)'],
-  ['Authorization model', 'declared in desired state (ADR 0013) but not served'],
-  ['Database endpoint', 'no data-placement model'],
-  ['Modules', 'no enablement model'],
-  ['Provisioning health', 'reconciliation status is shown under Identity; nothing else is observed'],
+  ['Issuer', 'sign-in issuer details are not available'],
+  ['Secret partition', 'secret partition details are not available'],
+  ['Authorization store', 'authorization details are not available'],
+  ['Authorization model', 'authorization model details are not available'],
+  ['Database endpoint', 'database placement is not available'],
+  ['Modules', 'module assignments are not available'],
+  ['Provisioning health', 'check Identity for the latest reconciliation result'],
 ]

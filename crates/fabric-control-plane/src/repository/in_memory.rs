@@ -25,6 +25,9 @@ pub struct InMemoryClientRepository {
     /// The stored clients, keyed by id.
     pub(super) clients: Mutex<BTreeMap<ClientId, StoredClient>>,
 
+    /// Product catalogue with its compare-and-swap revision.
+    pub(super) catalogue: Mutex<Option<fabric_client_model::catalogue::StoredCatalogue>>,
+
     /// The number of writes so far, which is where revisions come from.
     writes: Mutex<u64>,
 

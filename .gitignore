@@ -14,3 +14,10 @@ node_modules/
 dist/
 coverage/
 .tmp/
+
+# Local development desired-state snapshots and exclusive lock.
+.fabric-state.json
+.fabric-state.lock
+.fabric-state.next
+
+.local/

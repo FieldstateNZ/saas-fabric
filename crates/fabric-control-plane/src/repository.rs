@@ -34,13 +34,7 @@ pub use unconfigured::UnconfiguredRepository;
 /// never "the blob sha of `clients/acme/client.yaml` moved" (specification
 /// §8).
 ///
-/// # No `create`, no `delete`
-///
-/// Both are absent deliberately rather than pending. Creating a client is a
-/// workflow this increment does not implement, and deleting one is a decision
-/// with consequences no single API call should be able to take. Adding either
-/// later is an additive change; having them here unused would suggest the
-/// control plane can already do things it cannot.
+/// Client creation is conditional. Deletion requires a separate deprovisioning workflow.
 ///
 /// # Concurrency is the implementation's job, not the caller's
 ///
@@ -84,6 +78,36 @@ pub trait ClientRepository: Send + Sync {
         expected: &ClientRevision,
         change: &ChangeContext,
     ) -> Result<ClientRevision, RepositoryError>;
+
+    /// Creates a client only when its identifier does not already exist.
+    /// # Errors
+    /// Returns Conflict for a duplicate or an adapter error before changing state.
+    async fn create(
+        &self,
+        _document: &ClientDocument,
+        _change: &ChangeContext,
+    ) -> Result<ClientRevision, RepositoryError> {
+        Err(RepositoryError::NotConfigured)
+    }
+
+    /// Reads the product catalogue, with no revision before its first write.
+    /// # Errors
+    /// Returns an adapter error when the configured store cannot be read.
+    async fn catalogue(&self) -> Result<fabric_client_model::catalogue::StoredCatalogue, RepositoryError> {
+        Err(RepositoryError::NotConfigured)
+    }
+
+    /// Replaces the catalogue only if its revision still matches, including absence.
+    /// # Errors
+    /// Returns Conflict for a stale revision, or an adapter error.
+    async fn save_catalogue(
+        &self,
+        _catalogue: &fabric_client_model::catalogue::Catalogue,
+        _expected: Option<&ClientRevision>,
+        _change: &ChangeContext,
+    ) -> Result<ClientRevision, RepositoryError> {
+        Err(RepositoryError::NotConfigured)
+    }
 
     /// A short description for logging, such as a repository name and branch.
     ///

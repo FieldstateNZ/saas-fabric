@@ -25,11 +25,7 @@ mod integrations;
 pub const API_PREFIX: &str = "/api";
 
 /// Builds the control-plane router.
-///
-/// Every path this crate serves is visible here, in one file.
-///
 /// ```text
-/// GET /api/session                       where to sign in   (no operator)
 /// POST /api/session                      redeem a code      (no operator)
 /// POST   /api/reconciliation                converge every client, as you
 /// GET    /api/integrations/git               can desired state be read?
@@ -99,7 +95,20 @@ pub(crate) fn control_plane_routes(state: ControlPlaneState) -> Router {
             "/platform/components/{component}/rollback",
             post(handlers::roll_back_component),
         )
-        .route("/clients", get(handlers::list_clients))
+        .route(
+            "/catalogue",
+            get(handlers::catalogue::get_catalogue).post(handlers::catalogue::change_catalogue),
+        )
+        .route("/activity", get(handlers::catalogue::activity))
+        .route("/operator", get(handlers::catalogue::operator_profile))
+        .route(
+            "/clients",
+            get(handlers::list_clients).post(handlers::catalogue::create_client),
+        )
+        .route(
+            "/clients/{client_id}/product",
+            get(handlers::catalogue::get_product).put(handlers::catalogue::put_product),
+        )
         .route("/clients/{client_id}", get(handlers::get_client))
         .route(
             "/clients/{client_id}/identity",

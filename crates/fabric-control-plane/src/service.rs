@@ -1,5 +1,8 @@
 //! The control plane's domain operations.
 
+mod activity;
+mod catalogue;
+mod product;
 mod reconciliation_view;
 #[cfg(test)]
 mod reconciliation_view_tests;

@@ -36,9 +36,10 @@ This increment implements **Identity** only. The others are named here so the
 shape is visible, not because anything reconciles them yet.
 
 The product catalogue and client product configuration
-([ADR 0020](../decisions/0020-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md)) reconcile nothing of their own. An application assigned to
-a client reaches a platform service only by becoming an identity client in that
-client's document, which identity reconciliation then converges like any other.
+([ADR 0020](../decisions/0020-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md))
+reconcile nothing of their own. An application assigned to a client reaches a
+platform service only by becoming an identity client in that client's document,
+which identity reconciliation then converges like any other.
 
 ## The flow
 
@@ -118,7 +119,7 @@ DELETE /api/platform/components/{component}/hold       let it advance again
 GET    /api/platform/components/{component}/versions   what it could go back to
 POST   /api/platform/components/{component}/rollback   put it back on one
 GET    /api/catalogue                    the product catalogue, and its revision
-POST   /api/catalogue                    apply one command      (If-Match, or If-None-Match: * for the first)
+POST   /api/catalogue                    apply one command      (If-Match, or If-None-Match: *)
 GET    /api/activity                     recorded operator actions, newest first
 GET    /api/clients                      list clients
 POST   /api/clients                      create one             (refused if the id exists)
@@ -151,7 +152,9 @@ Three things it does not do, each of them a rule rather than a gap:
 
 ### The product catalogue and client creation
 
-Recorded in [ADR 0020](../decisions/0020-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md), and proposed rather than accepted. In outline:
+Recorded in
+[ADR 0020](../decisions/0020-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md),
+and proposed rather than accepted. In outline:
 
 - **The catalogue** is one desired-state document, `fabric-catalogue.yaml`, at
   the root of the client repository. Its `apiVersion: fabric.fieldstate.nz/v1`
@@ -203,8 +206,9 @@ deployment had already named.
 `local_directory` persists. A write survives a restart, which is what makes a
 catalogue with published releases workable locally — and it puts a second
 authority in one directory: once the snapshot exists, edits to the YAML beside
-it are ignored, without a warning. [ADR 0020](../decisions/0020-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md) §7 has the rest, including
-what a write flushes and what it does not.
+it are ignored, without a warning.
+[ADR 0020](../decisions/0020-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md)
+§7 has the rest, including what a write flushes and what it does not.
 
 ### Connecting the integration
 
@@ -729,8 +733,9 @@ the control plane would not work under it.
 Local development therefore needs a Keycloak. The shipped example says so
 rather than faking it.
 
-**One exception is proposed: the loopback workbench.** [ADR 0020](../decisions/0020-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md) §7
-contradicts the two paragraphs above, and they are left standing beside it
+**One exception is proposed: the loopback workbench.**
+[ADR 0020](../decisions/0020-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md)
+§7 contradicts the two paragraphs above, and they are left standing beside it
 rather than silently rewritten, because the contradiction is not settled. The
 workbench is not a posture — `mode = "oidc"` is still the only one a deployment
 can state — but it is a development shortcut: an example binary, built into no
@@ -805,15 +810,18 @@ The catalogue and client creation add three codes:
 | Answer | Means | The operator |
 |---|---|---|
 | `409 client_exists` | creation found a document already at that id | picks another id |
-| `409 realm_unavailable` | creation's realm is reserved, or another client document declares it. The message names the realm, and not which reason applies | picks another id |
-| `413 document_too_large` | the catalogue or a client document would render past 900 KiB, beyond what GitHub's contents API returns | trims the document in Git |
+| `409 realm_unavailable` | creation's realm is reserved, or another client document already declares it. The message names the realm and which of the two, since `GET /api/clients` already shows every client's realm | picks another id |
+| `422 document_too_large` | the document the write would produce is past its limit: 900 KiB for a write that grows one — a creation, a product save, a catalogue command — and 960 KiB for an identity edit, so remediation stays possible on a document growth has already filled. `422` and not `413`: the request body is not what is too large | trims the document in Git |
 
 `409 revision_conflict` means "ask again", in two situations. One is an edit
 against a revision that has moved; its message names the catalogue or the client,
-whichever moved. The other is a creation that conflicted while nothing is stored
-at that id — a race with another commit on the branch, where sending the request
-again is safe. A catalogue write carrying neither `If-Match` nor
-`If-None-Match: *` answers `428 revision_required`.
+whichever moved — including a catalogue write that loses the race between its own
+read and its write. The other is a creation that conflicted while nothing is
+stored at that id: a race with another commit on the branch, where sending the
+request again is safe. A creation the Git host refused for a genuine validation
+failure is neither, and stays a rejection, because asking again would change
+nothing. A catalogue write carrying neither `If-Match` nor `If-None-Match: *`
+answers `428 revision_required`.
 
 Stored data that will not parse answers `500 desired_state_invalid`, with no
 `Retry-After`, whether it is a client document, a client's `spec.product` — read
@@ -855,7 +863,7 @@ unconfigured for that operation at run time.
 |---|---|---|---|
 | `GitClientRepository` | `fabric-client-git` | `managed`, once connected, and `git` | a commit per write: `clients/<id>/client.yaml`, and `fabric-catalogue.yaml` at the repository root |
 | `LocalClientRepository` | `fabric-control-plane-api` | `local_directory`, and the workbench ([ADR 0020](../decisions/0020-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md) §7) | one process: `.fabric-state.json`, replaced by rename in a task of its own, so a write finishes even if its request goes away. Open failures are typed, and a snapshot from before the catalogue envelope is refused |
-| `InMemoryClientRepository` | `fabric-control-plane` | tests only | no — but it renders and parses the catalogue on every write and read, as the durable stores do |
+| `InMemoryClientRepository` | `fabric-control-plane` | tests only | no — but it renders and parses every client document and the catalogue on every write and read, as the durable stores do |
 | `UnconfiguredRepository` | `fabric-control-plane` | `managed`, before a repository is connected | — |
 
 The three that store anything implement the same concurrency rule rather than a
@@ -1052,7 +1060,9 @@ The catalogue event names no client, because the catalogue has none: it carries
 `resource = "catalogue"` and the entry the command changed, and takes its
 operation from the activity entry the command appended, so the audit record and
 what `GET /api/activity` shows cannot disagree. That activity is a view kept in
-desired state ([ADR 0020](../decisions/0020-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md) §6), not a replacement for these events.
+desired state
+([ADR 0020](../decisions/0020-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md) §6),
+not a replacement for these events.
 
 Git history is a **second** copy: the commit message carries a `Requested-by:`
 trailer, because every commit is authored by the platform's machine identity and
@@ -1066,10 +1076,12 @@ Nothing in the audit module is handed a value that could contain one.
 ## What this increment does not include
 
 Deletion of anything — a client, an application, or an assignment, whose
-removal is refused ([ADR 0020](../decisions/0020-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md) §5) — OpenFGA/OpenBao/Grafana/Envoy
-reconciliation, database provisioning, deploying application components, DNS
-names and certificates for them, observing their runtime health, a workflow
-engine, and provisioning the realm's own console client and operator role.
+removal is refused
+([ADR 0020](../decisions/0020-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md) §5)
+— OpenFGA/OpenBao/Grafana/Envoy reconciliation, database provisioning,
+deploying application components, DNS names and certificates for them,
+observing their runtime health, a workflow engine, and provisioning the realm's
+own console client and operator role.
 
 Client creation is in, as a desired-state write and nothing more: a created
 client has a document and, once converged, a realm. Routing, data placement and

@@ -274,9 +274,10 @@ internal-looking prefix.
 
 ## `spec.product`
 
-**Proposed** in [ADR 0020](../decisions/0020-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md). The product configuration an operator gives
-a client through the console, written by client creation and by
-`PUT /api/clients/{clientId}/product`.
+**Proposed** in
+[ADR 0020](../decisions/0020-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md).
+The product configuration an operator gives a client through the console,
+written by client creation and by `PUT /api/clients/{clientId}/product`.
 
 ```yaml
 spec:
@@ -346,12 +347,14 @@ the catalogue, for the client fields and any new assignment, so a catalogue that
 cannot be read still refuses one. The price is a whole release per assignment in
 every client's file, and no bulk migration: a client moves only when it is saved.
 
-**A client document is bounded.** A creation, a product save or an identity edit
+**A client document is bounded, by two limits.** A creation or a product save
 whose rendered document would exceed 900 KiB is refused with
-`413 document_too_large`, because GitHub's contents API does not return content
-past 1 MB. Activity only grows and every assignment is a whole release, so a
-client can reach that limit, and then every save to it is refused until the
-document is trimmed by hand.
+`422 document_too_large`; an identity edit is allowed up to 960 KiB, so a
+document already at the growth limit can still have a compromised callback or
+role removed. Both sit under what GitHub's contents API will read a file back at.
+Activity only grows and every assignment is a whole release, so a client can
+reach the growth limit — and once the remediation margin above it is gone too,
+the document must be trimmed by hand before anything can be written to it.
 
 **Removing an assigned application is refused** until deprovisioning exists
 (ADR 0020 §5). A save may change an assignment's version, plan and
@@ -390,7 +393,7 @@ in `spec.identity.clients`, replacing any entry with the same id:
 |---|---|
 | `id` is the application id | an application cannot be assigned if a client declared by hand already holds that id; an entry the product projected earlier is replaced |
 | the template callback exists only when the release has a hostname template | an assignment with no template and no client host is refused |
-| a release's template holds exactly one `{client}`, and was checked at publication with a 63-character label substituted | a template under `.internal` or `.example.test` is refused when it is published, never at assignment |
+| a release's template holds exactly one `{client}`, checked at publication against a worst-case client id sized to the label the placeholder shares — 63 characters for `{client}.example.com`, 56 for `{client}-portal.example.com` | a template under `.internal` or `.example.test` is refused when it is published, never at assignment; a client id too long for its template's label is refused at assignment |
 | every client host adds a callback, template or not | a client with any `.internal` or loopback host cannot be assigned an application at all, because `claimedHttps` admits public hosts only |
 | the entry is replaced whole on every product save | an edit to its callbacks, strategy or PKCE — through the identity API or by hand — is reverted by the next product save, and the realm converged back |
 
@@ -446,9 +449,10 @@ expects to survive.
 
 ## The catalogue document
 
-**Proposed** in [ADR 0020](../decisions/0020-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md). One per repository, at
-`fabric-catalogue.yaml` in the repository root — beside `clients/`, not under
-the client documents' path prefix.
+**Proposed** in
+[ADR 0020](../decisions/0020-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md).
+One per repository, at `fabric-catalogue.yaml` in the repository root — beside
+`clients/`, not under the client documents' path prefix.
 
 ```yaml
 apiVersion: fabric.fieldstate.nz/v1
@@ -493,7 +497,7 @@ one: a catalogue written by an earlier revision of it can be unreadable now.
 **It is rendered whole, and bounded.** Every catalogue change reprints the file
 with every release and every activity entry in it, and the formatting costs under
 [Preservation](#preservation) apply to all of it. A change that would take it past
-900 KiB is refused with `413 document_too_large`. Nothing a command does removes
+900 KiB is refused with `422 document_too_large`. Nothing a command does removes
 anything, so once the catalogue reaches that size every command is refused until
 the file is trimmed by hand — and the only things to trim are activity entries
 and releases.

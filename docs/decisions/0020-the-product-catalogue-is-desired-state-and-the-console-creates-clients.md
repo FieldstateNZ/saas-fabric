@@ -129,7 +129,9 @@ latest release, and otherwise appends the draft as release
 **The first write says it is the first.** Every write carries `If-Match` with
 the revision it read or — only when no catalogue exists yet —
 `If-None-Match: *`. A write carrying neither is refused with `428`, and a stale
-revision with `409 revision_conflict`, whose message names the catalogue. This is
+revision with `409 revision_conflict`, whose message names the catalogue rather
+than a client — including when the race is lost between the read and the write.
+This is
 ADR 0008's fourth rule applied to a second document, including a case ADR 0008
 did not have: a document that does not exist yet, which two operators could
 otherwise both create.
@@ -153,7 +155,8 @@ This reverses Fabric Console v0 and the port's former "no `create`".
 `POST /api/clients` takes an id and a configuration, and:
 
 1. refuses the realm the id would become when it is reserved, or when another
-   stored client document already declares it — `409 realm_unavailable`;
+   stored client document already declares it — `409 realm_unavailable`, saying
+   which of the two it is;
 2. reads the catalogue and resolves every requested application against a
    **published** version and a plan inside it, and every configuration value
    against its declared field — an undeclared key is refused, a required one
@@ -162,15 +165,19 @@ This reverses Fabric Console v0 and the port's former "no `create`".
    the client id, both required roles, the requested display name and hosts,
    and `spec.product` (§3) carrying a `Client created` activity entry;
 4. projects the assigned applications into `spec.identity.clients` (§4);
-5. refuses a document that renders past 900 KiB — `413 document_too_large`
-   (see Consequences);
+5. refuses a document that renders past the 900 KiB growth limit —
+   `422 document_too_large` (see Consequences);
 6. writes it **only if no document has that id**. In Git that is a contents
-   write with no expected blob, which the host refuses for a file that exists —
-   and the adapter cannot tell that refusal from another commit landing on the
-   branch at the same moment. So a conflict is settled by reading again: a
-   document now at that id is `409 client_exists`, its own code because a taken
-   id is fixed by choosing another; nothing there is `409 revision_conflict`,
-   and sending the request again is safe;
+   write with no expected blob, and the host answers two refusals the adapter
+   cannot read on their own: a `409`, ordinarily a lost race on the branch, and
+   a `422`, which GitHub returns both for a file that already exists and for a
+   genuine validation failure. So the outcome is settled by reading the id back.
+   A document there means the id is taken — `409 client_exists`, whichever
+   refusal reported it, its own code because a taken id is fixed by choosing
+   another. Nothing there after a `409` means the write lost a race and can be
+   sent again — `409 revision_conflict`. Nothing there after a `422` means the
+   request really was invalid, and it stays a rejection rather than becoming a
+   conflict something would retry;
 7. marks the client `pending`, answers `201` with an `ETag`, and — where an
    identity provider is configured — starts a background convergence as the
    creating operator.
@@ -201,9 +208,15 @@ have the next pass write roles and application clients into Keycloak's own realm
 with the operator's own bearer. So creation refuses `master`; the realm operators
 sign in against, read from the operator issuer; the Keycloak adapter's admin
 realm, when one is configured; and any realm another stored client document
-already declares. The answer is `409 realm_unavailable`, naming the realm but not
-which reason applies, because saying it is taken would confirm to the caller that
-another client's realm exists. Its limit is what it can see: a realm made in
+already declares. The answer is `409 realm_unavailable`, naming the realm and
+which of the two reasons applies. An earlier version withheld the reason, on the
+grounds that "already taken" confirms another client's realm exists — but
+`GET /api/clients` already shows every client's realm to every operator, so the
+omission protected nothing and only made the message less useful. The reserved
+names are compared as case-folded strings and never parsed as realm identifiers:
+a deployment whose operator issuer or admin realm is `Fabric` or `saas_fabric` —
+names Keycloak accepts and this model's own realm type would refuse — must not be
+unable to start because of this check. Its limit is what it can see: a realm made in
 Keycloak by hand, which no client document declares, is not refused.
 
 ### 3. A client's product configuration lives in its own document, as full snapshots
@@ -251,6 +264,12 @@ plane writes.
 A product save also migrates a `v1` document to `v2`, because it merges through
 the same identity edit that does.
 
+**A client document has two size ceilings.** A creation or a product save is
+refused when the document it would write passes 900 KiB; an identity edit is
+allowed up to 960 KiB, so a document already at the growth ceiling can still
+have a compromised callback or role removed. Both sit under what the contents API
+will read a file back at. See Consequences.
+
 ### 4. Assigned applications are projected into identity as public clients
 
 On creation and on every product save, each assignment writes — or replaces, by
@@ -270,12 +289,17 @@ declared by hand: the projection never claims a client it did not create.
 
 **The template is checked when it is published, not when it is assigned.** A
 draft's template may hold at most one `{client}`. A release that has a template
-must hold exactly one, and publishing substitutes a 63-character label — the
-longest a client id can be — and refuses the template unless the callback it
-produces is one `claimedHttps` admits. A template under `.internal` or
+must hold exactly one, and publishing substitutes a worst-case client id and
+refuses the template unless the callback it produces is one `claimedHttps`
+admits. That id is sized to the DNS label `{client}` actually shares: 63
+characters — the longest a client id can be — for a bare
+`{client}.example.com`, and 56 for `{client}-portal.example.com`, where the
+affix takes the rest of the label. So an affixed template publishes, instead of
+being refused on behalf of every client. A template under `.internal` or
 `.example.test` is refused once, at publication, rather than published and then
-refused by every assignment. A client's own hosts are not checked there, and
-remain the limit under Consequences.
+refused by every assignment. Two things are left to assignment: a client id too
+long for its template's label, and the client's own hosts, which remain the limit
+under Consequences.
 
 **Why project, rather than reconcile products.** An application a client is
 entitled to has to be able to sign that client's users in, and ADR 0019 already
@@ -355,9 +379,11 @@ ADR 0008 already describes.
   on the snapshot is the authority and the YAML is not read again;
 - every open parses every stored client and the catalogue, and refuses to start
   on one that does not parse;
-- a snapshot whose catalogue predates the envelope is refused at open, naming the
-  file. There is no legacy read path: the file is removed, or its catalogue
-  wrapped in the envelope by hand;
+- a snapshot whose catalogue carries neither `apiVersion` nor `kind` is refused
+  at open as predating the envelope, naming the file; one carrying a pair this
+  build does not recognise is refused as an invalid catalogue instead, saying
+  what it found. There is no legacy read path: the file is removed, or its
+  catalogue wrapped in the envelope by hand;
 - an open failure is typed — a held lock, an I/O error, an invalid snapshot, a
   pre-envelope or unreadable catalogue, an unreadable client — and a stored
   document that will not parse is reported as invalid, not unavailable;
@@ -371,9 +397,10 @@ ADR 0008 already describes.
 
 The in-memory repository lost everything on restart, which made a catalogue with
 published releases impossible to work with for longer than one session.
-`InMemoryClientRepository` remains for tests, and renders and parses the
-catalogue on every write and read as the durable stores do, so a test cannot pass
-against a catalogue no real store could hold. No deployment mode selects it.
+`InMemoryClientRepository` remains for tests, and renders and parses every client
+document and the catalogue on every write and read as the durable stores do, so a
+test cannot pass against desired state no real store could hold. No deployment
+mode selects it.
 
 **The workbench.** `cargo run -p fabric-control-plane-api --example
 console_workbench` starts the real router over a `LocalClientRepository` in
@@ -437,20 +464,43 @@ beside a role change.
 trims either list. Every catalogue command rewrites the whole of
 `fabric-catalogue.yaml` — every release snapshot and every activity entry — and
 every product save or identity edit rewrites the client's document with its
-release copies and its activity. A write whose rendered document exceeds 900 KiB
-is refused with `413 document_too_large`, because GitHub's contents API returns a
-file's content only up to 1 MB, and a document past that could be written but
-never read back.
+release copies and its activity. A write is refused with
+`422 document_too_large` — `422` and not `413`, because the request body is small
+and it is the document the write would produce that is too big — once that
+document passes its limit. There are two, both in `document_size`:
+**`MAX_DOCUMENT_BYTES`, 900 KiB, for a write that grows a document** — a
+creation, a product save or a catalogue command — and
+**`MAX_REMEDIATION_DOCUMENT_BYTES`, 960 KiB, for an identity edit**. Both sit
+under what the contents API will read a file back at, so a document either check
+accepts is one this platform can still read.
+
+The two limits exist so that growth stops first. An identity edit is how a
+compromised redirect URI or role is removed, and that edit *shrinks* the document
+— checking it against the ceiling growth has already reached would block
+remediation on exactly the document that needs it. So a client document at the
+growth limit still takes identity edits, with 100 KiB of margin to make them in;
+once even that margin is gone, the document has to be trimmed in Git before
+anything can be written to it at all.
+
+**An identity edit can spend that margin, and that is accepted.** An identity
+edit is checked only against `MAX_REMEDIATION_DOCUMENT_BYTES`, and it grows the
+document as well: an activity entry every time, and a body of up to 64 KiB
+(`MAX_BODY_BYTES`). So a document already at the growth limit can be walked up
+towards the remediation ceiling by repeated identity edits — one large one, or
+a few hundred small ones. It can never pass that ceiling, so the
+document stays readable; what runs out is the room to write it at all, and then
+it has to be trimmed in Git before any path can write it again. The alternative
+is checking an identity edit against the limit growth has already reached, which
+would refuse the shrinking edit this margin exists for.
 
 Every catalogue command appends activity and none removes anything, so **once the
-catalogue reaches the limit, every catalogue command is refused** — publishing,
+catalogue reaches its limit, every catalogue command is refused** — publishing,
 saving a draft, changing settings — until someone trims the file by hand in Git.
 The only things there are to trim are activity entries and releases, and releases
 were meant to be immutable. A client already assigned a trimmed release keeps its
-own copy (§3); a new assignment of that version can no longer be made. The same
-holds for one client's document: enough assignments, each a whole release, and
-enough activity reach the limit, and then every product save and identity edit
-for that client is refused until the document is trimmed by hand.
+own copy (§3); a new assignment of that version can no longer be made. A client's
+own document reaches the growth limit the same way: enough assignments, each a
+whole release, and enough activity.
 
 In Git each of these writes is a commit whose `Requested-by:` trailer already
 names the operator, so the activity lists are a second copy of attribution kept
@@ -576,11 +626,11 @@ repository is single-process by its lock, and is a development mode only.
 5. **Who owns a projected identity client.** Whether a product save may keep
    overwriting hand edits, or a projected client should be marked as the
    product's and refused in identity edits.
-6. **Activity, and what the size limit leaves.** Activity is bounded today only
-   by `413 document_too_large`. Keep it in desired state with a trimming rule,
-   move it to a durable store beside §24's audit events, or drop it in favour of
-   Git history — and decide what an operator does when a catalogue full of
-   releases reaches the limit.
+6. **Activity, and what the size limits leave.** Activity is bounded today only
+   by `422 document_too_large`, and by the margin an identity edit keeps above
+   it. Keep it in desired state with a trimming rule, move it to a durable store
+   beside §24's audit events, or drop it in favour of Git history — and decide
+   what an operator does when a catalogue full of releases reaches the limit.
 7. **Upgrading clients.** Whether clients ever move to a newer release without
    an operator saving each one, and whether a component's `automatic` policy is
    meant to mean anything for application components.

@@ -3,7 +3,8 @@
 React and TypeScript UI, using the supplied SaaS Fabric prototype review v2 as
 the design reference, backed by the Rust control-plane API. The decisions this
 surface makes, and the ones still owed to the product owner, are recorded in
-[ADR 0020](../../docs/decisions/0020-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md), which is proposed.
+[ADR 0020](../../docs/decisions/0020-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md),
+which is proposed.
 
 ## Run the functional local workbench
 
@@ -83,9 +84,9 @@ created client carry an `ETag`.
 | Answer | When |
 | --- | --- |
 | `409 client_exists` | creating a client whose id is already a document |
-| `409 realm_unavailable` | creating a client whose realm is reserved or already declared by another client; the message names the realm, not the reason |
-| `409 revision_conflict` | a stale edit, whose message names the catalogue or the client; or a creation that lost a race on the branch, which can be sent again |
-| `413 document_too_large` | a catalogue or client document that would render past 900 KiB |
+| `409 realm_unavailable` | creating a client whose realm is reserved or already declared by another client; the message names the realm and which of the two |
+| `409 revision_conflict` | a stale edit, whose message names the catalogue or the client; or a creation that lost a race on the branch, which can be sent again. A creation the Git host refused as invalid stays a rejection instead |
+| `422 document_too_large` | the document the write would produce is past its limit: 900 KiB for a creation, product save or catalogue command, 960 KiB for an identity edit, so a compromised callback can still be removed from a document growth has filled |
 | `500 desired_state_invalid` | stored data that will not parse — a client's `spec.product`, or the catalogue — which no retry fixes. One unreadable client fails the whole activity listing, and every creation |
 
 The Git adapter stores `fabric-catalogue.yaml` at the repository root, and each
@@ -117,9 +118,11 @@ Activity is the history of operator-authored product and identity writes, stored
 in the same write as the change. Reconciliation passes are not recorded: they are
 observations, not desired state. Activity is a view, not the audit trail: client
 creation, product saves, identity edits and catalogue commands each also emit a
-structured audit event to the log pipeline. Nothing trims activity; the 900 KiB
-document limit bounds it by refusal, so once the catalogue or a client document
-reaches that size, writes to it are refused until it is trimmed in Git.
+structured audit event to the log pipeline. Nothing trims activity; the document
+size limits bound it by refusal instead, so once the catalogue or a client
+document reaches 900 KiB, writes that grow it are refused until it is trimmed in
+Git — an identity edit keeps working up to 960 KiB, so a compromised callback
+can still be removed.
 
 A client with a `.internal` or loopback host cannot yet be assigned an
 application, because projected identity clients are `claimedHttps` only. An

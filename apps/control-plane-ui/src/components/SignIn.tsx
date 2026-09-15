@@ -1,4 +1,4 @@
-import { Brand } from '../console/primitives'
+import { Brand } from '../console/Brand'
 
 /**
  * The screen an operator sees before they have signed in.

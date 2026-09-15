@@ -310,11 +310,12 @@ spec:
 | Path | Required | Rule, as the control plane writes it |
 |---|---|---|
 | `legalName` | yes | non-empty, ≤256 bytes, no control characters |
-| `region`, `timezone` | yes | non-empty, ≤128 bytes, no control characters |
+| `region` | yes | non-empty, ≤128 bytes, no control characters |
+| `timezone` | yes | `UTC`, or an `Area/Location` name with no empty, `.` or `..` segment |
 | `definitionVersion` | yes | the catalogue's `definitionVersion` when the client was last saved |
 | `configuration` | yes | a value per catalogue `clientFields` entry: undeclared keys refused, required ones enforced, defaults filled in, each checked against its field's type |
 | `applications[].applicationId` | yes | a catalogue application, at most once per client |
-| `applications[].release` | yes | a whole published release, copied by the server from the version the request named |
+| `applications[].release` | yes | a whole published release: the client's stored copy while the application and version are unchanged, otherwise copied by the server from the catalogue's release of the version the request named |
 | `applications[].planId` | yes | a plan in that release |
 | `applications[].configuration` | yes | values for that release's `fields`, under the same rules as `configuration` |
 | `activity[]` | yes | `{at, operator, action, resource}`, appended by the server |
@@ -335,15 +336,29 @@ preserved untouched before; now every path that reads the product answers
 edit, and the platform-wide activity listing, which fails whole rather than
 leaving that client out.
 
-**A release is copied, not referenced.** A client keeps exactly the definition
-it was assigned until an operator saves it with another version. A later
-publication, a hand edit to the catalogue, or a catalogue that cannot be read
-changes nothing here. The price is a whole release per assignment in every
-client's file, and no bulk migration: a client moves only when it is saved.
+**A release is copied, and the copy is kept.** While an assignment's
+application and version are unchanged, a save keeps the client's stored release
+and resolves the plan and configuration against it; only a new application or a
+changed version reads the catalogue's release. A later publication, a hand edit
+to that release in the catalogue, or its removal from the catalogue changes
+nothing here, and does not stop the client being saved. Every save still reads
+the catalogue, for the client fields and any new assignment, so a catalogue that
+cannot be read still refuses one. The price is a whole release per assignment in
+every client's file, and no bulk migration: a client moves only when it is saved.
+
+**A client document is bounded.** A creation, a product save or an identity edit
+whose rendered document would exceed 900 KiB is refused with
+`413 document_too_large`, because GitHub's contents API does not return content
+past 1 MB. Activity only grows and every assignment is a whole release, so a
+client can reach that limit, and then every save to it is refused until the
+document is trimmed by hand.
 
 **Removing an assigned application is refused** until deprovisioning exists
 (ADR 0020 §5). A save may change an assignment's version, plan and
-configuration; it may not drop it.
+configuration; it may not drop it. A plan granting fewer features, or an older
+release with fewer components, still drops components from the client's
+entitlement — ADR 0020 records that as part of the same owed deprovisioning
+decision.
 
 **An identity edit writes this section.** Every identity edit appends an
 `Identity updated` entry, so a document with no `spec.product` gains one — with
@@ -375,6 +390,7 @@ in `spec.identity.clients`, replacing any entry with the same id:
 |---|---|
 | `id` is the application id | an application cannot be assigned if a client declared by hand already holds that id; an entry the product projected earlier is replaced |
 | the template callback exists only when the release has a hostname template | an assignment with no template and no client host is refused |
+| a release's template holds exactly one `{client}`, and was checked at publication with a 63-character label substituted | a template under `.internal` or `.example.test` is refused when it is published, never at assignment |
 | every client host adds a callback, template or not | a client with any `.internal` or loopback host cannot be assigned an application at all, because `claimedHttps` admits public hosts only |
 | the entry is replaced whole on every product save | an edit to its callbacks, strategy or PKCE — through the identity API or by hand — is reverted by the next product save, and the realm converged back |
 
@@ -471,11 +487,16 @@ to every stored release, so a rule tightened in a later version of this model
 makes a catalogue that was valid when written unreadable — and with it the
 catalogue page, client creation, every product save and the activity listing,
 which all read it and answer `500 desired_state_invalid`, which no retry fixes.
-A change to those rules is a schema change.
+A change to those rules is a schema change, and pull request #69 has already made
+one: a catalogue written by an earlier revision of it can be unreadable now.
 
-**It is rendered whole.** Every catalogue change reprints the file with every
-release and every activity entry in it, and the formatting costs under
-[Preservation](#preservation) apply to all of it.
+**It is rendered whole, and bounded.** Every catalogue change reprints the file
+with every release and every activity entry in it, and the formatting costs under
+[Preservation](#preservation) apply to all of it. A change that would take it past
+900 KiB is refused with `413 document_too_large`. Nothing a command does removes
+anything, so once the catalogue reaches that size every command is refused until
+the file is trimmed by hand — and the only things to trim are activity entries
+and releases.
 
 ## Revisions
 

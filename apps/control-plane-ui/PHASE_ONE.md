@@ -29,8 +29,28 @@ directory itself is not flushed.
 Existing local-directory YAML clients are imported only until the first snapshot
 is written; the snapshot then becomes the local development authority.
 
+**A snapshot from before the catalogue envelope is refused.** The workbench will
+not start on a `.fabric-state.json` whose catalogue predates `apiVersion` and
+`kind` — including one at `.local/workbench/.fabric-state.json` from an earlier
+revision of this work. The error names the file, and there is no legacy read
+path. Two ways out, with the workbench stopped:
+
+- **Delete the snapshot.** The workbench's catalogue, and every client created
+  through it, are lost. Top-level `*.yaml` clients in the directory are imported
+  again on the next start.
+- **Wrap the stored catalogue by hand.** In the JSON, `catalogue.text` holds the
+  catalogue's YAML. Put `apiVersion: fabric.fieldstate.nz/v1`, `kind: Catalogue`
+  and `spec:` on lines of their own before it, and indent the old text two spaces
+  under `spec:`. The result must still pass today's catalogue rules — a release
+  template with exactly one `{client}` and a public callback, `options` only on
+  choice fields, among others — or the workbench refuses it as an invalid
+  catalogue instead.
+
 The example API binds to loopback port 8082 and accepts the explicit test operator
-supplied by the local proxy. No external providers are connected, so nothing it
+supplied by the local proxy, and refuses a request whose `Host` is not
+`127.0.0.1:8082` or `localhost:8082`, against DNS rebinding. It reserves no realms
+or platform client ids, so creation there refuses only a realm another stored
+client already declares. No external providers are connected, so nothing it
 accepts can be authorised against an identity provider or converged. Production
 continues to use OIDC authentication; the workbench entry and authenticator setup
 are excluded from the production UI bundle, normal server configuration and every
@@ -58,11 +78,15 @@ Authenticated additions: GET/POST `/api/catalogue`, POST `/api/clients`,
 GET/PUT `/api/clients/{id}/product`, GET `/api/activity`, GET `/api/operator`.
 The first catalogue write requires `If-None-Match: *`; every later one, and every
 product save, requires the strong `If-Match` revision. Product responses and a
-created client carry an `ETag`. A duplicate client id is refused with
-`409 client_exists`, and a stale write with `409 revision_conflict`. Stored data
-that will not parse — a client's `spec.product`, or the catalogue — answers
-`500 desired_state_invalid`, which is not retryable, and one unreadable client
-fails the whole activity listing.
+created client carry an `ETag`.
+
+| Answer | When |
+| --- | --- |
+| `409 client_exists` | creating a client whose id is already a document |
+| `409 realm_unavailable` | creating a client whose realm is reserved or already declared by another client; the message names the realm, not the reason |
+| `409 revision_conflict` | a stale edit, whose message names the catalogue or the client; or a creation that lost a race on the branch, which can be sent again |
+| `413 document_too_large` | a catalogue or client document that would render past 900 KiB |
+| `500 desired_state_invalid` | stored data that will not parse — a client's `spec.product`, or the catalogue — which no retry fixes. One unreadable client fails the whole activity listing, and every creation |
 
 The Git adapter stores `fabric-catalogue.yaml` at the repository root, and each
 client's product state as `spec.product` inside its existing client document; in
@@ -93,10 +117,14 @@ Activity is the history of operator-authored product and identity writes, stored
 in the same write as the change. Reconciliation passes are not recorded: they are
 observations, not desired state. Activity is a view, not the audit trail: client
 creation, product saves, identity edits and catalogue commands each also emit a
-structured audit event to the log pipeline. Nothing bounds activity.
+structured audit event to the log pipeline. Nothing trims activity; the 900 KiB
+document limit bounds it by refusal, so once the catalogue or a client document
+reaches that size, writes to it are refused until it is trimmed in Git.
 
 A client with a `.internal` or loopback host cannot yet be assigned an
-application, because projected identity clients are `claimedHttps` only. A product
+application, because projected identity clients are `claimedHttps` only. An
+application's hostname template is checked when it is published, so a template
+under `.internal` or `.example.test` never publishes. A product
 save rewrites the projected identity clients, so a hand edit to their callbacks
 does not survive it.
 

@@ -95,6 +95,24 @@ A capability component names one of a closed list — `Identity`, `Database`,
 anything else is refused. A capability name is a promise the platform makes, and
 a free-text one is a promise nobody checked.
 
+**An application id is an identity client id, chosen once.** `createApplication`
+refuses an id that is not a valid OIDC client id — a Fabric identifier may start
+with a digit, and an OIDC client id may not — an id Keycloak already holds in every
+realm (`account`, `account-console`, `admin-cli`, `broker`, `realm-management`,
+`security-admin-console`), and this deployment's own client ids: the console's,
+and the Keycloak adapter's when one is configured. The application id becomes a
+client id in every realm it is assigned to (§4), and Keycloak accepts a second
+client under a name it already holds, beside the real one. The deployment's own
+ids are computed where the deployment is composed, and the workbench composes
+none (§7). These checks run when an application is created, not when the
+catalogue is read, so a catalogue already holding such an id stays readable.
+
+**Some catalogue rules hold on every save and every read.** The settings'
+timezone, and a `timezone` field's default, is `UTC` or an `Area/Location` name
+with no empty, `.` or `..` segment. A plan's configuration keys follow the
+field-key rule. `options` are refused on any field that is not a `choice`. A
+client's own timezone is held to the same rule when the client is saved.
+
 **A caller sends commands, never the document.** `POST /api/catalogue` takes one
 of `createApplication`, `saveApplication`, `publishApplication`,
 `saveDefinition`, `saveSettings` or `saveEnvironment`. Release numbers,
@@ -103,13 +121,15 @@ command can carry one. A release a caller could write would not be immutable; it
 would be a draft with a number on it.
 
 **Publishing validates, then freezes.** `publishApplication` refuses a draft with
-no plan, a container or chart component with no pinned version, or a draft
-identical to the latest release, and otherwise appends the draft as release
+no plan, a container or chart component with no pinned version, a hostname
+template that fails the publication rule in §4, or a draft identical to the
+latest release, and otherwise appends the draft as release
 `n + 1`. Editing the draft afterwards changes no release.
 
 **The first write says it is the first.** Every write carries `If-Match` with
 the revision it read or — only when no catalogue exists yet —
-`If-None-Match: *`. A write carrying neither is refused with `428`, and a stale revision with `409`. This is
+`If-None-Match: *`. A write carrying neither is refused with `428`, and a stale
+revision with `409 revision_conflict`, whose message names the catalogue. This is
 ADR 0008's fourth rule applied to a second document, including a case ADR 0008
 did not have: a document that does not exist yet, which two operators could
 otherwise both create.
@@ -132,20 +152,26 @@ change and grown by every release and every activity entry; see Consequences.
 This reverses Fabric Console v0 and the port's former "no `create`".
 `POST /api/clients` takes an id and a configuration, and:
 
-1. reads the catalogue and resolves every requested application against a
+1. refuses the realm the id would become when it is reserved, or when another
+   stored client document already declares it — `409 realm_unavailable`;
+2. reads the catalogue and resolves every requested application against a
    **published** version and a plan inside it, and every configuration value
    against its declared field — an undeclared key is refused, a required one
    enforced, a default filled in, each value checked against its type;
-2. builds a `v2` client document: `metadata.name` and `spec.identity.realm` both
+3. builds a `v2` client document: `metadata.name` and `spec.identity.realm` both
    the client id, both required roles, the requested display name and hosts,
    and `spec.product` (§3) carrying a `Client created` activity entry;
-3. projects the assigned applications into `spec.identity.clients` (§4);
-4. writes it **only if no document has that id**, and answers
-   `409 client_exists` otherwise — its own code beside `revision_conflict`,
-   because a taken id is fixed by choosing another rather than by re-reading. In
-   Git it is a contents write with no expected blob, which the host refuses for
-   a file that exists;
-5. marks the client `pending`, answers `201` with an `ETag`, and — where an
+4. projects the assigned applications into `spec.identity.clients` (§4);
+5. refuses a document that renders past 900 KiB — `413 document_too_large`
+   (see Consequences);
+6. writes it **only if no document has that id**. In Git that is a contents
+   write with no expected blob, which the host refuses for a file that exists —
+   and the adapter cannot tell that refusal from another commit landing on the
+   branch at the same moment. So a conflict is settled by reading again: a
+   document now at that id is `409 client_exists`, its own code because a taken
+   id is fixed by choosing another; nothing there is `409 revision_conflict`,
+   and sending the request again is safe;
+7. marks the client `pending`, answers `201` with an `ETag`, and — where an
    identity provider is configured — starts a background convergence as the
    creating operator.
 
@@ -168,6 +194,18 @@ creation chooses is permanent. The client document already describes client
 offering a choice nobody could correct afterwards. The cost is that there is no
 way to create a client onto an existing realm of another name.
 
+**Why some realms are refused.** Reconciliation treats every realm a document
+names as that client's, and this platform's Keycloak adapter treats a realm that
+already exists as a successful create. A client named `master` would therefore
+have the next pass write roles and application clients into Keycloak's own realm,
+with the operator's own bearer. So creation refuses `master`; the realm operators
+sign in against, read from the operator issuer; the Keycloak adapter's admin
+realm, when one is configured; and any realm another stored client document
+already declares. The answer is `409 realm_unavailable`, naming the realm but not
+which reason applies, because saying it is taken would confirm to the caller that
+another client's realm exists. Its limit is what it can see: a realm made in
+Keycloak by hand, which no client document declares, is not refused.
+
 ### 3. A client's product configuration lives in its own document, as full snapshots
 
 Each client document gains `spec.product`:
@@ -189,11 +227,16 @@ caller would be a forged release, so no request shape carries one.
 conditional check cover a client's product configuration and the identity
 clients projected from it, so the two cannot be committed apart.
 
-**A copy, not a reference.** A client keeps exactly the definition it was
-assigned until an operator changes it — whatever the catalogue later says,
-including a catalogue that is later edited by hand or cannot be read. That is
-what "an assignment keeps its exact version" has to mean if it is to survive
-the catalogue. The cost is duplication: every assigned client carries a whole
+**A copy, not a reference, and the copy is kept.** While an assignment's
+application and version are unchanged, a save keeps the client's stored release
+and resolves the plan and configuration against it; only a new application or a
+changed version reads the catalogue's release as it is now. So a client keeps
+exactly the definition it was assigned: a hand edit to that release in the
+catalogue does not reach it, and removing the release from the catalogue does not
+stop the client being saved. That is what "an assignment keeps its exact version"
+has to mean if it is to survive the catalogue. Every save still reads the
+catalogue, for the client fields and any new assignment, so a catalogue that
+cannot be read still refuses one. The cost is duplication: every assigned client carries a whole
 release, a correction to a published definition reaches no existing client, and
 there is no bulk migration. A client moves to a newer release, or a newer client
 definition, only when an operator saves it.
@@ -224,6 +267,15 @@ id — an entry in `spec.identity.clients`:
 An assignment with neither a template nor a client host is refused. So is the
 first assignment of an application whose id already names an identity client
 declared by hand: the projection never claims a client it did not create.
+
+**The template is checked when it is published, not when it is assigned.** A
+draft's template may hold at most one `{client}`. A release that has a template
+must hold exactly one, and publishing substitutes a 63-character label — the
+longest a client id can be — and refuses the template unless the callback it
+produces is one `claimedHttps` admits. A template under `.internal` or
+`.example.test` is refused once, at publication, rather than published and then
+refused by every assignment. A client's own hosts are not checked there, and
+remain the limit under Consequences.
 
 **Why project, rather than reconcile products.** An application a client is
 entitled to has to be able to sign that client's users in, and ADR 0019 already
@@ -303,8 +355,15 @@ ADR 0008 already describes.
   on the snapshot is the authority and the YAML is not read again;
 - every open parses every stored client and the catalogue, and refuses to start
   on one that does not parse;
+- a snapshot whose catalogue predates the envelope is refused at open, naming the
+  file. There is no legacy read path: the file is removed, or its catalogue
+  wrapped in the envelope by hand;
+- an open failure is typed — a held lock, an I/O error, an invalid snapshot, a
+  pre-envelope or unreadable catalogue, an unreadable client — and a stored
+  document that will not parse is reported as invalid, not unavailable;
 - a write serialises the whole snapshot to `.fabric-state.next`, `fsync`s it and
-  renames it over the snapshot;
+  renames it over the snapshot, in a task of its own, so it finishes — on disk
+  and in memory — even if the request that started it goes away;
 - `.fabric-state.lock` holds an OS lock, and a second process opening the same
   directory is refused;
 - it applies the same conditional create, update and catalogue compare-and-swap
@@ -312,7 +371,9 @@ ADR 0008 already describes.
 
 The in-memory repository lost everything on restart, which made a catalogue with
 published releases impossible to work with for longer than one session.
-`InMemoryClientRepository` remains for tests; no deployment mode selects it.
+`InMemoryClientRepository` remains for tests, and renders and parses the
+catalogue on every write and read as the durable stores do, so a test cannot pass
+against a catalogue no real store could hold. No deployment mode selects it.
 
 **The workbench.** `cargo run -p fabric-control-plane-api --example
 console_workbench` starts the real router over a `LocalClientRepository` in
@@ -322,6 +383,7 @@ serves the console against it.
 | Guard rail | Where it is |
 |---|---|
 | The API binds `127.0.0.1:8082`, and nothing else | a literal in the example |
+| A request whose `Host` is not `127.0.0.1:8082` or `localhost:8082` is refused with `421`. A loopback bind keeps out the network, not a page in a local browser that points a name it controls at `127.0.0.1` | the example |
 | The console's server binds `127.0.0.1:5174`, and proxies `/api` to the API, adding `X-Test-Operator` | `apps/control-plane-ui/preview/server.mjs` |
 | The operator is `testing::AcceptingOperator`: any request carrying `X-Test-Operator` is `local-workbench`, holding a fixture bearer | the example |
 | No identity provider, sign-in, secret store, Git integration or platform management — every one `None` | the example |
@@ -344,7 +406,10 @@ Its limits, plainly. Loopback is not authentication: **any process on the
 machine that can reach either port is an operator.** And `AcceptingOperator`
 lives in `fabric-control-plane`'s `pub mod testing`, compiled unconditionally,
 so keeping it out of a deployment is a convention of the composition root rather
-than a feature gate.
+than a feature gate. The workbench also reserves no names: `master` and the
+platform's own client ids are refused only where a deployment is composed, so it
+refuses just a realm another stored client declares and Keycloak's six built-in
+ids.
 
 ## Consequences
 
@@ -368,13 +433,28 @@ and `timezone`, `definitionVersion: 0`, no configuration or applications, and
 one activity entry. A reviewer reading that commit sees a new section appear
 beside a role change.
 
-**Activity grows without bound, and duplicates what Git already records.**
-Nothing trims either list. Every catalogue command rewrites the whole of
+**Activity and releases are bounded by refusal, not by trimming.** Nothing
+trims either list. Every catalogue command rewrites the whole of
 `fabric-catalogue.yaml` — every release snapshot and every activity entry — and
-every product save rewrites the client's document with its release copies. In
-Git each of those is a commit whose `Requested-by:` trailer already names the
-operator, so the lists are a second copy of attribution kept for the console's
-convenience. They are also desired state that anyone with write access to the
+every product save or identity edit rewrites the client's document with its
+release copies and its activity. A write whose rendered document exceeds 900 KiB
+is refused with `413 document_too_large`, because GitHub's contents API returns a
+file's content only up to 1 MB, and a document past that could be written but
+never read back.
+
+Every catalogue command appends activity and none removes anything, so **once the
+catalogue reaches the limit, every catalogue command is refused** — publishing,
+saving a draft, changing settings — until someone trims the file by hand in Git.
+The only things there are to trim are activity entries and releases, and releases
+were meant to be immutable. A client already assigned a trimmed release keeps its
+own copy (§3); a new assignment of that version can no longer be made. The same
+holds for one client's document: enough assignments, each a whole release, and
+enough activity reach the limit, and then every product save and identity edit
+for that client is refused until the document is trimmed by hand.
+
+In Git each of these writes is a commit whose `Requested-by:` trailer already
+names the operator, so the activity lists are a second copy of attribution kept
+for the console's convenience. They are also desired state that anyone with write access to the
 repository can edit: a view, not evidence. The structured audit record §24 asks
 for is the separate event each of these writes emits (§6).
 
@@ -389,18 +469,31 @@ Removing the projected client through the identity API is undone the same way.
 application.** Every host a client declares contributes a callback, whether or
 not the application has a hostname template, and `claimedHttps` admits public
 `https://` hosts only (ADR 0019 §3). One such host therefore refuses every
-assignment for that client, and an application whose template resolves under
-`.internal` cannot be assigned to anyone. LucentRoot's production hosts are
-`.internal`, so its clients cannot take an application today.
+assignment for that client. (An application whose template resolves under
+`.internal` is now refused when it is published, §4.) LucentRoot's production
+hosts are `.internal`, so its clients cannot take an application today.
 
 **Tightening a validation rule later can make the catalogue unreadable.** Every
 read parses and re-validates every stored release with the publication rules.
 Remove a capability name, or narrow the route or hostname-template rule, and a
 release published under the old rule makes the whole document unreadable — the
 catalogue page, client creation, every product save and the activity listing
-all read it — answered `500 desired_state_invalid` until the file is corrected by hand, which means editing a release
-that was meant to be immutable. Client documents' copies are not re-validated,
-so existing clients stay readable.
+all read it — answered `500 desired_state_invalid` until the file is corrected
+by hand, which means editing a release that was meant to be immutable. Client
+documents' copies are not re-validated, so existing clients stay readable.
+
+This pull request has already done it once. A release template with no
+`{client}` or one resolving under `.internal` or `.example.test`, a draft template
+with two, `options` on a field that is not a `choice`, a plan configuration key
+outside the field-key rule, and a settings timezone that is not `UTC` or an
+`Area/Location` name were all accepted by earlier revisions of it and are refused
+on read now. A catalogue written by those revisions can be unreadable, and a local
+store holding one refuses to open.
+
+**Creation reads every client first.** The realm check lists every stored client
+on each creation, so one client document that will not parse refuses every
+creation with `500 desired_state_invalid`, as it already fails the client
+listing.
 
 **`local_directory` has two authorities over time.** Until the first write, the
 top-level YAML is what loads; after it, `.fabric-state.json` is, and later edits
@@ -473,14 +566,21 @@ repository is single-process by its lock, and is a development mode only.
 3. **Deprovisioning.** What removing an application from a client must undo —
    the realm client, a deployment, data — what confirmation it needs, and
    whether a mistaken assignment should have an exit before that exists.
+   Changing an assignment's plan, or moving it to an older version, is allowed
+   while removal is refused — yet a plan granting fewer features, or a release
+   with fewer components, drops components from what the client is entitled to.
+   That is the same deprovisioning question, asked more quietly.
 4. **Private-network clients.** Whether a projected client should follow the
    kind of the client's hosts — `privateNetwork` for `.internal` — which is what
    LucentRoot needs, or whether applications stay public-host only.
 5. **Who owns a projected identity client.** Whether a product save may keep
    overwriting hand edits, or a projected client should be marked as the
    product's and refused in identity edits.
-6. **Activity.** Keep it in desired state with a bound, move it to a durable
-   store beside §24's audit events, or drop it in favour of Git history.
+6. **Activity, and what the size limit leaves.** Activity is bounded today only
+   by `413 document_too_large`. Keep it in desired state with a trimming rule,
+   move it to a durable store beside §24's audit events, or drop it in favour of
+   Git history — and decide what an operator does when a catalogue full of
+   releases reaches the limit.
 7. **Upgrading clients.** Whether clients ever move to a newer release without
    an operator saving each one, and whether a component's `automatic` policy is
    meant to mean anything for application components.

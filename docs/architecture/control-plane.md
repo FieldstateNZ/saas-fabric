@@ -159,9 +159,11 @@ Recorded in [ADR 0020](../decisions/0020-the-product-catalogue-is-desired-state-
   envelope is storage only: the API sends the body and a revision. It changes
   by command rather than by replacement, so release numbers, publication times
   and activity entries are the server's to assign.
-- **Creating a client** writes one `v2` document — its realm the client id, the
-  two required roles, and `spec.product` — only if no document holds that id,
-  and answers `409 client_exists` if one does. It provisions nothing.
+- **Creating a client** refuses a realm that is reserved or that another client
+  document already declares (`409 realm_unavailable`), then writes one `v2`
+  document — its realm the client id, the two required roles, and
+  `spec.product` — only if no document holds that id, answering
+  `409 client_exists` if one does. It provisions nothing.
 - **A client's product configuration** is `spec.product` in its own document,
   with every assigned release copied in whole, and each assigned application
   projected into `spec.identity.clients` as a public client. The shape is in
@@ -733,8 +735,11 @@ rather than silently rewritten, because the contradiction is not settled. The
 workbench is not a posture — `mode = "oidc"` is still the only one a deployment
 can state — but it is a development shortcut: an example binary, built into no
 image, that binds `127.0.0.1:8082` and treats any request carrying
-`X-Test-Operator` as the operator `local-workbench`. The reason given above for
-refusing a shortcut is exactly true of it. It connects no identity provider, no
+`X-Test-Operator` as the operator `local-workbench`. It refuses, with `421`, a
+request whose `Host` is not `127.0.0.1:8082` or `localhost:8082`, because a
+loopback bind keeps out the network but not a page in a local browser that
+points a name it controls at `127.0.0.1`. The reason given above for refusing a
+shortcut is exactly true of it. It connects no identity provider, no
 sign-in, no secret store and no integration, so nothing it accepts can be
 authorised or converged; what it does allow is working on the catalogue and
 client workflows without a Keycloak. Whether to keep it is owed to the product
@@ -791,21 +796,32 @@ console reads on load.
 
 Distinct codes, because an operator needs to tell the cases apart (§23); among them:
 `unauthenticated`, `unknown_client`, `invalid_request`, `desired_state_invalid`,
-`revision_required`, `revision_conflict`, `client_exists`, `realm_immutable`,
-`repository_unavailable`, `repository_denied`, `repository_rejected`.
+`revision_required`, `revision_conflict`, `client_exists`, `realm_unavailable`,
+`document_too_large`, `realm_immutable`, `repository_unavailable`,
+`repository_denied`, `repository_rejected`.
 
-The catalogue and client creation add one code. A duplicate client id answers
-`409 client_exists` — its own code beside `revision_conflict`, because a taken id
-is fixed by choosing another and a stale edit by re-reading. A stale catalogue
-revision answers `409 revision_conflict`, and a catalogue write carrying neither
-`If-Match` nor `If-None-Match: *` answers `428 revision_required`.
+The catalogue and client creation add three codes:
+
+| Answer | Means | The operator |
+|---|---|---|
+| `409 client_exists` | creation found a document already at that id | picks another id |
+| `409 realm_unavailable` | creation's realm is reserved, or another client document declares it. The message names the realm, and not which reason applies | picks another id |
+| `413 document_too_large` | the catalogue or a client document would render past 900 KiB, beyond what GitHub's contents API returns | trims the document in Git |
+
+`409 revision_conflict` means "ask again", in two situations. One is an edit
+against a revision that has moved; its message names the catalogue or the client,
+whichever moved. The other is a creation that conflicted while nothing is stored
+at that id — a race with another commit on the branch, where sending the request
+again is safe. A catalogue write carrying neither `If-Match` nor
+`If-None-Match: *` answers `428 revision_required`.
 
 Stored data that will not parse answers `500 desired_state_invalid`, with no
 `Retry-After`, whether it is a client document, a client's `spec.product` — read
 by the product routes, an identity edit and the activity listing — or the
 catalogue. `GET /api/activity` fails whole on one unreadable client, as
 `GET /api/clients` does on one unreadable document: a partial feed would read as
-a quiet day.
+a quiet day. Creation reads every client for its realm check, so one unreadable
+client document refuses every creation the same way.
 
 Two things no error says: anything an upstream system said verbatim, and
 anything about the repository's internals.
@@ -838,8 +854,8 @@ unconfigured for that operation at run time.
 | Implementation | Crate | Selected by | Durable |
 |---|---|---|---|
 | `GitClientRepository` | `fabric-client-git` | `managed`, once connected, and `git` | a commit per write: `clients/<id>/client.yaml`, and `fabric-catalogue.yaml` at the repository root |
-| `LocalClientRepository` | `fabric-control-plane-api` | `local_directory`, and the workbench ([ADR 0020](../decisions/0020-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md) §7) | one process: `.fabric-state.json`, replaced by rename |
-| `InMemoryClientRepository` | `fabric-control-plane` | tests only | no |
+| `LocalClientRepository` | `fabric-control-plane-api` | `local_directory`, and the workbench ([ADR 0020](../decisions/0020-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md) §7) | one process: `.fabric-state.json`, replaced by rename in a task of its own, so a write finishes even if its request goes away. Open failures are typed, and a snapshot from before the catalogue envelope is refused |
+| `InMemoryClientRepository` | `fabric-control-plane` | tests only | no — but it renders and parses the catalogue on every write and read, as the durable stores do |
 | `UnconfiguredRepository` | `fabric-control-plane` | `managed`, before a repository is connected | — |
 
 The three that store anything implement the same concurrency rule rather than a

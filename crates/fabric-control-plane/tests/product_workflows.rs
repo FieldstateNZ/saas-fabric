@@ -12,7 +12,7 @@ use http::{header, Response, StatusCode};
 use serde_json::{json, Value};
 use support::{
     as_operator, control_plane, control_plane_with_identity_provider, entity_tag, send, OPERATOR,
-    OPERATOR_REALM,
+    OPERATOR_REALM, RESERVED_APPLICATION_ID,
 };
 
 async fn command(router: &Router, revision: &Value, value: Value) -> Value {
@@ -575,7 +575,7 @@ async fn a_stored_product_section_that_will_not_parse_is_the_platforms_problem_n
     let plane = control_plane();
     plane
         .repository
-        .insert(ClientDocument::parse(MALFORMED_PRODUCT_CLIENT).unwrap())
+        .insert(&ClientDocument::parse(MALFORMED_PRODUCT_CLIENT).unwrap())
         .unwrap();
 
     let product = send(
@@ -653,6 +653,20 @@ async fn a_client_may_not_take_a_reserved_or_already_used_realm() {
     assert_eq!(master_status, StatusCode::CONFLICT, "{master_body}");
     assert_eq!(master_body["error"]["code"], "realm_unavailable");
 
+    // The status and code alone would still pass if the realm check ran
+    // *after* `repository.create` — refusing the response while `master`
+    // was already written. Nothing must actually exist at that id.
+    let master_get = send(
+        &app.router,
+        as_operator("GET", "/api/clients/master")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    let master_get_status = master_get.status();
+    let master_get_body = support::json(master_get).await;
+    assert_eq!(master_get_status, StatusCode::NOT_FOUND, "{master_get_body}");
+
     let operator_realm = create(&app.router, OPERATOR_REALM).await;
     assert_eq!(operator_realm.status(), StatusCode::CONFLICT);
     assert_eq!(
@@ -665,7 +679,7 @@ async fn a_client_may_not_take_a_reserved_or_already_used_realm() {
     // hand-edited document — inserted directly, the way it would arrive
     // through Git. `foo`'s realm is `bar`, not `foo`.
     app.repository
-        .insert(ClientDocument::parse(&HAND_EDITED_REALM.replace("{realm}", "bar")).unwrap())
+        .insert(&ClientDocument::parse(&HAND_EDITED_REALM.replace("{realm}", "bar")).unwrap())
         .unwrap();
 
     let taken = create(&app.router, "bar").await;
@@ -676,6 +690,37 @@ async fn a_client_may_not_take_a_reserved_or_already_used_realm() {
     // still created.
     let ordinary = create(&app.router, "newco").await;
     assert_eq!(ordinary.status(), StatusCode::CREATED);
+}
+
+#[tokio::test]
+async fn a_deployment_reserved_application_id_is_refused() {
+    // `reserved_client_ids` — this deployment's own OIDC client ids, the
+    // console's and a converged Keycloak's — is opaque to the control
+    // plane and computed at the composition root (see `ClientService`'s
+    // own field for why never a `ClientId`). The test harness fixes
+    // `RESERVED_APPLICATION_ID` as what a real deployment's own console id
+    // would be, so this test drives the real router against a genuine
+    // deployment-reserved id — not only the static built-ins
+    // `fabric-client-model` refuses on its own, which is all an empty set
+    // here would ever have been able to prove.
+    let app = control_plane();
+
+    let response = send(
+        &app.router,
+        as_operator("POST", "/api/catalogue")
+            .header("content-type", "application/json")
+            .header("if-none-match", "*")
+            .body(Body::from(
+                json!({"action":"createApplication","id":RESERVED_APPLICATION_ID,"name":"Shadow Console"})
+                    .to_string(),
+            ))
+            .unwrap(),
+    )
+    .await;
+    let status = response.status();
+    let body = support::json(response).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["error"]["code"], "invalid_request", "{body}");
 }
 
 #[tokio::test]
@@ -713,6 +758,57 @@ async fn an_assignment_is_refused_for_a_client_with_an_internal_host() {
             .header("content-type", "application/json")
             .body(Body::from(
                 json!({"id":"newco","configuration":internal_client}).to_string(),
+            ))
+            .unwrap(),
+    )
+    .await;
+    let status = response.status();
+    let body = support::json(response).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+}
+
+#[tokio::test]
+async fn a_client_id_too_long_for_its_affixed_hostname_label_is_refused_at_assignment() {
+    // The catalogue-wide hostname check (`validate_domain`) only refuses a
+    // template that could never publish for *any* client — see
+    // `hostname.rs`'s own rustdoc for why it no longer checks every
+    // template against a bare 63-character worst case. A client whose own
+    // id genuinely does not fit this template's label is a per-client
+    // problem, refused here, at the one place that id is actually
+    // substituted in.
+    let app = control_plane();
+    let mut affixed = definition();
+    affixed["domain"] = json!("{client}-portal.example.com");
+    let first = command(
+        &app.router,
+        &Value::Null,
+        json!({"action":"createApplication","id":"analytics","name":"Analytics"}),
+    )
+    .await;
+    let saved = command(
+        &app.router,
+        &first["revision"],
+        json!({"action":"saveApplication","id":"analytics","definition":affixed}),
+    )
+    .await;
+    command(
+        &app.router,
+        &saved["revision"],
+        json!({"action":"publishApplication","id":"analytics","note":"Initial release"}),
+    )
+    .await;
+
+    // 60 characters: a legal `ClientId` on its own (the limit is 63), but
+    // combined with "-portal" (7 characters) the label this domain
+    // substitutes into would be 67 — over the DNS label limit.
+    let long_id = "a".repeat(60);
+
+    let response = send(
+        &app.router,
+        as_operator("POST", "/api/clients")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({"id": long_id, "configuration": client()}).to_string(),
             ))
             .unwrap(),
     )
@@ -806,6 +902,329 @@ async fn an_unrelated_product_save_keeps_the_clients_original_release_copy() {
         body["product"]["applications"][0]["release"]["definition"]["name"], "Analytics",
         "the client's own copy must not have moved just because the catalogue's did"
     );
+}
+
+#[tokio::test]
+async fn upgrading_an_assignments_version_takes_the_new_releases_copy() {
+    // `resolve()` keeps a stored copy only when an assignment's
+    // application id *and* version are both unchanged. Every other test in
+    // this file assigns version 1 throughout, which would still pass if
+    // that check only compared the application id and ignored the
+    // version — this is the one that would not.
+    let app = control_plane();
+    let first = command(
+        &app.router,
+        &Value::Null,
+        json!({"action":"createApplication","id":"analytics","name":"Analytics"}),
+    )
+    .await;
+    let saved = command(
+        &app.router,
+        &first["revision"],
+        json!({"action":"saveApplication","id":"analytics","definition":definition()}),
+    )
+    .await;
+    let published_v1 = command(
+        &app.router,
+        &saved["revision"],
+        json!({"action":"publishApplication","id":"analytics","note":"v1"}),
+    )
+    .await;
+
+    let created = send(
+        &app.router,
+        as_operator("POST", "/api/clients")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({"id":"newco","configuration":client()}).to_string(),
+            ))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(created.status(), StatusCode::CREATED);
+    let created = support::json(created).await;
+    let revision = created["client"]["revision"].as_str().unwrap().to_owned();
+    assert_eq!(
+        created["product"]["applications"][0]["release"]["definition"]["name"],
+        "Analytics"
+    );
+
+    // A new draft, distinguishable from v1's, published as v2.
+    let mut v2_definition = definition();
+    v2_definition["name"] = json!("Analytics V2");
+    let saved_v2 = command(
+        &app.router,
+        &published_v1["revision"],
+        json!({"action":"saveApplication","id":"analytics","definition":v2_definition}),
+    )
+    .await;
+    command(
+        &app.router,
+        &saved_v2["revision"],
+        json!({"action":"publishApplication","id":"analytics","note":"v2"}),
+    )
+    .await;
+
+    let mut upgraded = client();
+    upgraded["applications"] = json!([{"applicationId":"analytics","version":2,"planId":"standard","configuration":{"team":"Finance"}}]);
+
+    let response = send(
+        &app.router,
+        as_operator("PUT", "/api/clients/newco/product")
+            .header("content-type", "application/json")
+            .header("if-match", format!("\"{revision}\""))
+            .body(Body::from(upgraded.to_string()))
+            .unwrap(),
+    )
+    .await;
+    let status = response.status();
+    let body = support::json(response).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        body["product"]["applications"][0]["release"]["definition"]["name"], "Analytics V2",
+        "upgrading the assignment's version must take the new release's own copy, not keep the old one"
+    );
+}
+
+#[tokio::test]
+async fn an_unrelated_save_succeeds_even_when_the_kept_releases_plan_was_removed_from_the_catalogue() {
+    // The plan check inside `resolve()` runs against the *kept* copy's own
+    // plans when an assignment's application and version are unchanged —
+    // never re-looked up from the catalogue's current state. A hand-edit
+    // that drains the catalogue's own copy of the release's plans must not
+    // reach an already-assigned client through some later, unrelated save.
+    let app = control_plane();
+    let first = command(
+        &app.router,
+        &Value::Null,
+        json!({"action":"createApplication","id":"analytics","name":"Analytics"}),
+    )
+    .await;
+    let saved = command(
+        &app.router,
+        &first["revision"],
+        json!({"action":"saveApplication","id":"analytics","definition":definition()}),
+    )
+    .await;
+    command(
+        &app.router,
+        &saved["revision"],
+        json!({"action":"publishApplication","id":"analytics","note":"Initial release"}),
+    )
+    .await;
+
+    let created = send(
+        &app.router,
+        as_operator("POST", "/api/clients")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({"id":"newco","configuration":client()}).to_string(),
+            ))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(created.status(), StatusCode::CREATED);
+    let created = support::json(created).await;
+    let revision = created["client"]["revision"].as_str().unwrap().to_owned();
+
+    // Edited directly in the repository — a hand-edit no command exposes:
+    // the published release's own "standard" plan, renamed. A published
+    // release must still carry at least one plan to validate, so this
+    // renames it rather than draining the list, which is enough either
+    // way to make "standard" no longer part of the catalogue's own copy.
+    let stored = app.repository.catalogue().await.unwrap();
+    let mut edited = stored.catalogue.clone();
+    edited
+        .applications
+        .first_mut()
+        .unwrap()
+        .releases
+        .first_mut()
+        .unwrap()
+        .definition
+        .plans
+        .first_mut()
+        .unwrap()
+        .id = ClientId::try_new("renamed").unwrap();
+    app.repository
+        .save_catalogue(&edited, stored.revision.as_ref(), &change())
+        .await
+        .unwrap();
+
+    let mut unrelated = client();
+    unrelated["legalName"] = json!("Newco Holdings Ltd");
+
+    let response = send(
+        &app.router,
+        as_operator("PUT", "/api/clients/newco/product")
+            .header("content-type", "application/json")
+            .header("if-match", format!("\"{revision}\""))
+            .body(Body::from(unrelated.to_string()))
+            .unwrap(),
+    )
+    .await;
+    let status = response.status();
+    let body = support::json(response).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["product"]["applications"][0]["planId"], "standard");
+}
+
+/// A padding entry for a client's or the catalogue's own activity feed.
+/// Not something a later write resubmits — `activity` is server-appended,
+/// never part of a request body — so padding through it, unlike through a
+/// field a request would have to carry, never runs into the 64 KiB
+/// request-body limit no matter how large the *stored* document gets.
+fn padding_activity(bytes: usize) -> ProductActivity {
+    ProductActivity {
+        at: 0,
+        operator: OPERATOR.into(),
+        action: "Padding".into(),
+        resource: "a".repeat(bytes),
+    }
+}
+
+/// The catalogue is grown directly through the repository for the same
+/// reason the client-document size tests below are: a single request body
+/// is capped at 64 KiB, so no HTTP call could carry enough padding in one
+/// go to reach the 900 KiB limit — but `activity` accumulates the same way
+/// a real sequence of catalogue commands would grow it, one entry per
+/// write, just faster. What runs through the real router is the write that
+/// actually matters: a catalogue command, sent as an ordinary operator
+/// would send it, refused once the document it would produce is already
+/// over the limit.
+#[tokio::test]
+async fn a_catalogue_saved_until_it_is_refused_for_size() {
+    let app = control_plane();
+    let current = app.repository.catalogue().await.unwrap();
+
+    let mut catalogue = current.catalogue.clone();
+    loop {
+        catalogue.activity.push(padding_activity(50_000));
+
+        if catalogue.render().unwrap().len() > 900 * 1024 {
+            break;
+        }
+    }
+
+    let revision = app
+        .repository
+        .save_catalogue(&catalogue, current.revision.as_ref(), &change())
+        .await
+        .unwrap();
+
+    // Every catalogue command appends its own activity entry, so even a
+    // save that changes nothing about the settings' own values still
+    // grows the document further — and must be refused now that it is
+    // already over the limit.
+    let response = send(
+        &app.router,
+        as_operator("POST", "/api/catalogue")
+            .header("content-type", "application/json")
+            .header("if-match", format!("\"{revision}\""))
+            .body(Body::from(
+                json!({
+                    "action": "saveSettings",
+                    "settings": {
+                        "platformName": catalogue.settings.platform_name,
+                        "defaultRegion": catalogue.settings.default_region,
+                        "timezone": catalogue.settings.timezone,
+                    },
+                })
+                .to_string(),
+            ))
+            .unwrap(),
+    )
+    .await;
+    let status = response.status();
+    let body = support::json(response).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert_eq!(body["error"]["code"], "document_too_large", "{body}");
+}
+
+/// The client document's size sits behind two different limits depending on
+/// which write produced it (see `document_size`'s own rustdoc): an
+/// ordinary write is refused past 900 KiB, but an identity edit — the write
+/// security remediation depends on — is allowed up to 1000 KiB.
+///
+/// The document under test is padded, and seeded, directly through the
+/// repository rather than through a sequence of HTTP writes: a single
+/// request body is capped at 64 KiB, so no HTTP call could carry enough
+/// padding in one go to reach either limit. Padding through
+/// `product.activity` keeps that true regardless — an entry there is never
+/// part of what either edit below resubmits, so both of their own request
+/// bodies stay small how ever large the stored document grows.
+#[tokio::test]
+async fn a_document_between_the_two_size_limits_blocks_a_product_save_but_not_an_identity_edit() {
+    let app = control_plane();
+    let acme = ClientId::try_new("acme").unwrap();
+    let current = app.repository.get(&acme).await.unwrap();
+
+    // Fifty-thousand-byte steps: fine enough, against the ~124 KiB window
+    // between the two limits, that a step cannot cross both at once, and
+    // few enough (about eighteen) that padding stays fast — each step
+    // re-renders and re-parses the whole document so far.
+    let mut padded = current.document.clone();
+    loop {
+        padded = padded.with_activity(padding_activity(50_000)).unwrap();
+
+        if padded.render().unwrap().len() > 900 * 1024 {
+            break;
+        }
+    }
+    assert!(
+        padded.render().unwrap().len() < 1000 * 1024,
+        "the seeded document overshot the remediation limit; reduce the padding step"
+    );
+
+    let revision = app
+        .repository
+        .update(&acme, &padded, &current.revision, &change())
+        .await
+        .unwrap();
+
+    let save_response = send(
+        &app.router,
+        as_operator("PUT", "/api/clients/acme/product")
+            .header("content-type", "application/json")
+            .header("if-match", format!("\"{revision}\""))
+            .body(Body::from(
+                json!({
+                    "displayName": "Acme", "hosts": ["www.example.com"], "legalName": "Acme Ltd",
+                    "region": "NZ", "timezone": "Pacific/Auckland", "configuration": {}, "applications": []
+                })
+                .to_string(),
+            ))
+            .unwrap(),
+    )
+    .await;
+    let save_status = save_response.status();
+    let save_body = support::json(save_response).await;
+    assert_eq!(save_status, StatusCode::UNPROCESSABLE_ENTITY, "{save_body}");
+    assert_eq!(save_body["error"]["code"], "document_too_large", "{save_body}");
+
+    // The failed save above did not move the revision: the document is
+    // still exactly the size that just refused a product save, and an
+    // identity edit at that same size — a tiny, ordinary one, adding no
+    // padding of its own — must still succeed.
+    let identity_response = send(
+        &app.router,
+        as_operator("PUT", "/api/clients/acme/identity")
+            .header("content-type", "application/json")
+            .header("if-match", format!("\"{revision}\""))
+            .body(Body::from(
+                json!({
+                    "realm": "acme",
+                    "roles": ["Client Realm Administrator", "Client Realm User", "Extra Role"],
+                    "clients": [],
+                })
+                .to_string(),
+            ))
+            .unwrap(),
+    )
+    .await;
+    let identity_status = identity_response.status();
+    let identity_body = support::json(identity_response).await;
+    assert_eq!(identity_status, StatusCode::OK, "{identity_body}");
 }
 
 /// Shared by the tests above that write to the repository directly rather

@@ -1,16 +1,7 @@
 //! Creating a client is a single desired-state write, refused when the id or
 //! the realm it would take is not this operator's to take.
-//!
-//! In the 121–150 line band. The reason is that this is one method,
-//! `create_client`, together with the one private helper it calls and
-//! nothing else — the realm check needed its own name and its own rustdoc
-//! precisely because the reasoning behind it is the load-bearing part of
-//! this file, and folding it back into `create_client`'s body to save lines
-//! would bury that reasoning inside a longer function rather than remove it.
 
-use fabric_client_model::{
-    catalogue::CreateClientRequest, ClientDocument, ClientId, DesiredStateError, RealmName,
-};
+use fabric_client_model::{catalogue::CreateClientRequest, ClientDocument};
 
 use crate::{
     audit, document_size, ChangeContext, ClientService, ControlPlaneError, Operator, RepositoryError,
@@ -60,23 +51,35 @@ impl ClientService {
             summary: format!("create client {}", request.id),
         };
 
-        // A `Conflict` from `create` is not the one unambiguous event it
-        // looks like. On Git, `status_failure` maps both a stale-blob `409`
-        // and an unrelated validation `422` to this same variant — so it
-        // could mean "this id is already a document" or "somebody else's
-        // commit landed on the branch at the same moment, and this write
-        // never happened at all". Re-reading tells them apart: a document
-        // now at this id means the id really is taken (`ClientExists`, not
-        // retryable); nothing there means the write can be retried
-        // (`RevisionConflict`).
+        // Neither a `Conflict` nor a `Rejected` from `create` is the one
+        // unambiguous event either looks like on its own.
+        //
+        // `Conflict` is Git's `409`: ordinarily a lost race on the branch
+        // ref, but two creates of the same id racing each other can also
+        // land as this. `Rejected` is Git's `422` on a create specifically
+        // (see `fabric_client_git`'s `create_status_failure`, which is why
+        // this is not the same `422` an *update*'s `Conflict` also covers):
+        // GitHub answers it both when the file already exists — a create
+        // carries no `sha`, so there is nothing to be stale against — and
+        // for a genuine validation failure this platform's own request
+        // caused. Re-reading tells every one of these apart: a document now
+        // at this id means the id really is taken (`ClientExists`,
+        // whichever status reported it); nothing there after a `Conflict`
+        // means the write can be retried (`RevisionConflict`); nothing
+        // there after a `Rejected` means the request really was invalid,
+        // and stays `Rejected` — not retryable, because nothing about
+        // asking again would change the answer.
         let revision = match repository.create(&document, &change).await {
             Ok(revision) => revision,
-            Err(RepositoryError::Conflict) => {
+            Err(lost_race @ (RepositoryError::Conflict | RepositoryError::Rejected { .. })) => {
                 return Err(match repository.get(&request.id).await {
                     Ok(_) => ControlPlaneError::ClientExists {
                         id: request.id.clone(),
                     },
-                    Err(RepositoryError::NotFound { .. }) => ControlPlaneError::RevisionConflict,
+                    Err(RepositoryError::NotFound { .. }) => match lost_race {
+                        RepositoryError::Conflict => ControlPlaneError::RevisionConflict,
+                        other => ControlPlaneError::from_repository(other),
+                    },
                     Err(other) => ControlPlaneError::from_repository(other),
                 });
             }
@@ -89,61 +92,5 @@ impl ClientService {
         audit::client_created(operator, &request.id, &revision);
 
         Ok(StoredClient { document, revision })
-    }
-
-    /// Refuses a realm that is reserved, or that another stored client
-    /// already declares.
-    ///
-    /// # Why this matters
-    ///
-    /// [`ClientDocument::create`] sets a new client's realm to its own id,
-    /// and reconciliation treats *any* realm the document names as this
-    /// client's — including one that already exists for another reason.
-    /// Keycloak answers `409` to a realm-create call that finds the realm
-    /// already there, and this platform's own admin client treats that as
-    /// success (see `fabric_keycloak::admin`'s `create`), so the very next
-    /// sweep would rename that realm, add roles to it and write application
-    /// clients into it — using this operator's own bearer. A client id of
-    /// `master`, or one matching a realm another client document already
-    /// declares by hand, is exactly the takeover this refuses before a
-    /// document is ever written.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ControlPlaneError::RealmUnavailable`] if the realm this id
-    /// would produce is reserved, or is already declared by another client's
-    /// stored document.
-    async fn check_realm_available(&self, id: &ClientId) -> Result<(), ControlPlaneError> {
-        let realm = RealmName::try_new(id.as_str()).map_err(|error| {
-            ControlPlaneError::InvalidRequest(DesiredStateError::InvalidField {
-                field: "id",
-                detail: error.to_string(),
-            })
-        })?;
-
-        if self.reserved_realms().contains(&realm) {
-            return Err(ControlPlaneError::RealmUnavailable { realm });
-        }
-
-        let clients = self
-            .repository
-            .current()
-            .list()
-            .await
-            .map_err(ControlPlaneError::from_repository)?;
-
-        // Excludes a client already stored under *this same* id: realm and
-        // id are the same string by construction, so re-requesting an id
-        // that already exists would otherwise always collide with itself
-        // here first — reported as a realm conflict with some other tenant,
-        // when it is a plain duplicate id. That one is `create`'s own job,
-        // below, which answers it as `ClientExists`.
-        if clients.iter().any(|stored| {
-            stored.document.client().identity.realm == realm && stored.document.client().id != *id
-        }) {
-            return Err(ControlPlaneError::RealmUnavailable { realm });
-        }
-
-        Ok(())
     }
 }

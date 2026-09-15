@@ -8,13 +8,10 @@ use crate::{DesiredStateError, Host, RedirectStrategy, RedirectStrategyKind, Red
 /// The placeholder an application's `domain` is written with.
 const PLACEHOLDER: &str = "{client}";
 
-/// The longest label a real client id can ever substitute — the DNS label
-/// limit every [`ClientId`](crate::ClientId) is already bound to
-/// (`fabric_core::ids::slug::MAX_LENGTH`). Used to build the worst case a
-/// publish has to survive, so a template that only fails for a client with an
-/// unusually long id is caught here rather than by that client's own
-/// assignment.
-const LONGEST_CLIENT_ID: usize = 63;
+/// The longest a whole DNS label may be — what a real client id substituted
+/// into `{client}`'s own label must still fit inside, alongside whatever
+/// else that label carries.
+const LONGEST_LABEL: usize = 63;
 
 impl ApplicationDefinition {
     /// Checks the hostname template, more strictly while publishing.
@@ -31,6 +28,23 @@ impl ApplicationDefinition {
     /// Deferring that second question to assignment time is how a domain of
     /// `{client}.internal` or `{client}.example.test` used to publish
     /// successfully and then refuse every client it was assigned to.
+    ///
+    /// # Why the worst case is not always a 63-character client id
+    ///
+    /// A template like `{client}-portal.example.com` shares its first DNS
+    /// label with seven literal characters besides the placeholder, so the
+    /// longest client id that label could ever hold is `63 - 7`, not the
+    /// full 63 a bare `{client}.example.com` allows — checking against 63
+    /// regardless would refuse the affixed form for every client, including
+    /// ones whose id could fit it fine. The worst case substituted here is
+    /// sized to the label `{client}` actually shares, floored at one
+    /// character so a template cannot shrink the check to nothing. A real
+    /// client id longer than what its own label has room for is not this
+    /// check's problem: `ClientDocument::with_application_identity` already
+    /// refuses that specific combination the moment such a client is
+    /// assigned this application, which is where a fix belongs — narrowing
+    /// one client's id or the template's own affix — that this
+    /// catalogue-wide check has no business making for every other client.
     ///
     /// # Errors
     ///
@@ -64,7 +78,21 @@ impl ApplicationDefinition {
             )));
         }
 
-        let host = self.domain.replace(PLACEHOLDER, &"a".repeat(LONGEST_CLIENT_ID));
+        // The label `{client}` shares with any literal affix, minus the
+        // placeholder itself — what a substituted client id has to leave
+        // room for. `occurrences == 1` was just checked above, so the label
+        // this finds necessarily contains the placeholder and is at least
+        // as long as it.
+        let affix_len = self
+            .domain
+            .split('.')
+            .find(|label| label.contains(PLACEHOLDER))
+            .map_or(0, |label| label.len() - PLACEHOLDER.len());
+        let worst_case_client_len = LONGEST_LABEL.saturating_sub(affix_len).max(1);
+
+        let host = self
+            .domain
+            .replace(PLACEHOLDER, &"a".repeat(worst_case_client_len));
         let callback = RedirectUri::try_new(format!("https://{host}/callback"))
             .map_err(|error| invalid(format!("Hostname template produces an invalid callback: {error}")))?;
 
@@ -135,5 +163,19 @@ mod tests {
     #[test]
     fn publishing_accepts_an_ordinary_public_domain() {
         definition("{client}.example.com").validate_domain(true).unwrap();
+    }
+
+    #[test]
+    fn publishing_accepts_a_template_with_an_affix_sharing_the_placeholders_label() {
+        // A bare `{client}` allows a 63-character worst case; sharing its
+        // label with `-portal` (7 characters) must not check against that
+        // same 63 — it would make this template unpublishable for every
+        // client, not only ones whose id is actually too long.
+        definition("{client}-portal.example.com")
+            .validate_domain(true)
+            .unwrap();
+        definition("app-{client}.example.com")
+            .validate_domain(true)
+            .unwrap();
     }
 }

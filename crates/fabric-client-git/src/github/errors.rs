@@ -1,10 +1,14 @@
 //! Turning transport and status failures into repository errors.
 
+mod create_status_failure;
+
 use fabric_client_model::ClientId;
 use fabric_control_plane::RepositoryError;
 use fabric_git_host::TokenError;
 use reqwest::header::HeaderMap;
 use reqwest::StatusCode;
+
+pub(super) use create_status_failure::create_status_failure;
 
 /// The header the host reports remaining quota in.
 const RATE_LIMIT_REMAINING: &str = "x-ratelimit-remaining";
@@ -43,10 +47,13 @@ pub(super) fn transport_failure(operation: &str, error: &reqwest::Error) -> Repo
 /// - **`403` with no quota left** is a rate limit, which is transient, and
 ///   reporting it as a refused credential would send an operator looking for a
 ///   secret that is perfectly fine. The header is what distinguishes them.
-/// - **`409` and `422`** both mean the write's precondition did not hold: the
-///   host uses one for a stale blob hash and the other for related conflicts
-///   on the same file. Both are a lost race, and both must produce the same
-///   answer — re-read and redo.
+/// - **`409` and `422`** both mean an *update*'s precondition did not hold:
+///   the host uses one for a stale blob hash and the other for related
+///   conflicts on the same file. Both are a lost race, and both must
+///   produce the same answer — re-read and redo. This does not hold for a
+///   *create*, which carries no blob hash to be stale against — see
+///   [`create_status_failure`] for why that call site uses its own mapping
+///   instead of this one.
 /// - **Other `4xx`** are the platform asking for something the host will not
 ///   do, which no retry fixes. Reporting them as `Unavailable` would invite a
 ///   retry loop over a misconfiguration (§23).

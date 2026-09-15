@@ -1,13 +1,17 @@
 //! The control plane's domain operations.
 //!
-//! Just over the 120-line advisory threshold. The reason is that this is one
-//! struct, [`ClientService`], together with its constructor and its trivial
-//! accessors — the struct's own doc below says why every rule about a client
-//! lives in exactly one copy here; splitting its methods across files would
-//! be splitting rules that exist specifically so they cannot disagree.
+//! In the 121–150 line band. The reason is that this is one struct,
+//! [`ClientService`], its four fields' own rustdoc — which is where the
+//! reasoning for two of them, `reserved_realms` and `reserved_client_ids`,
+//! actually lives — together with its constructor and its two plain reads,
+//! `list` and `get`. Every rule that *does* something to a client is
+//! already one file per rule (`create_client.rs`, `set_product.rs`, and the
+//! rest); what stays here is the struct those files all share and the
+//! handful of methods too small to be their own rule.
 
 mod catalogue;
 mod create_client;
+mod realm_available;
 mod reconciliation_view;
 #[cfg(test)]
 mod reconciliation_view_tests;
@@ -16,11 +20,12 @@ mod reserved;
 mod service_tests;
 mod set_identity;
 mod set_product;
+mod state_access;
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use fabric_client_model::{ClientId, RealmName};
+use fabric_client_model::ClientId;
 use fabric_core::Clock;
 use fabric_reconciliation::ReconciliationStatusStore;
 
@@ -63,38 +68,32 @@ pub struct ClientService {
     /// Realms a new client may never declare. Computed at startup by
     /// whoever assembles this deployment — see
     /// [`create_client`](Self::create_client) for what it protects.
-    reserved_realms: Arc<BTreeSet<RealmName>>,
+    ///
+    /// Plain, case-folded strings, not [`RealmName`](fabric_client_model::RealmName):
+    /// parsing a Keycloak realm name through `RealmName`'s strict DNS-label
+    /// rule could fail a deployment's startup over a realm name Keycloak
+    /// itself had always accepted. See
+    /// `fabric_control_plane_api::startup::reserved_names::realms` for the
+    /// full argument, and where these are actually computed.
+    reserved_realms: Arc<BTreeSet<String>>,
 
     /// Application ids the catalogue may never accept. Plain strings, not
-    /// [`ClientId`] — see `service::catalogue::change_catalogue` for why —
-    /// computed the same way, and for the same reason, as `reserved_realms`.
+    /// [`ClientId`]: this deployment's own console or Keycloak adapter
+    /// `client_id` is arbitrary configuration this crate does not choose,
+    /// so forcing it through `ClientId::try_new` risks the same startup
+    /// failure `reserved_realms` avoids above. Computed the same way, and
+    /// for the same reason, as `reserved_realms`.
     reserved_client_ids: Arc<BTreeSet<String>>,
 }
 
 impl ClientService {
-    /// What is known about whether desired state has taken effect.
-    ///
-    /// Exposed for the convergence pass, which records into the same store the
-    /// read paths report from — two stores would be two answers to one
-    /// question.
-    #[must_use]
-    pub(crate) fn statuses(&self) -> &ReconciliationStatusStore {
-        &self.reconciliation
-    }
-
-    /// The clock, so a pass stamps outcomes the same way a write does.
-    #[must_use]
-    pub(crate) fn clock(&self) -> &dyn Clock {
-        self.clock.as_ref()
-    }
-
     /// Assembles the service.
     #[must_use]
     pub fn new(
         repository: Arc<DesiredStateBinding>,
         reconciliation: Arc<ReconciliationStatusStore>,
         clock: Arc<dyn Clock>,
-        reserved_realms: Arc<BTreeSet<RealmName>>,
+        reserved_realms: Arc<BTreeSet<String>>,
         reserved_client_ids: Arc<BTreeSet<String>>,
     ) -> Self {
         Self {

@@ -2,13 +2,14 @@
 use super::{
     contents::StoredFile,
     decoding::decode,
-    errors::{status_failure, transport_failure},
+    errors::{create_status_failure, status_failure, transport_failure},
     http::GitHost,
     wire::{ContentsEntry, PutContentsResponse},
 };
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use fabric_client_model::{ClientId, ClientRevision};
 use fabric_control_plane::RepositoryError;
+use reqwest::{header::HeaderMap, StatusCode};
 impl GitHost {
     pub(crate) async fn read_catalogue(&self) -> Result<Option<StoredFile>, RepositoryError> {
         let response = self
@@ -52,8 +53,14 @@ impl GitHost {
         text: &str,
         message: &str,
     ) -> Result<ClientRevision, RepositoryError> {
-        self.write_file(&self.document_path(client), text, None, message)
-            .await
+        self.write_file(
+            &self.document_path(client),
+            text,
+            None,
+            message,
+            create_status_failure,
+        )
+        .await
     }
     pub(crate) async fn write_catalogue(
         &self,
@@ -61,15 +68,20 @@ impl GitHost {
         expected: Option<&ClientRevision>,
         message: &str,
     ) -> Result<ClientRevision, RepositoryError> {
-        self.write_file("fabric-catalogue.yaml", text, expected, message)
+        self.write_file("fabric-catalogue.yaml", text, expected, message, status_failure)
             .await
     }
+    /// Writes a file through the contents API, mapping a non-success status
+    /// with `on_status_failure` — different callers give a `sha`-less
+    /// create a different meaning than an update, see
+    /// [`create_status_failure`] for why.
     async fn write_file(
         &self,
         path: &str,
         text: &str,
         expected: Option<&ClientRevision>,
         message: &str,
+        on_status_failure: fn(&str, StatusCode, &HeaderMap, Option<&ClientId>) -> RepositoryError,
     ) -> Result<ClientRevision, RepositoryError> {
         let mut body = serde_json::json!({ "message": message, "content": BASE64.encode(text), "branch": self.config.branch, "committer": { "name": self.config.committer_name, "email": self.config.committer_email } });
         if let (Some(revision), Some(map)) = (expected, body.as_object_mut()) {
@@ -82,7 +94,7 @@ impl GitHost {
             )
             .await?;
         if !response.status().is_success() {
-            return Err(status_failure(
+            return Err(on_status_failure(
                 "writing desired state",
                 response.status(),
                 response.headers(),

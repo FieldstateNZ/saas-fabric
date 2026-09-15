@@ -81,7 +81,7 @@ pub mod testing;
 // model's; this is the port's vocabulary made reachable from one place.
 pub use client_secrets::{ClientSecrets, SecretMetadata, SecretPath, SecretValues, SecretsError};
 pub use config::{ControlPlaneConfig, OperatorConfig, ReconciliationConfig};
-pub use errors::ControlPlaneError;
+pub use errors::{ControlPlaneError, RealmUnavailableReason};
 pub use fabric_client_model::SecretNamespace;
 pub use git_integration::{
     AccessibleRepository, AppCreationRequest, ClientConfigurationTarget, CreatedApp, DesiredStateFactory,

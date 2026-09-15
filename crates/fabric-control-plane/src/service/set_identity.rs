@@ -89,10 +89,17 @@ impl ClientService {
             })?;
 
         // Measured before the write, not left to the repository to
-        // discover: GitHub's contents API cannot read a file this size
-        // back, so a document that grows past it must be refused here
-        // rather than committed and then unreadable.
-        crate::document_size::check(&updated.render().map_err(ControlPlaneError::InvalidRequest)?)?;
+        // discover: GitHub's contents API cannot read a file this size back,
+        // so a document that grows past it must be refused here rather than
+        // committed and then unreadable. Checked against the *remediation*
+        // limit, not the ordinary one `create_client` and `set_product` use
+        // — an identity edit is exactly how an operator removes a
+        // compromised redirect URI or role, and the ordinary limit would
+        // block that edit on the very document most in need of it. See
+        // `document_size`'s own rustdoc for the full argument.
+        crate::document_size::check_remediation(
+            &updated.render().map_err(ControlPlaneError::InvalidRequest)?,
+        )?;
 
         let change = ChangeContext {
             requested_by: operator.subject().to_owned(),

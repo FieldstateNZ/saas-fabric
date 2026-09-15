@@ -1,6 +1,13 @@
 //! Repository operations serialize writes and publish only committed snapshots.
+//!
+//! In the 121–150 line band. The reason is that Rust requires every method
+//! of a trait in one `impl` block — `ClientRepository`'s seven methods
+//! cannot be spread across files the way free functions can — together
+//! with the two small helpers (`render_client`, `invalid`) those methods
+//! share and that have no other caller to be useful to.
 use super::commit::commit_and_swap;
-use super::{unavailable, LocalClientRepository, Record};
+use super::error_helpers::{rejected, unavailable};
+use super::{LocalClientRepository, Record};
 use async_trait::async_trait;
 use fabric_client_model::{
     catalogue::{Catalogue, StoredCatalogue},
@@ -102,7 +109,7 @@ impl ClientRepository for LocalClientRepository {
         expected: Option<&ClientRevision>,
         _change: &ChangeContext,
     ) -> Result<ClientRevision, RepositoryError> {
-        let text = catalogue.render().map_err(|_| unavailable("Invalid catalogue"))?;
+        let text = catalogue.render().map_err(|_| rejected("Invalid catalogue"))?;
         let expected = expected.cloned();
 
         commit_and_swap(Arc::clone(&self.inner), move |next| {
@@ -123,11 +130,10 @@ impl ClientRepository for LocalClientRepository {
     }
 }
 /// Renders a client document, mapping a failure the way `save_catalogue` maps
-/// a catalogue's.
+/// a catalogue's — [`rejected`], not [`unavailable`]: a document that will
+/// not render is invalid, not a repository having a bad minute.
 fn render_client(document: &ClientDocument) -> Result<String, RepositoryError> {
-    document
-        .render()
-        .map_err(|_| unavailable("Invalid client document"))
+    document.render().map_err(|_| rejected("Invalid client document"))
 }
 /// Builds the "stored document will not parse" error for a listing, or falls
 /// back to `Unavailable` in the one case that should be unreachable: the

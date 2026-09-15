@@ -1,4 +1,11 @@
 //! Applies operator commands while owning version numbers and audit attribution.
+//!
+//! In the 121–150 line band. The reason is `apply` itself: one `match` over
+//! every [`CatalogueCommand`] variant, because that match is exactly the
+//! place a new command is wired in, and splitting each arm into its own
+//! function would still leave this file naming all six and stitching their
+//! results into one activity record — the coordination, not the individual
+//! arms, is what makes this one function.
 use super::validation::{invalid, text};
 use super::{
     Application, ApplicationDefinition, ApplicationRelease, Catalogue, CatalogueCommand, ProductActivity,

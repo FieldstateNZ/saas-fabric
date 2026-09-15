@@ -1,11 +1,21 @@
 //! A desired-state repository held in memory.
+//!
+//! In the 121–150 line band. The reason is that this is one struct
+//! together with its constructor and the handful of methods every other
+//! file in this module needs from it — `insert` and `set_unavailable` for
+//! tests, `next_revision` and `check_available` for
+//! `in_memory_behaviour.rs`'s trait impl. Splitting those off `Self` would
+//! not shrink this file so much as move its methods one file over, still
+//! needing the same fields.
 
 use std::collections::BTreeMap;
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use fabric_client_model::{ClientDocument, ClientId, ClientRevision};
 
-use crate::repository::{RepositoryError, StoredClient};
+use crate::repository::RepositoryError;
+
+pub(super) use super::in_memory_records::{CatalogueRecord, ClientRecord};
 
 /// A repository backed by a map, for tests.
 ///
@@ -29,8 +39,10 @@ use crate::repository::{RepositoryError, StoredClient};
 /// build a router against it.
 #[derive(Default)]
 pub struct InMemoryClientRepository {
-    /// The stored clients, keyed by id.
-    pub(super) clients: Mutex<BTreeMap<ClientId, StoredClient>>,
+    /// The stored clients, keyed by id, each rendered — never the typed
+    /// struct. The same reasoning as `catalogue`, applied to the other kind
+    /// of document this repository holds.
+    pub(super) clients: Mutex<BTreeMap<ClientId, ClientRecord>>,
 
     /// The catalogue, rendered — never the typed struct.
     ///
@@ -64,17 +76,22 @@ impl InMemoryClientRepository {
     ///
     /// # Errors
     ///
-    /// Returns [`RepositoryError`] only if the generated revision could not be
-    /// parsed, which `rev-<digits>` never fails at.
-    pub fn insert(&self, document: ClientDocument) -> Result<ClientRevision, RepositoryError> {
+    /// Returns [`RepositoryError`] if the generated revision could not be
+    /// parsed (which `rev-<digits>` never fails at), or if `document` will
+    /// not render — the same round trip [`ClientRepository::create`](crate::ClientRepository::create)
+    /// applies to every client this repository is asked to store.
+    pub fn insert(&self, document: &ClientDocument) -> Result<ClientRevision, RepositoryError> {
+        let text = document.render().map_err(|_| RepositoryError::Rejected {
+            detail: "Invalid client document".into(),
+        })?;
         let revision = self.next_revision()?;
         let client = document.client().id.clone();
 
         lock(&self.clients).insert(
             client,
-            StoredClient {
-                document,
+            ClientRecord {
                 revision: revision.clone(),
+                text,
             },
         );
 
@@ -119,15 +136,4 @@ impl InMemoryClientRepository {
 /// Takes a lock, recovering from a poisoned one rather than panicking.
 pub(super) fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
-}
-
-/// The catalogue as this repository actually keeps it: rendered text and the
-/// revision that write produced.
-pub(super) struct CatalogueRecord {
-    /// The revision this text was written at.
-    pub(super) revision: ClientRevision,
-
-    /// The rendered document — what `Catalogue::render` produced, and what
-    /// `Catalogue::parse` reads back.
-    pub(super) text: String,
 }

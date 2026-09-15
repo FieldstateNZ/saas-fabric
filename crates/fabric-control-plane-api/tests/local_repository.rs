@@ -206,3 +206,27 @@ async fn a_snapshot_predating_the_versioned_catalogue_names_the_state_file_and_i
     assert!(message.contains(".fabric-state.json"), "{message}");
     assert!(message.contains("predates the versioned catalogue"), "{message}");
 }
+
+/// [`a_snapshot_predating_the_versioned_catalogue_names_the_state_file_and_is_refused`]'s
+/// sibling: a stored catalogue that names an `apiVersion` this build does
+/// not recognise is a different problem from a pre-envelope one — it
+/// postdates this build's understanding rather than predating the envelope
+/// — and must not be reported with the same "predates the versioned
+/// catalogue" message.
+#[tokio::test]
+async fn a_snapshot_with_an_unrecognised_apiversion_names_what_was_found_not_legacy() {
+    let path = TempDir::unique("fabric-local-future-catalogue");
+    std::fs::write(
+        path.join(".fabric-state.json"),
+        r#"{"writes":1,"clients":{},"catalogue":{"revision":"local-1","text":"apiVersion: fabric.fieldstate.nz/v2\nkind: Catalogue\nspec:\n  applications: []\n"}}"#,
+    )
+    .unwrap();
+
+    let message = match LocalClientRepository::open(&path).await {
+        Ok(_) => panic!("an unrecognised apiVersion must be refused, not opened"),
+        Err(error) => error.to_string(),
+    };
+
+    assert!(!message.contains("predates the versioned catalogue"), "{message}");
+    assert!(message.contains("fabric.fieldstate.nz/v2/Catalogue"), "{message}");
+}

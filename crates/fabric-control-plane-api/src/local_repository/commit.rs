@@ -1,6 +1,7 @@
 //! Committing a mutated snapshot to disk before it becomes the current one,
 //! without losing that commit to a cancelled caller.
-use super::{storage, unavailable, Inner, Snapshot};
+use super::error_helpers::unavailable;
+use super::{storage, Inner, Snapshot};
 use fabric_control_plane::RepositoryError;
 use std::sync::Arc;
 

@@ -73,7 +73,9 @@ impl Envelope {
 /// # Errors
 ///
 /// Returns [`DesiredStateError::UnknownDocumentKind`], naming the pair this
-/// model expects and the pair the document actually carried.
+/// model expects and the pair the document actually carried — or `None` if
+/// it carried neither field, which is what a document written before this
+/// envelope concept existed looks like.
 pub(super) fn check_document_kind(raw: &Value) -> Result<(), DesiredStateError> {
     let api_version = string_at(raw, "apiVersion");
     let kind = string_at(raw, "kind");
@@ -82,13 +84,17 @@ pub(super) fn check_document_kind(raw: &Value) -> Result<(), DesiredStateError> 
         return Ok(());
     }
 
-    Err(DesiredStateError::UnknownDocumentKind {
-        expected: EXPECTED_DOCUMENT,
-        found: format!(
+    let found = (api_version.is_some() || kind.is_some()).then(|| {
+        format!(
             "{}/{}",
             api_version.unwrap_or("(no apiVersion)"),
             kind.unwrap_or("(no kind)"),
-        ),
+        )
+    });
+
+    Err(DesiredStateError::UnknownDocumentKind {
+        expected: EXPECTED_DOCUMENT,
+        found,
     })
 }
 

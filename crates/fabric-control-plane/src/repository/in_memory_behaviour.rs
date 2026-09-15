@@ -5,12 +5,19 @@
 //! make the repository unavailable — and this one is the surface the *domain*
 //! drives. Two concerns that share a struct, which the house convention puts
 //! in two modules rather than one long file.
+//!
+//! Still in the 121–150 line band even after that split. The reason is the
+//! same one `local_repository/operations.rs` gives: `ClientRepository`'s
+//! seven methods are one trait impl, which Rust requires in a single
+//! `impl` block regardless of how unrelated two of them are to the other
+//! five.
 
 use async_trait::async_trait;
 use fabric_client_model::catalogue::{Catalogue, StoredCatalogue};
 use fabric_client_model::{ClientDocument, ClientId, ClientRevision};
 
-use crate::repository::in_memory::{lock, CatalogueRecord, InMemoryClientRepository};
+use crate::repository::in_memory::{lock, CatalogueRecord, ClientRecord, InMemoryClientRepository};
+use crate::repository::in_memory_documents::{render, stored};
 use crate::repository::{ChangeContext, ClientRepository, RepositoryError, StoredClient};
 
 #[async_trait]
@@ -18,18 +25,21 @@ impl ClientRepository for InMemoryClientRepository {
     async fn list(&self) -> Result<Vec<StoredClient>, RepositoryError> {
         self.check_available()?;
 
-        Ok(lock(&self.clients).values().cloned().collect())
+        lock(&self.clients)
+            .iter()
+            .map(|(client, record)| stored(client, record))
+            .collect()
     }
 
     async fn get(&self, client: &ClientId) -> Result<StoredClient, RepositoryError> {
         self.check_available()?;
 
-        lock(&self.clients)
-            .get(client)
-            .cloned()
-            .ok_or_else(|| RepositoryError::NotFound {
-                client: client.clone(),
-            })
+        let clients = lock(&self.clients);
+        let record = clients.get(client).ok_or_else(|| RepositoryError::NotFound {
+            client: client.clone(),
+        })?;
+
+        stored(client, record)
     }
 
     async fn update(
@@ -41,6 +51,10 @@ impl ClientRepository for InMemoryClientRepository {
     ) -> Result<ClientRevision, RepositoryError> {
         self.check_available()?;
 
+        // The same round trip `create` applies, below: rendered, then
+        // parsed back with exactly the code that will read it again, before
+        // any lock on the stored map is even taken.
+        let text = render(document)?;
         let revision = self.next_revision()?;
         let mut clients = lock(&self.clients);
 
@@ -52,7 +66,7 @@ impl ClientRepository for InMemoryClientRepository {
             return Err(RepositoryError::Conflict);
         }
 
-        current.document = document.clone();
+        current.text = text;
         current.revision = revision.clone();
 
         Ok(revision)
@@ -64,6 +78,7 @@ impl ClientRepository for InMemoryClientRepository {
         _change: &ChangeContext,
     ) -> Result<ClientRevision, RepositoryError> {
         self.check_available()?;
+        let text = render(document)?;
         let mut clients = lock(&self.clients);
         if clients.contains_key(&document.client().id) {
             return Err(RepositoryError::Conflict);
@@ -71,9 +86,9 @@ impl ClientRepository for InMemoryClientRepository {
         let revision = self.next_revision()?;
         clients.insert(
             document.client().id.clone(),
-            StoredClient {
-                document: document.clone(),
+            ClientRecord {
                 revision: revision.clone(),
+                text,
             },
         );
         Ok(revision)

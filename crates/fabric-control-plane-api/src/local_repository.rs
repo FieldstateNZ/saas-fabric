@@ -1,5 +1,6 @@
 //! Durable single-process development storage with atomic snapshot replacement.
 mod commit;
+mod error_helpers;
 mod errors;
 mod open;
 mod operations;
@@ -10,12 +11,10 @@ use fabric_client_model::{
 };
 use fabric_control_plane::{RepositoryError, StoredClient};
 use serde::{Deserialize, Serialize};
-use std::{
-    collections::BTreeMap,
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
 use tokio::sync::Mutex;
+
+use error_helpers::unavailable;
 
 pub use errors::LocalRepositoryError;
 
@@ -97,40 +96,6 @@ impl Snapshot {
                         .map_err(|_| unavailable("Invalid catalogue revision"))?,
                 ),
             }),
-        }
-    }
-}
-fn unavailable(detail: &str) -> RepositoryError {
-    RepositoryError::Unavailable {
-        detail: detail.into(),
-    }
-}
-/// Wraps an I/O failure with the path it happened against.
-fn io(path: &Path, source: std::io::Error) -> LocalRepositoryError {
-    LocalRepositoryError::Io {
-        path: path.to_path_buf(),
-        source,
-    }
-}
-/// Wraps a snapshot JSON failure with the path it came from.
-fn invalid_snapshot(path: &Path, error: &serde_json::Error) -> LocalRepositoryError {
-    LocalRepositoryError::InvalidSnapshot {
-        path: path.to_path_buf(),
-        detail: error.to_string(),
-    }
-}
-/// Distinguishes a pre-envelope catalogue from every other way one can fail
-/// to parse — see [`LocalRepositoryError::LegacyCatalogue`].
-fn catalogue_error(path: &Path, source: DesiredStateError) -> LocalRepositoryError {
-    if matches!(source, DesiredStateError::UnknownDocumentKind { .. }) {
-        LocalRepositoryError::LegacyCatalogue {
-            path: path.to_path_buf(),
-            source,
-        }
-    } else {
-        LocalRepositoryError::InvalidCatalogue {
-            path: path.to_path_buf(),
-            source,
         }
     }
 }

@@ -1,4 +1,13 @@
 //! Every way a client's desired state can be wrong.
+//!
+//! In the 121–150 line band. The reason is the same one
+//! `fabric-control-plane`'s own `errors.rs` gives for its own exemption
+//! from the 150-line hard limit: this is one enum, every way a document can
+//! be refused, with the reasoning for each variant's message beside it.
+//! Splitting it would put some refusals in one file and some in another,
+//! with no principled line between them — the next person adding a
+//! variant would have to guess which file, rather than adding one more
+//! arm to the one place they all already are.
 
 /// A desired-state document that cannot be accepted.
 ///
@@ -42,12 +51,18 @@ pub enum DesiredStateError {
     /// mean something entirely different by `spec.identity`, and guessing is
     /// how a control plane writes a valid-looking document that reconciles
     /// into the wrong resource.
-    #[error("expected {expected}, found {found}")]
+    #[error("expected {expected}, found {}", found.as_deref().unwrap_or("no apiVersion or kind at all"))]
     UnknownDocumentKind {
         /// The `apiVersion/kind` pair this model writes.
         expected: &'static str,
-        /// The pair the document actually carried.
-        found: String,
+        /// The pair the document actually carried — `None` when it carried
+        /// neither field at all, which is what a document written before
+        /// this envelope concept existed looks like, and distinct from
+        /// `Some` naming a pair this build simply does not (yet, or any
+        /// longer) recognise. A caller that only wants "is this the
+        /// legacy, pre-envelope shape or something else" reads this field
+        /// rather than parsing [`Self`]'s rendered message.
+        found: Option<String>,
     },
 
     /// A required field is absent.

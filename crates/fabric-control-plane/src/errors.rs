@@ -4,10 +4,13 @@ mod from_repository;
 
 #[cfg(test)]
 mod error_tests;
+mod realm_unavailable_reason;
 mod response;
 mod status_mapping;
 
 use fabric_client_model::{ClientId, DesiredStateError, RealmName};
+
+pub use realm_unavailable_reason::RealmUnavailableReason;
 
 use crate::operator::OperatorAuthError;
 
@@ -107,14 +110,21 @@ pub enum ControlPlaneError {
     #[error("the catalogue changed since it was read; re-read it and apply the change again")]
     CatalogueRevisionConflict,
 
-    /// A rendered document is larger than this platform will write.
+    /// A write would produce a document larger than this platform will
+    /// store.
     ///
-    /// GitHub's contents API does not return the content of a file over
-    /// 1 MB, so a document that grows past that is a document a future read
-    /// could not recover — refused here, before the write, rather than
-    /// discovered the next time somebody tries to read it back. See
-    /// `document_size` for the exact limit and why it is short of GitHub's.
-    #[error("this document is too large to store; the limit is {limit} bytes")]
+    /// Not a complaint about the request body — `PUT /identity` removing a
+    /// single compromised redirect URI can still trip this, against a
+    /// document that grew large from many earlier, unrelated writes. What
+    /// is refused is the document the write would *produce*: GitHub's
+    /// contents API cannot read a file back once it is over 1 MB, so a
+    /// document that would cross that line is refused here, before the
+    /// write, rather than discovered the next time somebody tries to read
+    /// it back. See `document_size` for the two limits a write is checked
+    /// against and why they differ. Answered as `422`, not `413`: `413`
+    /// describes a request body that is itself too large, which this is
+    /// not.
+    #[error("the document this write would produce would exceed the {limit}-byte limit")]
     DocumentTooLarge {
         /// The limit that was exceeded.
         limit: usize,
@@ -153,22 +163,25 @@ pub enum ControlPlaneError {
     /// A new client would take a realm that is reserved, or already used by
     /// another client.
     ///
-    /// Never says which. `ClientDocument::create` sets a new client's realm
-    /// to its own id, and Keycloak's realm-create treats finding the realm
-    /// already there as success — so a client id of `master`, or one
-    /// matching a realm another client document already declares, would let
-    /// the next reconciliation pass rewrite that realm using this
-    /// operator's own authority. See
+    /// Says which. `ClientDocument::create` sets a new client's realm to its
+    /// own id, and Keycloak's realm-create treats finding the realm already
+    /// there as success — so a client id of `master`, or one matching a
+    /// realm another client document already declares, would let the next
+    /// reconciliation pass rewrite that realm using this operator's own
+    /// authority. See
     /// [`ClientService::create_client`](crate::ClientService::create_client)
-    /// for the whole argument. The message names the realm, because an
-    /// operator has to know what to pick instead, but not whether it was
-    /// reserved or taken — either answer would confirm to a caller who
-    /// should not be able to tell that some *other* client's realm exists at
-    /// all.
-    #[error("the realm {realm} is unavailable; it is reserved, or already used by another client")]
+    /// for the whole argument. An earlier version of this message withheld
+    /// which of the two reasons applied, reasoning that either answer would
+    /// confirm some other client's realm exists — but every operator can
+    /// already see every client's realm through `GET /api/clients`, so
+    /// there was nothing left for that omission to protect, only a less
+    /// useful message.
+    #[error("the realm {realm} is unavailable: {reason}")]
     RealmUnavailable {
         /// The realm this id would have taken.
         realm: RealmName,
+        /// Which of the two reasons this realm could not be taken.
+        reason: RealmUnavailableReason,
     },
 
     /// The desired-state repository could not be reached.

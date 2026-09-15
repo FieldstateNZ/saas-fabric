@@ -3,14 +3,13 @@
 
 use std::collections::BTreeSet;
 
-use fabric_client_model::RealmName;
-
 use crate::ClientService;
 
 impl ClientService {
-    /// Realms a new client may never declare.
+    /// Realms a new client may never declare, as case-folded strings — see
+    /// [`ClientService`]'s own field for why never a `RealmName`.
     #[must_use]
-    pub(crate) fn reserved_realms(&self) -> &BTreeSet<RealmName> {
+    pub(crate) fn reserved_realms(&self) -> &BTreeSet<String> {
         &self.reserved_realms
     }
 

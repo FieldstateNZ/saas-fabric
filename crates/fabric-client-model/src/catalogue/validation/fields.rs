@@ -1,4 +1,12 @@
 //! Type checking for configuration schemas and submitted values.
+//!
+//! In the 121–150 line band. The reason is that a configuration field's
+//! shape and a submitted value's legality are one contract, checked in two
+//! directions: `validate_fields` is what a schema must look like,
+//! `values`/`check` is what a value must satisfy against a field that
+//! shape already produced. `check_key` and `is_timezone` are the two rules
+//! both directions rely on, so they stay where both can reach them rather
+//! than in a file only one of the two would import.
 use super::{invalid, text, unique};
 use crate::catalogue::{ConfigurationField, ConfigurationValues, FieldKind};
 use crate::{ClientId, DesiredStateError, Host};

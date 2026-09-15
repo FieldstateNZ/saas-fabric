@@ -1,7 +1,8 @@
 //! Opening a store: acquire the OS lock, load or import a snapshot, and
 //! validate every document already on disk once — so a later read never has
 //! to discover a stored document does not parse.
-use super::{catalogue_error, invalid_snapshot, io, storage, Inner, LocalClientRepository, Snapshot};
+use super::error_helpers::{catalogue_error, invalid_snapshot, io};
+use super::{storage, Inner, LocalClientRepository, Snapshot};
 use crate::local_repository::LocalRepositoryError;
 use fabric_client_model::catalogue::Catalogue;
 use std::path::Path;

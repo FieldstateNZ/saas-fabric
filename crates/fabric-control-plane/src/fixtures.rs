@@ -40,7 +40,7 @@ pub(crate) fn acme_document() -> ClientDocument {
 /// A repository holding one client, and the revision it is at.
 pub(crate) fn repository_with_acme() -> (Arc<InMemoryClientRepository>, fabric_client_model::ClientRevision) {
     let repository = Arc::new(InMemoryClientRepository::new());
-    let revision = repository.insert(acme_document()).unwrap();
+    let revision = repository.insert(&acme_document()).unwrap();
 
     (repository, revision)
 }

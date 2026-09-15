@@ -1,4 +1,13 @@
 //! Resolves requests to immutable entitlements before writing a client.
+//!
+//! In the 121–150 line band. The reason is `resolve` itself: ADR 0020 §3's
+//! keep-the-stored-copy rule, the timezone check, and the plan and
+//! configuration lookups all decide the one `ClientProduct` a write is
+//! about to commit, and none of them is a rule a second caller would ever
+//! want on its own. `components`/`navigation` stay beside it because they
+//! read the same `ApplicationAssignment` this function produces — moving
+//! them elsewhere would separate a type from the two projections that only
+//! make sense once it exists.
 use super::validation::{invalid, is_timezone, text, unique, values};
 use super::{ApplicationAssignment, Catalogue, ClientProduct, ClientProductRequest};
 use crate::DesiredStateError;

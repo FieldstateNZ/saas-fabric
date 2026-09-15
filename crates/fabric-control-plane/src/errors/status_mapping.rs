@@ -89,10 +89,15 @@ impl ControlPlaneError {
             | Self::ClientExists { .. }
             | Self::RealmUnavailable { .. } => StatusCode::CONFLICT,
 
-            // 413, and not retryable: GitHub's contents API cannot read this
-            // document back once it is this large, so nothing about waiting
-            // and asking again would help.
-            Self::DocumentTooLarge { .. } => StatusCode::PAYLOAD_TOO_LARGE,
+            // 422, not 413: 413 describes a request body that is itself too
+            // large, but the request here can be a small edit — removing one
+            // role — against a document that is already big for reasons
+            // that edit did not create. What is unprocessable is the
+            // document the write would produce, which is exactly what 422
+            // says, and not retryable: GitHub's contents API cannot read
+            // this document back once it is this large, so nothing about
+            // waiting and asking again would help.
+            Self::DocumentTooLarge { .. } => StatusCode::UNPROCESSABLE_ENTITY,
 
             // A stored document that will not parse is the platform's problem,
             // not the caller's, and no retry fixes it — whether the document

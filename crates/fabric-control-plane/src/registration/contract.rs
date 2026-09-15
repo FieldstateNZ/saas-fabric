@@ -4,7 +4,6 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use axum::Router;
-use fabric_client_model::RealmName;
 use fabric_core::Clock;
 use fabric_reconciliation::ReconciliationStatusStore;
 
@@ -112,7 +111,10 @@ pub struct ControlPlaneDeps {
     /// deliberately — see [`ClientService`](crate::ClientService)'s own
     /// rustdoc for "not Keycloak". The names it is handed are opaque to it;
     /// only whoever assembles a deployment knows what they mean.
-    pub reserved_realms: BTreeSet<RealmName>,
+    ///
+    /// Plain, case-folded strings, not [`RealmName`](fabric_client_model::RealmName)
+    /// — see [`ClientService`](crate::ClientService)'s own field for why.
+    pub reserved_realms: BTreeSet<String>,
 
     /// Application ids the catalogue may never accept, because something
     /// other than an application already means them: this platform's own

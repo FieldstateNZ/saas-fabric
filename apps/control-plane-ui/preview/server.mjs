@@ -26,6 +26,12 @@ const server = await createServer({
     proxy: {
       '/api': {
         target: 'http://127.0.0.1:8082',
+        // Explicit rather than left to Vite's default. The workbench API answers
+        // only when Host is its own address (its DNS-rebinding defence), and this
+        // forwards the target's host. Vite 6.4 already does, and Vite's own
+        // allowedHosts check refuses a foreign Host on :5174 with 403 before the
+        // proxy runs — both observed against a stub target, 2026-09-16.
+        changeOrigin: true,
         headers: { 'X-Test-Operator': 'local-workbench' },
       },
     },

@@ -15,7 +15,7 @@ export function DeploymentEvidence({ observation }: { observation?: DeploymentOb
         {observation.workloads.map((workload) => (
           <li key={workload.name}>
             <strong>{workload.name}</strong> — {label(workload.health)}
-            {workload.desiredReplicas !== null && ` · ${workload.readyReplicas}/${workload.desiredReplicas} ready`}
+            {workload.desiredReplicas !== null && ` · ${String(workload.readyReplicas)}/${String(workload.desiredReplicas)} ready`}
             {workload.health !== 'stopped' && workload.versions.length > 0 && ` · ${workload.versions.join(', ')}`}
             {workload.detail && <p>{workload.detail}</p>}
           </li>

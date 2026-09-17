@@ -1384,7 +1384,8 @@ impl crate::DeploymentObserver for ObservedRelease {
             observed_at_unix_seconds: 42,
             version: Some("0.3.0-preview.1".into()),
             health: crate::DeploymentHealth::Healthy,
-            workloads: vec![], detail: None,
+            workloads: vec![],
+            detail: None,
         })
     }
 }
@@ -1396,7 +1397,11 @@ async fn observation_does_not_change_desired_state_or_update_selection() {
     assert_eq!(status.running, crate::Running::Observed("0.3.0-preview.1".into()));
     assert_eq!(status.desired, version("0.3.0-preview.2"));
     assert!(desired.writes().is_empty());
-    let updated = service.reconcile("lucentroot", "saas-fabric").await.unwrap().status;
+    let updated = service
+        .reconcile("lucentroot", "saas-fabric")
+        .await
+        .unwrap()
+        .status;
     assert_eq!(updated.desired, version("0.3.0-preview.3"));
     assert!(updated.observation.is_none());
 }

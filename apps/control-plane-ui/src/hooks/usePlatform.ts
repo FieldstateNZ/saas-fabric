@@ -21,7 +21,7 @@ export interface PlatformState extends Loadable<Platform> {
 /** Loads what this deployment's environment is asked to run. */
 export function usePlatform(): PlatformState {
   const [revision, setRevision] = useState(0)
-  const refresh = useCallback(() => setRevision((value) => value + 1), [])
+  const refresh = useCallback(() => { setRevision((value) => value + 1) }, [])
   const [state, setState] = useState<PlatformState>({
     value: null,
     loading: true,

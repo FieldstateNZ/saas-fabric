@@ -8,7 +8,7 @@ pub(crate) fn pinned<'a>(image: &'a str, repository: &str) -> Option<(&'a str, &
     if hex.len() != 64 || !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         return None;
     }
-    Version::parse(version)?;
+    Version::parse(version.strip_prefix('v').unwrap_or(version))?;
     Some((version, digest))
 }
 

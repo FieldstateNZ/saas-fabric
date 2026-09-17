@@ -252,7 +252,7 @@ The reasoning, the licence audit, and the consequences are recorded in
 | [0017](docs/decisions/0017-fabric-decides-which-client-secret-boundary-an-operation-reaches.md) | Fabric decides which client secret boundary an operation reaches |
 | [0018](docs/decisions/0018-runtime-state-is-published-as-three-versioned-documents.md) | Runtime state is published as three independently versioned documents |
 | [0019](docs/decisions/0019-the-edge-proves-the-token-and-the-issuer-names-the-tenant.md) | The edge proves the token, the issuer names the tenant, and a public client proves its code |
-| [0020](docs/decisions/0020-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md) | The product catalogue is desired state, and the console creates clients |
+| [0020](docs/decisions/0021-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md) | The product catalogue is desired state, and the console creates clients |
 
 ## Running it
 
@@ -339,7 +339,7 @@ shows whether that has actually happened.
 Pull request #69 adds a product catalogue, client creation and per-client
 product configuration, all as desired-state writes, and a loopback workbench for
 developing the console against them. They are implemented and **proposed** —
-see [ADR 0020](docs/decisions/0020-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md).
+see [ADR 0021](docs/decisions/0021-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md).
 
 Not yet built:
 
@@ -357,7 +357,7 @@ Not yet built:
   client's document — realm, roles and product configuration — and nothing
   else. Routing, data placement, secrets and a database are still a workflow
   nobody has designed. Deletion, and removing an application from a client,
-  need their own confirmation semantics (ADR 0008, ADR 0020).
+  need their own confirmation semantics (ADR 0008, ADR 0021).
 - **Deploying what the product catalogue describes.** No controller deploys an
   application's components, issues their DNS names or certificates, or observes
   their health; the console reports all three as not observed.

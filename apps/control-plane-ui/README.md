@@ -8,7 +8,7 @@ The console follows the supplied v2 prototype: an overview dashboard, searchable
 clients, applications, components and platform navigation. What each screen
 does, and what is still missing underneath it, is in [PHASE_ONE.md](PHASE_ONE.md).
 The decisions it makes, and the ones still owed, are in
-[ADR 0020](../../docs/decisions/0020-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md), which is proposed.
+[ADR 0021](../../docs/decisions/0021-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md), which is proposed.
 
 `npm run preview:ui` is **not** a sample-data preview. It serves the console on
 `127.0.0.1:5174` and proxies `/api` to the loopback workbench API on
@@ -107,7 +107,7 @@ this increment.
 assignments and configuration, and the catalogue are edited through the product
 workflows in [PHASE_ONE.md](PHASE_ONE.md). None of them edits identity directly:
 the API projects each assigned application into the client's identity as a
-public client, and a product save rewrites those entries (ADR 0020 §4).
+public client, and a product save rewrites those entries (ADR 0021 §4).
 
 ## Concurrency
 
@@ -163,5 +163,5 @@ That explicit loopback-only example uses a test operator and has no external
 providers, so nothing it accepts can be authorised or converged. It is excluded
 from the production entry and from every image. It is also proposed rather than
 settled: the control-plane architecture says local development needs a Keycloak,
-and [ADR 0020](../../docs/decisions/0020-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md) records the contradiction and leaves keeping the workbench
+and [ADR 0021](../../docs/decisions/0021-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md) records the contradiction and leaves keeping the workbench
 to the product owner.

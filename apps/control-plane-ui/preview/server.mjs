@@ -8,7 +8,7 @@
  * `X-Test-Operator` is accepted only by `testing::AcceptingOperator`, in
  * `crates/fabric-control-plane/src/testing.rs`, which the example composes
  * in and which treats any request carrying it as a fixed operator — a
- * development shortcut recorded as a proposal in ADR 0020 §7, not something
+ * development shortcut recorded as a proposal in ADR 0021 §7, not something
  * a deployment could configure.
  */
 import { fileURLToPath } from 'node:url'

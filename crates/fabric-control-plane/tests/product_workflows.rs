@@ -822,7 +822,7 @@ async fn a_client_id_too_long_for_its_affixed_hostname_label_is_refused_at_assig
 
 #[tokio::test]
 async fn an_unrelated_product_save_keeps_the_clients_original_release_copy() {
-    // ADR 0020 §3: a client is pinned to the exact release it was assigned,
+    // ADR 0021 §3: a client is pinned to the exact release it was assigned,
     // not to "whatever the catalogue later says". A release edited by hand
     // in the repository — the only way it can change once published — must
     // not reach a client through some *other*, unrelated save.

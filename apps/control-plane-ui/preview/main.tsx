@@ -7,7 +7,7 @@
  * deployed: there is no sign-in here (`App.tsx`'s `useSession` gate is
  * skipped entirely), and the workbench connects no identity provider, secret
  * store, Git integration, or platform management — every one of them is
- * `None` behind the example API this proxies to (ADR 0020 §7).
+ * `None` behind the example API this proxies to (ADR 0021 §7).
  */
 import { createRoot } from 'react-dom/client'
 

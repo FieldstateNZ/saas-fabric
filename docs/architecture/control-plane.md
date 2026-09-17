@@ -2,10 +2,10 @@
 
 - **Status:** Implemented (identity). The product catalogue, client creation
   and the local workbench are implemented and **Proposed** — see
-  [ADR 0020](../decisions/0020-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md)
+  [ADR 0021](../decisions/0021-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md)
 - **Related:** [ADR 0008](../decisions/0008-desired-state-is-the-authority.md),
   [ADR 0009](../decisions/0009-operator-identity-is-not-tenant-identity.md),
-  [ADR 0020](../decisions/0020-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md),
+  [ADR 0021](../decisions/0021-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md),
   the platform specification §4–§6 and §30
 
 The platform specification describes two planes. The runtime plane — tenant
@@ -36,7 +36,7 @@ This increment implements **Identity** only. The others are named here so the
 shape is visible, not because anything reconciles them yet.
 
 The product catalogue and client product configuration
-([ADR 0020](../decisions/0020-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md))
+([ADR 0021](../decisions/0021-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md))
 reconcile nothing of their own. An application assigned to a client reaches a
 platform service only by becoming an identity client in that client's document,
 which identity reconciliation then converges like any other.
@@ -153,7 +153,7 @@ Three things it does not do, each of them a rule rather than a gap:
 ### The product catalogue and client creation
 
 Recorded in
-[ADR 0020](../decisions/0020-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md),
+[ADR 0021](../decisions/0021-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md),
 and proposed rather than accepted. In outline:
 
 - **The catalogue** is one desired-state document, `fabric-catalogue.yaml`, at
@@ -207,7 +207,7 @@ deployment had already named.
 catalogue with published releases workable locally — and it puts a second
 authority in one directory: once the snapshot exists, edits to the YAML beside
 it are ignored, without a warning.
-[ADR 0020](../decisions/0020-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md)
+[ADR 0021](../decisions/0021-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md)
 §7 has the rest, including what a write flushes and what it does not.
 
 ### Connecting the integration
@@ -734,7 +734,7 @@ Local development therefore needs a Keycloak. The shipped example says so
 rather than faking it.
 
 **One exception is proposed: the loopback workbench.**
-[ADR 0020](../decisions/0020-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md)
+[ADR 0021](../decisions/0021-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md)
 §7 contradicts the two paragraphs above, and they are left standing beside it
 rather than silently rewritten, because the contradiction is not settled. The
 workbench is not a posture — `mode = "oidc"` is still the only one a deployment
@@ -862,7 +862,7 @@ unconfigured for that operation at run time.
 | Implementation | Crate | Selected by | Durable |
 |---|---|---|---|
 | `GitClientRepository` | `fabric-client-git` | `managed`, once connected, and `git` | a commit per write: `clients/<id>/client.yaml`, and `fabric-catalogue.yaml` at the repository root |
-| `LocalClientRepository` | `fabric-control-plane-api` | `local_directory`, and the workbench ([ADR 0020](../decisions/0020-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md) §7) | one process: `.fabric-state.json`, replaced by rename in a task of its own, so a write finishes even if its request goes away. Open failures are typed, and a snapshot from before the catalogue envelope is refused |
+| `LocalClientRepository` | `fabric-control-plane-api` | `local_directory`, and the workbench ([ADR 0021](../decisions/0021-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md) §7) | one process: `.fabric-state.json`, replaced by rename in a task of its own, so a write finishes even if its request goes away. Open failures are typed, and a snapshot from before the catalogue envelope is refused |
 | `InMemoryClientRepository` | `fabric-control-plane` | tests only | no — but it renders and parses every client document and the catalogue on every write and read, as the durable stores do |
 | `UnconfiguredRepository` | `fabric-control-plane` | `managed`, before a repository is connected | — |
 
@@ -1061,7 +1061,7 @@ The catalogue event names no client, because the catalogue has none: it carries
 operation from the activity entry the command appended, so the audit record and
 what `GET /api/activity` shows cannot disagree. That activity is a view kept in
 desired state
-([ADR 0020](../decisions/0020-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md) §6),
+([ADR 0021](../decisions/0021-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md) §6),
 not a replacement for these events.
 
 Git history is a **second** copy: the commit message carries a `Requested-by:`
@@ -1077,7 +1077,7 @@ Nothing in the audit module is handed a value that could contain one.
 
 Deletion of anything — a client, an application, or an assignment, whose
 removal is refused
-([ADR 0020](../decisions/0020-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md) §5)
+([ADR 0021](../decisions/0021-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md) §5)
 — OpenFGA/OpenBao/Grafana/Envoy reconciliation, database provisioning,
 deploying application components, DNS names and certificates for them,
 observing their runtime health, a workflow engine, and provisioning the realm's

@@ -1,4 +1,4 @@
-# ADR 0020 — The product catalogue is desired state, and the console creates clients
+# ADR 0021 — The product catalogue is desired state, and the console creates clients
 
 - **Status:** Proposed
 - **Date:** 2026-09-16

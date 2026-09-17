@@ -3,7 +3,7 @@
 React and TypeScript UI, using the supplied SaaS Fabric prototype review v2 as
 the design reference, backed by the Rust control-plane API. The decisions this
 surface makes, and the ones still owed to the product owner, are recorded in
-[ADR 0020](../../docs/decisions/0020-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md),
+[ADR 0021](../../docs/decisions/0021-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md),
 which is proposed.
 
 ## Run the functional local workbench

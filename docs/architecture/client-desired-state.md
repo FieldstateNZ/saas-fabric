@@ -1,13 +1,13 @@
 # The client desired-state document
 
 - **Status:** Implemented. `spec.product` and the catalogue document are
-  implemented and **Proposed** in [ADR 0020](../decisions/0020-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md)
+  implemented and **Proposed** in [ADR 0021](../decisions/0021-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md)
 - **Owned by:** [`fabric-client-model`](../../crates/fabric-client-model)
 - **Stored in:** `saas-fabric-clients`, at `clients/<client id>/client.yaml`;
   the product catalogue beside them, at `fabric-catalogue.yaml`
 - **Related:** [ADR 0008](../decisions/0008-desired-state-is-the-authority.md),
   [ADR 0019](../decisions/0019-the-edge-proves-the-token-and-the-issuer-names-the-tenant.md),
-  [ADR 0020](../decisions/0020-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md),
+  [ADR 0021](../decisions/0021-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md),
   [the identity edge test matrix](identity-edge-test-matrix.md),
   the platform specification §4
 
@@ -275,7 +275,7 @@ internal-looking prefix.
 ## `spec.product`
 
 **Proposed** in
-[ADR 0020](../decisions/0020-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md).
+[ADR 0021](../decisions/0021-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md).
 The product configuration an operator gives a client through the console,
 written by client creation and by `PUT /api/clients/{clientId}/product`.
 
@@ -357,10 +357,10 @@ reach the growth limit — and once the remediation margin above it is gone too,
 the document must be trimmed by hand before anything can be written to it.
 
 **Removing an assigned application is refused** until deprovisioning exists
-(ADR 0020 §5). A save may change an assignment's version, plan and
+(ADR 0021 §5). A save may change an assignment's version, plan and
 configuration; it may not drop it. A plan granting fewer features, or an older
 release with fewer components, still drops components from the client's
-entitlement — ADR 0020 records that as part of the same owed deprovisioning
+entitlement — ADR 0021 records that as part of the same owed deprovisioning
 decision.
 
 **An identity edit writes this section.** Every identity edit appends an
@@ -450,7 +450,7 @@ expects to survive.
 ## The catalogue document
 
 **Proposed** in
-[ADR 0020](../decisions/0020-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md).
+[ADR 0021](../decisions/0021-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md).
 One per repository, at `fabric-catalogue.yaml` in the repository root — beside
 `clients/`, not under the client documents' path prefix.
 
@@ -479,7 +479,7 @@ was added. Versioning the file is what lets a later change to its shape ship
 beside `v1` rather than reinterpret documents already stored.
 
 **`spec` is owned throughout.** Unknown keys are refused at every level. What
-each section holds, and the commands that change them, are in ADR 0020 §1.
+each section holds, and the commands that change them, are in ADR 0021 §1.
 
 **An absent file is an empty catalogue with no revision**, and the write that
 creates it must say so with `If-None-Match: *`. The Git adapter tells an absent

@@ -1,6 +1,6 @@
 //! Resolves requests to immutable entitlements before writing a client.
 //!
-//! In the 121–150 line band. The reason is `resolve` itself: ADR 0020 §3's
+//! In the 121–150 line band. The reason is `resolve` itself: ADR 0021 §3's
 //! keep-the-stored-copy rule, the timezone check, and the plan and
 //! configuration lookups all decide the one `ClientProduct` a write is
 //! about to commit, and none of them is a rule a second caller would ever
@@ -17,7 +17,7 @@ impl Catalogue {
     ///
     /// # Why `previous` is here at all
     ///
-    /// ADR 0020 §3 pins a client to the exact release it was assigned —
+    /// ADR 0021 §3 pins a client to the exact release it was assigned —
     /// "whatever the catalogue later says" is exactly what a client must
     /// *not* silently start following. Looking every assignment up in `self`
     /// on every save would do precisely that: a release is meant to be

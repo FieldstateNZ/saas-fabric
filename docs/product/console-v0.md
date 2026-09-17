@@ -2,7 +2,7 @@
 
 > **Superseded in part by pull request #69.** This is the v0 screen contract,
 > kept as it was written. Three of its statements no longer describe the
-> console, and [ADR 0020](../decisions/0020-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md), which is proposed, records
+> console, and [ADR 0021](../decisions/0021-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md), which is proposed, records
 > why each changed and what it costs:
 >
 > - **"No Add client."** The console creates clients through

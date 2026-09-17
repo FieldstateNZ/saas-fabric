@@ -1,16 +1,9 @@
 import type { Platform, PlatformComponent, PlatformLastCheck } from '../api/types'
 import { ComponentBrake } from './ComponentBrake'
 
-/**
- * What an environment is asked to run.
- *
- * # Six lines, and no more
- *
- * There is no history, no release notes, no deployment status and no
- * third-party component here. Every one of those is a thing the platform
- * cannot yet answer honestly, and a console that showed them would be showing
- * a guess. The six lines below are the ones that are true.
- */
+import { DeploymentEvidence } from './DeploymentEvidence'
+
+/** Desired state and independently observed deployment evidence. */
 export function PlatformPanel({ platform }: { platform: Platform }) {
   return (
     <section className="platform">
@@ -58,7 +51,7 @@ function ComponentRows({ component }: { component: PlatformComponent }) {
         <dd>{component.newer ?? '—'}</dd>
 
         <dt>Running</dt>
-        <dd>Unknown</dd>
+        <dd>{component.running === 'unknown' ? 'Unknown' : component.running}</dd>
       </dl>
 
       <dl className="platform__rows platform__rows--decision">
@@ -79,6 +72,7 @@ function ComponentRows({ component }: { component: PlatformComponent }) {
         </p>
       )}
 
+      <DeploymentEvidence observation={component.observation} />
       <ComponentBrake component={component} />
 
       {component.diagnostics.length > 0 && (

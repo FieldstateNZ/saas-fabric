@@ -24,11 +24,12 @@ export function PlatformViews({
   return (
     <>
       <PageHeader
+        actions={<button type="button" onClick={platform.refresh} disabled={platform.loading}>Refresh status</button>}
         title={environments ? 'Environments' : 'Components'}
         description={
           environments
             ? 'The environment managed by this deployment of SaaS Fabric.'
-            : 'Desired versions, update policies, and controls for your platform.'
+            : 'Desired and running versions, deployment health, and update controls.'
         }
       />
       {platform.loading && <p role="status">Loading platform…</p>}
@@ -62,7 +63,7 @@ export function PlatformViews({
                     : 'Not checked yet'}
                 </dd>
                 <dt>Running state</dt>
-                <dd>Not observed</dd>
+                <dd>{platform.value.components.map((component) => `${component.component}: ${component.observation?.health ?? 'not observed'}`).join(' · ')}</dd>
               </dl>
               <a href="#/components">Manage components →</a>
             </div>

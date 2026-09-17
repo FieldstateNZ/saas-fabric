@@ -3,7 +3,7 @@
 //! ```text
 //! Available     discovered from artifact registries   ← this crate asks
 //! Desired       the platform repository                ← this crate proposes
-//! Running       the reconciliation system              ← not yet answered
+//! Running       the reconciliation system              ← read-only observation
 //! ```
 //!
 //! Three states, and they are deliberately not one. A version that has been
@@ -25,6 +25,7 @@ mod charts;
 mod desired_state;
 mod diagnostic;
 mod discovery;
+mod observation;
 mod policy;
 mod registry;
 mod selector;
@@ -39,6 +40,7 @@ pub use charts::ChartIndex;
 pub use desired_state::{ComponentDesired, DesiredRevision, DesiredState, DesiredStateError, Hold};
 pub use diagnostic::SafeDiagnostic;
 pub use discovery::{Discovery, History, ReleaseUnit, ResolvedImage};
+pub use observation::{DeploymentHealth, DeploymentObservation, DeploymentObserver, WorkloadObservation};
 pub use policy::UpdatePolicy;
 pub use registry::{Provenance, Registry, RegistryError, Resolved};
 pub use selector::{decide, Decision, Reason};

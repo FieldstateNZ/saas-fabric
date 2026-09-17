@@ -235,7 +235,8 @@ export interface PlatformComponent {
    * actually support. Rendered as "Newer version".
    */
   readonly newer: string | null
-  readonly running: 'unknown'
+  readonly running: string
+  readonly observation?: DeploymentObservation
   readonly policy: 'automatic' | 'manual' | 'locked'
 
   /**
@@ -300,4 +301,20 @@ export interface Platform {
   readonly environment: string
   readonly components: readonly PlatformComponent[]
   readonly lastCheck: PlatformLastCheck | null
+}
+
+/** Live evidence, sampled independently of the desired release. */
+export interface DeploymentObservation {
+  readonly observedAtUnixSeconds: number
+  readonly version: string | null
+  readonly health: 'healthy' | 'progressing' | 'degraded' | 'stopped' | 'unavailable'
+  readonly detail: string | null
+  readonly workloads: readonly {
+    readonly name: string
+    readonly health: DeploymentObservation['health']
+    readonly versions: readonly string[]
+    readonly desiredReplicas: number | null
+    readonly readyReplicas: number
+    readonly detail: string | null
+  }[]
 }

@@ -20,6 +20,10 @@ pub struct PlatformManagementConfig {
     #[serde(default)]
     pub registry: RegistryBinding,
 
+    /// Explicit read-only workload bindings; empty disables cluster observation.
+    #[serde(default)]
+    pub observation: std::collections::BTreeMap<String, Vec<fabric_deployment_kubernetes::WorkloadTarget>>,
+
     /// How often the sweep runs.
     ///
     /// **Zero disables it**, and so does omitting the whole section. A

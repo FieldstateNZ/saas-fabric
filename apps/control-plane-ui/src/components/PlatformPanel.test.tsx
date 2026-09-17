@@ -151,3 +151,14 @@ describe('a deployment that manages no platform', () => {
     expect(screen.getByText(/not connected for this deployment/i)).toBeInTheDocument()
   })
 })
+
+it('shows the independently observed running version even when desired is newer', () => {
+  render(<PlatformPanel platform={platform({ components: [component({
+    desired: 'v1.0.2', running: 'v1.0.1',
+    observation: { observedAtUnixSeconds: 1700000000, version: 'v1.0.1', health: 'healthy', detail: null, workloads: [] },
+  })] })} />)
+  expect(screen.getByText('v1.0.1')).toBeInTheDocument()
+  expect(screen.getByText('v1.0.2')).toBeInTheDocument()
+  expect(screen.getByText('Healthy')).toBeInTheDocument()
+  expect(screen.queryByText('Unknown')).not.toBeInTheDocument()
+})

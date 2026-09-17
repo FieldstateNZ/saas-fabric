@@ -39,9 +39,12 @@ pub struct ComponentRow {
     /// nothing to advance to.
     pub newer: Option<String>,
 
-    /// What is actually running. Always `unknown` until there is a
-    /// reconciliation integration to ask.
-    pub running: &'static str,
+    /// Observed running version, or `unknown` when no single version is proven.
+    pub running: String,
+
+    /// Read-only rollout evidence, absent when observation is not configured.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub observation: Option<fabric_platform_management::DeploymentObservation>,
 
     /// The standing decision about advancement.
     pub policy: &'static str,

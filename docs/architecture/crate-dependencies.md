@@ -119,6 +119,12 @@ registry and *how it authenticates* is a separate integration from the platform
 repository's credential and the two must stay separable — the GitHub App that
 writes desired state is not, and must never become, the registry credential.
 
+`fabric-deployment-kubernetes` implements the optional `DeploymentObserver`
+port. It depends only on `fabric-core` and `fabric-platform-management`; only
+the control-plane composition root can bind it. It performs bounded GETs using
+the pod identity and returns product-level deployment evidence. It cannot
+write desired state or change Kubernetes resources. See [ADR 0022](../decisions/0022-running-versions-come-from-deployment-evidence.md).
+
 `fabric-registry` implements that port and holds no credential at all: the
 packages are public, so it exchanges an anonymous pull token and reads. A
 credential that does not exist cannot be conflated with the GitHub App that

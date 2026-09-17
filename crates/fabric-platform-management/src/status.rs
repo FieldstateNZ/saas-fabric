@@ -6,21 +6,13 @@ pub use reconciliation::Reconciliation;
 
 use crate::{ArtifactKind, ComponentDesired, Discovery, Hold, UpdatePolicy, Version};
 
-/// What is actually serving.
-///
-/// One variant, because one is all that can be answered honestly today.
-/// Reporting a deployment as converged or updating requires the
-/// reconciliation system, and Fabric knowing that Git changed is not the same
-/// as knowing that a rollout started — a console that said "Updating" on the
-/// strength of a commit would be reporting success from a Git write.
-///
-/// An enum rather than an `Option<Version>` so that gaining
-/// `Converged`/`Degraded` later is an addition rather than a reinterpretation
-/// of what `None` meant.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// A running version established by independent deployment evidence.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Running {
-    /// Nothing here can say. There is no reconciliation integration yet.
+    /// No single healthy running version is currently established.
     Unknown,
+    /// All active observed workloads are healthy and agree on this version.
+    Observed(String),
 }
 
 /// Whether desired state has somewhere to go.
@@ -72,6 +64,9 @@ pub struct ComponentStatus {
 
     /// What is actually serving.
     pub running: Running,
+
+    /// Independently observed deployment evidence, when configured.
+    pub observation: Option<crate::DeploymentObservation>,
 
     /// The standing decision about advancement.
     pub policy: UpdatePolicy,
@@ -125,6 +120,7 @@ impl ComponentStatus {
             },
             newer,
             running: Running::Unknown,
+            observation: None,
             policy: desired.policy,
             hold: desired.hold.clone(),
             diagnostics: Diagnostics {

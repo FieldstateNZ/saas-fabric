@@ -47,9 +47,11 @@ impl ComponentRow {
                 ArtifactKind::Oci => "oci",
                 ArtifactKind::Helm => "helm",
             },
-            running: match status.running {
-                Running::Unknown => "unknown",
+            running: match &status.running {
+                Running::Unknown => "unknown".into(),
+                Running::Observed(version) => version.clone(),
             },
+            observation: status.observation.clone(),
             policy: match status.policy {
                 UpdatePolicy::Automatic => "automatic",
                 UpdatePolicy::Manual => "manual",

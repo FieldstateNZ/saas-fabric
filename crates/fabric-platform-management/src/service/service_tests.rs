@@ -1374,3 +1374,29 @@ async fn a_preview_still_stays_on_the_line_it_is_on() {
         "the next preview of this line, not the first of the next one"
     );
 }
+
+struct ObservedRelease;
+#[async_trait::async_trait]
+impl crate::DeploymentObserver for ObservedRelease {
+    async fn observe(&self, environment: &str, component: &str) -> Option<crate::DeploymentObservation> {
+        assert_eq!((environment, component), ("lucentroot", "saas-fabric"));
+        Some(crate::DeploymentObservation {
+            observed_at_unix_seconds: 42,
+            version: Some("0.3.0-preview.1".into()),
+            health: crate::DeploymentHealth::Healthy,
+            workloads: vec![], detail: None,
+        })
+    }
+}
+#[tokio::test]
+async fn observation_does_not_change_desired_state_or_update_selection() {
+    let desired = Arc::new(Recorded::new(UpdatePolicy::Automatic, None));
+    let service = service(&registries_with_three(), &desired).with_observer(Arc::new(ObservedRelease));
+    let status = service.status("lucentroot", "saas-fabric").await.unwrap();
+    assert_eq!(status.running, crate::Running::Observed("0.3.0-preview.1".into()));
+    assert_eq!(status.desired, version("0.3.0-preview.2"));
+    assert!(desired.writes().is_empty());
+    let updated = service.reconcile("lucentroot", "saas-fabric").await.unwrap().status;
+    assert_eq!(updated.desired, version("0.3.0-preview.3"));
+    assert!(updated.observation.is_none());
+}

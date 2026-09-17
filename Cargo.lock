@@ -334,6 +334,7 @@ dependencies = [
  "fabric-client-model",
  "fabric-control-plane",
  "fabric-core",
+ "fabric-deployment-kubernetes",
  "fabric-git-host",
  "fabric-keycloak",
  "fabric-openbao",
@@ -380,6 +381,19 @@ dependencies = [
  "tower",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "fabric-deployment-kubernetes"
+version = "0.3.0"
+dependencies = [
+ "async-trait",
+ "fabric-core",
+ "fabric-platform-management",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]

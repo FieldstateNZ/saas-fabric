@@ -23,6 +23,9 @@ pub struct PlatformManagement {
     /// Where published artifacts are looked up.
     registry: Arc<dyn Registry>,
 
+    /// Optional read-only evidence; never consulted to author desired state.
+    observer: Option<Arc<dyn crate::DeploymentObserver>>,
+
     /// Where chart versions are looked up.
     ///
     /// A second port rather than a second implementation of the first: a chart
@@ -48,10 +51,18 @@ impl PlatformManagement {
     ) -> Self {
         Self {
             registry,
+            observer: None,
             charts,
             desired_state,
             clock,
         }
+    }
+
+    /// Attaches a read-only deployment observer.
+    #[must_use]
+    pub fn with_observer(mut self, observer: Arc<dyn crate::DeploymentObserver>) -> Self {
+        self.observer = Some(observer);
+        self
     }
 
     /// What a component's situation is, changing nothing.
@@ -72,7 +83,16 @@ impl PlatformManagement {
     pub async fn status(&self, environment: &str, component: &str) -> Result<ComponentStatus, PlatformError> {
         let (desired, discovery) = self.look(environment, component).await?;
 
-        Ok(ComponentStatus::assemble(component, &desired, &discovery))
+        let mut status = ComponentStatus::assemble(component, &desired, &discovery);
+        if let Some(observer) = &self.observer {
+            status.observation = observer.observe(environment, component).await;
+            status.running = status
+                .observation
+                .as_ref()
+                .and_then(|o| o.version.clone())
+                .map_or(crate::Running::Unknown, crate::Running::Observed);
+        }
+        Ok(status)
     }
 
     /// Every component of an environment, changing nothing.

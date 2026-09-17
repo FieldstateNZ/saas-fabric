@@ -77,6 +77,7 @@ CONTROL_PLANE = frozenset(
         "fabric-client-git",
         "fabric-keycloak",
         "fabric-openbao",
+        "fabric-deployment-kubernetes",
         "fabric-control-plane-api",
     }
 )
@@ -617,6 +618,7 @@ def check_dependency_direction(graph: Graph) -> list[Failure]:
         # writes platform desired state must never become the registry's
         # credential.
         "fabric-registry": {"fabric-core", "fabric-platform-management"},
+        "fabric-deployment-kubernetes": {"fabric-core", "fabric-platform-management"},
         "fabric-client-git": {
             "fabric-core",
             "fabric-client-model",
@@ -651,6 +653,7 @@ def check_dependency_direction(graph: Graph) -> list[Failure]:
             "fabric-platform-git",
             "fabric-platform-management",
             "fabric-registry",
+            "fabric-deployment-kubernetes",
             "fabric-client-model",
             "fabric-reconciliation",
             "fabric-control-plane",
@@ -895,6 +898,13 @@ def check_adapter_containment(graph: Graph) -> list[Failure]:
             "which client and which rule.",
         ),
     )
+
+    adapters += ((
+        "fabric-deployment-kubernetes",
+        re.compile(r"\bowner_references\b|\bresource_version\b|\bReplicaSet\b|/apis/apps/v1/"),
+        "Kubernetes deployment evidence stays inside its read-only adapter",
+        "The domain and console consume deployment evidence, never Kubernetes representations.",
+    ),)
 
     failures = []
 

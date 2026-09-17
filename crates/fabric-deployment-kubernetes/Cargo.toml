@@ -1,0 +1,19 @@
+[package]
+name = "fabric-deployment-kubernetes"
+description = "Read-only Kubernetes deployment evidence for platform management."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+fabric-core.workspace = true
+fabric-platform-management.workspace = true
+async-trait.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["fs"] }
+
+[lints]
+workspace = true

@@ -110,13 +110,25 @@ pub fn establish(
 
     let repository = PlatformDesiredState::unconnected();
 
+    let service = PlatformManagement::new(
+        Arc::new(registry) as Arc<dyn Registry>,
+        Arc::new(charts) as Arc<dyn ChartIndex>,
+        Arc::clone(&repository) as Arc<dyn DesiredState>,
+        Arc::clone(clock),
+    );
+    let service = if config.observation.is_empty() {
+        service
+    } else {
+        service.with_observer(Arc::new(
+            fabric_deployment_kubernetes::KubernetesObserver::in_cluster(
+                &config.environment,
+                config.observation.clone(),
+                Arc::clone(clock),
+            )?,
+        ))
+    };
     Ok(Some(PlatformBinding {
-        service: Arc::new(PlatformManagement::new(
-            Arc::new(registry) as Arc<dyn Registry>,
-            Arc::new(charts) as Arc<dyn ChartIndex>,
-            Arc::clone(&repository) as Arc<dyn DesiredState>,
-            Arc::clone(clock),
-        )),
+        service: Arc::new(service),
         repository,
         environment: config.environment.clone(),
     }))
@@ -131,6 +143,7 @@ mod tests {
         PlatformManagementConfig {
             environment: "lucentroot".to_owned(),
             registry: RegistryBinding::default(),
+            observation: std::collections::BTreeMap::new(),
             reconciliation_interval_seconds: 60,
             operation_timeout_seconds,
         }

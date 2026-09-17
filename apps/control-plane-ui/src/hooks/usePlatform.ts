@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 
 import { getPlatform } from '../api/platform'
 import { ControlPlaneError } from '../api/errors'
@@ -15,10 +15,13 @@ export interface PlatformState extends Loadable<Platform> {
    * them looking for a fault instead of a connection they have not made.
    */
   readonly unmanaged: boolean
+  readonly refresh?: () => void
 }
 
 /** Loads what this deployment's environment is asked to run. */
 export function usePlatform(): PlatformState {
+  const [revision, setRevision] = useState(0)
+  const refresh = useCallback(() => setRevision((value) => value + 1), [])
   const [state, setState] = useState<PlatformState>({
     value: null,
     loading: true,
@@ -28,6 +31,7 @@ export function usePlatform(): PlatformState {
 
   useEffect(() => {
     let current = true
+    setState({ value: null, loading: true, error: null, unmanaged: false })
 
     getPlatform()
       .then((platform) => {
@@ -54,7 +58,7 @@ export function usePlatform(): PlatformState {
     return () => {
       current = false
     }
-  }, [])
+  }, [revision])
 
-  return state
+  return { ...state, refresh }
 }

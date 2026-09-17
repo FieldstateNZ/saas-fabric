@@ -24,6 +24,7 @@ fabric-git-host.workspace = true
 fabric-platform-git.workspace = true
 fabric-platform-management.workspace = true
 fabric-registry.workspace = true
+fabric-deployment-kubernetes.workspace = true
 fabric-core.workspace = true
 fabric-keycloak.workspace = true
 fabric-openbao.workspace = true

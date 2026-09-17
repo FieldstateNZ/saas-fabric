@@ -161,14 +161,23 @@ Three things follow from that, and all three are deliberate:
   and once inside the predicate. That is defence in depth, not redundancy to
   tidy away — the two are built independently, so a mistake in one does not
   silently disable the other.
-- **A procedure's required (non-nullable) argument that nothing in the mapping
-  supplies is refused at startup.** `key_id` and `key_tenant_key` are plain,
-  non-nullable arguments in the schema `ndc-postgres` publishes; before
+- **A procedure's required (non-nullable) argument that nothing *this verb's*
+  translation sends is refused at startup.** `key_id` and `key_tenant_key` are
+  plain, non-nullable arguments in the schema `ndc-postgres` publishes; before
   `key_arguments` existed, a mapping naming only `filter_argument` passed
   every check this crate ran and failed on the connector's first delete. That
   gap is now a boot failure: `registration::required_arguments` walks every
-  argument the schema marks non-nullable and refuses to start if the mapping
-  — payload, filter, or a key — supplies nothing for it.
+  argument the schema marks non-nullable and refuses to start if what that
+  verb's translation actually sends — payload alone for an insert; payload,
+  filter and keys for an update; filter and keys for a delete, **never** a
+  payload — supplies nothing for it. Counting verb-blind is its own bug:
+  crediting a delete with an argument only `payload_argument` names let a
+  mapping that wrote a key value into the wrong setting pass this check by
+  coincidence.
+- **A delete mapping may not declare `payload_argument` at all.** A delete
+  carries no payload, so one present is refused at config validation rather
+  than accepted as harmless unused configuration — in practice it has been a
+  value meant for `key_arguments`, written into the wrong setting.
 
 An update's payload can need reshaping too. `ndc-postgres`'s
 `update_columns` argument on a keyed update procedure does not take

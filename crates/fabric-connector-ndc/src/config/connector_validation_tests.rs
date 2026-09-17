@@ -172,30 +172,6 @@ fn an_update_naming_one_argument_for_both_payload_and_predicate_is_rejected() {
 }
 
 #[test]
-fn a_colliding_delete_mapping_is_rejected_even_though_a_delete_sends_no_payload() {
-    // A delete never reads `payload_argument`, so this collision is inert
-    // today. It is still incoherent configuration, and letting it start means
-    // the mapping is one field away from the update bug with nothing to catch
-    // it.
-    let procedures = CollectionProcedures {
-        delete: Some(ProcedureBinding {
-            procedure: "delete_customers".to_owned(),
-            payload_argument: Some("filter".to_owned()),
-            filter_argument: Some("filter".to_owned()),
-            key_arguments: BTreeMap::new(),
-            payload_shape: PayloadShape::Values,
-        }),
-        ..CollectionProcedures::default()
-    };
-
-    let error = NdcConnectorConfig::for_test(mapping("customers", procedures))
-        .validate()
-        .unwrap_err();
-
-    assert!(error.contains("customers.delete"));
-}
-
-#[test]
 fn a_colliding_insert_mapping_is_rejected_too() {
     // Inserts are outside `predicate_bearing`, which is exactly why the check
     // walks every verb instead.
@@ -444,6 +420,57 @@ fn the_full_articles_shaped_update_mapping_is_accepted() {
     assert!(NdcConnectorConfig::for_test(mapping("articles", procedures))
         .validate()
         .is_ok());
+}
+
+/// The generic collision case is
+/// `an_update_naming_one_argument_for_both_payload_and_predicate_is_rejected`,
+/// above; this pins `validate_distinct_arguments` against the real, keyed
+/// shape this section otherwise exercises, rather than only the hand-written
+/// `customers` one.
+#[test]
+fn a_colliding_update_mapping_is_rejected_on_the_articles_shaped_procedure_too() {
+    let procedures = CollectionProcedures {
+        update: Some(ProcedureBinding {
+            procedure: "update_articles_by_id_and_tenant_key".to_owned(),
+            payload_argument: Some("pre_check".to_owned()),
+            filter_argument: Some("pre_check".to_owned()),
+            key_arguments: articles_key_arguments(),
+            payload_shape: PayloadShape::SetOperations,
+        }),
+        ..CollectionProcedures::default()
+    };
+
+    let error = NdcConnectorConfig::for_test(mapping("articles", procedures))
+        .validate()
+        .unwrap_err();
+
+    assert!(error.contains("articles.update"), "{error}");
+    assert!(error.contains("payload_argument"), "{error}");
+}
+
+#[test]
+fn a_delete_mapping_declaring_a_payload_argument_is_rejected_at_startup() {
+    // A delete carries no payload at all; naming one is the same mistake that
+    // produces `required_arguments`'s false negative -- a `key_id` value
+    // written into `payload_argument` instead of `key_arguments`, where
+    // translation never sends it for a delete.
+    let procedures = CollectionProcedures {
+        delete: Some(ProcedureBinding {
+            procedure: "delete_articles_by_id_and_tenant_key".to_owned(),
+            payload_argument: Some("accidental_payload".to_owned()),
+            filter_argument: Some("pre_check".to_owned()),
+            key_arguments: articles_key_arguments(),
+            payload_shape: PayloadShape::Values,
+        }),
+        ..CollectionProcedures::default()
+    };
+
+    let error = NdcConnectorConfig::for_test(mapping("articles", procedures))
+        .validate()
+        .unwrap_err();
+
+    assert!(error.contains("articles.delete"), "{error}");
+    assert!(error.contains("payload_argument"), "{error}");
 }
 
 #[test]

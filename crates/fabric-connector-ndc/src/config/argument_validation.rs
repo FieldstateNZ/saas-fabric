@@ -1,6 +1,6 @@
 //! What a write mapping must say about where its arguments go.
 //!
-//! Three checks that need only the configuration to run, so they run before any
+//! Four checks that need only the configuration to run, so they run before any
 //! connector is contacted. The complementary check — that the argument *names*
 //! are ones the connector's procedures actually declare — needs the schema, and
 //! lives in `registration::procedure_arguments`.
@@ -68,6 +68,34 @@ impl NdcConnectorConfig {
                         self.id
                     ));
                 }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Refuses a delete mapping that declares a `payload_argument`.
+    ///
+    /// A delete carries no payload at all — there is nothing for a
+    /// `payload_argument` to name — so one present on a delete mapping is not
+    /// unused configuration to shrug at, it is a mapping written for the
+    /// wrong setting — the same mistake that produces
+    /// `registration::required_arguments`'s false negative: a mapping meant
+    /// to write a keyed procedure's `key_id` value into `key_arguments` and
+    /// wrote it into `payload_argument` instead, where translation never
+    /// sends it for a delete (see `registration::required_arguments_tests`).
+    pub(super) fn validate_delete_has_no_payload_argument(&self) -> Result<(), String> {
+        for (collection, procedures) in &self.procedures {
+            let Some(binding) = procedures.delete.as_ref() else {
+                continue;
+            };
+
+            if binding.payload_argument.is_some() {
+                return Err(format!(
+                    "connector {}: {collection}.delete declares payload_argument, but a delete carries no \
+                     payload; remove payload_argument from this mapping",
+                    self.id
+                ));
             }
         }
 

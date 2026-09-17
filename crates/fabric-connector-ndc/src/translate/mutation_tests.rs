@@ -651,6 +651,109 @@ fn a_keyed_update_shapes_its_payload_as_set_operations() {
     assert_eq!(arguments["key_tenant_key"], "tenant-acme-482");
 }
 
+/// Read from `schema-named.json`'s types, not observed against a live
+/// connector: `update_columns.body` is `nullable<update_column_articles_body>`,
+/// wrapping the *operation*, so `{"body": {"_set": null}}` supplies the
+/// operation and reads as "set it to `NULL`." See
+/// `PayloadShape::SetOperations`'s rustdoc for why this reading does not
+/// extend to a plain `values` argument such as an insert's.
+#[test]
+fn a_keyed_update_wraps_a_null_value_in_set_rather_than_dropping_it() {
+    let config = articles_config(CollectionProcedures {
+        update: Some(keyed_update_binding()),
+        ..CollectionProcedures::default()
+    });
+
+    let spec = MutationSpec::Update {
+        collection: articles_collection(),
+        filter: Some(keyed_filter("9", "tenant-acme-482")),
+        changes: Row::new()
+            .with(FieldName::try_new("body").unwrap(), Value::Null)
+            .with(
+                FieldName::try_new("tenant_key").unwrap(),
+                Value::String("tenant-acme-482".to_owned()),
+            ),
+    };
+
+    let request = to_mutation_request(&spec, None, &config, &keyed_articles_index()).unwrap();
+    let NdcMutationOperation::Procedure { arguments, .. } = request.operations.first().unwrap();
+
+    assert_eq!(
+        arguments["update_columns"]["body"],
+        serde_json::json!({"_set": null})
+    );
+}
+
+/// ADR 0020 rule 1: a caller can say anything it likes in `changes`,
+/// including a value for the very field a key argument reads, and the key
+/// must still come from the predicate `MutationSpec::for_target` scoped —
+/// never from `changes`, not even as a fallback. A key extraction that reads
+/// `changes` first and falls back to the predicate only when the field is
+/// absent from the payload would let a caller redirect a keyed write by
+/// editing the field it updates; this test, and its sibling below (whose
+/// predicate omits the field entirely, so only a fallback — not a
+/// preference — could satisfy it), rule that out.
+#[test]
+fn a_keyed_update_reads_its_key_from_the_predicate_never_the_payload() {
+    let config = articles_config(CollectionProcedures {
+        update: Some(keyed_update_binding()),
+        ..CollectionProcedures::default()
+    });
+
+    let spec = MutationSpec::Update {
+        collection: articles_collection(),
+        filter: Some(keyed_filter("9", "tenant-482")),
+        changes: Row::new()
+            .with(
+                FieldName::try_new("tenant_key").unwrap(),
+                Value::String("tenant-OTHER".to_owned()),
+            )
+            .with(
+                FieldName::try_new("title").unwrap(),
+                Value::String("Updated".to_owned()),
+            ),
+    };
+
+    let request = to_mutation_request(&spec, None, &config, &keyed_articles_index()).unwrap();
+    let NdcMutationOperation::Procedure { arguments, .. } = request.operations.first().unwrap();
+
+    assert_eq!(arguments["key_tenant_key"], "tenant-482");
+}
+
+/// The fallback case the test above cannot reach: there `changes` and the
+/// predicate agree on every field but one, and a "prefer changes" bug and a
+/// "fall back to changes" bug would fail it the same way. Here the predicate
+/// has no equality for `id` at all — only `tenant_key` — while `changes`
+/// names `id`, so only a fallback could produce a value, and the correct
+/// behaviour is to refuse rather than read the caller's payload for a value
+/// the predicate never stated.
+#[test]
+fn a_keyed_update_whose_predicate_omits_a_key_field_is_refused_even_though_changes_supplies_it() {
+    let config = articles_config(CollectionProcedures {
+        update: Some(keyed_update_binding()),
+        ..CollectionProcedures::default()
+    });
+
+    let spec = MutationSpec::Update {
+        collection: articles_collection(),
+        filter: Some(Filter::Compare {
+            field: FieldName::try_new("tenant_key").unwrap(),
+            operator: ComparisonOperator::Equal,
+            value: Value::String("tenant-482".to_owned()),
+        }),
+        changes: Row::new()
+            .with(FieldName::try_new("id").unwrap(), Value::String("9".to_owned()))
+            .with(
+                FieldName::try_new("tenant_key").unwrap(),
+                Value::String("tenant-482".to_owned()),
+            ),
+    };
+
+    let error = to_mutation_request(&spec, None, &config, &keyed_articles_index()).unwrap_err();
+
+    assert!(matches!(error, ConnectorError::InvalidOperation(_)));
+}
+
 #[test]
 fn a_keyed_delete_missing_a_key_equality_is_refused() {
     let config = articles_config(CollectionProcedures {
@@ -778,6 +881,33 @@ fn a_keyed_delete_with_an_in_of_one_value_for_the_key_is_not_accepted() {
     let spec = MutationSpec::Delete {
         collection: articles_collection(),
         filter: Some(filter),
+    };
+
+    let error = to_mutation_request(&spec, None, &config, &keyed_articles_index()).unwrap_err();
+
+    assert!(matches!(error, ConnectorError::InvalidOperation(_)));
+}
+
+/// Pins the call order inside `to_mutation_request`, not just
+/// `add_key_arguments`'s own collision guard in isolation: `add_predicate`
+/// still inserts unconditionally (see its own rustdoc), so the guard only
+/// catches anything because key arguments are added *after* the predicate.
+/// Reversing that order would let the predicate silently overwrite the key
+/// argument instead of the other way around, and this test would then see
+/// `Ok` where it asserts `InvalidOperation`.
+#[test]
+fn a_key_argument_colliding_with_the_filter_argument_is_refused_through_the_full_pipeline() {
+    let config = articles_config(CollectionProcedures {
+        delete: Some(ProcedureBinding {
+            key_arguments: BTreeMap::from([("id".to_owned(), "pre_check".to_owned())]),
+            ..keyed_delete_binding()
+        }),
+        ..CollectionProcedures::default()
+    });
+
+    let spec = MutationSpec::Delete {
+        collection: articles_collection(),
+        filter: Some(keyed_filter("9", "tenant-acme-482")),
     };
 
     let error = to_mutation_request(&spec, None, &config, &keyed_articles_index()).unwrap_err();

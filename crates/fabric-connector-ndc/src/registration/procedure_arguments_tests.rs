@@ -115,10 +115,15 @@ fn a_filter_argument_pointing_at_a_non_predicate_argument_is_refused() {
 fn a_payload_argument_pointing_at_a_predicate_argument_is_refused() {
     // The mirror of the case above, and the only claim that can honestly be
     // made about a payload argument: whatever shape it has, it is not a
-    // predicate.
+    // predicate. An update mapping, not a delete: `NdcConnectorConfig::validate`
+    // refuses a delete that declares `payload_argument` at all (see
+    // `config::argument_validation::validate_delete_has_no_payload_argument`),
+    // so a delete naming one this way is not a shape a real configuration can
+    // reach, even though this function is exercised directly here and would
+    // not itself refuse it.
     let config = config_with(CollectionProcedures {
-        delete: Some(ProcedureBinding {
-            procedure: "delete_customers".to_owned(),
+        update: Some(ProcedureBinding {
+            procedure: "update_customers".to_owned(),
             payload_argument: Some("filter".to_owned()),
             filter_argument: Some("filter".to_owned()),
             key_arguments: BTreeMap::new(),

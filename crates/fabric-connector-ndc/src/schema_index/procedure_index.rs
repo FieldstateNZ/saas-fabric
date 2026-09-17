@@ -180,4 +180,36 @@ mod tests {
 
         assert!(!index["delete_articles"]["pre_check"].required);
     }
+
+    #[test]
+    fn a_bare_array_argument_is_required() {
+        // `insert_articles`'s `objects`, unwrapped in `nullable`: nothing in
+        // this crate's observed schemas sends an insert with no rows, and
+        // `required_arguments_tests` pins that this crate holds a mapping to
+        // supplying it.
+        let index = indexed(
+            r#"[{"name": "insert_articles", "arguments": {
+                "objects": {"type": {"type": "array", "element_type": {"type": "named", "name": "articles"}}}
+            }}]"#,
+        );
+
+        assert!(index["insert_articles"]["objects"].required);
+    }
+
+    #[test]
+    fn a_bare_predicate_argument_is_required() {
+        // A hand-written fixture shape, `delete_customers(filter)` — no
+        // capture pins it, and `filter` is the argument name issue #62 found
+        // wrong on a real connector. It still proves the point: a `filter`
+        // argument with no `nullable` wrapper is required, and a mapping must
+        // supply it via `filter_argument` or the connector refuses every
+        // call.
+        let index = indexed(
+            r#"[{"name": "delete_customers", "arguments": {
+                "filter": {"type": {"type": "predicate", "object_type_name": "customers"}}
+            }}]"#,
+        );
+
+        assert!(index["delete_customers"]["filter"].required);
+    }
 }

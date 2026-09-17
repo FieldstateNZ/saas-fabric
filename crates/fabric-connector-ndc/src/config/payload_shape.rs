@@ -31,22 +31,26 @@ pub enum PayloadShape {
     /// Only an update mapping may declare this: an insert sends an array of
     /// row objects, never a per-column operation map, and a delete has no
     /// payload at all. Config validation refuses both.
+    ///
+    /// # Why a null value has to be wrapped too
+    ///
+    /// Read from the checked-in `schema-named.json`'s types, not observed
+    /// against a live connector — `docs/verification.md` records no probe of
+    /// either null behaviour below. `update_columns.body` is typed
+    /// `nullable<update_column_articles_body>`: the `nullable` wraps the
+    /// *operation*, not the value it carries, so `{"body": null}` (the
+    /// operation itself omitted) reads as "no operation for this column,"
+    /// while `{"body": {"_set": null}}` supplies the operation and asks it to
+    /// set the column to `NULL`. Wrapping every changed field in
+    /// `{"_set": ...}`, this one included, is what keeps that distinction
+    /// available to a caller who means to clear a column, rather than
+    /// collapsing "clear it" and "leave it" into the same `null`.
+    ///
+    /// This reading is specific to `update_columns`. It says nothing about
+    /// `insert_articles_object.body`, which the same fixture types as a plain
+    /// `nullable<text>` — a bare nullable column, not an operation — so a
+    /// `null` there is an ordinary value written by the insert, not a
+    /// "leave alone" signal; there is no existing row for an insert to leave
+    /// alone.
     SetOperations,
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn the_default_shape_is_values() {
-        assert_eq!(PayloadShape::default(), PayloadShape::Values);
-    }
-
-    #[test]
-    fn parses_snake_case_from_configuration() {
-        let shape: PayloadShape = serde_json::from_str(r#""set_operations""#).unwrap();
-
-        assert_eq!(shape, PayloadShape::SetOperations);
-    }
 }

@@ -22,6 +22,8 @@ mod connector_validation;
 mod connector_validation_tests;
 mod key_argument_validation;
 mod payload_shape;
+#[cfg(test)]
+mod payload_shape_tests;
 mod procedure_binding;
 mod procedures;
 

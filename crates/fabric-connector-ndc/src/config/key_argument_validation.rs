@@ -62,12 +62,16 @@ impl NdcConnectorConfig {
     /// all. Nothing has been observed wanting either shaped, so a mapping
     /// asking for it is configuration written for the wrong verb rather than
     /// a case this crate should try to honour.
+    ///
+    /// Walks [`crate::config::CollectionProcedures::non_update`] rather than listing
+    /// `"insert"` and `"delete"` by hand: a verb this crate learns to map in
+    /// the future inherits the same constraint automatically, instead of
+    /// silently passing this check by omission the way the false negative in
+    /// `registration::required_arguments` did for a differently hand-listed
+    /// verb set.
     pub(super) fn validate_payload_shape(&self) -> Result<(), String> {
         for (collection, procedures) in &self.procedures {
-            for (operation, binding) in [
-                ("insert", procedures.insert.as_ref()),
-                ("delete", procedures.delete.as_ref()),
-            ] {
+            for (operation, binding) in procedures.non_update() {
                 let Some(binding) = binding else { continue };
 
                 if binding.payload_shape != PayloadShape::Values {

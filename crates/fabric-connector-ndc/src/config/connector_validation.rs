@@ -22,6 +22,7 @@ impl NdcConnectorConfig {
         self.validate_transport()?;
         self.validate_predicate_arguments()?;
         self.validate_payload_arguments()?;
+        self.validate_delete_has_no_payload_argument()?;
         self.validate_distinct_arguments()?;
         self.validate_key_arguments_on_insert()?;
         self.validate_key_argument_distinctness()?;

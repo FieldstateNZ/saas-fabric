@@ -19,11 +19,12 @@ use crate::{NdcConnectorConfig, SchemaIndex};
 /// `filter_argument` passed every check this crate ran and failed on the
 /// connector's first delete.
 ///
-/// "Supplied" means named *anywhere* in the mapping — as
-/// [`ProcedureBinding::payload_argument`], [`ProcedureBinding::filter_argument`],
-/// or a value in [`ProcedureBinding::key_arguments`]. Which of the three is
-/// beside the point; what matters is that the connector's required argument
-/// has somewhere to come from.
+/// "Supplied" means named by whichever settings *this verb's translation
+/// actually sends* — see [`supplied_arguments`], which is verb-aware for
+/// exactly this reason. An argument named by a setting translation never
+/// reads for this verb (a `payload_argument` on a delete mapping, say) is not
+/// supplied, whatever the configuration happens to say: the connector would
+/// still refuse the call, because nothing on the wire ever named it.
 ///
 /// # Errors
 ///
@@ -53,7 +54,7 @@ fn check_binding(
     binding: &ProcedureBinding,
 ) -> Result<(), String> {
     let procedure = &binding.procedure;
-    let supplied = supplied_arguments(binding);
+    let supplied = supplied_arguments(binding, verb);
 
     for required in index.required_arguments(procedure) {
         if supplied.iter().any(|argument| argument.as_str() == required) {
@@ -71,13 +72,38 @@ fn check_binding(
     Ok(())
 }
 
-/// Every argument name one mapping actually fills, regardless of which
-/// setting names it.
-fn supplied_arguments(binding: &ProcedureBinding) -> Vec<&String> {
-    binding
-        .payload_argument
-        .iter()
-        .chain(binding.filter_argument.iter())
-        .chain(binding.key_arguments.values())
-        .collect()
+/// Every argument name one mapping actually sends for `verb`, matching what
+/// `translate::mutation::to_mutation_request` builds for each operation: an
+/// insert sends only its payload; an update sends its payload, its predicate,
+/// and every key argument; a delete sends its predicate and every key
+/// argument, and never a payload — a delete has none, and config validation
+/// ([`crate::config::NdcConnectorConfig::validate_delete_has_no_payload_argument`])
+/// now refuses a mapping that declares one anyway.
+///
+/// Getting this wrong in either direction is a real bug, not a style choice.
+/// Undercounting refuses a mapping that would have worked. Overcounting —
+/// crediting a delete with an argument only `payload_argument` names — is a
+/// false negative a verb-agnostic version of this function produced: a
+/// `delete_articles_by_id_and_tenant_key` mapping that wrote its `key_id`
+/// value into `payload_argument` instead of `key_arguments` passed this check
+/// by coincidence, because that version counted `payload_argument` regardless
+/// of verb. See `required_arguments_tests` for the mapping that pins this
+/// against the real procedure shape.
+fn supplied_arguments<'a>(binding: &'a ProcedureBinding, verb: &str) -> Vec<&'a String> {
+    let payload = binding.payload_argument.iter();
+    let filter = binding.filter_argument.iter();
+    let keys = binding.key_arguments.values();
+
+    match verb {
+        "insert" => payload.collect(),
+        "update" => payload.chain(filter).chain(keys).collect(),
+        "delete" => filter.chain(keys).collect(),
+        // `CollectionProcedures::all` names only these three verbs today, so
+        // this arm is unreached. It fails closed rather than being left
+        // absent: "supplies nothing" refuses a fourth verb's every mapping at
+        // startup, which is loud and safe, instead of a panic on an
+        // unmatched pattern or a silent "supplies everything" that would
+        // refuse nothing this check exists to catch.
+        _ => Vec::new(),
+    }
 }

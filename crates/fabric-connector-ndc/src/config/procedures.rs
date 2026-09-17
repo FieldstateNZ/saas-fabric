@@ -63,11 +63,40 @@ impl CollectionProcedures {
     /// bearing verbs would wave the insert through. The startup check that
     /// every configured argument is one the procedure declares wants the same
     /// breadth, for the same reason.
+    ///
+    /// Destructures `self` field by field rather than naming `self.insert`,
+    /// `self.update`, `self.delete` directly: a fourth field added to
+    /// [`CollectionProcedures`] then fails this destructure to compile,
+    /// instead of silently being absent from `all()` and, with it, from
+    /// [`Self::non_update`] and every check built on top of either.
     pub(crate) fn all(&self) -> [(&'static str, Option<&ProcedureBinding>); 3] {
+        let Self {
+            insert,
+            update,
+            delete,
+        } = self;
+
         [
-            ("insert", self.insert.as_ref()),
-            ("update", self.update.as_ref()),
-            ("delete", self.delete.as_ref()),
+            ("insert", insert.as_ref()),
+            ("update", update.as_ref()),
+            ("delete", delete.as_ref()),
         ]
+    }
+
+    /// Every mapping except the update one, paired with its verb.
+    ///
+    /// Feeds the `payload_shape` check: `set_operations` only makes sense for
+    /// an update's payload argument, so every *other* verb has to be held to
+    /// `values`. Derived from [`Self::all`] rather than a hand-written
+    /// `["insert", "delete"]` list, so a verb this crate learns to map in the
+    /// future is checked automatically instead of silently passing that
+    /// validation by omission — the same reasoning
+    /// `registration::required_arguments::supplied_arguments` now applies
+    /// per-verb rather than to a hardcoded set.
+    pub(super) fn non_update(&self) -> Vec<(&'static str, Option<&ProcedureBinding>)> {
+        self.all()
+            .into_iter()
+            .filter(|(verb, _)| *verb != "update")
+            .collect()
     }
 }

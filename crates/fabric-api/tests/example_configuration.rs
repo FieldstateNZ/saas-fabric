@@ -8,8 +8,9 @@
 
 mod examples_support;
 
-use examples_support::{catalog, config};
-use fabric_api::config::TokenConfig;
+use examples_support::{catalog, config, raw};
+use fabric_api::config::{AppConfig, TokenConfig};
+use fabric_connector_ndc::PayloadShape;
 use fabric_core::LogicalResourceName;
 use fabric_data_api::OperationKind;
 
@@ -95,6 +96,14 @@ fn the_example_catalogue_now_allows_the_writes_the_connector_can_serve() {
 /// Pinning this against the parsed example config means a rename of either
 /// name in `examples/config.toml` fails this test rather than surfacing only
 /// as a connector refusal at startup.
+///
+/// This is also this workspace's round-trip proof that `ProcedureBinding`'s
+/// TOML shape -- the inline-table `key_arguments = { id = "key_id" }` and the
+/// `snake_case` `payload_shape = "set_operations"` string -- parses correctly
+/// through the loader an operator's `config.toml` actually goes through
+/// (`AppConfig::load`, via `examples_support::config`), rather than through
+/// `toml::from_str` called directly: figment is the real mechanism, so that
+/// is the one worth pinning.
 #[test]
 fn the_example_connectors_customers_mapping_names_its_key_argument() {
     let config = config();
@@ -103,9 +112,45 @@ fn the_example_connectors_customers_mapping_names_its_key_argument() {
 
     let update = customers.update.as_ref().unwrap();
     assert_eq!(update.key_arguments.get("id").map(String::as_str), Some("key_id"));
+    assert_eq!(update.payload_shape, PayloadShape::SetOperations);
 
     let delete = customers.delete.as_ref().unwrap();
     assert_eq!(delete.key_arguments.get("id").map(String::as_str), Some("key_id"));
+}
+
+/// `#[serde(deny_unknown_fields)]` on `ProcedureBinding` holds through the
+/// real loader, not only through direct `serde_json`/`toml` deserialisation:
+/// a typo'd setting in a `[connectors.procedures.*]` table must fail
+/// `AppConfig::load` rather than silently doing nothing. Built from the
+/// example configuration's own text plus one bogus line, written to a
+/// temporary file, so everything *other* than the injected typo is a
+/// configuration already known to load.
+#[test]
+fn an_unknown_field_in_a_procedure_mapping_is_refused_at_load() {
+    // Inserted into the *existing* `[connectors.procedures.customers.insert]`
+    // table rather than appended as a new one -- TOML refuses to redeclare a
+    // table, and that refusal would mask the one this test means to pin.
+    let contents = raw("config.toml").replacen(
+        "payload_argument = \"objects\"",
+        "payload_argument = \"objects\"\nbogus_setting = \"nope\"",
+        1,
+    );
+
+    let path = std::env::temp_dir().join(format!(
+        "fabric-config-unknown-field-{}-{}.toml",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::write(&path, contents).unwrap();
+
+    let error = AppConfig::load(path.to_str().unwrap()).unwrap_err();
+
+    let _ = std::fs::remove_file(&path);
+
+    assert!(error.contains("bogus_setting"), "{error}");
 }
 
 #[test]

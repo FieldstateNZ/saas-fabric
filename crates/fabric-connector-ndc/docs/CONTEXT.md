@@ -52,18 +52,22 @@ Wire types are hand-written in `src/wire/` from the published spec.
   `capabilities.rs`, `schema.rs`, `ndc_type.rs`, `procedure.rs`. All
   `pub(crate)`. Field names mirror NDC exactly.
 - `translate/` — `query.rs`, `expression.rs`, `membership.rs`, `mutation.rs`,
-  `procedure_arguments.rs`, `key_arguments.rs`, `response.rs`, `capabilities.rs`.
-  Refusals are built as `UnsupportedFeature::…refused_because(detail)` — see
-  invariant 8. `key_arguments.rs` reads a keyed procedure's key values off the
-  predicate's *direct* equality clauses only (see invariant 3c).
+  `procedure_arguments.rs`, `key_arguments.rs`, `key_equality.rs`, `response.rs`,
+  `capabilities.rs`. Refusals are built as
+  `UnsupportedFeature::…refused_because(detail)` — see invariant 8.
+  `key_arguments.rs` adds one argument per `key_arguments` entry and refuses a
+  collision with an argument already written; `key_equality.rs` is where it
+  reads a keyed procedure's key values off the predicate's *direct* equality
+  clauses (see invariant 3c).
 - `schema_index/` — `schema_index_type.rs`, `semantic_operator.rs`,
   `operator_index.rs`, `collection_index.rs`, `procedure_index.rs`.
   `procedure_index.rs`'s `ArgumentInfo { kind: ArgumentKind, required: bool }`
   carries nullability *beside* `ArgumentKind`, not inside it — `ArgumentKind`
   stays a two-way kind split on purpose (see its rustdoc).
 - `config/` — `connector_config.rs`, `connector_validation.rs`,
-  `argument_validation.rs` (payload/filter checks), `key_argument_validation.rs`
-  (key argument and `payload_shape` checks), `procedures.rs`
+  `argument_validation.rs` (payload/filter checks, including that a delete may
+  not declare `payload_argument`), `key_argument_validation.rs` (key argument
+  distinctness and `payload_shape` checks), `procedures.rs`
   (`CollectionProcedures`), `procedure_binding.rs` (`ProcedureBinding`),
   `payload_shape.rs` (`PayloadShape`).
 - `registration/` — `procedure_arguments.rs` (payload/filter vs. schema),
@@ -114,20 +118,38 @@ Wire types are hand-written in `src/wire/` from the published spec.
    is re-checked in `translate::mutation`. An argument a connector never declared
    may be silently ignored, and for a filter that means an unscoped write.
 3c. **A key value is read only from an equality in the predicate the platform
-   already built — never from the caller's payload, never guessed.**
-   `translate::key_arguments` looks only at a filter's *direct* clauses (a bare
-   `Filter::Compare`, or a top-level `Filter::And`'s own clauses); it never
-   descends into `Or`, `Not`, or a nested `And`, and `Filter::In` is never
-   accepted as an equality even with one value. No equality, or more than one
-   with differing values, is refused. `key_arguments` values are also
+   already built — never from the caller's payload, never guessed, not even as
+   a fallback for a field the predicate omits.** `translate::key_equality`
+   looks only at a filter's *direct* clauses (a bare `Filter::Compare`, or a
+   top-level `Filter::And`'s own clauses); it never descends into `Or`, `Not`,
+   or a nested `And`, and `Filter::In` is never accepted as an equality even
+   with one value. No equality, or more than one with differing values, is
+   refused. `translate::key_arguments::add_key_arguments` then refuses to
+   write a key argument's value over an argument name the payload, the
+   predicate, or an earlier key argument already claimed — the collision
+   config validation
+   (`config::key_argument_validation::validate_key_argument_distinctness`)
+   should already have prevented, checked again because `add_predicate` still
+   inserts unconditionally and only the order of the two calls (predicate
+   first) makes the guard meaningful. `key_arguments` values are also
    re-checked at startup (`registration::key_arguments`): every one must be an
    argument the procedure declares as `ArgumentKind::Value`, never
    `Predicate`.
-3d. **A procedure's required (non-nullable) argument that no part of the
-   mapping supplies is refused at startup**, not left to fail on the
-   connector's first call. `registration::required_arguments` checks every
-   mapped procedure's non-nullable arguments against payload, filter, and
-   every key argument combined.
+3d. **A procedure's required (non-nullable) argument that no part of *that
+   verb's translation* supplies is refused at startup**, not left to fail on
+   the connector's first call. `registration::required_arguments` checks every
+   mapped procedure's non-nullable arguments against what
+   `translate::mutation::to_mutation_request` actually sends for that verb:
+   payload, filter and keys for an update; filter and keys for a delete;
+   payload alone for an insert. Verb-blind counting is its own bug, not a
+   simplification — crediting a delete with an argument only
+   `payload_argument` names let a mapping that wrote a key value into the
+   wrong setting pass this check by coincidence.
+3e. **A delete mapping may not declare `payload_argument` at all.** A delete
+   carries no payload, so `config::argument_validation::validate_delete_has_no_payload_argument`
+   refuses one at startup rather than accepting silently-unused configuration
+   that is usually a value meant for `key_arguments` written in the wrong
+   place.
 4. **A mutation reaching translation with no predicate is refused.**
 5. **`ResolvedSecret::expose()` is called in exactly one place** —
    `routing.rs`, straight into the request body. Never logged, never in a span,

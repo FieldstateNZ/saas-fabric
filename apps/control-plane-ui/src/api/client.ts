@@ -180,7 +180,7 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
     // operator made. Forgetting it is what lets the shell notice and offer to
     // sign in again, rather than showing an error on every panel at once.
     if (response.status === 401) {
-      forgetToken()
+      forgetToken(token)
     }
 
     throw await refusal(response)

@@ -16,11 +16,15 @@
 //!
 //! # What this crate is for
 //!
-//! One question: *given a token, who is this and which store answers for
-//! them?* It makes no authorization decision, holds no policy, and — in this
-//! increment — talks to no authorization service at all. Everything that comes
-//! later is allowed to trust its answer, which is why it is worth building
-//! alone and testing adversarially before anything depends on it.
+//! One question first: *given a token, who is this and which store answers
+//! for them?* That identity primitive holds no policy of its own — the
+//! authorization model lives in OpenFGA, pinned per issuer by
+//! [`IssuerRegistration`] — but the crate does not stop at identity:
+//! `check.rs`, `openfga.rs` and `runtime.rs` bind that identity to a decision
+//! and ask an embedded OpenFGA for the answer, serving `POST /v1/check`.
+//! Everything that comes later is allowed to trust the identity this crate
+//! binds, which is why verification was built and tested adversarially before
+//! anything depended on it.
 //!
 //! # The rule that shapes every type here
 //!

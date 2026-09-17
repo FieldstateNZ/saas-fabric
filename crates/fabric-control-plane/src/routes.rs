@@ -61,9 +61,10 @@ pub const API_PREFIX: &str = "/api";
 /// an identity provider (§8, ADR 0008). `PUT` means what the Data API does
 /// not: a genuine whole-resource replacement.
 pub(crate) fn control_plane_routes(state: ControlPlaneState) -> Router {
-    // Mounted only when the deployment has a sign-in. Under the trusted-header
-    // posture there is nothing to sign in to, and a route that exists in order
-    // to refuse every call is a route somebody eventually makes work.
+    // Mounted only when the deployment has a sign-in. OIDC always builds one
+    // (`operator_keys::establish` in the host); `None` is a harness wiring an
+    // authenticator directly — the test support module, the loopback
+    // workbench. A route that only ever refuses is one somebody makes work.
     let session = if state.sign_in.is_some() {
         Router::new().route(
             "/session",

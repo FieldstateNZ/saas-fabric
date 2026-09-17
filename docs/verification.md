@@ -4,9 +4,9 @@ What was measured, what it showed, and where the numbers came from. Every
 command below is reproducible from the repository root; nothing here is
 asserted without one.
 
-Last run: 2026-08-29, against `claude/split-issuer-from-endpoints`,
-covering both planes, on **Rust 1.98.0** — pinned in
-[`rust-toolchain.toml`](../rust-toolchain.toml).
+Last run: 2026-09-18, on `main` at `f4a39d1` (PR #73), covering both
+planes, on **Rust 1.98.0** — pinned in
+[`rust-toolchain.toml`](../rust-toolchain.toml) — on macOS aarch64.
 
 The version is recorded because it mattered. CI used to install `stable`
 unpinned, and 1.98's `unused_async_trait_impl` failed this increment's pull
@@ -16,16 +16,17 @@ which is a better statement of what they do, but the failure itself was
 toolchain drift. `docs/architecture/toolchain-policy.md` records the pin and
 the obligation that comes with it.
 
-The runtime plane's numbers come from the same tree as the previous run
-(2026-08-14, after six rounds of adversarial review; the last two ran narrow
-independent lenses rather than one generalist pass and between them found
-nineteen blocking defects — more than the four generalist rounds before them
-combined). Nothing in the runtime plane changed for this increment, which is
-itself checked: the architecture script now fails if a control-plane crate
-appears anywhere in the runtime graph.
-
-The control plane's numbers are new. What was verified beyond the gates below
-is at the end, under "The control plane, end to end".
+The previous run recorded here was 2026-08-29, against
+`claude/split-issuer-from-endpoints`. Two increments have landed since and
+changed what is verified: keyed update and delete reaching a real
+`ndc-postgres` procedure (issue #62's F3, closed by PR #71, ADR 0020) and
+observed platform deployments from a live cluster (PR #72, ADR 0022). Both
+are closed, both changed the crate graph, and both get their own short
+section below, alongside "Connector acceptance (issue #62)". Most of the
+rest of this document — the gates table's headline numbers aside — is the
+accumulated record of runs before this one; each section below still states
+its own date and commit, and only what changed for this pass is restated
+here.
 
 ## Gates
 
@@ -33,17 +34,17 @@ is at the end, under "The control plane, end to end".
 | --- | --- | --- |
 | Formatting | `cargo fmt --all --check` | clean |
 | Lints | `cargo clippy --workspace --all-targets -- -D warnings` | 0 findings |
-| Tests | `cargo test --workspace --exclude fabric-ndc-acceptance` | 1940 passing, 0 failing, 1 ignored |
+| Tests | `cargo test --workspace --exclude fabric-ndc-acceptance` | 2098 passing, 0 failing, 1 ignored — 2090 on `f4a39d1`, plus the eight `crates/fabric-fga-auth-api/tests/example_configuration.rs` adds in the same change as this refresh |
 | Docs | `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps` | 0 warnings |
 | Dependencies | `cargo deny check` | advisories, bans, licences, sources — all ok |
 | File sizes | `python3 scripts/check_file_sizes.py` | 0 over the 150-line limit (2 exempted, both explained) |
-| Architecture | `python3 scripts/check_architecture.py` | 11 invariants hold across 22 crates |
+| Architecture | `python3 scripts/check_architecture.py` | 11 invariants hold across 23 crates |
 | Console lint | `npm run lint` | 0 findings |
 | Console types | `npm run typecheck` | 0 errors |
-| Console tests | `npm test` | 91 passing, 0 failing |
-| Console build | `npm run build` | 229 kB, 70 kB gzipped |
-| Connector acceptance | `cargo test -p fabric-ndc-acceptance` | 44 passing, 0 failing across two integration binaries — **default mode**, Docker up (server `29.1.3`); of the 14 container-backed tests, 13 reached a real connector and postgres and 1 reached the nginx impostor (see below for the breakdown) |
-| Connector acceptance, required mode | `FABRIC_REQUIRE_CONNECTOR_ACCEPTANCE=1 cargo test -p fabric-ndc-acceptance` | 44 passing, 0 failing across two integration binaries — **required mode**, observed on the first green `connector-acceptance` CI run for PR #66 (workflow run 34014619529): the job pre-pulled all three pins by digest (`Status: Downloaded newer image for ghcr.io/hasura/ndc-postgres@sha256:f91910ef…`, `postgres@sha256:e013e867…`, `nginx@sha256:65645c7b…`), then `published_state_reaches_a_real_connector` reported 26 passed in 12.32 s and `the_stack_comes_up` 18 passed in 3.48 s. Not reproducible on the implementation machine — see below |
+| Console tests | `npm test` | 143 passing, 0 failing, across 28 files |
+| Console build | `npm run build` | `dist/assets/index-Bk9NSHzW.js`, 281.86 kB, gzip 83.58 kB |
+| Connector acceptance | `cargo test -p fabric-ndc-acceptance` | not re-run locally for this pass (Docker-backed and out of scope for this doc refresh) — the last locally measured run is recorded below, dated, and is now stale on test count: PR #71 added four tests to `published_state_reaches_a_real_connector` (15, not 11) |
+| Connector acceptance, required mode | `FABRIC_REQUIRE_CONNECTOR_ACCEPTANCE=1 cargo test -p fabric-ndc-acceptance` | not run locally for this pass; passed in CI on this commit — GitHub Actions run [35196362764](https://github.com/FieldstateNZ/saas-fabric/actions/runs/35196362764) (workflow `CI`, 2026-09-17) |
 
 Twelve of the thirteen rows above run in CI on every push and pull request
 (`.github/workflows/ci.yml`): the four Rust gates, the dependency check
@@ -55,9 +56,23 @@ steps of one job because `npm ci` dominates each of them. The
 one place that claim is made, with the requirement set — CI can go green on
 that job only by actually reaching a real connector (`tests/support/gate.rs`).
 That CI job **is** the "required mode" row; the "default mode" row above it
-is not a separate CI job, only this table's honest record of what running
-the same suite without the requirement, on the machine that did this
-increment's work, actually showed.
+is not a separate CI job, and for this pass it is not a fresh local
+measurement either — it stays here as a pointer to the last one, recorded
+below with its own date, rather than asserting a number this pass did not
+produce.
+
+**Everything from here to "Nothing is ignored" below is the 2026-08-29
+record, unchanged, and its test counts are now stale.** PR #71 added four
+tests to `published_state_reaches_a_real_connector` — a cross-tenant keyed
+delete, a same-key keyed delete, a keyed update, and the check that no write
+response names a key argument or a procedure (see "Keyed writes reach
+ndc-postgres" below) — so that binary now holds 15 tests, not 11 (30 with the
+15 shared harness unit tests counted below, not 26), and the crate's
+two-binary "N passing" total is 48, not 44. The mechanism this section
+documents — the pull-deadline fallback, the per-binary resolution cache, the
+container/network cleanup — has not changed and was not re-exercised for
+this pass; it is left as the record of the run that proved it, not restated
+as current.
 
 **What "44 passing" is actually two different kinds of test.**
 `cargo test -p fabric-ndc-acceptance` runs two integration binaries,
@@ -337,14 +352,27 @@ inside that crate the same way it keeps every other NDC type there; the
 floor's own enforcement is pinned by `fabric-connector-ndc`'s fixture-backed
 unit tests instead.
 
-`a_delete_scoped_to_another_tenant_affects_nothing_and_the_row_survives` is
-not implemented. The real `delete_articles_by_id_and_tenant_key` procedure
-requires `key_id` and `key_tenant_key` arguments alongside its `pre_check`
-predicate, and `fabric_connector_ndc::CollectionProcedures` has nowhere to
-carry a required key argument — a neutral `MutationSpec::Delete { filter }`
-cannot be expressed against this connector's generated procedures as they
-stand. This is F3, below, and it is deferred to its own issue rather than
-grown here.
+`a_delete_scoped_to_another_tenant_affects_nothing_and_the_row_survives` was
+not implemented at this point in the record. The real
+`delete_articles_by_id_and_tenant_key` procedure requires `key_id` and
+`key_tenant_key` arguments alongside its `pre_check` predicate, and
+`fabric_connector_ndc::CollectionProcedures` had nowhere to carry a required
+key argument — a neutral `MutationSpec::Delete { filter }` could not be
+expressed against this connector's generated procedures as they then stood.
+This was F3, below, deferred to its own issue rather than grown here.
+
+**F3 is now closed.** PR #71 (2026-09-17, ADR 0020, superseding ADR 0004)
+gave a procedure mapping a way to name which arguments carry the logical key
+and how an update payload is shaped, so key values are read from the
+tenant-scoped predicate's own equalities rather than the request body. The
+test named above is now implemented, and three more joined it, in
+`crates/fabric-ndc-acceptance/tests/published_state_reaches_a_real_connector.rs`:
+`a_delete_scoped_to_another_tenant_affects_nothing_and_the_row_survives`,
+`a_keyed_delete_removes_only_this_tenants_row_under_the_shared_key`,
+`a_keyed_update_changes_only_this_tenants_row`, and
+`no_write_response_names_the_key_arguments_or_the_procedure`. See "Keyed
+writes reach ndc-postgres (issue #62's F3, PR #71)" below for what each
+proves.
 
 **The mutation experiments.** Five mutations were run against this
 composed test in this worktree, following the standard above: mutate, run
@@ -388,7 +416,172 @@ assumptions, and the commit that corrected each:
 | F1 | Every write could omit `fields` on a procedure request. A real `ndc-postgres` refuses that outright: `400 — "Procedure requests must ask for 'affected_rows' or use the 'returning' clause."` | `6defacb` |
 | F2 | The shipped example's predicate argument name, `filter`, was a real connector's name for it. A real `ndc-postgres` calls it `pre_check` (delete, update) or `post_check` (insert) | `6defacb` |
 | F4 | `wire/response.rs`'s rustdoc gave the wrong reason `rows` is ever absent from a query response. `ndc-postgres` never takes that route; only another connector might | `e5e2d73` |
-| F3 | Neutral update/delete could be mapped onto this connector's generated procedures the same way insert is. They cannot: `update_articles_by_id_and_tenant_key` and `delete_articles_by_id_and_tenant_key` require `key_id`/`key_tenant_key` arguments `CollectionProcedures` has nowhere to carry | **Not corrected here** — deferred to a new issue, "neutral update/delete cannot be expressed against `ndc-postgres` v3.1.0's keyed procedures," which will supersede ADR 0004 rather than amend it further (ADR 0004's addendum; lead decision on issue #62) |
+| F3 | Neutral update/delete could be mapped onto this connector's generated procedures the same way insert is. They cannot: `update_articles_by_id_and_tenant_key` and `delete_articles_by_id_and_tenant_key` require `key_id`/`key_tenant_key` arguments `CollectionProcedures` has nowhere to carry | **Closed since this table was written** — `72aac20` (PR #71, 2026-09-17). ADR 0020 supersedes ADR 0004: a procedure mapping may now name which arguments carry the logical key, key values come only from the tenant-scoped predicate's own equalities, never the request body. See "Keyed writes reach ndc-postgres" below |
+
+## Keyed writes reach ndc-postgres (issue #62's F3, PR #71)
+
+ADR 0020 (`72aac20`, 2026-09-17) supersedes ADR 0004 and closes the one gap
+"Connector acceptance (issue #62)" above named and deferred: a procedure
+mapping may now name which of a procedure's arguments carry the logical key
+and how an update's payload is shaped, so `PATCH` and `DELETE` on a keyed
+resource can reach `ndc-postgres` v3.1.0's real
+`update_articles_by_id_and_tenant_key` and `delete_articles_by_id_and_tenant_key`
+procedures instead of stopping at "cannot be expressed." Key values come only
+from the tenant-scoped predicate's own direct equalities — never the request
+body, never inferred — and the discriminator still goes out twice: once as a
+key argument, once inside `pre_check`, both read from the same conjunct.
+
+**Proven against the real connector.** Four tests joined
+`crates/fabric-ndc-acceptance/tests/published_state_reaches_a_real_connector.rs`,
+all driven through the same real `FilesystemRuntimePublication` →
+`fabric_tenant_runtime` → `fabric_data_api` → `fabric_connector_ndc` stack
+against `ghcr.io/hasura/ndc-postgres:v3.1.0` and `postgres:16-alpine` that
+the rest of that file uses:
+
+- `a_delete_scoped_to_another_tenant_affects_nothing_and_the_row_survives` —
+  the test issue #62 named and could not implement. globex asks to delete a
+  row acme owns, by its logical key; the response reports `affected: 0`, a
+  direct `psql` count shows the row still exists, and acme can still read it.
+  This is the cross-tenant proof: the key argument alone is not what scopes
+  the delete, the predicate travelling alongside it is.
+- `a_keyed_delete_removes_only_this_tenants_row_under_the_shared_key` — acme
+  and globex each have a row under the same logical key `1` (a shared table,
+  discriminator-isolated). acme's delete removes exactly one physical row,
+  `psql` confirms one remains, and it is globex's; globex's own read is
+  unaffected.
+- `a_keyed_update_changes_only_this_tenants_row` — a `PATCH` from acme
+  changes only acme's physical row under the shared key; `psql` shows
+  globex's title unchanged, and globex's own read agrees.
+- `no_write_response_names_the_key_arguments_or_the_procedure` — runs the
+  cross-tenant delete, the update and the keyed delete in sequence and
+  inspects every response body: no `key_id`, `key_tenant_key`, procedure
+  name, or other NDC vocabulary escapes to the caller, which is the same
+  containment `check_ndc_containment` enforces structurally, now checked
+  at the response as well.
+
+**Proven at the unit level, one rule at a time.** ADR 0020 states four rules
+and each is enforced rather than documented; the tests it points at (all in
+`crates/fabric-connector-ndc/src`):
+
+- *A key value must come from an equality the platform can see* —
+  `translate/key_equality_tests.rs`:
+  `a_bare_top_level_equality_is_found`,
+  `a_direct_clause_of_a_top_level_and_is_found`,
+  `an_equality_hidden_under_an_or_is_not_found`,
+  `an_equality_inside_a_nested_and_is_not_found`,
+  `no_equality_at_all_is_refused`, and
+  `two_differing_equalities_are_refused_as_contradictory`.
+- *A key argument may not collide with the payload or predicate argument, or
+  with another key argument* — `translate/key_arguments_tests.rs`:
+  `a_key_argument_colliding_with_the_filter_argument_is_refused_rather_than_overwriting_it`,
+  `a_key_argument_colliding_with_the_payload_argument_is_refused`,
+  `a_key_argument_colliding_with_another_key_argument_is_refused`.
+- *A key argument is checked against the connector's own schema at startup*
+  — `registration/key_arguments_tests.rs`:
+  `a_key_argument_the_procedure_never_declares_is_refused`,
+  `a_key_argument_declared_as_a_predicate_is_refused`,
+  `a_key_field_absent_from_the_collections_schema_is_refused`.
+- *A required argument nothing supplies is a startup failure, not a `400` on
+  the first write* — `registration/required_arguments_tests.rs`:
+  `a_mapping_missing_a_required_key_is_refused_at_startup`,
+  `a_mapping_supplying_no_keys_at_all_is_refused`,
+  `a_delete_mapping_that_puts_a_key_value_in_payload_argument_instead_of_key_arguments_is_refused`,
+  `the_full_articles_mapping_covers_every_required_argument_on_the_real_schema`.
+- *The payload shape is a closed enum* (`values` or `set_operations`, the
+  latter only for an update) — `config/payload_shape_tests.rs`
+  (`the_default_shape_is_values`, `parses_snake_case_from_configuration`)
+  for the enum itself, and `config/connector_validation_tests.rs`
+  (`set_operations_on_an_insert_mapping_is_rejected`,
+  `set_operations_on_a_delete_mapping_is_rejected`) for the refusal.
+
+**One claim in ADR 0020 this pass could not independently confirm.** The ADR
+states, citing "`docs/verification.md`, mutation M3": "with `pre_check`
+removed from a keyed delete, `ndc-postgres` v3.1.0 still deleted exactly one
+row, because the `articles` primary key is `(id, tenant_key)` and the key
+arguments alone named it" — offered there as the measured reason the
+discriminator is still sent a second time inside `pre_check` rather than
+relied on to be redundant. No mutation table entry labelled M3 existed in
+this document before this pass, `cargo test -p fabric-ndc-acceptance` was not
+run for this pass (see the Gates table), and mutating `translate/mutation.rs`
+to drop `pre_check` from a keyed delete and re-running the acceptance suite
+against real Docker is what it would take to reproduce this directly. Recorded
+as the ADR states it, not independently re-verified here.
+
+## Observed platform deployments (PR #72, ADR 0022)
+
+Before PR #72 the Components page always said `Running: Unknown` — desired
+state in Git was proven, but nothing observed what was actually serving.
+ADR 0022 (Accepted for the LucentRoot readiness milestone) adds an optional,
+read-only `DeploymentObserver` port that `fabric-deployment-kubernetes`
+implements: bounded `GET`s against named Deployments, Pods and ReplicaSets,
+using the pod's own projected service-account token, with no create, update,
+delete, exec, secret-read or cluster-wide permission. The runtime plane
+cannot depend on it (`check_the_planes_do_not_meet` and the crate graph
+above), and Kubernetes representations stay inside the adapter
+(`check_adapter_containment`'s third rule, added with this crate).
+
+**What counts as a healthy running version, proven at the unit level** (all
+in `crates/fabric-deployment-kubernetes/src`):
+
+- *A version requires a current observed controller generation, not just
+  ready-looking replicas* — `evaluate_tests.rs::requires_controller_and_actual_container_evidence`
+  drives a fixture through `observedGeneration` lagging `generation` (reports
+  `Progressing`) and a running container whose image ID disagrees with the
+  deployment's pinned digest (reports `Progressing` with no version claimed)
+  — the exact shape of "desired moved, running has not caught up yet" that a
+  live rollout produces.
+- *A pod must be owned through an unbroken controller chain, ready, and not
+  terminating* — `evaluate_tests.rs::foreign_pods_cannot_satisfy_rollout`,
+  `terminating_and_unready_pods_are_not_healthy`.
+- *A scale-to-zero reports stopped only once the controller agrees, not on
+  the request alone* — `evaluate_tests.rs::stopped_workloads_require_completed_scale_down`.
+- *A failed rollout condition overrides ready counts that look fine in
+  isolation* — `evaluate_tests.rs::failed_controller_overrides_ready_counts`.
+- *A tag-only image, or an image from a different repository, is not version
+  evidence* — `evaluate_tests.rs::tag_only_and_wrong_repository_images_are_not_version_evidence`.
+- *Mixed releases across workloads never collapse into one reported version,
+  a stopped runtime never hides a healthy control plane, and missing or
+  failed evidence is never papered over with an old version* —
+  `summary_tests.rs::mixed_releases_never_become_a_single_running_version`,
+  `stopped_runtime_does_not_hide_a_healthy_control_plane`,
+  `missing_or_failed_evidence_cannot_reuse_a_version`.
+- *The client re-reads its projected token, never caches a stale credential
+  or leaks a cluster response verbatim, and refuses a paginated list rather
+  than acting on a partial one* — `client_tests.rs::credentials_rotate_and_only_get_requests_are_sent`,
+  `errors_do_not_expose_cluster_response_or_credentials`,
+  `refuses_partial_lists_and_encodes_selectors`.
+
+**Observation is independent of desired-state selection**, proven in
+`crates/fabric-platform-management/src/service/service_tests.rs::observation_does_not_change_desired_state_or_update_selection`:
+a fixture observer reports `0.3.0-preview.1` running while desired state is
+already `0.3.0-preview.2` (and a reconcile moves desired state on to
+`0.3.0-preview.3`); the test asserts `status.running` reflects only what was
+observed, `status.desired` and the update-selection path never read it back,
+and no desired-state write happens as a side effect of asking. This is the
+same desired-ahead-of-running shape LucentRoot went on to show for real — see
+below.
+
+The console's half: `apps/control-plane-ui/src/components/DeploymentEvidence.test.tsx`
+asserts the display distinguishes "not configured" from "configured but the
+observation itself failed" (`distinguishes missing configuration from an
+observation failure`) and shows mixed releases and a stopped runtime as what
+they are, without implying a convergence the evidence does not support
+(`shows mixed releases and a stopped runtime without claiming convergence`).
+
+**What only LucentRoot could show.** The readiness record kept in the
+platform repository (`saas-fabric-platform`'s `docs/fabric-readiness.md`) is
+reported to show exactly the sequence the unit tests above predict rather
+than merely permit: desired state advanced to `preview.13`
+(`fabric-platform-git`'s `ac0985f`) while the observer still reported
+`preview.12` running, because Argo had not yet applied the new manifest: the
+same "generation observed, but not yet the new one" state
+`requires_controller_and_actual_container_evidence` exercises with a
+fixture. A later observation reported both desired and running agreeing on
+`preview.13`. This document has not read `docs/fabric-readiness.md` directly
+— it is a record in a different repository — so this paragraph states what
+is reported there, not something re-derived from this repository's own
+tests; the unit tests above are what this repository can independently
+stand behind.
 
 ## Acting on Keycloak as the operator
 
@@ -548,27 +741,34 @@ change.
 
 ## File sizes
 
-815 Rust source files under `crates/*/src`, of which 151 are the control
-plane's; `scripts/check_file_sizes.py` measures 709 of them, the rest being
-`*_tests.rs` siblings and per-crate integration tests it excludes by rule. The
-policy (`docs/architecture/file-size-policy.md`) treats 150 production lines as
-a hard limit and 120 as advisory; test lines never count, whether they live in
-a sibling `*_tests.rs` or in a trailing `#[cfg(test)]` module.
+890 Rust source files under `crates/*/src` across the workspace's 23 crates
+(up from 815 files when this section was last counted) — 366 the runtime
+plane's, 349 the control plane's, and 175 in neither, using
+`scripts/check_architecture.py`'s own `RUNTIME_PLANE`/`CONTROL_PLANE` sets to
+place each crate; `scripts/check_file_sizes.py` measures 777 — the 890 less the 114
+`*_tests.rs` siblings it excludes by rule, plus
+`crates/fabric-control-plane-api/examples/console_workbench.rs`, which sits
+outside `src/` and is measured because the script excludes no `examples/`
+directory (the script also walks
+`tests/`, `benches/` and `examples/`, but per-crate integration tests under
+`crates/<name>/tests/` are excluded the same way, so they never entered the
+890 in the first place). The policy (`docs/architecture/file-size-policy.md`)
+treats 150 production lines as a hard limit and 120 as advisory; test lines
+never count, whether they live in a sibling `*_tests.rs` or in a trailing
+`#[cfg(test)]` module.
 
-Counted by running the script on `deb5e59` ("Harden the composed native-client
-test, and drain its background sweep"), the commit this doc pass's own code
-round shipped on, on `claude/m2-edge-trust-s4`. This documentation-only commit
-changes no `.rs` file, so the numbers below still hold on the doc-pass commit
-itself. Re-run it rather than trusting the numbers: they are a snapshot, and
-the point of recording them is that the next snapshot can be compared.
+Counted by running the script on `main` at `f4a39d1` (PR #73), 2026-09-18.
+Re-run it rather than trusting the numbers: they are a snapshot, and the
+point of recording them is that the next snapshot can be compared.
 
 - **Over 150 lines: none unexplained.** Two files hold an exemption, each with
   its reason recorded beside it in the script:
-  `fabric-control-plane/src/errors.rs` (175) and `fabric-fga-auth/src/cache.rs`
-  (155).
-- **Over 120 lines: 110 files**, of which 108 are inside the hard limit. The
-  largest unexempted are two at exactly 150 —
-  `fabric-connector/src/errors/connector_error.rs` and
+  `fabric-control-plane/src/errors.rs` (267, up from 175) and
+  `fabric-fga-auth/src/cache.rs` (155, unchanged).
+- **Over 120 lines: 132 files**, of which 130 are inside the hard limit. The
+  largest unexempted are three at exactly 150 —
+  `fabric-client-model/src/document.rs`,
+  `fabric-connector/src/errors/connector_error.rs`, and
   `fabric-platform-management/src/desired_state/port.rs`. Every file in the
   121–150 band that this lane wrote or touched states its reason at the top of
   the file, which is what the policy asks of that band.
@@ -593,29 +793,49 @@ kept the rule about a whole *name* and gave `registered_domain/label.rs` the
 rule about one *label*; `fabric-identity/src/logging.rs` kept the domain's
 refusals and gave `logging/startup.rs` the one event there that is not one.
 
-**108 files sit in the 121–150 band**, and the reason is the one it has always
+**130 files sit in the 121–150 band**, and the reason is the one it has always
 been: rustdoc. Every file in the band is a type or a function set whose prose
 outweighs its code — `redirect_uri.rs` is 138 lines for a newtype over a
 `String`, and most of that is the argument for why a wildcard in the host is
 refused. Splitting prose away from the thing it explains would satisfy the
 counter and make the code worse.
 
-The console's 17 source files are held to the same 150-line limit by ESLint's
-`max-lines`; none is close.
+The console's source has grown to 101 non-test `.ts`/`.tsx` files under
+`apps/control-plane-ui/src` (up from 17), held to the same 150-line limit by
+ESLint's `max-lines` (`eslint.config.js`, `max: 150`, test files exempted the
+same way `*_tests.rs` siblings are on the Rust side). Not individually
+re-measured for this pass; the Gates table's Console lint row (`npm run
+lint`, 0 findings) is what stands behind "held to the limit", since a
+violation is an error under that config, not a warning.
 
 ## Dependency licences
 
-208 packages in the resolved graph — 195 third-party and 13 of this
-workspace's own — every one carrying an OSI-approved permissive licence. `deny.toml`'s `exceptions` list is empty, and its `allow`
-list is the set of licences actually present — not a set approved in
-principle, so an unmatched entry never sits there as noise.
+218 packages in the resolved graph (`cargo metadata --format-version 1
+--all-features`, workspace members plus every resolved dependency) — 195
+third-party and 23 of this workspace's own — every one carrying an
+OSI-approved permissive licence. `deny.toml`'s `exceptions` list is empty,
+and its `allow` list is the set of licences actually present — not a set
+approved in principle, so an unmatched entry never sits there as noise.
+`cargo deny check` reports advisories, bans, licences and sources all ok on
+this tree (2026-09-18).
+
+The third-party count (195) is unchanged since this table was last counted —
+ten more workspace crates have joined since (13 → 23: `fabric-runtime-publication`,
+`fabric-ndc-acceptance`, `fabric-openbao`, `fabric-fga-auth`,
+`fabric-fga-auth-api`, `fabric-git-host`, `fabric-platform-git`,
+`fabric-platform-management`, `fabric-registry`, `fabric-deployment-kubernetes`),
+and every one of them was built entirely out of crates already in the graph.
+That is also why only the `Apache-2.0` row below changed: it carries every
+workspace crate's own licence (`license.workspace = true`, `Apache-2.0`) plus
+the one third-party crate whose licence is that string alone, so it rises by
+exactly the ten new crates, 14 → 24.
 
 | Count | Licence |
 | --- | --- |
 | 107 | MIT OR Apache-2.0 |
 | 35 | MIT |
 | 18 | Unicode-3.0 |
-| 14 | Apache-2.0 |
+| 24 | Apache-2.0 |
 | 10 | Apache-2.0 OR MIT |
 | 3 | Apache-2.0 OR ISC OR MIT |
 | 3 | ISC |
@@ -632,12 +852,20 @@ principle, so an unmatched entry never sits there as noise.
 | 1 | MIT AND BSD-3-Clause |
 | 1 | MIT OR Apache-2.0 OR LGPL-2.1-or-later |
 
-The control plane added exactly two third-party crates, both verified per crate
-and per version: `serde_norway` 0.9.42 (MIT OR Apache-2.0) and
-`unsafe-libyaml-norway` 0.2.15 (MIT). See
-`docs/architecture/dependency-policy.md`. Notably it added **no** Git library
-and **no** Kubernetes client — the desired-state adapter speaks its host's
-contents API over the `reqwest` that was already in the graph.
+The control plane's third-party additions, historically, were exactly two
+crates, both verified per crate and per version: `serde_norway` 0.9.42 (MIT
+OR Apache-2.0) and `unsafe-libyaml-norway` 0.2.15 (MIT). See
+`docs/architecture/dependency-policy.md`. Notably it has still added **no**
+Git library and **no** Kubernetes client — checked again for this pass
+because `fabric-deployment-kubernetes` (new in PR #72, ADR 0022) is exactly
+the kind of crate that would tempt one: it reads the Kubernetes API directly
+over the `reqwest` that was already in the graph
+(`crates/fabric-deployment-kubernetes/Cargo.toml` declares `fabric-core`,
+`fabric-platform-management`, `async-trait`, `reqwest`, `serde`,
+`serde_json`, `tokio` and nothing else), and `scripts/check_architecture.py`'s
+"No drivers, no control-plane clients" invariant — which bans `kube`,
+`k8s-openapi`, `kube-client`, `kube-runtime`, `git2`, `gix` and `gitoxide`
+from the whole resolved graph, not just direct dependencies — still holds.
 
 Three entries deserve a note, because each looks worse at a glance than it is:
 
@@ -666,29 +894,69 @@ over HTTP rather than linking anything.
 
 ## Crate dependency graph
 
-Verified by `scripts/check_architecture.py` against
-`docs/architecture/crate-dependencies.md`; a new edge that is not in the
-document fails CI.
+23 crates now, up from the 6-and-6 split of 13 this section originally
+described. Each plane has grown two members since 2026-08-29 —
+`fabric-fga-auth`/`fabric-fga-auth-api` (the authorization trust boundary,
+ADR 0016) joined the runtime plane, and `fabric-openbao` and
+`fabric-deployment-kubernetes` joined the control plane — and the third
+group, in neither plane, has grown from one crate (`fabric-core`) to seven:
+the four platform-side crates below sit there on the same footing as
+`fabric-core` (`docs/architecture/crate-dependencies.md`), reachable from the
+control plane and never from the runtime plane. Every
+edge below is exactly what `scripts/check_architecture.py`'s own
+`expected` table (its "Dependency direction" check) declares, cross-checked
+against `docs/architecture/crate-dependencies.md`, which the script also
+verifies; a new edge that is not in the document fails CI.
 
 ```
-fabric-core            (no internal dependencies; the only crate both planes share)
+fabric-core                    (no internal dependencies; the kernel every other crate can reach)
 
   runtime plane
-fabric-identity        → core
-fabric-connector       → core
-fabric-tenant-runtime  → core, connector
-fabric-connector-ndc   → core, connector, tenant-runtime
-fabric-data-api        → core, identity, tenant-runtime, connector
-fabric-api             → all of the above  (composition root)
+fabric-identity                → core
+fabric-connector               → core
+fabric-tenant-runtime          → core, connector
+fabric-connector-ndc           → core, connector, tenant-runtime
+fabric-data-api                → core, identity, tenant-runtime, connector
+fabric-fga-auth                → core                                    (the trust boundary, ADR 0016)
+fabric-fga-auth-api            → core, fga-auth                          (composition root, own process)
+fabric-api                     → core, identity, tenant-runtime,
+                                  connector, connector-ndc, data-api      (composition root)
 
   control plane
-fabric-client-model    → core
-fabric-reconciliation  → core, client-model
-fabric-control-plane   → core, client-model, reconciliation
-fabric-keycloak        → core, client-model, reconciliation      (implements the port)
-fabric-client-git      → core, client-model, control-plane       (implements the port)
-fabric-control-plane-api → all of the above  (composition root)
+fabric-client-model            → core
+fabric-reconciliation          → core, client-model
+fabric-control-plane           → core, client-model, reconciliation,
+                                  platform-management
+fabric-keycloak                → core, client-model, reconciliation,
+                                  control-plane                          (implements IdentityProvider, OperatorSignIn)
+fabric-client-git               → core, client-model, control-plane, git-host
+                                  (implements the client desired-state port, ADR 0008)
+fabric-deployment-kubernetes   → core, platform-management               (implements DeploymentObserver, ADR 0022)
+fabric-openbao                 → core, control-plane                     (implements SecretStore, IntegrationStore)
+fabric-control-plane-api       → core, git-host, platform-git,
+                                  platform-management, registry,
+                                  deployment-kubernetes, client-model,
+                                  reconciliation, control-plane,
+                                  keycloak, client-git, openbao           (composition root)
+
+  neither plane
+fabric-platform-management     → core                                    (update-policy rules; no transport)
+fabric-git-host                → core                                    (App-credential exchange, shared)
+fabric-platform-git            → core, git-host, platform-management     (implements the platform desired-state port)
+fabric-registry                → core, platform-management               (implements Registry)
+fabric-runtime-publication     → core (non-dev); dev: tenant-runtime, data-api, identity, connector
+fabric-ndc-acceptance          → runtime-publication, connector-ndc,
+                                  tenant-runtime, data-api, identity,
+                                  connector                               (dev-only; test-only, no production code)
 ```
+
+`fabric-ndc-acceptance` and `fabric-runtime-publication` are the two crates
+whose dependency table looks unlike the rest: both are in neither plane, and
+`fabric-ndc-acceptance` declares no non-dev dependency at all — it is a
+named, visible exception in `check_ndc_containment` and
+`check_runtime_plane_cannot_reach_the_publisher`, not a relaxation of either
+(`docs/architecture/crate-dependencies.md`, "`fabric-ndc-acceptance` is
+test-only, and also in neither plane").
 
 Also checked structurally, because none of these can be caught by a test:
 
@@ -696,39 +964,62 @@ Also checked structurally, because none of these can be caught by a test:
   in the other. This is the increment's central structural claim: the runtime
   plane must keep serving tenants while Git and Keycloak are unreachable, and
   one edge would put control-plane availability behind every tenant request.
-- **Keycloak representations stay in `fabric-keycloak`, and Git-hosting
-  details in `fabric-client-git`.** Checked as vocabulary, not just as
+- **Plane reachability is transitive, and no runtime-plane crate can reach
+  the publisher.** Two checks added with `fabric-runtime-publication` (ADR
+  0018): a crate cannot join a plane by way of an edge that skips a
+  plane-mate, and nothing in the runtime plane may gain a path to the crate
+  that publishes the files it reads — the one edge that would make the
+  runtime plane a second writer of its own input.
+- **Keycloak representations stay in `fabric-keycloak`, Git-hosting details
+  in `fabric-client-git`, and Kubernetes deployment evidence stays in
+  `fabric-deployment-kubernetes`.** Three adapters, one rule
+  (`check_adapter_containment`), checked as vocabulary, not just as
   dependency edges — `*Representation`, `publicClient`, `openid-connect`,
-  `ContentsEntry`, `PutContents`, `contents/` may not appear anywhere else.
-  Only the control plane's composition root may depend on either crate.
+  `ContentsEntry`, `PutContents`, `contents/`, `owner_references`,
+  `resource_version`, `ReplicaSet`, `/apis/apps/v1/` may not appear anywhere
+  outside their owning crate. Only the control plane's composition root may
+  depend on any of the three.
 - **The operator console reaches only the control-plane API.** No file under
-  `apps/control-plane-ui/src` may name `client_secret`, `/admin/realms`, the
-  Git host's API, or a Keycloak admin endpoint. Checked as a property of the
-  console's own source rather than of what a response happened to contain,
-  because that is the form the rule takes: a fetch to another origin is the
-  violation, whether or not a credential is in the same commit.
+  `apps/control-plane-ui/src` may name `client_secret`/`clientSecret`,
+  `/admin/realms`, `api.github.com`, or a Keycloak admin endpoint. Checked as
+  a property of the console's own source rather than of what a response
+  happened to contain, because that is the form the rule takes: a fetch to
+  another origin is the violation, whether or not a credential is in the
+  same commit.
+- **The console's Content-Security-Policy widens for exactly one thing.**
+  New with the in-product GitHub App flow: `nginx.conf`'s CSP must permit
+  `form-action https://github.com` (creating the App is a cross-origin form
+  POST of the App manifest) and must not permit `github.com` in any other
+  directive — widening `connect-src` or `default-src` would let the console
+  fetch from an origin the control plane exists to keep it away from, the
+  same claim the bullet above makes about source code, held here about the
+  policy that enforces it in the browser.
 
 - **NDC vocabulary stays in `fabric-connector-ndc`.** `fabric-api` may name
   exactly two symbols from it — `NdcConnectorConfig` and
-  `build_ndc_connector`, both startup wiring. Nothing else in the workspace
+  `build_ndc_connector`, both startup wiring — and `fabric-ndc-acceptance` is
+  the one named test-only exception (above). Nothing else in the workspace
   may name an `Ndc*` type at all. Prose is exempt: several crates explain the
   boundary without being permitted to cross it.
-- **No transport in the domain crates.** `fabric-core`, `fabric-connector`
-  and `fabric-tenant-runtime` declare no HTTP client or server.
-  `fabric-identity` does depend on Axum, deliberately — see the dependency
-  document for why that is the crate's job rather than a leak.
+- **No transport in the domain crates.** `fabric-core`, `fabric-connector`,
+  `fabric-tenant-runtime`, `fabric-client-model` and `fabric-reconciliation`
+  declare no HTTP client or server — the runtime-plane and control-plane
+  halves of the same claim. `fabric-identity` does depend on Axum,
+  deliberately — see the dependency document for why that is the crate's job
+  rather than a leak.
 - **No database driver anywhere in the graph.** Checked against the full
   resolved set, not just direct declarations — a driver arriving transitively
   compiles into the binary exactly as much as one declared directly, and no
   manifest here would mention it. The runtime plane opens no
   database connections; every physical connection lives inside a connector
   process.
-- **No Kubernetes or Git client anywhere in the graph** — still, and now
-  including the control plane, which is where somebody would reach for one.
-  `fabric-client-git` speaks its host's contents API over HTTPS, so the
-  platform needs no clone, no working copy, and no disk. §6 keeps the control
-  plane out of the request path, and the strongest form of that is a client
-  that is not linked into any binary this workspace builds.
+- **No Kubernetes or Git client anywhere in the graph** — still, checked
+  again with `fabric-deployment-kubernetes` in the tree, which is exactly
+  where somebody would reach for `kube`. It reads the Kubernetes API
+  directly over `reqwest`, the same way `fabric-client-git` speaks its Git
+  host's contents API over HTTPS: the platform needs no clone, no working
+  copy, and no disk, and the strongest form of "never in the request path"
+  (§6) is a client that is not linked into any binary this workspace builds.
 - **`X-Tenant-Id` appears only where it is rejected**, in `fabric-identity`
   and in tests asserting the rejection.
 
@@ -816,6 +1107,25 @@ So the honest split is:
 | Desired-state document contract | **Real document proven** — the seeded file parses and serves |
 | Git adapter | Protocol fake only; blocked on a GitHub App |
 | Deployment through `saas-fabric-platform` | Not started |
+
+**Updated since this run.** The App this table says does not exist evidently
+now does: on 2026-09-17, `fabric-client-git`'s own write path (not the
+local-directory development adapter) updated `fabric-catalogue.yaml` on
+`github.com/FieldstateNZ/saas-fabric-clients` (commit `d5bdee8`), and
+Platform Management's separate Git integration advanced
+`saas-fabric-platform` for real (`3fa06bc`, `ac0985f`). Those three commits
+are not in this repository; they were read from the hosts on 2026-09-18 with
+`gh api repos/FieldstateNZ/saas-fabric-clients/commits/d5bdee8` and
+`gh api repos/FieldstateNZ/saas-fabric-platform/commits/<sha>`, which is the
+reproducible command, and the second host's author is
+`saas-fabric-platform-lucentroot[bot]`, the App identity. Neither is a test
+this repository runs, so "Git adapter: protocol fake only" is no longer
+accurate as stated but "no automated test against a real Git host" still is
+— see "What is not verified" below for the fuller, more careful version of
+this update. "Deployment through `saas-fabric-platform`" has also moved: PR
+#72 (ADR 0022) added observed deployment evidence, and LucentRoot's own
+readiness record shows a desired-vs-running convergence — see "Observed
+platform deployments" above.
 
 ### What the real document changed
 
@@ -969,11 +1279,32 @@ Named here rather than left for a reader to discover.
   and a ceiling — all tested against a socket. What no test can show is that
   GitHub's stated expiry matches when the token actually stops working. The
   `401` retry is what covers the difference.
-- **No test against a real Git host.** The concurrency mechanism is tested
-  against a stateful fake that moves blob hashes and refuses stale ones, which
-  is what the contents API does — but "the host answers `409` for a stale
-  `sha`" is still read from documentation rather than observed. Blocked on the
-  GitHub App; see "Real integration" above.
+- **No automated test against a real Git host — but real writes have now
+  been observed on two.** The automated suite still has none: the
+  concurrency mechanism is tested only against a stateful fake that moves
+  blob hashes and refuses stale ones, which is what the contents API does,
+  and "the host answers `409` for a stale `sha`" is still read from
+  documentation, not observed by anything this document can point at.
+  What has changed since "Git: the adapter is proven, the deployment is
+  not" above (2026-08-28, when the App did not yet exist) is that real
+  writes are no longer hypothetical. `fabric-catalogue.yaml` — the file
+  `docs/architecture/control-plane.md` names as `fabric-client-git`'s own
+  write, at the client repository's root — was updated on
+  `github.com/FieldstateNZ/saas-fabric-clients` on 2026-09-17 (commit
+  `d5bdee8`, "SaaS Fabric: update product catalogue"), which is that
+  adapter's own write path, not the local-directory development one the
+  2026-08-28 run used. Separately, and against the *other* Git integration
+  (`fabric-platform-git`, a different App and a different repository, per
+  "Two Git integrations, one flow"), Platform Management has made real
+  commits to `saas-fabric-platform` — for example `3fa06bc` and `ac0985f`,
+  advancing an environment to `preview.12` and `.13`. Both are commits read
+  from a real host's own history on 2026-09-18, with
+  `gh api repos/FieldstateNZ/saas-fabric-platform/commits/<sha>`, not from a
+  fake's in-memory state; neither
+  is a test this repository runs, and this document has not read a git log
+  entry recording `409` on a stale `sha` from either host, so that specific
+  path stays unproven. See "Real integration: LucentRoot" above for the
+  Keycloak adapter's equivalent proof and what distinguishes it from this.
 - **A realm update has not been observed.** Reconciliation created `acme` and
   has never had to change its display name, so the claim that Keycloak's realm
   update applies only the fields it is given — the reason `RealmUpdate` carries
@@ -991,24 +1322,27 @@ Named here rather than left for a reader to discover.
   everything the API offers. Not a gap in the implementation — there is no
   per-client permission model to implement yet, and ADR 0009 says so rather
   than implying otherwise.
-- **`saas-fabric-clients` does not exist yet.** The Git adapter has never
-  addressed the repository it is written for. The document contract it expects
-  is `docs/architecture/client-desired-state.md`, and the shipped examples
-  conform to it under test.
+- **`saas-fabric-clients` exists and has been written to for real, which is
+  new.** `github.com/FieldstateNZ/saas-fabric-clients` holds
+  `fabric-catalogue.yaml`, updated by commit `d5bdee8` on 2026-09-17 — see
+  the Git-host bullet above for what that does and does not establish. The
+  document contract it follows is `docs/architecture/client-desired-state.md`,
+  and the shipped examples conform to it under test; what remains unproven is
+  still the same automated coverage named above, not the repository's
+  existence.
 
 **Runtime plane:**
 
-- **The connector integration gap is closed, except F3.** As of issue #62
+- **The connector integration gap is closed, F3 included.** As of issue #62
   slice 4, something in this workspace has spoken to a running NDC
   connector: `crates/fabric-ndc-acceptance/tests/published_state_reaches_a_real_connector.rs`
   composes the real publisher, runtime, Data API and NDC adapter against an
   actual `ghcr.io/hasura/ndc-postgres:v3.1.0` and `postgres:16-alpine`, and
   proves tenant isolation, fail-closed behaviour, and a real write against
   them rather than a fake. "Connector acceptance (issue #62)" above is the
-  detail — the composed test's own description, its eleven tests, and the
-  five-mutation table that falsifies "no predicate reached the connector" by
-  disabling the predicate and watching the isolation assertions fail against
-  the real database.
+  detail — the composed test's own description and its mutation table, which
+  falsifies "no predicate reached the connector" by disabling the predicate
+  and watching the isolation assertions fail against the real database.
 
   Round six of review found two defects invisible to every unit test because
   the requests were well-formed and the logic correct: a connector that
@@ -1020,17 +1354,16 @@ Named here rather than left for a reader to discover.
   falsified, and the commit that corrected it, is F1 (`6defacb`), F2
   (`6defacb`), and F4 (`e5e2d73`) in the table above.
 
-  **F3 is the one exception, and it is deferred rather than closed.** Neutral
-  update and delete cannot be expressed against this connector's generated
-  procedures: `update_articles_by_id_and_tenant_key` and
-  `delete_articles_by_id_and_tenant_key` require `key_id`/`key_tenant_key`
-  arguments `fabric_connector_ndc::CollectionProcedures` has nowhere to
-  carry, so `a_delete_scoped_to_another_tenant_affects_nothing_and_the_row_survives`
-  — named in the plan — is not implemented. ADR 0004's addendum and the
-  lead's decision on issue #62 both point this at a new, separate issue,
-  "neutral update/delete cannot be expressed against `ndc-postgres` v3.1.0's
-  keyed procedures," which supersedes ADR 0004 rather than amending it
-  further.
+  **F3 is now closed too**, by PR #71 (`72aac20`, 2026-09-17, ADR 0020,
+  superseding ADR 0004). Neutral update and delete could not be expressed
+  against `ndc-postgres`'s generated procedures — `update_articles_by_id_and_tenant_key`
+  and `delete_articles_by_id_and_tenant_key` require `key_id`/`key_tenant_key`
+  arguments a neutral `MutationSpec` had nowhere to carry — so ADR 0020 lets
+  a procedure mapping name which of its arguments carry the logical key and
+  how an update payload is shaped, with key values taken only from the
+  tenant-scoped predicate's own direct equalities, never from the request
+  body. See "Keyed writes reach ndc-postgres (issue #62's F3, PR #71)" above
+  for what closes it, cited by test.
 
 - **No exactly-once write guarantee.** The platform now distinguishes a write
   that provably did not reach the backend from one whose outcome is unknown

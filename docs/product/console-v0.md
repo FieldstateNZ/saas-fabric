@@ -80,6 +80,15 @@ how much of the platform is wired up.
 
 ### Secrets — the first interactive tab
 
+> **Superseded by pull request #32.** Client secrets are built: `fabric-openbao`
+> partitions by client, the control-plane API serves
+> `GET /api/clients/{clientId}/secrets`,
+> `GET/PUT/DELETE /api/clients/{clientId}/secrets/entry/{path}` and
+> `POST .../secrets/reveal`, and the console's Secrets tab
+> (`apps/control-plane-ui/src/components/tabs/Secrets.tsx`) does what this
+> section describes below. "Nothing exists" is the original v0 contract, kept
+> as it was written.
+
 Browse the client's partition, reveal deliberately, and write.
 
 - a path tree or flat path list for the client's partition

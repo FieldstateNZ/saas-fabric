@@ -23,6 +23,14 @@ the control plane is down; that is not a property you can have from one image.
 The runtime plane's name is unchanged because `saas-fabric-platform` already
 expects it.
 
+**A further target exists and is not one of them.** `Dockerfile` also has an
+`authorization-front` target — `fabric-fga-auth-api` plus the OpenFGA it
+starts (ADR 0016) — and it builds locally from the same builder stage as the
+two Rust images.
+[`.github/workflows/release.yml`](../../.github/workflows/release.yml)'s build
+matrix does not include it, so nothing publishes it today: a release of this
+version of the workspace still ships exactly the three images above.
+
 ## What this repository does not publish
 
 **Anything that says where it runs.** No manifests, no namespaces, no

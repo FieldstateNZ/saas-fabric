@@ -312,8 +312,9 @@ the location:
 | `SecretStore` | the application's private key | never |
 | `IntegrationStore` | application id, slug, installation, repository | yes |
 
-`fabric-openbao` implements both and is the only crate that knows OpenBao
-exists. It authenticates with the pod's own Kubernetes identity, so there is
+`fabric-openbao` implements both — and a third port, `ClientSecrets`, for a
+client's own secrets rather than the platform's, behind the client secret
+routes — and is the only crate that knows OpenBao exists. It authenticates with the pod's own Kubernetes identity, so there is
 still no credential for a human to create or transport — which is the whole
 point, since secrets projected *into* a pod are a one-way path and the platform
 now generates credential material of its own.
@@ -642,7 +643,7 @@ being stretched to fit it.
 |---|---|---|
 | `Desired` | what the environment is asked to run | — |
 | `Newer version` | the newest eligible version **newer than desired**, i.e. what Fabric would advance to | not "the available version" |
-| `Running` | what is actually serving; `Unknown` until there is a reconciliation integration to ask | not inferred from Git having changed |
+| `Running` | what is actually serving, read from deployment evidence when the deployment binds an observer ([ADR 0022](../decisions/0022-running-versions-come-from-deployment-evidence.md)); `Unknown` when no observer is configured or the evidence does not agree on one version | not inferred from Git having changed |
 
 `newer` is `None` whenever nothing sorts after `desired`. Under the label
 *Available* that rendered as `—` for an environment running the newest preview
@@ -1008,7 +1009,12 @@ developer running the filesystem adapter by hand exercise that seam today.
   in for in production — three ConfigMaps in `platform-system`, written by a
   least-privileged controller, mounted as whole volumes (never `subPath`) into
   the runtime's existing `tenants_path` / `data_sources_path` / `catalog_path`.
-  Specified in ADR 0018, "The Kubernetes adapter", not built here.
+  Specified in ADR 0018, "The Kubernetes adapter", not built here. The shape
+  it would take is no longer hypothetical: `fabric-deployment-kubernetes`
+  (ADR 0022) already reaches the Kubernetes API — GETs and LISTs, not writes —
+  over plain HTTPS with `reqwest` and a projected service-account token, with
+  no `kube` or `k8s-openapi` crate in the graph, so a publication adapter's
+  writes could reach the API server the same way.
 - **A scheduled caller.** Something that reads `current()`, decides a
   revision, and calls `publish()` on an interval. Publication writes with the
   controller's own ServiceAccount, so — unlike Keycloak reconciliation

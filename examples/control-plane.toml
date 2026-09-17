@@ -30,15 +30,11 @@ request_timeout_seconds = 30
 # Operator identity
 # ---------------------------------------------------------------------------
 #
-# The control plane consumes an operator identity that the operator-plane proxy
-# has already established (ADR 0009). It is authentication-agnostic in the same
-# way the runtime plane is (ADR 0002) — and it carries the same obligation:
-# this API must be reachable only from the operator network, because a header
-# is trivially forgeable by anything that can reach the service directly.
+# OIDC, against the platform's own realm (ADR 0009, ADR 0010). An operator
+# signs in through the console, which redeems an authorization code for a
+# bearer and sends it on every request; there is no header this file, or a
+# `curl` command standing in for the console, can set instead.
 #
-# For local development, send the header yourself:
-#     curl -H 'Tailscale-User-Login: operator@example.com' \
-#          http://localhost:8081/api/clients
 # The only posture. There is no development shortcut beside it, deliberately:
 # the one that existed asserted a name from a proxy header, was safe only
 # because of where the service sat, and could lend the platform nothing to act

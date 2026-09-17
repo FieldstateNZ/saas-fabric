@@ -19,8 +19,10 @@ const FETCH_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Builds the operator posture's key set and sign-in surface.
 ///
-/// Returns an empty key holder and no sign-in for the trusted-header posture,
-/// which needs neither.
+/// OIDC is the only posture, so this always returns a sign-in surface and
+/// starts the key refresh. The `Option` in the return type is the seam a
+/// harness uses to compose an authenticator directly and skip sign-in; nothing
+/// this function builds ever leaves it `None`.
 ///
 /// # Errors
 ///

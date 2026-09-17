@@ -95,14 +95,17 @@ read the two error captures and the fieldless-insert refusal; and
 `translate::response`'s tests read `mutation-insert-ok.json` (its two
 reconstructed siblings, `mutation-insert-affected-only.json` and
 `mutation-delete-other-tenant.json`, are read the same way but are discussed
-below the table rather than given their own `Verbatim? Yes` row). Two of the
+below the table rather than given their own `Verbatim? Yes` row). All
 three `request-*.json` files are read the same way too, but not one test
 apiece: `request-insert-affected-only.json` is read by both
 `wire::mutation_fields`'s and `translate::mutation`'s tests, while
 `request-insert-returning.json` is read by `wire::mutation_fields`'s alone.
-The third, `request-delete-other-tenant.json`, is checked in the same
-verbatim way but is read by no test today -- see below the table for why it
-is kept anyway.
+The third, `request-delete-other-tenant.json`, sat unread for issue #62's
+follow-up until issue #67 gave it one: `translate::mutation`'s keyed-delete
+test pins the argument names and the `fields` selection against it (not the
+whole body -- its `pre_check` is a hand-built cross-tenant probe that this
+crate's own translation can never reproduce byte-for-byte; see that test's
+rustdoc).
 
 | File | Verbatim? | Request | Status | Read by |
 |---|---|---|---|---|
@@ -114,7 +117,7 @@ is kept anyway.
 | `error-unknown-operator.json` | Yes | a predicate using operator `equals` (not a real one) | 400 | `client::error_mapping` |
 | `request-insert-returning.json` | Yes | the request that produced `mutation-insert-ok.json` | -- | `wire::mutation_fields` |
 | `request-insert-affected-only.json` | Yes | the request that produced `mutation-insert-affected-only.json` | -- | `wire::mutation_fields`, `translate::mutation` |
-| `request-delete-other-tenant.json` | Yes | the request that produced `mutation-delete-other-tenant.json` | -- | none -- kept as the observed shape F3's follow-up must produce |
+| `request-delete-other-tenant.json` | Yes | the request that produced `mutation-delete-other-tenant.json` | -- | `translate::mutation` |
 
 The three `request-*.json` files are requests, not responses, so "Status"
 never carries an HTTP code for any of them -- all three are extracted

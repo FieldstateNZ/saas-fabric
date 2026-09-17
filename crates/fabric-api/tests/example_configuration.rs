@@ -8,8 +8,9 @@
 
 mod examples_support;
 
-use examples_support::{catalog, config};
-use fabric_api::config::TokenConfig;
+use examples_support::{catalog, config, raw};
+use fabric_api::config::{AppConfig, TokenConfig};
+use fabric_connector_ndc::PayloadShape;
 use fabric_core::LogicalResourceName;
 use fabric_data_api::OperationKind;
 
@@ -69,24 +70,87 @@ fn the_example_catalogue_parses() {
     assert!(customers.allows(OperationKind::Create));
 }
 
-/// The example connector has no `update` or `delete` mapping for
-/// `customers` (they are shown commented out in `examples/config.toml`,
-/// named the way a real `ndc-postgres` actually generates them) -- see F3 in
+/// The example connector now maps `update` and `delete` for `customers` to
+/// the real keyed procedures a `ndc-postgres` generates
+/// (`update_customers_by_id`, `delete_customers_by_id` in
+/// `examples/config.toml`) -- issue #67 closed F3 in
 /// `docs/verification.md`'s "Connector acceptance (issue #62)" section and
-/// `crates/fabric-ndc-acceptance/docs/CONTEXT.md`: neutral update/delete
-/// cannot yet be expressed against that connector's keyed procedures at all.
-/// The catalogue matches deliberately: granting an operation the connector
-/// cannot serve would be a promise this example cannot keep, not a
-/// conservative default.
+/// `crates/fabric-ndc-acceptance/docs/CONTEXT.md`: a neutral update/delete
+/// can now be expressed against a keyed procedure via `key_arguments`. The
+/// catalogue matches deliberately: granting an operation the connector can
+/// now serve is no longer a promise this example cannot keep.
 #[test]
-fn the_example_catalogue_does_not_promise_writes_the_connector_cannot_serve() {
+fn the_example_catalogue_now_allows_the_writes_the_connector_can_serve() {
     let catalog = catalog();
 
     let customers = catalog
         .resolve(&LogicalResourceName::try_new("customers").unwrap())
         .unwrap();
-    assert!(!customers.allows(OperationKind::Update));
-    assert!(!customers.allows(OperationKind::Delete));
+    assert!(customers.allows(OperationKind::Update));
+    assert!(customers.allows(OperationKind::Delete));
+}
+
+/// `key_arguments` is what lets a neutral update or delete reach a real
+/// `ndc-postgres` keyed procedure at all (issue #67) -- the predicate's own
+/// `id` equality is repeated as the procedure's required `key_id` argument.
+/// Pinning this against the parsed example config means a rename of either
+/// name in `examples/config.toml` fails this test rather than surfacing only
+/// as a connector refusal at startup.
+///
+/// This is also this workspace's round-trip proof that `ProcedureBinding`'s
+/// TOML shape -- the inline-table `key_arguments = { id = "key_id" }` and the
+/// `snake_case` `payload_shape = "set_operations"` string -- parses correctly
+/// through the loader an operator's `config.toml` actually goes through
+/// (`AppConfig::load`, via `examples_support::config`), rather than through
+/// `toml::from_str` called directly: figment is the real mechanism, so that
+/// is the one worth pinning.
+#[test]
+fn the_example_connectors_customers_mapping_names_its_key_argument() {
+    let config = config();
+    let connector = config.connectors.first().unwrap();
+    let customers = connector.procedures.get("customers").unwrap();
+
+    let update = customers.update.as_ref().unwrap();
+    assert_eq!(update.key_arguments.get("id").map(String::as_str), Some("key_id"));
+    assert_eq!(update.payload_shape, PayloadShape::SetOperations);
+
+    let delete = customers.delete.as_ref().unwrap();
+    assert_eq!(delete.key_arguments.get("id").map(String::as_str), Some("key_id"));
+}
+
+/// `#[serde(deny_unknown_fields)]` on `ProcedureBinding` holds through the
+/// real loader, not only through direct `serde_json`/`toml` deserialisation:
+/// a typo'd setting in a `[connectors.procedures.*]` table must fail
+/// `AppConfig::load` rather than silently doing nothing. Built from the
+/// example configuration's own text plus one bogus line, written to a
+/// temporary file, so everything *other* than the injected typo is a
+/// configuration already known to load.
+#[test]
+fn an_unknown_field_in_a_procedure_mapping_is_refused_at_load() {
+    // Inserted into the *existing* `[connectors.procedures.customers.insert]`
+    // table rather than appended as a new one -- TOML refuses to redeclare a
+    // table, and that refusal would mask the one this test means to pin.
+    let contents = raw("config.toml").replacen(
+        "payload_argument = \"objects\"",
+        "payload_argument = \"objects\"\nbogus_setting = \"nope\"",
+        1,
+    );
+
+    let path = std::env::temp_dir().join(format!(
+        "fabric-config-unknown-field-{}-{}.toml",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::write(&path, contents).unwrap();
+
+    let error = AppConfig::load(path.to_str().unwrap()).unwrap_err();
+
+    let _ = std::fs::remove_file(&path);
+
+    assert!(error.contains("bogus_setting"), "{error}");
 }
 
 #[test]

@@ -30,7 +30,9 @@ mod support;
 use std::collections::BTreeMap;
 
 use fabric_connector::ConnectorId;
-use fabric_connector_ndc::{build_ndc_connector, CollectionProcedures, NdcConnectorConfig, ProcedureBinding};
+use fabric_connector_ndc::{
+    build_ndc_connector, CollectionProcedures, NdcConnectorConfig, PayloadShape, ProcedureBinding,
+};
 use http::StatusCode;
 use serde_json::Value;
 use support::compose::compose;
@@ -56,19 +58,35 @@ fn read_only_config(endpoint: String) -> NdcConnectorConfig {
     }
 }
 
-/// The write-enabled twin of [`read_only_config`]: maps `articles`' insert to
-/// the real `insert_articles` procedure the connector's own schema declares
+/// The write-enabled twin of [`read_only_config`]: maps `articles`' insert,
+/// update and delete to the real procedures the connector's own schema
+/// declares
 /// (`crates/fabric-ndc-acceptance/tests/fixtures/ndc-postgres-v3.1.0/README.md`).
-/// `objects` carries the payload; there is no `filter_argument` because
-/// `MutationSpec::Insert` never carries a predicate -- the tenant
-/// discriminator is stamped onto the row instead
-/// (`fabric_connector::MutationSpec::for_target`). Update and delete are
-/// deliberately absent: the real `update_articles_by_id_and_tenant_key` and
-/// `delete_articles_by_id_and_tenant_key` procedures require `key_id` and
-/// `key_tenant_key` arguments `CollectionProcedures` has nowhere to carry --
-/// F3 in the issue #62 plan, deferred to its own follow-up issue rather than
-/// grown here (ADR 0004's addendum; `docs/verification.md`).
+///
+/// `insert_articles`' `objects` carries the payload; there is no
+/// `filter_argument` because `MutationSpec::Insert` never carries a predicate
+/// -- the tenant discriminator is stamped onto the row instead
+/// (`fabric_connector::MutationSpec::for_target`).
+///
+/// The real `update_articles_by_id_and_tenant_key` and
+/// `delete_articles_by_id_and_tenant_key` procedures are keyed by primary
+/// key, not by a bare predicate: both require `key_id` and `key_tenant_key`
+/// alongside their optional `pre_check`. `key_arguments` names which of the
+/// predicate's own equalities are repeated as those two named arguments --
+/// this is issue #67's F3 fix, and is what this file could not express
+/// before it (see the now-deleted comment this rustdoc replaces). The
+/// tenant discriminator therefore reaches the connector twice on a keyed
+/// write: once as `key_tenant_key`, once inside `pre_check` -- defence in
+/// depth, not redundancy (`ProcedureBinding::key_arguments`'s own rustdoc).
+/// `update_columns` takes `PayloadShape::SetOperations`
+/// (`{col: {"_set": value}}`), which is what `ndc-postgres` generates for a
+/// keyed update; `insert_articles`' `objects` stays `PayloadShape::Values`.
 fn writable_config(endpoint: String) -> NdcConnectorConfig {
+    let key_arguments = BTreeMap::from([
+        ("id".to_owned(), "key_id".to_owned()),
+        ("tenant_key".to_owned(), "key_tenant_key".to_owned()),
+    ]);
+
     let mut procedures = BTreeMap::new();
     procedures.insert(
         "articles".to_owned(),
@@ -77,9 +95,23 @@ fn writable_config(endpoint: String) -> NdcConnectorConfig {
                 procedure: "insert_articles".to_owned(),
                 payload_argument: Some("objects".to_owned()),
                 filter_argument: None,
+                key_arguments: BTreeMap::new(),
+                payload_shape: PayloadShape::Values,
             }),
-            update: None,
-            delete: None,
+            update: Some(ProcedureBinding {
+                procedure: "update_articles_by_id_and_tenant_key".to_owned(),
+                payload_argument: Some("update_columns".to_owned()),
+                filter_argument: Some("pre_check".to_owned()),
+                key_arguments: key_arguments.clone(),
+                payload_shape: PayloadShape::SetOperations,
+            }),
+            delete: Some(ProcedureBinding {
+                procedure: "delete_articles_by_id_and_tenant_key".to_owned(),
+                payload_argument: None,
+                filter_argument: Some("pre_check".to_owned()),
+                key_arguments,
+                payload_shape: PayloadShape::Values,
+            }),
         },
     );
 
@@ -518,15 +550,245 @@ async fn a_write_the_connector_accepts_reports_the_count_the_connector_gave() {
     assert_eq!(count, "1");
 }
 
-// `a_delete_scoped_to_another_tenant_affects_nothing_and_the_row_survives`
-// is not implemented here. The real `delete_articles_by_id_and_tenant_key`
-// procedure requires `key_id` and `key_tenant_key` arguments alongside its
-// `pre_check` predicate, and `fabric_connector_ndc::CollectionProcedures`
-// has nowhere to carry a required key argument -- a neutral
-// `MutationSpec::Delete { filter }` cannot be expressed against this
-// connector's generated procedures as they stand. This is F3 in the issue
-// #62 plan; ADR 0004's addendum and the lead's decision on this issue both
-// defer it to a new, separate issue ("neutral update/delete cannot be
-// expressed against `ndc-postgres` v3.1.0's keyed procedures"), which will
-// supersede ADR 0004 rather than amend it further. `docs/verification.md`
-// records the same deferral in its falsified-assumptions table.
+#[tokio::test]
+async fn a_delete_scoped_to_another_tenant_affects_nothing_and_the_row_survives() {
+    let test_name = "a_delete_scoped_to_another_tenant_affects_nothing_and_the_row_survives";
+    if !docker_available_or_skip(test_name) {
+        return;
+    }
+
+    let stack = Stack::up(ConnectorMode::Static);
+    let connector = build_ndc_connector(writable_config(stack.connector_base_url.clone()), None)
+        .await
+        .expect("the connector's schema should accept the keyed delete mapping");
+    let composed = compose(connector, &fixtures::writable_snapshot()).await;
+
+    // acme creates the row this test's cross-tenant delete will target, via
+    // `POST` -- the seed SQL stays untouched, so the pre-existing
+    // `count(*) FROM articles` assertions elsewhere in this file keep
+    // holding.
+    let create = composed
+        .app
+        .clone()
+        .oneshot(requests::post(
+            "/articles",
+            &requests::claims_for("acme"),
+            &serde_json::json!({"id": "2", "title": "Acme Second"}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(create.status(), StatusCode::CREATED);
+
+    // globex asks to delete acme's row by its logical key. The keyed
+    // procedure requires `key_tenant_key`, which `key_arguments` fills from
+    // the predicate `for_target` built for globex -- so the delete reaches
+    // the connector scoped to globex's own discriminator value, not acme's.
+    let response = composed
+        .app
+        .clone()
+        .oneshot(requests::delete("/articles/2", &requests::claims_for("globex")))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = requests::body_json(response).await;
+    assert_eq!(body["affected"], 0, "{body}");
+
+    // Read directly against postgres: the row survives, untouched.
+    let count = stack
+        .query_scalar("SELECT count(*) FROM articles WHERE id = '2' AND tenant_key = 'tenant-acme-482';");
+    assert_eq!(count, "1");
+
+    // acme still owns it; globex still cannot see it.
+    let acme_read = composed
+        .app
+        .clone()
+        .oneshot(requests::get("/articles/2", &requests::claims_for("acme")))
+        .await
+        .unwrap();
+    assert_eq!(acme_read.status(), StatusCode::OK);
+
+    let globex_read = composed
+        .app
+        .clone()
+        .oneshot(requests::get("/articles/2", &requests::claims_for("globex")))
+        .await
+        .unwrap();
+    assert_eq!(globex_read.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn a_keyed_delete_removes_only_this_tenants_row_under_the_shared_key() {
+    let test_name = "a_keyed_delete_removes_only_this_tenants_row_under_the_shared_key";
+    if !docker_available_or_skip(test_name) {
+        return;
+    }
+
+    let stack = Stack::up(ConnectorMode::Static);
+    let connector = build_ndc_connector(writable_config(stack.connector_base_url.clone()), None)
+        .await
+        .expect("the connector's schema should accept the keyed delete mapping");
+    let composed = compose(connector, &fixtures::writable_snapshot()).await;
+
+    // acme deletes its own row under the logical key `1` -- the same key
+    // globex's row (seeded by `SEED_SQL`) also shares.
+    let response = composed
+        .app
+        .clone()
+        .oneshot(requests::delete("/articles/1", &requests::claims_for("acme")))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = requests::body_json(response).await;
+    assert_eq!(body["affected"], 1, "{body}");
+
+    // Read directly against postgres: one physical row remains under id
+    // `1`, and it is globex's.
+    let count = stack.query_scalar("SELECT count(*) FROM articles WHERE id = '1';");
+    assert_eq!(count, "1");
+    let surviving_tenant = stack.query_scalar("SELECT tenant_key FROM articles WHERE id = '1';");
+    assert_eq!(surviving_tenant, fixtures::GLOBEX_DISCRIMINATOR_VALUE);
+
+    // globex's own read is unaffected by acme's delete.
+    let globex_read = composed
+        .app
+        .clone()
+        .oneshot(requests::get("/articles/1", &requests::claims_for("globex")))
+        .await
+        .unwrap();
+    assert_eq!(globex_read.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn a_keyed_update_changes_only_this_tenants_row() {
+    let test_name = "a_keyed_update_changes_only_this_tenants_row";
+    if !docker_available_or_skip(test_name) {
+        return;
+    }
+
+    let stack = Stack::up(ConnectorMode::Static);
+    let connector = build_ndc_connector(writable_config(stack.connector_base_url.clone()), None)
+        .await
+        .expect("the connector's schema should accept the keyed update mapping");
+    let composed = compose(connector, &fixtures::writable_snapshot()).await;
+
+    let response = composed
+        .app
+        .clone()
+        .oneshot(requests::patch(
+            "/articles/1",
+            &requests::claims_for("acme"),
+            &serde_json::json!({"title": "Acme Handbook, revised"}),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = requests::body_json(response).await;
+    assert_eq!(body["affected"], 1, "{body}");
+
+    // Read directly against postgres: only acme's physical row changed.
+    let acme_title =
+        stack.query_scalar("SELECT title FROM articles WHERE id = '1' AND tenant_key = 'tenant-acme-482';");
+    assert_eq!(acme_title, "Acme Handbook, revised");
+    let globex_title =
+        stack.query_scalar("SELECT title FROM articles WHERE id = '1' AND tenant_key = 'tenant-globex-915';");
+    assert_eq!(globex_title, "Globex Playbook");
+
+    // globex's own read agrees -- unaffected by acme's update.
+    let globex_read = requests::body_json(
+        composed
+            .app
+            .clone()
+            .oneshot(requests::get("/articles/1", &requests::claims_for("globex")))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(globex_read["title"], "Globex Playbook", "{globex_read}");
+}
+
+#[tokio::test]
+async fn no_write_response_names_the_key_arguments_or_the_procedure() {
+    let test_name = "no_write_response_names_the_key_arguments_or_the_procedure";
+    if !docker_available_or_skip(test_name) {
+        return;
+    }
+
+    let stack = Stack::up(ConnectorMode::Static);
+    let connector = build_ndc_connector(writable_config(stack.connector_base_url.clone()), None)
+        .await
+        .expect("the connector's schema should accept the keyed write mappings");
+    let composed = compose(connector, &fixtures::writable_snapshot()).await;
+
+    // Mirrors the sequence of writes tests 1-3 perform, all within this
+    // test's own stack, so their response bodies can be inspected here --
+    // the cross-tenant delete first (it removes nothing), then the update
+    // (the row must still exist), and the keyed delete last (it removes the
+    // row, so nothing after it needs the row intact).
+    let create = composed
+        .app
+        .clone()
+        .oneshot(requests::post(
+            "/articles",
+            &requests::claims_for("acme"),
+            &serde_json::json!({"id": "2", "title": "Acme Second"}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(create.status(), StatusCode::CREATED);
+
+    let cross_tenant_delete = requests::body_text(
+        composed
+            .app
+            .clone()
+            .oneshot(requests::delete("/articles/2", &requests::claims_for("globex")))
+            .await
+            .unwrap(),
+    )
+    .await;
+
+    let update = requests::body_text(
+        composed
+            .app
+            .clone()
+            .oneshot(requests::patch(
+                "/articles/1",
+                &requests::claims_for("acme"),
+                &serde_json::json!({"title": "Acme Handbook, revised"}),
+            ))
+            .await
+            .unwrap(),
+    )
+    .await;
+
+    let keyed_delete = requests::body_text(
+        composed
+            .app
+            .clone()
+            .oneshot(requests::delete("/articles/1", &requests::claims_for("acme")))
+            .await
+            .unwrap(),
+    )
+    .await;
+
+    // Everything the wire format could leak but a `WriteResponse` must not:
+    // the procedures' own names, their key and predicate argument names, the
+    // `_set` wrapping `payload_shape` adds, and either tenant's
+    // discriminator value.
+    for text in [&cross_tenant_delete, &update, &keyed_delete] {
+        for forbidden in [
+            "key_id",
+            "key_tenant_key",
+            "pre_check",
+            "update_columns",
+            "_set",
+            "by_id_and_tenant_key",
+            fixtures::ACME_DISCRIMINATOR_VALUE,
+            fixtures::GLOBEX_DISCRIMINATOR_VALUE,
+        ] {
+            assert!(!text.contains(forbidden), "{forbidden} leaked in {text}");
+        }
+    }
+}

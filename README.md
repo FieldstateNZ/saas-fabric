@@ -22,22 +22,29 @@ plane's own architecture is
 ```text
                          saas-fabric
 
-       ┌─────────────────────────────────────────┐
-       │              CONTROL PLANE              │
-       │  React console                          │
-       │      ↓                                  │
-       │  Control Plane API                      │
-       │      ↓                                  │
-       │  Client desired state → Git             │
-       │      ↓                                  │
-       │  Reconciliation → Keycloak adapter      │
-       └─────────────────────────────────────────┘
+        ┌──────────────────────────────────────────────────────┐
+        │                    CONTROL PLANE                     │
+        │  React console                                       │
+        │      ↓                                               │
+        │  Control Plane API                                   │
+        │      ├→ Client desired state → Git                   │
+        │      │      ↓                                        │
+        │      │  Reconciliation → Keycloak adapter            │
+        │      ├→ Platform desired state → Git                 │
+        │      │  (component versions read from registries;    │
+        │      │   running versions read from the cluster)     │
+        │      └→ Client secrets → OpenBao                     │
+        └──────────────────────────────────────────────────────┘
 
-       ┌─────────────────────────────────────────┐
-       │              RUNTIME PLANE              │
-       │  trusted identity → tenant runtime      │
-       │      → Data API → connector             │
-       └─────────────────────────────────────────┘
+        ┌────────────────────────────────────────────┐
+        │               RUNTIME PLANE                │
+        │  trusted identity → tenant runtime         │
+        │      → Data API → connector                │
+        │                                            │
+        │  authorization front (separate image)      │
+        │  tenant bearer → Check → embedded OpenFGA  │
+        │  not yet called by the Data API above      │
+        └────────────────────────────────────────────┘
 ```
 
 The two planes share exactly one crate, and
@@ -109,6 +116,8 @@ Kubernetes, or opens a connection (§6).
 | [`fabric-connector`](crates/fabric-connector) | The neutral execution boundary. No protocol or database types. |
 | [`fabric-connector-ndc`](crates/fabric-connector-ndc) | Speaks Hasura NDC — wire types read from v0.2.13, requires 0.2.4 or newer. The only crate that knows NDC exists. |
 | [`fabric-data-api`](crates/fabric-data-api) | The public HTTP surface. |
+| [`fabric-fga-auth`](crates/fabric-fga-auth) | The authorization front's identity primitive — verifies a tenant's bearer against a trusted issuer registry and answers a Check (ADR 0016). |
+| [`fabric-fga-auth-api`](crates/fabric-fga-auth-api) | The authorization front's composition root — starts the embedded OpenFGA process and serves `POST /v1/check` on the one published port. |
 | [`fabric-api`](crates/fabric-api) | The runtime plane's composition root. |
 
 **Control plane**
@@ -119,8 +128,21 @@ Kubernetes, or opens a connection (§6).
 | [`fabric-reconciliation`](crates/fabric-reconciliation) | Comparison and convergence. Owns the identity-provider port; owns no protocol. |
 | [`fabric-control-plane`](crates/fabric-control-plane) | The operator-facing API, the desired-state port, and the operator identity seam. |
 | [`fabric-keycloak`](crates/fabric-keycloak) | The Keycloak adapter. The only crate that knows Keycloak exists. |
-| [`fabric-client-git`](crates/fabric-client-git) | The Git-backed desired-state repository. The only crate that knows Git exists. |
+| [`fabric-client-git`](crates/fabric-client-git) | The client desired-state repository, over the Git host's contents API. One of three crates that know a Git host exists; `fabric-git-host` and `fabric-platform-git` are the others. |
+| [`fabric-openbao`](crates/fabric-openbao) | Where a Fabric instance's secrets and integration record live. The only crate that knows OpenBao exists. |
+| [`fabric-deployment-kubernetes`](crates/fabric-deployment-kubernetes) | Read-only deployment evidence — observed running versions, over plain HTTPS, no `kube` crate (ADR 0022). |
 | [`fabric-control-plane-api`](crates/fabric-control-plane-api) | The control plane's composition root. |
+
+**In neither plane**
+
+| Crate | Role |
+|---|---|
+| [`fabric-runtime-publication`](crates/fabric-runtime-publication) | The runtime state wire contract: three independently versioned documents. The producer is built; nothing calls it yet (ADR 0018). |
+| [`fabric-git-host`](crates/fabric-git-host) | Authenticating to a Git host as a GitHub App — mints, caches and expires an installation token, shared by both Git integrations. |
+| [`fabric-platform-git`](crates/fabric-platform-git) | Atomic desired-state mutation in the platform repository — one tree, one commit, one ref update. |
+| [`fabric-platform-management`](crates/fabric-platform-management) | Deciding which version of a component an environment should run. Defines the `Registry` and `DeploymentObserver` ports; no transport of its own. |
+| [`fabric-registry`](crates/fabric-registry) | Reading published artifacts from an OCI registry, anonymously. |
+| [`fabric-ndc-acceptance`](crates/fabric-ndc-acceptance) | Test-only. Composes the real publisher, runtime, Data API and NDC adapter against a running connector; no production code. |
 
 **Applications**
 
@@ -183,27 +205,41 @@ looks exactly like success — rows come back, status 200, nothing logged.
 
 ### 6. Operators write desired state; reconciliation makes it true
 
-The control plane never calls a platform service on an operator's behalf. A
-change to a client's identity writes a document to Git, and reconciliation
-converges Keycloak onto it — so Git is the authority rather than one of two
-writers racing (ADR 0008).
+That is client identity's rule, not every capability's. For identity, the
+control plane never calls Keycloak on an operator's behalf: a change to a
+client's identity writes a document to Git, and reconciliation converges
+Keycloak onto it — so Git is the authority rather than one of two writers
+racing (ADR 0008).
 
-The visible consequence is that a successful write reports `pending`, not
-`applied`. Writing the document and converging the provider are different events
-that fail independently, and an API that reported them as one would be lying
-about the second one every time. Reconciliation is idempotent and **only adds**:
-it creates what is missing and corrects what it manages, and deletes nothing.
+The visible consequence is that a successful identity write reports `pending`,
+not `applied`. Writing the document and converging the provider are different
+events that fail independently, and an API that reported them as one would be
+lying about the second one every time. Reconciliation is idempotent and **only
+adds**: it creates what is missing and corrects what it manages, and deletes
+nothing.
 
 Because it observes before it acts, a realm changed outside SaaS Fabric is
 reported as `drifted` rather than silently corrected — the one signal that says
 something else is editing the realms the platform owns.
 
+Two capabilities skip that indirection on purpose. A client secret write
+reaches OpenBao directly and reports success or failure from that one call
+(ADR 0017) — there is no desired-state document for a secret to converge from,
+and reconciling a value nobody can read back would add a step, not a
+guarantee. Platform Management reads artifact registries and the cluster's
+deployment evidence directly, for the same reason resolution never reads Git
+(§6): "what could this run" and "what is it running" are reads, and a read
+gains nothing from a trip through desired state first. What still goes through
+Git either way is *desired* state itself — a component's chosen version is a
+commit to the platform repository, exactly as a client's identity is a commit
+to the clients repository.
+
 ### 7. Keycloak stops at its adapter, exactly as NDC does
 
 `RealmRepresentation` and the admin token exist in `fabric-keycloak` and
-nowhere else; a blob hash and a commit exist in `fabric-client-git` and nowhere
-else. `scripts/check_architecture.py` fails the build if either vocabulary
-escapes.
+nowhere else; a blob hash and a commit exist in the two Git adapters,
+`fabric-client-git` and `fabric-platform-git`, and nowhere above them.
+`scripts/check_architecture.py` fails the build if either vocabulary escapes.
 
 The operator console says Client, Identity, and Domains. It never says the name
 of the service underneath, and there is no workflow anywhere that redirects an
@@ -254,6 +290,7 @@ The reasoning, the licence audit, and the consequences are recorded in
 | [0019](docs/decisions/0019-the-edge-proves-the-token-and-the-issuer-names-the-tenant.md) | The edge proves the token, the issuer names the tenant, and a public client proves its code |
 | [0020](docs/decisions/0020-keyed-writes-name-their-key-arguments.md) | Keyed writes name their key arguments; the tenant predicate is still sent whole |
 | [0021](docs/decisions/0021-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md) | The product catalogue is desired state, and the console creates clients |
+| [0022](docs/decisions/0022-running-versions-come-from-deployment-evidence.md) | Running versions come from deployment evidence |
 
 ## Running it
 
@@ -268,6 +305,13 @@ GitHub token:
 
 ```bash
 cargo run -p fabric-control-plane-api -- examples/control-plane.toml
+```
+
+The authorization front, with an embedded OpenFGA and no datastore configured
+— in memory, lost on restart, fine for development and never for a deployment:
+
+```bash
+cargo run -p fabric-fga-auth-api -- examples/authorization.toml
 ```
 
 And the operator console against it:
@@ -309,6 +353,12 @@ Never `latest` — `saas-fabric-platform` pins an explicit version. The builder'
 compiler is checked against `rust-toolchain.toml`, so an image cannot be built
 by a compiler no gate ran.
 
+The `Dockerfile` also has a further target, `authorization-front`, for the
+authorization front door (`fabric-fga-auth-api` plus the OpenFGA it starts).
+It builds locally, but [`.github/workflows/release.yml`](.github/workflows/release.yml)'s
+build matrix does not include it, so it is not published — v0.3.0 ships the
+three images above, not four.
+
 A tag carrying a prerelease part — `v0.3.0-preview.42` — publishes the same
 three images as a **preview**: an integration candidate, so current work is
 visible in an environment rather than only in a test run. See
@@ -331,41 +381,69 @@ visible in an environment rather than only in a test run. See
 **Runtime plane:** implemented and tested — tenant identity, the tenant
 registry, the Data API, the connector boundary, and the NDC connector.
 
-**Control plane:** the first capability, **client identity**, is implemented and
-tested end to end. An operator lists clients and edits a client's realm roles in
-the console; the change is written to a client document in Git with optimistic
-concurrency; reconciliation converges a Keycloak realm onto it; and the console
-shows whether that has actually happened.
+**Control plane:** operator sign-in is OIDC, and implemented end to end — there
+is no other posture. **Client identity**, the first capability, is implemented
+and tested end to end: an operator lists clients and edits a client's realm
+roles in the console; the change is written to a client document in Git with
+optimistic concurrency; reconciliation converges a Keycloak realm onto it; and
+the console shows whether that has actually happened. Git connection is
+in-product for both integrations — client desired state and the platform
+repository — so a deployment starts knowing neither, and an operator connects
+each through the console (`mode = "managed"`). A deployment that states its
+repository outright (`mode = "git"`) is still supported, and is what the
+integration tests drive.
 
-Pull request #69 adds a product catalogue, client creation and per-client
-product configuration, all as desired-state writes, and a loopback workbench for
-developing the console against them. They are implemented and **proposed** —
-see [ADR 0021](docs/decisions/0021-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md).
+Pull request #69 (merged) adds the product catalogue, client creation and
+per-client product configuration, all as desired-state writes, and a loopback
+workbench for developing the console against them — implemented, though
+[ADR 0021](docs/decisions/0021-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md),
+which governs them, is still **Proposed**. Pull request #71 (merged) lets a
+keyed update or delete reach a real `ndc-postgres` procedure — see
+[ADR 0020](docs/decisions/0020-keyed-writes-name-their-key-arguments.md).
+
+**Platform Management** discovers what an environment could run, holds or
+resumes a component's advancement, lists rollback candidates and rolls one
+back — desired-state writes to the platform repository — and now shows what is
+actually *running*, read directly from the cluster's deployment evidence
+rather than inferred from a commit (pull request #72,
+[ADR 0022](docs/decisions/0022-running-versions-come-from-deployment-evidence.md)).
+
+**Client secrets** are managed through OpenBao: the console's Secrets tab
+reads, writes and deletes a client's partition, and reveals a value only on an
+explicit action.
+
+**The authorization front door** — `fabric-fga-auth` and `fabric-fga-auth-api`
+— is built: it verifies a tenant's bearer and answers `POST /v1/check` against
+an embedded OpenFGA (ADR 0016). It is not yet called by `fabric-data-api`, and
+it is not one of the three images the release workflow publishes — see
+[Releases](#releases).
 
 Not yet built:
 
-- The Configuration, Feature, Storage, Events, and Secrets APIs (§27). The
-  binding format already carries their state.
-- **Runtime binding publication.** The runtime reads tenant bindings and
-  DataSources that a controller writes; the file-backed `JsonFileSource` is the
-  contract between them, and publishing into it is a reconciliation target
-  beside Keycloak rather than a control-plane mutation — see
+- The Configuration, Feature, Storage, Events, and tenant-facing Secrets APIs
+  (§27). The binding format already carries their state.
+- **Runtime binding publication.** The producer exists
+  (`fabric-runtime-publication`, ADR 0018) and is proven against the real
+  runtime and Data API, but nothing calls it: no Kubernetes adapter, no
+  scheduled caller, and no provisioner input (`ProvisionedPlacement`) yet
+  exist — see
   [the control-plane architecture](docs/architecture/control-plane.md#runtime-publication-boundary).
-- **The other platform capabilities**: authorization (OpenFGA), secrets
-  (OpenBao), routing (Envoy), observability (Grafana). Each follows the shape
-  identity established.
+- **Reconciliation into OpenBao, OpenFGA, Envoy and Grafana.** Client secrets
+  and Platform Management's registry and cluster reads already reach OpenBao
+  and those services directly; what is missing is converging desired state
+  *into* each one the way identity converges into Keycloak.
 - **Client deletion, and the rest of client creation.** The console creates a
   client's document — realm, roles and product configuration — and nothing
-  else. Routing, data placement, secrets and a database are still a workflow
-  nobody has designed. Deletion, and removing an application from a client,
-  need their own confirmation semantics (ADR 0008, ADR 0021).
+  else. Routing, data placement, a secret boundary and a database are still a
+  workflow nobody has designed. Deletion, and removing an application from a
+  client, need their own confirmation semantics (ADR 0008, ADR 0021).
 - **Deploying what the product catalogue describes.** No controller deploys an
   application's components, issues their DNS names or certificates, or observes
   their health; the console reports all three as not observed.
-- **Operator authentication beyond a trusted network boundary.** The posture is
-  the runtime plane's, and carries the same obligation (ADR 0009).
-- A JWKS refresher. `VerificationKeys` is a snapshot, so rotation in the opt-in
-  defence-in-depth mode means rebuilding the reader.
+- A JWKS refresher for `fabric-identity`'s opt-in signature-verification mode.
+  `VerificationKeys` there is a snapshot, so rotation means rebuilding the
+  reader — unrelated to `fabric-fga-auth`'s own key cache, which already
+  re-fetches on demand when a key is missing, behind a cooldown.
 
 ## Licence
 

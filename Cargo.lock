@@ -421,6 +421,7 @@ dependencies = [
  "fabric-core",
  "fabric-fga-auth",
  "figment",
+ "jsonwebtoken",
  "reqwest",
  "serde",
  "tokio",

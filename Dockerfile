@@ -33,9 +33,9 @@ RUN apt-get update \
 
 COPY . .
 
-# Cache mounts rather than the copy-manifests-first trick: this is a thirteen
-# crate workspace, and a dependency-only pre-build would need every manifest
-# listed here and would rot the first time one moved.
+# Cache mounts rather than the copy-manifests-first trick: this is a
+# twenty-three crate workspace, and a dependency-only pre-build would need
+# every manifest listed here and would rot the first time one moved.
 #
 # The binaries are copied out inside the same `RUN`, because a cache mount is
 # not part of the resulting layer — anything left in `target/` disappears when

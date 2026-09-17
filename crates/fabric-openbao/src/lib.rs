@@ -14,10 +14,12 @@
 //!
 //! # What this crate is, and what it is not
 //!
-//! It implements two ports the control plane owns, and it is the only place in
-//! this workspace that knows OpenBao exists. Nothing above it names a mount, a
-//! path, an authentication method or a lease — the domain asks for a secret by
-//! name within an instance's partition, and where that lands is decided here.
+//! It implements three ports the control plane owns — the platform's own
+//! secret store, its integration record, and a client's secrets — and it is
+//! the only place in this workspace that knows OpenBao exists. Nothing above
+//! it names a mount, a path, an authentication method or a lease — the domain
+//! asks for a secret by name within a partition, and where that lands is
+//! decided here.
 
 mod auth;
 mod client;

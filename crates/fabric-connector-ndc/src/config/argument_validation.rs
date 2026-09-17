@@ -4,6 +4,12 @@
 //! connector is contacted. The complementary check — that the argument *names*
 //! are ones the connector's procedures actually declare — needs the schema, and
 //! lives in `registration::procedure_arguments`.
+//!
+//! This file is in the 121-150 line band the file-size policy asks a reason
+//! for: four short checks over where a write mapping's payload and predicate
+//! arguments go, sharing one concept — argument placement — and each too
+//! small on its own to justify a file of its own without fragmenting that one
+//! validation pass across more files than it clarifies.
 
 use crate::config::{NdcConnectorConfig, ProcedureBinding};
 

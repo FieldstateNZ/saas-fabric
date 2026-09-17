@@ -91,8 +91,9 @@ impl CollectionProcedures {
     /// `["insert", "delete"]` list, so a verb this crate learns to map in the
     /// future is checked automatically instead of silently passing that
     /// validation by omission — the same reasoning
-    /// `registration::required_arguments::supplied_arguments` now applies
-    /// per-verb rather than to a hardcoded set.
+    /// `registration::required_arguments::supplied_arguments` follows, there
+    /// via a per-verb match rather than one hardcoded list applied uniformly
+    /// to every verb.
     pub(super) fn non_update(&self) -> Vec<(&'static str, Option<&ProcedureBinding>)> {
         self.all()
             .into_iter()

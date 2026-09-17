@@ -78,7 +78,7 @@ fn check_binding(
 /// and every key argument; a delete sends its predicate and every key
 /// argument, and never a payload — a delete has none, and config validation
 /// ([`crate::config::NdcConnectorConfig::validate_delete_has_no_payload_argument`])
-/// now refuses a mapping that declares one anyway.
+/// refuses a mapping that declares one anyway.
 ///
 /// Getting this wrong in either direction is a real bug, not a style choice.
 /// Undercounting refuses a mapping that would have worked. Overcounting —
@@ -100,10 +100,11 @@ fn supplied_arguments<'a>(binding: &'a ProcedureBinding, verb: &str) -> Vec<&'a 
         "delete" => filter.chain(keys).collect(),
         // `CollectionProcedures::all` names only these three verbs today, so
         // this arm is unreached. It fails closed rather than being left
-        // absent: "supplies nothing" refuses a fourth verb's every mapping at
-        // startup, which is loud and safe, instead of a panic on an
-        // unmatched pattern or a silent "supplies everything" that would
-        // refuse nothing this check exists to catch.
+        // absent: "supplies nothing" refuses a fourth verb's mapping at
+        // startup whenever its procedure declares a required argument, which
+        // is loud and safe, instead of a panic on an unmatched pattern or a
+        // silent "supplies everything" that would refuse nothing this check
+        // exists to catch.
         _ => Vec::new(),
     }
 }

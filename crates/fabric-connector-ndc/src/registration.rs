@@ -59,7 +59,7 @@ use crate::{logging, NdcConnector, NdcConnectorConfig, SchemaIndex, NDC_MINIMUM_
 /// 6. **Every argument the procedure requires**, against what *this verb's*
 ///    translation actually sends — payload, filter and keys for an update;
 ///    filter and keys for a delete; payload alone for an insert, since a
-///    delete's `payload_argument` (config validation now refuses one) or an
+///    delete's `payload_argument` (config validation refuses one) or an
 ///    insert's `filter_argument` is never read — see
 ///    `required_arguments::check_required_arguments`. This is the check that
 ///    would have turned issue #62's F3 into a boot failure instead of a

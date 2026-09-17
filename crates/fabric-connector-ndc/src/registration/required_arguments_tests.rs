@@ -133,9 +133,9 @@ fn a_nullable_argument_is_never_required() {
     assert!(check_required_arguments(&config, &keyed_index()).is_ok());
 }
 
-/// The filter arm of `supplied_arguments`, and the spec's own claim that the
-/// pre-existing `delete_customers(filter)` shape still passes. `filter` here
-/// is a **bare, non-nullable** `predicate` — no `nullable` wrapper — so it is
+/// The filter arm of `supplied_arguments`: the pre-existing
+/// `delete_customers(filter)` shape still passes it. `filter` here is a
+/// **bare, non-nullable** `predicate` — no `nullable` wrapper — so it is
 /// required, and only `filter_argument` can supply it.
 ///
 /// This replaces a version of this test that gave `filter` a `nullable`
@@ -144,7 +144,9 @@ fn a_nullable_argument_is_never_required() {
 /// above), so that version passed whether or not `supplied_arguments` counted
 /// `filter_argument` for a delete — it substituted a nullable predicate for
 /// the claim it was supposed to pin, and could not have caught the false
-/// negative the test above this one does.
+/// negative
+/// `a_delete_mapping_that_puts_a_key_value_in_payload_argument_instead_of_key_arguments_is_refused`,
+/// further above, pins.
 #[test]
 fn a_delete_mapping_supplying_its_one_required_filter_argument_still_passes() {
     let schema: NdcSchemaResponse = serde_json::from_str(
@@ -203,8 +205,8 @@ fn an_insert_mapping_supplying_its_one_required_payload_argument_is_accepted() {
 /// like `KEYED_DELETE_SCHEMA` above. Exercises all three verbs at once,
 /// including the update arm of `supplied_arguments`, which no other test in
 /// this file reaches: every other update-shaped check in this crate goes
-/// through `translate::mutation_tests` or `config::connector_validation_tests`
-/// instead.
+/// through `translate::mutation_tests`, `config::connector_validation_tests`,
+/// or `registration::procedure_arguments_tests` instead.
 #[test]
 fn the_full_articles_mapping_covers_every_required_argument_on_the_real_schema() {
     let path = format!(

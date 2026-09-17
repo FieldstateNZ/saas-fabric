@@ -751,7 +751,13 @@ fn a_keyed_update_whose_predicate_omits_a_key_field_is_refused_even_though_chang
 
     let error = to_mutation_request(&spec, None, &config, &keyed_articles_index()).unwrap_err();
 
-    assert!(matches!(error, ConnectorError::InvalidOperation(_)));
+    let ConnectorError::InvalidOperation(message) = error else {
+        panic!("expected InvalidOperation, got {error:?}");
+    };
+    // Names the missing field specifically -- not just any refusal -- so an
+    // unrelated future refusal on this mapping cannot mask a reintroduced
+    // fallback to `changes`.
+    assert!(message.contains("key field `id`"), "{message}");
 }
 
 #[test]

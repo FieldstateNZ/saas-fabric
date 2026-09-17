@@ -130,8 +130,12 @@ Wire types are hand-written in `src/wire/` from the published spec.
    config validation
    (`config::key_argument_validation::validate_key_argument_distinctness`)
    should already have prevented, checked again because `add_predicate` still
-   inserts unconditionally and only the order of the two calls (predicate
-   first) makes the guard meaningful. `key_arguments` values are also
+   inserts unconditionally. Call order (predicate before keys) is what makes
+   that particular case — a key colliding with the predicate — caught at all;
+   a key colliding with the payload or with another key is caught regardless
+   of order, since the payload is written before either call runs and a
+   key-key collision is caught inside `add_key_arguments`'s own loop.
+   `key_arguments` values are also
    re-checked at startup (`registration::key_arguments`): every one must be an
    argument the procedure declares as `ArgumentKind::Value`, never
    `Predicate`.
@@ -148,8 +152,8 @@ Wire types are hand-written in `src/wire/` from the published spec.
 3e. **A delete mapping may not declare `payload_argument` at all.** A delete
    carries no payload, so `config::argument_validation::validate_delete_has_no_payload_argument`
    refuses one at startup rather than accepting silently-unused configuration
-   that is usually a value meant for `key_arguments` written in the wrong
-   place.
+   — a likely cause is a value meant for `key_arguments`, written in the
+   wrong place.
 4. **A mutation reaching translation with no predicate is refused.**
 5. **`ResolvedSecret::expose()` is called in exactly one place** —
    `routing.rs`, straight into the request body. Never logged, never in a span,

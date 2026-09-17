@@ -144,7 +144,7 @@ filter_argument = "pre_check"
 key_arguments = { id = "key_id", tenant_key = "key_tenant_key" }
 ```
 
-Three things follow from that, and all three are deliberate:
+Four things follow from that, and all four are deliberate:
 
 - **The key value is read off the predicate, never off the caller's payload,
   and never guessed.** After the full predicate is placed under
@@ -176,8 +176,8 @@ Three things follow from that, and all three are deliberate:
   coincidence.
 - **A delete mapping may not declare `payload_argument` at all.** A delete
   carries no payload, so one present is refused at config validation rather
-  than accepted as harmless unused configuration — in practice it has been a
-  value meant for `key_arguments`, written into the wrong setting.
+  than accepted as harmless unused configuration — a likely cause is a value
+  meant for `key_arguments`, written into the wrong setting.
 
 An update's payload can need reshaping too. `ndc-postgres`'s
 `update_columns` argument on a keyed update procedure does not take

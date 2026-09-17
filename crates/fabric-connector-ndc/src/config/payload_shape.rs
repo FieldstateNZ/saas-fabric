@@ -48,9 +48,8 @@ pub enum PayloadShape {
     ///
     /// This reading is specific to `update_columns`. It says nothing about
     /// `insert_articles_object.body`, which the same fixture types as a plain
-    /// `nullable<text>` — a bare nullable column, not an operation — so a
-    /// `null` there is an ordinary value written by the insert, not a
-    /// "leave alone" signal; there is no existing row for an insert to leave
-    /// alone.
+    /// `nullable<text>` — a bare nullable column, not an operation. The types
+    /// admit a `null` there as an ordinary value, not a "leave alone" signal;
+    /// what the connector actually does with it has not been observed.
     SetOperations,
 }

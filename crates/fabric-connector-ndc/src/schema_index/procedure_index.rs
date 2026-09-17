@@ -183,10 +183,10 @@ mod tests {
 
     #[test]
     fn a_bare_array_argument_is_required() {
-        // `insert_articles`'s `objects`, unwrapped in `nullable`: nothing in
-        // this crate's observed schemas sends an insert with no rows, and
-        // `required_arguments_tests` pins that this crate holds a mapping to
-        // supplying it.
+        // `insert_articles`'s `objects` — bare, not wrapped in `nullable`:
+        // nothing in this crate's observed schemas sends an insert with no
+        // rows, and `required_arguments_tests` pins that this crate holds a
+        // mapping to supplying it.
         let index = indexed(
             r#"[{"name": "insert_articles", "arguments": {
                 "objects": {"type": {"type": "array", "element_type": {"type": "named", "name": "articles"}}}

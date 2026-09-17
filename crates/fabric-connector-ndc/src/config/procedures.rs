@@ -1,5 +1,7 @@
 //! How a collection's writes map onto connector procedures.
 
+use crate::config::ProcedureBinding;
+
 /// The procedures backing one collection's writes.
 ///
 /// # Why writes need explicit configuration
@@ -61,58 +63,41 @@ impl CollectionProcedures {
     /// bearing verbs would wave the insert through. The startup check that
     /// every configured argument is one the procedure declares wants the same
     /// breadth, for the same reason.
+    ///
+    /// Destructures `self` field by field rather than naming `self.insert`,
+    /// `self.update`, `self.delete` directly: a fourth field added to
+    /// [`CollectionProcedures`] then fails this destructure to compile,
+    /// instead of silently being absent from `all()` and, with it, from
+    /// [`Self::non_update`] and every check built on top of either.
     pub(crate) fn all(&self) -> [(&'static str, Option<&ProcedureBinding>); 3] {
+        let Self {
+            insert,
+            update,
+            delete,
+        } = self;
+
         [
-            ("insert", self.insert.as_ref()),
-            ("update", self.update.as_ref()),
-            ("delete", self.delete.as_ref()),
+            ("insert", insert.as_ref()),
+            ("update", update.as_ref()),
+            ("delete", delete.as_ref()),
         ]
     }
-}
 
-/// One procedure and the argument names it expects.
-#[derive(Debug, Clone, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ProcedureBinding {
-    /// The procedure's name in the connector's schema.
-    pub procedure: String,
-
-    /// The argument carrying the payload — rows for an insert, field changes
-    /// for an update.
+    /// Every mapping except the update one, paired with its verb.
     ///
-    /// Must differ from [`Self::filter_argument`], and startup validation
-    /// rejects a mapping where it does not: both are placed in the same
-    /// argument map, so a shared name means the predicate lands on top of the
-    /// payload and the write silently changes nothing.
-    #[serde(default)]
-    pub payload_argument: Option<String>,
-
-    /// The argument carrying the predicate, for updates and deletes.
-    ///
-    /// A mapping for an update or delete that omits this is rejected at
-    /// startup: without somewhere to put the predicate, the tenant scoping
-    /// added by
-    /// [`MutationSpec::for_target`](fabric_connector::MutationSpec::for_target)
-    /// would be silently dropped, and the write would reach every tenant's rows.
-    ///
-    /// Nothing in the specification fixes this name; a real `ndc-postgres`
-    /// calls it `pre_check` on the delete and update procedures it generates,
-    /// and `post_check` on the insert procedure's own permission predicate
-    /// (observed against `ndc-postgres` v3.1.0, issue #62) — never `filter`,
-    /// which the shipped example wrongly used until that observation. Set this
-    /// to whatever name the target connector's own `/schema` declares; startup
-    /// checks the name and its kind against that schema either way.
-    #[serde(default)]
-    pub filter_argument: Option<String>,
-}
-
-impl ProcedureBinding {
-    /// The payload and predicate argument names, when the mapping declares
-    /// both.
-    ///
-    /// `None` when either is absent — a mapping naming only one of them has
-    /// nothing to collide with, so validation has nothing to compare.
-    pub(super) fn argument_names(&self) -> Option<(&String, &String)> {
-        self.payload_argument.as_ref().zip(self.filter_argument.as_ref())
+    /// Feeds the `payload_shape` check: `set_operations` only makes sense for
+    /// an update's payload argument, so every *other* verb has to be held to
+    /// `values`. Derived from [`Self::all`] rather than a hand-written
+    /// `["insert", "delete"]` list, so a verb this crate learns to map in the
+    /// future is checked automatically instead of silently passing that
+    /// validation by omission — the same reasoning
+    /// `registration::required_arguments::supplied_arguments` follows, there
+    /// via a per-verb match rather than one hardcoded list applied uniformly
+    /// to every verb.
+    pub(super) fn non_update(&self) -> Vec<(&'static str, Option<&ProcedureBinding>)> {
+        self.all()
+            .into_iter()
+            .filter(|(verb, _)| *verb != "update")
+            .collect()
     }
 }

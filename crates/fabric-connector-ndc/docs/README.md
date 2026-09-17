@@ -124,6 +124,72 @@ closed rather than open — every write is refused at translation — but it is
 startup-detectable, and "every write 400s in production" is a bad way to find
 out.
 
+## Some procedures are keyed, not just filtered
+
+A real `ndc-postgres` v3.1.0 does not generate `delete_articles(pre_check)`. It
+generates `delete_articles_by_id_and_tenant_key(key_id, key_tenant_key,
+pre_check)` — one procedure per collection's primary key, with the key columns
+as their own required arguments alongside the predicate. A neutral
+`MutationSpec::Delete { filter }` has no separate concept of "the key"; it only
+has the predicate `MutationSpec::for_target` built.
+
+`ProcedureBinding::key_arguments` bridges that gap: a `BTreeMap<String,
+String>` from a physical field name (as it appears in the neutral `Filter`) to
+the procedure's own argument for that field's value.
+
+```toml
+[connectors.procedures.articles.delete]
+procedure = "delete_articles_by_id_and_tenant_key"
+filter_argument = "pre_check"
+key_arguments = { id = "key_id", tenant_key = "key_tenant_key" }
+```
+
+Four things follow from that, and all four are deliberate:
+
+- **The key value is read off the predicate, never off the caller's payload,
+  and never guessed.** After the full predicate is placed under
+  `filter_argument`, translation looks for exactly one equality per key field
+  among the predicate's *direct* clauses — a bare `Filter::Compare`, or a
+  direct clause of a top-level `Filter::And`. It does not descend into `Or`,
+  `Not`, or a nested `And` (a value that only holds along one branch is not a
+  key value), and `Filter::In` is never accepted even with one value (a set
+  the platform never collapsed to an equality is not one). No equality, or
+  more than one with differing values, is refused — a keyed procedure cannot
+  be called without its key, or against a contradictory one.
+- **The tenant discriminator can reach the connector twice.** When a key field
+  is also the discriminator column, its value goes out once as a key argument
+  and once inside the predicate. That is defence in depth, not redundancy to
+  tidy away — the two are built independently, so a mistake in one does not
+  silently disable the other.
+- **A procedure's required (non-nullable) argument that nothing *this verb's*
+  translation sends is refused at startup.** `key_id` and `key_tenant_key` are
+  plain, non-nullable arguments in the schema `ndc-postgres` publishes; before
+  `key_arguments` existed, a mapping naming only `filter_argument` passed
+  every check this crate ran and failed on the connector's first delete. That
+  gap is now a boot failure: `registration::required_arguments` walks every
+  argument the schema marks non-nullable and refuses to start if what that
+  verb's translation actually sends — payload alone for an insert; payload,
+  filter and keys for an update; filter and keys for a delete, **never** a
+  payload — supplies nothing for it. Counting verb-blind is its own bug:
+  crediting a delete with an argument only `payload_argument` names let a
+  mapping that wrote a key value into the wrong setting pass this check by
+  coincidence.
+- **A delete mapping may not declare `payload_argument` at all.** A delete
+  carries no payload, so one present is refused at config validation rather
+  than accepted as harmless unused configuration — a likely cause is a value
+  meant for `key_arguments`, written into the wrong setting.
+
+An update's payload can need reshaping too. `ndc-postgres`'s
+`update_columns` argument on a keyed update procedure does not take
+`{"title": "new title"}`; it takes `{"title": {"_set": "new title"}}`, a
+per-column operation rather than a bare value. `ProcedureBinding::payload_shape`
+says which shape a mapping's payload argument expects — `values` (the
+default, and the only shape an insert's `objects` argument is ever observed
+to take) or `set_operations`. Only an update may declare `set_operations`: an
+insert sends an array of row objects and a delete sends no payload, so
+neither has anywhere for a per-column wrapper to go, and config validation
+refuses both.
+
 ## When a call to a connector fails
 
 The three transport failures this crate reports are **not interchangeable**, and

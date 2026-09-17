@@ -30,6 +30,12 @@ mod capabilities_tests;
 mod expression;
 #[cfg(test)]
 mod expression_tests;
+mod key_arguments;
+#[cfg(test)]
+mod key_arguments_tests;
+mod key_equality;
+#[cfg(test)]
+mod key_equality_tests;
 mod membership;
 #[cfg(test)]
 mod membership_tests;

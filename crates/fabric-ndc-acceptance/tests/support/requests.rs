@@ -85,6 +85,28 @@ pub fn post(uri: &str, claims: &Value, body: &Value) -> Request<Body> {
         .unwrap()
 }
 
+/// A PATCH request carrying a bearer token and a JSON body -- the fields to
+/// change, not the whole record (`PATCH /v1/data/{resource}/{key}`).
+pub fn patch(uri: &str, claims: &Value, body: &Value) -> Request<Body> {
+    Request::builder()
+        .method("PATCH")
+        .uri(versioned(uri))
+        .header("authorization", format!("Bearer {}", token_for(claims)))
+        .header("content-type", "application/json")
+        .body(Body::from(body.to_string()))
+        .unwrap()
+}
+
+/// A DELETE request carrying a bearer token and no body.
+pub fn delete(uri: &str, claims: &Value) -> Request<Body> {
+    Request::builder()
+        .method("DELETE")
+        .uri(versioned(uri))
+        .header("authorization", format!("Bearer {}", token_for(claims)))
+        .body(Body::empty())
+        .unwrap()
+}
+
 /// A GET request carrying a bearer token *and* a caller-supplied
 /// `X-Tenant-Id` header -- the selection path the identity resolver refuses
 /// outright regardless of what it names (`fabric_identity::resolver`).

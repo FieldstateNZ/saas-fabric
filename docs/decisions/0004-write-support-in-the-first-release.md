@@ -1,6 +1,6 @@
 # ADR 0004 — Write support ships in the first release, with a named gap
 
-- **Status:** Accepted
+- **Status:** Superseded by [ADR 0020](0020-keyed-writes-name-their-key-arguments.md) on 2026-09-15 — the checklist below is complete and the gap it names is closed
 - **Date:** 2026-08-13
 - **Applies to:** the Data API's mutation path
 - **Related:** [ADR 0001](0001-ndc-as-connector-boundary.md), [ADR 0003](0003-data-sources-are-first-class-resources.md), specification §18, §21, §28

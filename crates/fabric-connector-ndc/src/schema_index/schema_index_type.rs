@@ -72,7 +72,10 @@ impl SchemaIndex {
     /// by [`Self::declared_arguments`], not by this return type.
     #[must_use]
     pub fn procedure_argument(&self, procedure: &str, argument: &str) -> Option<ArgumentKind> {
-        self.procedures.get(procedure)?.get(argument).copied()
+        self.procedures
+            .get(procedure)?
+            .get(argument)
+            .map(|info| info.kind)
     }
 
     /// Every argument name a procedure declares, for an error message that can
@@ -82,6 +85,28 @@ impl SchemaIndex {
         self.procedures
             .get(procedure)
             .map(|arguments| arguments.keys().map(String::as_str).collect())
+            .unwrap_or_default()
+    }
+
+    /// Every argument name a procedure declares as required — non-nullable in
+    /// the connector's own schema.
+    ///
+    /// Feeds the startup check that a mapping supplies *something* for each
+    /// of these, as payload, filter, or a key argument. A required argument
+    /// this platform never sends is not a soft gap: the connector refuses
+    /// every call to that procedure, which for a delete or update means every
+    /// write is a startup-preventable outage rather than a first-request one.
+    #[must_use]
+    pub(crate) fn required_arguments(&self, procedure: &str) -> Vec<&str> {
+        self.procedures
+            .get(procedure)
+            .map(|arguments| {
+                arguments
+                    .iter()
+                    .filter(|(_, info)| info.required)
+                    .map(|(name, _)| name.as_str())
+                    .collect()
+            })
             .unwrap_or_default()
     }
 

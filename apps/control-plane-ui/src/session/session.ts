@@ -29,6 +29,13 @@ const STATE = 'fabric.signin.state'
 
 /** The operator's token, for as long as this tab is open. */
 let token: string | null = null
+const ended = new Set<() => void>()
+
+/** Subscribe to a rejected session without persisting its token. */
+export function onSessionEnded(listener: () => void): () => void {
+  ended.add(listener)
+  return () => { ended.delete(listener) }
+}
 
 /** What the API says about where to sign in. */
 interface SessionConfig {
@@ -44,8 +51,11 @@ export function currentToken(): string | null {
 }
 
 /** Forgets the token, so the next render asks the operator to sign in. */
-export function forgetToken(): void {
+export function forgetToken(rejected: string | null = token): void {
+  // A delayed refusal for an older request must not end a newer sign-in.
+  if (token === null || token !== rejected) return
   token = null
+  for (const listener of ended) listener()
 }
 
 /**

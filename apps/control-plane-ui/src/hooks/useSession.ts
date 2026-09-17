@@ -8,7 +8,7 @@
  */
 import { useCallback, useEffect, useState } from 'react'
 
-import { beginSignIn, clearQuery, completeSignIn, currentToken, discardPending } from '../session/session'
+import { beginSignIn, clearQuery, completeSignIn, currentToken, discardPending, onSessionEnded } from '../session/session'
 import { attemptPending, callbackError, forgetAttempt, needsTheOperator, recordAttempt } from '../session/silent'
 
 /** Where the operator stands with respect to signing in. */
@@ -28,6 +28,11 @@ export function useSession(): Session {
 
   useEffect(() => {
     let abandoned = false
+    const unsubscribe = onSessionEnded(() => {
+      if (abandoned) return
+      abandoned = true
+      setState({ status: 'signed-out', error: 'Your session ended. Sign in again to continue.' })
+    })
 
     const settle = (next: SessionState): void => {
       if (!abandoned) {
@@ -41,6 +46,7 @@ export function useSession(): Session {
 
     return () => {
       abandoned = true
+      unsubscribe()
     }
   }, [])
 

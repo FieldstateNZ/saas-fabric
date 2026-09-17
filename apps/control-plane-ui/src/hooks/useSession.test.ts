@@ -7,11 +7,13 @@
  * so at most once, because a console that bounces off its identity provider
  * forever is worse than one that shows a button.
  */
-import { renderHook, waitFor } from '@testing-library/react'
+import { act, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { forgetToken } from '../session/session'
 import { useSession } from './useSession'
+import { request } from '../api/client'
+import { currentToken } from '../session/session'
 
 /** Puts the page at a URL, without navigating. */
 function arriveAt(query: string): void {
@@ -121,5 +123,48 @@ describe('a signed-out page load', () => {
     })
     expect(navigation.to()).toBeNull()
     expect(sessionStorage.getItem('fabric.signin.silent')).toBeNull()
+  })
+})
+
+
+describe('a session rejected during use', () => {
+  async function signedIn() {
+    sessionStorage.setItem('fabric.signin.state', 'state')
+    sessionStorage.setItem('fabric.signin.verifier', 'verifier')
+    arriveAt('?code=code&state=state')
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true,
+      json: () => Promise.resolve({ access_token: 'current-token' }) }))
+    const hook = renderHook(useSession)
+    await waitFor(() => { expect(hook.result.current.state.status).toBe('signed-in') })
+    return hook
+  }
+
+  it('returns to sign-in on 401 without retrying an operator write', async () => {
+    const { result } = await signedIn()
+    const fetched = vi.fn().mockResolvedValue({ ok: false, status: 401,
+      json: () => Promise.resolve({ error: { code: 'unauthenticated', message: 'not a platform operator' } }) })
+    vi.stubGlobal('fetch', fetched)
+    await act(async () => {
+      await expect(request('/api/reconciliation', { method: 'POST' })).rejects.toThrow()
+    })
+    expect(result.current.state).toEqual({ status: 'signed-out', error: 'Your session ended. Sign in again to continue.' })
+    expect(currentToken()).toBeNull()
+    expect(fetched).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps the session for a permission refusal rather than starting a sign-in loop', async () => {
+    const { result } = await signedIn()
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 403,
+      json: () => Promise.resolve({ error: { code: 'forbidden', message: 'Operation not permitted' } }) }))
+    await act(async () => { await expect(request('/api/platform')).rejects.toThrow() })
+    expect(result.current.state.status).toBe('signed-in')
+    expect(currentToken()).toBe('current-token')
+  })
+
+  it('does not forget a current token for a delayed rejection of an older token', async () => {
+    const { result } = await signedIn()
+    act(() => { forgetToken('old-token') })
+    expect(result.current.state.status).toBe('signed-in')
+    expect(currentToken()).toBe('current-token')
   })
 })

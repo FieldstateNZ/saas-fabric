@@ -47,14 +47,16 @@ pub(super) fn check_document_kind(raw: &Value) -> Result<SchemaVersion, DesiredS
         }
     }
 
-    let found: String = format!(
-        "{}/{}",
-        api_version.unwrap_or("(no apiVersion)"),
-        kind.unwrap_or("(no kind)")
-    )
-    .chars()
-    .take(MAX_QUOTED_KIND)
-    .collect();
+    let found = (api_version.is_some() || kind.is_some()).then(|| {
+        format!(
+            "{}/{}",
+            api_version.unwrap_or("(no apiVersion)"),
+            kind.unwrap_or("(no kind)")
+        )
+        .chars()
+        .take(MAX_QUOTED_KIND)
+        .collect::<String>()
+    });
 
     Err(DesiredStateError::UnknownDocumentKind {
         expected: schema::EXPECTED_DOCUMENT,

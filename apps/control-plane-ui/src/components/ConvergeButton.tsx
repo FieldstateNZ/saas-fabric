@@ -15,7 +15,7 @@ import { describe } from '../hooks/useClients'
  *
  * Which is also when somebody is available to act on what it finds.
  */
-export function ConvergeButton() {
+export function ConvergeButton({ onComplete }: { onComplete?: () => void }) {
   const [busy, setBusy] = useState(false)
   const [outcome, setOutcome] = useState<string | null>(null)
 
@@ -26,6 +26,7 @@ export function ConvergeButton() {
     try {
       const { clients } = await converge()
       setOutcome(`Checked ${String(clients)} client${clients === 1 ? '' : 's'}.`)
+      onComplete?.()
     } catch (thrown: unknown) {
       setOutcome(describe(thrown))
     } finally {

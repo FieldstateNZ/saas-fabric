@@ -1,5 +1,6 @@
 //! The Git-backed implementation of the desired-state repository.
 
+mod catalogue;
 mod list;
 mod write;
 
@@ -72,6 +73,24 @@ impl ClientRepository for GitClientRepository {
         write::update(&self.host, client, document, expected, change).await
     }
 
+    async fn create(
+        &self,
+        document: &ClientDocument,
+        change: &ChangeContext,
+    ) -> Result<ClientRevision, RepositoryError> {
+        self.create_client(document, change).await
+    }
+    async fn catalogue(&self) -> Result<fabric_client_model::catalogue::StoredCatalogue, RepositoryError> {
+        self.catalogue_read().await
+    }
+    async fn save_catalogue(
+        &self,
+        catalogue: &fabric_client_model::catalogue::Catalogue,
+        expected: Option<&ClientRevision>,
+        change: &ChangeContext,
+    ) -> Result<ClientRevision, RepositoryError> {
+        self.catalogue_write(catalogue, expected, change).await
+    }
     fn describe(&self) -> String {
         self.host.describe()
     }

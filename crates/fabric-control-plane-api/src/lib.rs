@@ -27,3 +27,6 @@ pub mod config;
 pub mod secrets;
 pub mod startup;
 pub mod telemetry;
+
+/// Durable local development desired-state adapter.
+pub mod local_repository;

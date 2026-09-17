@@ -1,12 +1,20 @@
 //! Tests for the control plane's domain rules.
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use fabric_client_model::{ClientId, ClientRevision, IdentityConfiguration, RealmName, RoleName};
+use fabric_client_model::catalogue::{
+    Catalogue, CatalogueCommand, ClientProductRequest, ConsoleSettings, CreateClientRequest, StoredCatalogue,
+};
+use fabric_client_model::{
+    ClientDocument, ClientId, ClientRevision, IdentityConfiguration, RealmName, RoleName,
+};
 use fabric_reconciliation::{ReconciliationStatus, ReconciliationStatusStore};
 
 use crate::fixtures::{repository_with_acme, FixedClock};
-use crate::repository::InMemoryClientRepository;
+use crate::repository::{
+    ChangeContext, ClientRepository, InMemoryClientRepository, RepositoryError, StoredClient,
+};
 use crate::{ClientService, ControlPlaneError, Operator};
 
 fn service(repository: Arc<InMemoryClientRepository>) -> ClientService {
@@ -14,6 +22,8 @@ fn service(repository: Arc<InMemoryClientRepository>) -> ClientService {
         crate::DesiredStateBinding::to(repository),
         Arc::new(ReconciliationStatusStore::new()),
         Arc::new(FixedClock),
+        Arc::new(std::collections::BTreeSet::new()),
+        Arc::new(std::collections::BTreeSet::new()),
     )
 }
 
@@ -240,4 +250,248 @@ async fn an_unknown_client_is_not_confused_with_an_empty_repository() {
         ControlPlaneError::UnknownClient(_)
     ));
     assert_eq!(service.list().await.unwrap().len(), 1);
+}
+
+/// A repository whose `create` always loses the race without ever storing
+/// anything — the scenario `create_client` must tell apart from the id
+/// genuinely already being taken. `status_failure` (the Git adapter) maps
+/// both a stale-blob `409` and an unrelated `422` to the same `Conflict`, so
+/// a real repository can produce this; this fake makes it reproducible
+/// without one.
+struct ConflictingRepository;
+
+#[async_trait::async_trait]
+impl ClientRepository for ConflictingRepository {
+    async fn list(&self) -> Result<Vec<StoredClient>, RepositoryError> {
+        Ok(vec![])
+    }
+
+    async fn get(&self, client: &ClientId) -> Result<StoredClient, RepositoryError> {
+        Err(RepositoryError::NotFound {
+            client: client.clone(),
+        })
+    }
+
+    async fn update(
+        &self,
+        _client: &ClientId,
+        _document: &ClientDocument,
+        _expected: &ClientRevision,
+        _change: &ChangeContext,
+    ) -> Result<ClientRevision, RepositoryError> {
+        Err(RepositoryError::NotConfigured)
+    }
+
+    async fn create(
+        &self,
+        _document: &ClientDocument,
+        _change: &ChangeContext,
+    ) -> Result<ClientRevision, RepositoryError> {
+        Err(RepositoryError::Conflict)
+    }
+
+    async fn catalogue(&self) -> Result<StoredCatalogue, RepositoryError> {
+        Ok(StoredCatalogue {
+            catalogue: Catalogue::default(),
+            revision: None,
+        })
+    }
+
+    fn describe(&self) -> String {
+        "a repository that always loses the create race".to_owned()
+    }
+}
+
+/// [`ConflictingRepository`]'s sibling for the *other* way Git's adapter can
+/// answer a create: `422`, mapped to [`RepositoryError::Rejected`] rather
+/// than [`RepositoryError::Conflict`] — see `fabric_client_git`'s
+/// `create_status_failure` for why a create's `422` is not the same event as
+/// an update's.
+struct RejectingRepository;
+
+#[async_trait::async_trait]
+impl ClientRepository for RejectingRepository {
+    async fn list(&self) -> Result<Vec<StoredClient>, RepositoryError> {
+        Ok(vec![])
+    }
+
+    async fn get(&self, client: &ClientId) -> Result<StoredClient, RepositoryError> {
+        Err(RepositoryError::NotFound {
+            client: client.clone(),
+        })
+    }
+
+    async fn update(
+        &self,
+        _client: &ClientId,
+        _document: &ClientDocument,
+        _expected: &ClientRevision,
+        _change: &ChangeContext,
+    ) -> Result<ClientRevision, RepositoryError> {
+        Err(RepositoryError::NotConfigured)
+    }
+
+    async fn create(
+        &self,
+        _document: &ClientDocument,
+        _change: &ChangeContext,
+    ) -> Result<ClientRevision, RepositoryError> {
+        Err(RepositoryError::Rejected {
+            detail: "creating a client returned 422".into(),
+        })
+    }
+
+    async fn catalogue(&self) -> Result<StoredCatalogue, RepositoryError> {
+        Ok(StoredCatalogue {
+            catalogue: Catalogue::default(),
+            revision: None,
+        })
+    }
+
+    fn describe(&self) -> String {
+        "a repository that always refuses the create outright".to_owned()
+    }
+}
+
+fn new_client_request() -> CreateClientRequest {
+    CreateClientRequest {
+        id: ClientId::try_new("newco").unwrap(),
+        configuration: ClientProductRequest {
+            display_name: "New Co".into(),
+            hosts: vec![],
+            legal_name: "New Co Ltd".into(),
+            region: "NZ".into(),
+            timezone: "Pacific/Auckland".into(),
+            configuration: std::collections::BTreeMap::default(),
+            applications: vec![],
+        },
+    }
+}
+
+#[tokio::test]
+async fn a_create_conflict_with_nothing_stored_is_a_revision_conflict_not_a_taken_id() {
+    let service = ClientService::new(
+        crate::DesiredStateBinding::to(Arc::new(ConflictingRepository)),
+        Arc::new(ReconciliationStatusStore::new()),
+        Arc::new(FixedClock),
+        Arc::new(BTreeSet::new()),
+        Arc::new(BTreeSet::new()),
+    );
+
+    let error = service
+        .create_client(&operator(), new_client_request())
+        .await
+        .unwrap_err();
+
+    assert!(matches!(error, ControlPlaneError::RevisionConflict), "{error:?}");
+}
+
+#[tokio::test]
+async fn a_create_rejection_with_nothing_stored_stays_a_rejection_not_a_revision_conflict() {
+    let service = ClientService::new(
+        crate::DesiredStateBinding::to(Arc::new(RejectingRepository)),
+        Arc::new(ReconciliationStatusStore::new()),
+        Arc::new(FixedClock),
+        Arc::new(BTreeSet::new()),
+        Arc::new(BTreeSet::new()),
+    );
+
+    let error = service
+        .create_client(&operator(), new_client_request())
+        .await
+        .unwrap_err();
+
+    // Not `RevisionConflict`: nothing about asking again would make GitHub
+    // answer a genuine validation failure any differently, so it must stay
+    // the not-retryable outcome `RepositoryError::Rejected` maps to.
+    assert!(
+        matches!(error, ControlPlaneError::RepositoryRejected),
+        "{error:?}"
+    );
+}
+
+/// A repository whose read agrees with whatever `expected` a caller passes,
+/// but whose `save_catalogue` still loses the race — simulating a second
+/// write landing between `change_catalogue`'s own read and its write, which
+/// its own pre-write revision check cannot see coming.
+struct RacingCatalogueRepository;
+
+#[async_trait::async_trait]
+impl ClientRepository for RacingCatalogueRepository {
+    async fn list(&self) -> Result<Vec<StoredClient>, RepositoryError> {
+        Ok(vec![])
+    }
+
+    async fn get(&self, client: &ClientId) -> Result<StoredClient, RepositoryError> {
+        Err(RepositoryError::NotFound {
+            client: client.clone(),
+        })
+    }
+
+    async fn update(
+        &self,
+        _client: &ClientId,
+        _document: &ClientDocument,
+        _expected: &ClientRevision,
+        _change: &ChangeContext,
+    ) -> Result<ClientRevision, RepositoryError> {
+        Err(RepositoryError::NotConfigured)
+    }
+
+    async fn create(
+        &self,
+        _document: &ClientDocument,
+        _change: &ChangeContext,
+    ) -> Result<ClientRevision, RepositoryError> {
+        Err(RepositoryError::NotConfigured)
+    }
+
+    async fn catalogue(&self) -> Result<StoredCatalogue, RepositoryError> {
+        Ok(StoredCatalogue {
+            catalogue: Catalogue::default(),
+            revision: None,
+        })
+    }
+
+    async fn save_catalogue(
+        &self,
+        _catalogue: &Catalogue,
+        _expected: Option<&ClientRevision>,
+        _change: &ChangeContext,
+    ) -> Result<ClientRevision, RepositoryError> {
+        Err(RepositoryError::Conflict)
+    }
+
+    fn describe(&self) -> String {
+        "a repository that always loses the catalogue race".to_owned()
+    }
+}
+
+#[tokio::test]
+async fn a_lost_catalogue_race_says_the_catalogue_changed_not_the_client() {
+    let service = ClientService::new(
+        crate::DesiredStateBinding::to(Arc::new(RacingCatalogueRepository)),
+        Arc::new(ReconciliationStatusStore::new()),
+        Arc::new(FixedClock),
+        Arc::new(BTreeSet::new()),
+        Arc::new(BTreeSet::new()),
+    );
+
+    let error = service
+        .change_catalogue(
+            &operator(),
+            CatalogueCommand::SaveSettings {
+                settings: ConsoleSettings::default(),
+            },
+            None,
+        )
+        .await
+        .unwrap_err();
+
+    // Not `RevisionConflict`, which reads as "the client changed since it
+    // was read" — wrong noun for a race on the catalogue.
+    assert!(
+        matches!(error, ControlPlaneError::CatalogueRevisionConflict),
+        "{error:?}"
+    );
 }

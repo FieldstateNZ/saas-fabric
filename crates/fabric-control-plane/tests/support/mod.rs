@@ -30,6 +30,20 @@ use tower::ServiceExt as _;
 /// The operator every test authenticates as.
 pub const OPERATOR: &str = "brett@example.com";
 
+/// The realm the fixture operator posture authenticates against — distinct
+/// from `master`, so a test can tell "reserved because it is `master`" apart
+/// from "reserved because it is the operator's own realm".
+pub const OPERATOR_REALM: &str = "platform-operators";
+
+/// An application id this deployment's own console is fixed under, the way
+/// a real composition root computes `reserved_client_ids` from
+/// configuration — see `fabric-control-plane-api`'s
+/// `startup::reserved_names::client_ids`. Named here rather than left an
+/// empty set so a test can drive the real router against a genuine
+/// deployment-reserved id, not only the static built-ins
+/// `fabric-client-model` refuses on its own.
+pub const RESERVED_APPLICATION_ID: &str = "platform-console";
+
 /// A header these tests still set, so that "authenticated" is visible in each
 /// request rather than implied by the harness.
 ///
@@ -194,19 +208,27 @@ pub fn control_plane_with_identity_provider(provider: Arc<FakeIdentityProvider>)
 fn build(identity_provider: Option<Arc<dyn IdentityProviderFactory>>) -> TestControlPlane {
     let repository = Arc::new(InMemoryClientRepository::new());
     let revision = repository
-        .insert(ClientDocument::parse(ACME).expect("the fixture document must parse"))
+        .insert(&ClientDocument::parse(ACME).expect("the fixture document must parse"))
         .expect("the fixture must store");
 
     let config: ControlPlaneConfig = serde_json::from_value(serde_json::json!({
         "operator": {
             "mode": "oidc",
-            "issuer": "https://auth.example.test/realms/master",
+            "issuer": format!("https://auth.example.test/realms/{OPERATOR_REALM}"),
             "redirect_uri": "https://fabric.example.test/",
         }
     }))
     .expect("the fixture configuration must load");
 
     let binding = DesiredStateBinding::to(repository.clone());
+
+    // What a real composition root computes and hands in — see
+    // `fabric-control-plane-api`'s `startup::application::build`. Named here
+    // rather than left empty so `create_client`'s realm-reservation rule has
+    // something real to refuse in a test that drives the real router.
+    let reserved_realms = ["master".to_owned(), OPERATOR_REALM.to_owned()]
+        .into_iter()
+        .collect();
 
     let services = build_control_plane(
         &config,
@@ -226,6 +248,9 @@ fn build(identity_provider: Option<Arc<dyn IdentityProviderFactory>>) -> TestCon
             // above it, and minting signed tokens here would make every one of
             // them a test about authentication.
             operators: Some(AcceptingOperator::accepting(OPERATOR)),
+
+            reserved_realms,
+            reserved_client_ids: [RESERVED_APPLICATION_ID.to_owned()].into_iter().collect(),
         },
     )
     .expect("the control plane must build");

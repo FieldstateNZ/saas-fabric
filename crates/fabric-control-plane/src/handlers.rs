@@ -14,28 +14,42 @@
 //! they are how an operator obtains the token the extractor then demands.
 //! Neither can read or change anything.
 
+mod change_catalogue;
 mod converge;
+mod create_client;
+mod get_catalogue;
 mod get_client;
 mod get_identity;
+mod get_operator;
+mod get_product;
 mod integration;
+mod list_activity;
 mod list_clients;
 mod platform;
 mod put_identity;
+mod put_product;
 mod secrets;
 mod secrets_path;
 mod session;
 
+pub(crate) use change_catalogue::change_catalogue;
 pub(crate) use converge::converge;
+pub(crate) use create_client::create_client;
+pub(crate) use get_catalogue::get_catalogue;
 pub(crate) use get_client::get_client;
 pub(crate) use get_identity::get_identity;
+pub(crate) use get_operator::get_operator;
+pub(crate) use get_product::get_product;
 pub(crate) use integration::{
     begin_connection, begin_install, choose_repository, created, disconnect, get_integration,
     get_platform_integration, installed, list_repositories, ClientConfigurationFlow, PlatformManagementFlow,
 };
+pub(crate) use list_activity::list_activity;
 pub(crate) use list_clients::list_clients;
 pub(crate) use platform::{
     get_platform, pause_component, resume_component, roll_back_component, rollback_candidates,
 };
 pub(crate) use put_identity::put_identity;
+pub(crate) use put_product::put_product;
 pub(crate) use secrets::{delete_secret, list_secrets, reveal_secret, secret_metadata, write_secret};
 pub(crate) use session::{redeem_session, session_config};

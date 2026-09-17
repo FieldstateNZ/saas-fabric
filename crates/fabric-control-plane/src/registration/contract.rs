@@ -1,11 +1,13 @@
 //! What the host hands in, and what it gets back.
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use axum::Router;
 use fabric_core::Clock;
 use fabric_reconciliation::ReconciliationStatusStore;
 
+use super::PlatformBinding;
 use crate::repository::DesiredStateBinding;
 
 /// What building the control plane produces.
@@ -97,27 +99,34 @@ pub struct ControlPlaneDeps {
     /// otherwise have to mint tokens signed by a key they also had to publish
     /// — proving the extractor works, and nothing else, at considerable cost.
     pub operators: Option<Arc<dyn crate::OperatorAuthenticator>>,
-}
 
-/// Platform Management, and the environment it manages.
-///
-/// # Why the environment is not a request parameter
-///
-/// It reaches the platform repository as a path segment —
-/// `environments/<name>/components.yaml` — so a caller who could name it could
-/// name a path. Specification section 31.7 forbids exactly that, and the
-/// cheapest way to satisfy it is to have nowhere for a caller to say it: a
-/// deployment manages one environment, stated in its configuration, and the
-/// route takes no name at all.
-#[derive(Clone)]
-pub struct PlatformBinding {
-    /// The service.
-    pub service: Arc<fabric_platform_management::PlatformManagement>,
+    /// Realms a new client may never declare, because something other than
+    /// a client already means them: Keycloak's own `master`, the realm the
+    /// operator posture itself authenticates against, and — when this
+    /// deployment converges Keycloak — the admin realm its machine identity
+    /// lives in.
+    ///
+    /// Computed here, at the composition root, rather than inside this
+    /// crate: this crate knows no realm's name but a client's own, and
+    /// deliberately — see [`ClientService`](crate::ClientService)'s own
+    /// rustdoc for "not Keycloak". The names it is handed are opaque to it;
+    /// only whoever assembles a deployment knows what they mean.
+    ///
+    /// Plain, case-folded strings, not [`RealmName`](fabric_client_model::RealmName)
+    /// — see [`ClientService`](crate::ClientService)'s own field for why.
+    pub reserved_realms: BTreeSet<String>,
 
-    /// The environment it manages, from this deployment's configuration.
-    pub environment: String,
-
-    /// The late-bound repository, so a connected integration can point it
-    /// somewhere and a disconnected one can take it away.
-    pub repository: Arc<fabric_platform_management::PlatformDesiredState>,
+    /// Application ids the catalogue may never accept, because something
+    /// other than an application already means them: this platform's own
+    /// OIDC client ids — the console's, and, when Keycloak is configured,
+    /// its machine identity's. The realm-managed built-ins every realm
+    /// carries (`account`, `realm-management`, …) are not here: they are
+    /// static identity-protocol facts, not this deployment's configuration,
+    /// so `fabric-client-model` refuses them on its own.
+    ///
+    /// Plain strings, not [`ClientId`](fabric_client_model::ClientId) — see
+    /// [`ClientService`](crate::ClientService)'s own field for why.
+    ///
+    /// Computed the same way, and for the same reason, as `reserved_realms`.
+    pub reserved_client_ids: BTreeSet<String>,
 }

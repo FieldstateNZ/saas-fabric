@@ -31,14 +31,16 @@ pub(crate) async fn sweep(
 
     let reconciler = IdentityReconciler::new(factory.acting_as(operator.token()));
 
-    Ok(reconcile::run(
+    let clients = reconcile::run(
         state.desired_state.current().as_ref(),
         &reconciler,
         state.service.statuses(),
         state.health.as_ref(),
         state.service.clock(),
     )
-    .await)
+    .await;
+
+    Ok(clients)
 }
 
 /// Converges in the background, having already answered the operator.

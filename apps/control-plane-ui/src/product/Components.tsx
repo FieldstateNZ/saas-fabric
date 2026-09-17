@@ -1,0 +1,67 @@
+import type { Catalogue } from '../api/catalogue-types'
+import { Panel } from '../console/Panel'
+import { PlatformViews } from '../console/PlatformViews'
+import type { PlatformState } from '../hooks/usePlatform'
+
+/**
+ * The Components page: the platform's own components (see
+ * {@link PlatformViews}), plus every application's declared components,
+ * read-only here.
+ *
+ * Each application links back to its own workspace to edit — this page is
+ * for surveying components across the whole catalogue, not for changing any
+ * one of them.
+ */
+export function Components({
+  catalogue,
+  platform,
+}: {
+  catalogue: Catalogue
+  platform: PlatformState
+}) {
+  return (
+    <>
+      <PlatformViews platform={platform} />
+      <h2>Application components</h2>
+      {catalogue.applications.map((app) => (
+        <Panel
+          key={app.id}
+          title={app.draft.name}
+          action={<a href={`#/applications/${encodeURIComponent(app.id)}`}>Edit components →</a>}
+        >
+          <div className="table-wrap">
+            <table className="fabric-table">
+              <thead>
+                <tr>
+                  <th>Component</th>
+                  <th>Kind</th>
+                  <th>Reference</th>
+                  <th>Version</th>
+                  <th>Policy</th>
+                </tr>
+              </thead>
+              <tbody>
+                {app.draft.components.map((component) => (
+                  <tr key={component.id}>
+                    <td>{component.name}</td>
+                    <td>{component.kind}</td>
+                    <td className="mono">{component.reference}</td>
+                    <td>
+                      {component.kind === 'capability'
+                        ? 'Platform capability'
+                        : component.version || 'Not pinned'}
+                    </td>
+                    <td>{component.policy}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {app.draft.components.length === 0 && (
+              <p className="panel-body">No components defined yet.</p>
+            )}
+          </div>
+        </Panel>
+      ))}
+    </>
+  )
+}

@@ -3,14 +3,14 @@
 use std::sync::Arc;
 
 use fabric_client_git::{GitAuthConfig, GitClientRepository, GitCredential};
+use fabric_control_plane::DesiredStateBinding;
 use fabric_control_plane::IdentityProviderFactory;
-use fabric_control_plane::{DesiredStateBinding, InMemoryClientRepository};
 use fabric_core::Clock;
 use fabric_keycloak::KeycloakProviderFactory;
 
 use crate::config::{DesiredStateConfig, IdentityProviderConfig};
+use crate::local_repository::LocalClientRepository;
 use crate::secrets;
-use crate::startup::local_documents;
 
 /// Builds the desired-state binding this deployment starts with.
 ///
@@ -61,19 +61,12 @@ pub(super) async fn desired_state(
         }
 
         DesiredStateConfig::LocalDirectory { path } => {
-            let repository = Arc::new(InMemoryClientRepository::new());
-            let loaded = local_documents::load(&repository, path).await?;
-
-            // Loud, and at warn rather than info: a deployment that reached
-            // this branch by accident is one whose operators' changes are
-            // being written to a map that a restart will empty.
-            tracing::warn!(
-                event = "control_plane.development_desired_state",
-                path = %path.display(),
-                clients = loaded,
-                "using a development desired-state repository; writes are kept in memory and \
-                 are lost when this process stops"
+            let repository = Arc::new(
+                LocalClientRepository::open(path)
+                    .await
+                    .map_err(|error| error.to_string())?,
             );
+            tracing::warn!(event = "control_plane.development_desired_state", path = %path.display(), "using persistent local development desired state");
 
             Ok(DesiredStateBinding::to(repository))
         }

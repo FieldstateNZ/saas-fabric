@@ -5,15 +5,16 @@
 //! that read them, and the three operations — parse, edit, render — that
 //! produce and consume it. None of those would be reused or tested apart
 //! from the type they belong to.
-
+mod activity;
+mod application_identity;
 #[cfg(test)]
 mod document_tests;
 mod migration;
 mod parse;
+mod product;
 mod render;
 mod schema;
 mod version;
-
 use crate::{Client, DesiredStateError, IdentityConfiguration};
 
 pub use schema::{API_VERSION, API_VERSION_V2, KIND};

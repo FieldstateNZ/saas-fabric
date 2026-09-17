@@ -62,5 +62,5 @@ function clearCallbackQuery(): void {
     return
   }
 
-  window.history.replaceState({}, '', window.location.pathname)
+  window.history.replaceState({}, '', window.location.pathname + window.location.hash)
 }

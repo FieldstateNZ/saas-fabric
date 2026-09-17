@@ -4,7 +4,7 @@ use fabric_client_model::{ClientId, DesiredStateError};
 
 /// A failure reading or writing desired state.
 ///
-/// # Seven, not one
+/// # Eight, not one
 ///
 /// Because the control plane answers each differently, and an operator needs
 /// to be able to tell them apart. A conflict means "read it again and redo
@@ -82,6 +82,21 @@ pub enum RepositoryError {
         /// The client whose document could not be read.
         client: ClientId,
 
+        /// What was wrong with it.
+        #[source]
+        source: DesiredStateError,
+    },
+
+    /// The stored catalogue could not be read.
+    ///
+    /// [`Self::Invalid`]'s message names a client; the catalogue is one
+    /// document with no client to name, so this is a sibling rather than a
+    /// reuse of that variant with a placeholder id. Reported as a platform
+    /// failure for the same reason `Invalid` is, not as
+    /// [`Self::Unavailable`]: a catalogue that will not parse is not fixed by
+    /// asking again.
+    #[error("the stored catalogue could not be read: {source}")]
+    InvalidCatalogue {
         /// What was wrong with it.
         #[source]
         source: DesiredStateError,

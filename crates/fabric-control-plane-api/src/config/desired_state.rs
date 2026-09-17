@@ -45,17 +45,25 @@ pub enum DesiredStateConfig {
     /// speed.
     Git(Box<GitRepositoryConfig>),
 
-    /// Documents loaded from a local directory into memory at startup.
+    /// A persistent development store, opened from a local directory.
     ///
-    /// **Development only.** Writes are kept in memory and never reach the
-    /// files, so a restart loses them. The host logs a warning saying so at
-    /// startup rather than leaving it to be discovered.
+    /// **Development only** — the host logs a warning saying so at startup
+    /// rather than leaving it to be discovered — but not in-memory. The
+    /// top-level `*.yaml` files (one client document each) are imported the
+    /// first time the directory is opened; from then on `.fabric-state.json`
+    /// is authoritative, and every write commits to it before this call
+    /// returns, so a restart picks up exactly where the process left off. An
+    /// OS-level lock on the directory refuses a second process opening it,
+    /// so two processes cannot each believe they hold the only copy.
     ///
     /// It exists because the control plane must be runnable without a cluster
     /// (§22), and because a fake that skipped optimistic concurrency would
     /// make every test of the conflict path meaningless — this one keeps it.
+    /// See [`LocalClientRepository`](crate::local_repository::LocalClientRepository)
+    /// for the storage format.
     LocalDirectory {
-        /// The directory holding one `*.yaml` document per client.
+        /// The directory holding the imported `*.yaml` documents and, once
+        /// anything has been written, `.fabric-state.json`.
         path: std::path::PathBuf,
     },
 }

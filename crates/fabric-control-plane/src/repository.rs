@@ -5,6 +5,8 @@ mod change_context;
 mod errors;
 mod in_memory;
 mod in_memory_behaviour;
+mod in_memory_documents;
+mod in_memory_records;
 mod stored_client;
 mod unconfigured;
 
@@ -34,13 +36,27 @@ pub use unconfigured::UnconfiguredRepository;
 /// never "the blob sha of `clients/acme/client.yaml` moved" (specification
 /// §8).
 ///
-/// # No `create`, no `delete`
+/// # `create` exists now; `delete` still does not
 ///
-/// Both are absent deliberately rather than pending. Creating a client is a
-/// workflow this increment does not implement, and deleting one is a decision
-/// with consequences no single API call should be able to take. Adding either
-/// later is an additive change; having them here unused would suggest the
-/// control plane can already do things it cannot.
+/// Client creation used to belong to a workflow this crate did not
+/// implement. It is now a desired-state write like any other — one document,
+/// written once, refused if the id is already taken — so [`create`](Self::create)
+/// is a real method here rather than a gap.
+///
+/// `delete` is still absent, and still deliberately: removing a client is a
+/// decision with consequences — application data, secrets, identity sessions
+/// — that no single call should be able to take, and there is no
+/// deprovisioning workflow yet to take it safely. Adding it later is an
+/// additive change; having it here unused would suggest the control plane
+/// can already do something it cannot.
+///
+/// [`create`](Self::create), [`catalogue`](Self::catalogue) and
+/// [`save_catalogue`](Self::save_catalogue) all carry a default body that
+/// answers [`RepositoryError::NotConfigured`]. That is not laziness: it means
+/// an implementation that forgets to override one of them still compiles,
+/// and reports itself unconfigured at run time rather than failing to build —
+/// the same trade the control plane already makes at its own boundary for a
+/// platform nothing has been connected to yet.
 ///
 /// # Concurrency is the implementation's job, not the caller's
 ///
@@ -84,6 +100,36 @@ pub trait ClientRepository: Send + Sync {
         expected: &ClientRevision,
         change: &ChangeContext,
     ) -> Result<ClientRevision, RepositoryError>;
+
+    /// Creates a client only when its identifier does not already exist.
+    /// # Errors
+    /// Returns Conflict for a duplicate or an adapter error before changing state.
+    async fn create(
+        &self,
+        _document: &ClientDocument,
+        _change: &ChangeContext,
+    ) -> Result<ClientRevision, RepositoryError> {
+        Err(RepositoryError::NotConfigured)
+    }
+
+    /// Reads the product catalogue, with no revision before its first write.
+    /// # Errors
+    /// Returns an adapter error when the configured store cannot be read.
+    async fn catalogue(&self) -> Result<fabric_client_model::catalogue::StoredCatalogue, RepositoryError> {
+        Err(RepositoryError::NotConfigured)
+    }
+
+    /// Replaces the catalogue only if its revision still matches, including absence.
+    /// # Errors
+    /// Returns Conflict for a stale revision, or an adapter error.
+    async fn save_catalogue(
+        &self,
+        _catalogue: &fabric_client_model::catalogue::Catalogue,
+        _expected: Option<&ClientRevision>,
+        _change: &ChangeContext,
+    ) -> Result<ClientRevision, RepositoryError> {
+        Err(RepositoryError::NotConfigured)
+    }
 
     /// A short description for logging, such as a repository name and branch.
     ///

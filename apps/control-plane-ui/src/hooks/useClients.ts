@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 
 import { listClients } from '../api/client'
 import type { Client } from '../api/types'
@@ -20,7 +20,9 @@ export interface Loadable<T> {
  *
  * It grows one when the console can create a client.
  */
-export function useClients(): Loadable<readonly Client[]> {
+export function useClients(): Loadable<readonly Client[]> & { refresh: () => void } {
+  const [generation, setGeneration] = useState(0)
+  const refresh = useCallback(() => { setGeneration((value) => value + 1) }, [])
   const [state, setState] = useState<Loadable<readonly Client[]>>({
     value: null,
     loading: true,
@@ -48,9 +50,9 @@ export function useClients(): Loadable<readonly Client[]> {
     return () => {
       current = false
     }
-  }, [])
+  }, [generation])
 
-  return state
+  return { ...state, refresh }
 }
 
 /** Turns anything thrown into something an operator can read. */

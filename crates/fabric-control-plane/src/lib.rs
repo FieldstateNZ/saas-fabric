@@ -40,17 +40,20 @@
 //!
 //! # What is deliberately absent
 //!
-//! - **Client creation.** `POST /api/clients` is not implemented: creating a
-//!   client is a workflow (routing, data placement, secrets, a database) and
-//!   this increment is the identity slice of it.
-//! - **Deletion of anything.** Neither documents nor realm content.
-//! - **Raw document editing.** The API exposes realms, roles and application
-//!   clients. It never exposes a file path, a line number, or YAML.
+//! - **Deletion of anything.** Neither documents nor realm content. Client
+//!   creation writes a document; removing a client is a decision with
+//!   consequences — application data, secrets, identity sessions — that no
+//!   single call should take, and there is no deprovisioning workflow to
+//!   take it (see [`ClientRepository`]).
+//! - **Raw document editing.** The API exposes realms, roles, application
+//!   clients and product configuration. It never exposes a file path, a line
+//!   number, or YAML.
 
 mod audit;
 mod client_secrets;
 mod config;
 mod converge;
+mod document_size;
 mod errors;
 mod extraction;
 #[cfg(test)]
@@ -78,7 +81,7 @@ pub mod testing;
 // model's; this is the port's vocabulary made reachable from one place.
 pub use client_secrets::{ClientSecrets, SecretMetadata, SecretPath, SecretValues, SecretsError};
 pub use config::{ControlPlaneConfig, OperatorConfig, ReconciliationConfig};
-pub use errors::ControlPlaneError;
+pub use errors::{ControlPlaneError, RealmUnavailableReason};
 pub use fabric_client_model::SecretNamespace;
 pub use git_integration::{
     AccessibleRepository, AppCreationRequest, ClientConfigurationTarget, CreatedApp, DesiredStateFactory,

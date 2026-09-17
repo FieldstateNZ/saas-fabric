@@ -7,7 +7,7 @@ use fabric_control_plane::{build_control_plane, ControlPlaneDeps};
 use fabric_core::SystemClock;
 
 use crate::config::ControlPlaneAppConfig;
-use crate::startup::{adapters, integration, operator_keys, platform, serving};
+use crate::startup::{adapters, integration, operator_keys, platform, reserved_names, serving};
 
 /// The assembled control plane, plus the work that must outlive a request.
 pub struct Application {
@@ -72,6 +72,12 @@ pub async fn build(config: &ControlPlaneAppConfig) -> Result<Application, String
     let repository = adapters::desired_state(&config.desired_state, Arc::clone(&clock)).await?;
     let identity_provider = adapters::identity_provider(&config.identity_provider)?;
 
+    // Computed before the service exists: a client's realm and an
+    // application's id are refused against these from the moment the
+    // control plane can accept either.
+    let reserved_realms = reserved_names::realms(&config.control_plane, &config.identity_provider)?;
+    let reserved_client_ids = reserved_names::client_ids(&config.control_plane, &config.identity_provider);
+
     let (keys, sign_in) = operator_keys::establish(&config.control_plane.operator)?;
 
     // Before the flows, because one of them connects it.
@@ -102,6 +108,9 @@ pub async fn build(config: &ControlPlaneAppConfig) -> Result<Application, String
 
             // Always the configured posture. The override exists for tests.
             operators: None,
+
+            reserved_realms,
+            reserved_client_ids,
         },
     )?;
 

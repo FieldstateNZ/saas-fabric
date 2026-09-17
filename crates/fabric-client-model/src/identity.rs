@@ -14,6 +14,7 @@ mod pkce_method;
 mod redirect_strategy;
 mod redirect_uri;
 pub mod required_roles;
+pub mod reserved_client_ids;
 mod validation;
 #[cfg(test)]
 mod validation_tests;

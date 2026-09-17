@@ -75,11 +75,36 @@ impl ControlPlaneError {
             // now. Not a 400 — the request was well-formed and would have been
             // applied a moment earlier — and not a 503, which would advertise
             // an immediate retry that would be refused identically.
-            Self::RevisionConflict | Self::IntegrationMoved => StatusCode::CONFLICT,
+            //
+            // `CatalogueRevisionConflict` joins it for the reason its own
+            // rustdoc gives: same event, different document, same remedy.
+            //
+            // `ClientExists` and `RealmUnavailable` join them at 409 for a
+            // related but distinct reason: not "read again and redo it" but
+            // "this name is already taken", which is why each carries its
+            // own code below rather than `revision_conflict`.
+            Self::RevisionConflict
+            | Self::CatalogueRevisionConflict
+            | Self::IntegrationMoved
+            | Self::ClientExists { .. }
+            | Self::RealmUnavailable { .. } => StatusCode::CONFLICT,
+
+            // 422, not 413: 413 describes a request body that is itself too
+            // large, but the request here can be a small edit — removing one
+            // role — against a document that is already big for reasons
+            // that edit did not create. What is unprocessable is the
+            // document the write would produce, which is exactly what 422
+            // says, and not retryable: GitHub's contents API cannot read
+            // this document back once it is this large, so nothing about
+            // waiting and asking again would help.
+            Self::DocumentTooLarge { .. } => StatusCode::UNPROCESSABLE_ENTITY,
 
             // A stored document that will not parse is the platform's problem,
-            // not the caller's, and no retry fixes it.
-            Self::InvalidDesiredState { .. } => StatusCode::INTERNAL_SERVER_ERROR,
+            // not the caller's, and no retry fixes it — whether the document
+            // is a client's or the catalogue's.
+            Self::InvalidDesiredState { .. } | Self::InvalidCatalogue { .. } => {
+                StatusCode::INTERNAL_SERVER_ERROR
+            }
 
             // 503 and retryable: Git being briefly unreachable is the ordinary
             // transient failure of this API.

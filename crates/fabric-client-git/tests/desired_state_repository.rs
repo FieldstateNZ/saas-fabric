@@ -336,3 +336,79 @@ async fn a_revision_the_host_reports_is_carried_opaquely() {
 
     assert_eq!(stored.revision, ClientRevision::try_new("sha-0").unwrap());
 }
+
+#[tokio::test]
+async fn catalogue_roundtrips_and_rejects_stale_edits() {
+    let catalogue = fabric_client_model::catalogue::Catalogue::default();
+    let text = catalogue.render().unwrap();
+    let host = FakeGitHost::start(&[("fabric-catalogue.yaml", &text)]).await;
+    let repository = repository(&host);
+    let stored = repository.catalogue().await.unwrap();
+    let mut updated = stored.catalogue;
+    updated.settings.platform_name = "Operator platform".into();
+    let revision = repository
+        .save_catalogue(&updated, stored.revision.as_ref(), &change())
+        .await
+        .unwrap();
+    let reread = repository.catalogue().await.unwrap();
+    assert_eq!(reread.revision, Some(revision));
+    assert_eq!(reread.catalogue.settings.platform_name, "Operator platform");
+    assert!(matches!(
+        repository
+            .save_catalogue(&updated, stored.revision.as_ref(), &change())
+            .await,
+        Err(RepositoryError::Conflict)
+    ));
+}
+
+#[tokio::test]
+async fn a_stored_catalogue_that_will_not_parse_is_reported_as_invalid_not_unavailable() {
+    // `Unavailable` tells a caller to wait a moment and ask again. Nothing
+    // about asking again fixes a document with the wrong `kind`, so this must
+    // come back as `InvalidCatalogue` instead — the same non-retryable
+    // treatment a client document that will not parse already gets.
+    let host = FakeGitHost::start(&[(
+        "fabric-catalogue.yaml",
+        "apiVersion: fabric.fieldstate.nz/v1\nkind: Tenant\nspec: {}\n",
+    )])
+    .await;
+
+    let error = repository(&host).catalogue().await.unwrap_err();
+
+    assert!(
+        matches!(error, RepositoryError::InvalidCatalogue { .. }),
+        "{error}"
+    );
+}
+
+#[tokio::test]
+async fn creating_a_client_document_sends_no_sha() {
+    // A create is unconditional by construction: there is no prior revision
+    // to name, and sending one would ask the host to compare against a blob
+    // that does not exist.
+    let host = FakeGitHost::start(&[]).await;
+    let repository = repository(&host);
+    let document = ClientDocument::parse(&ACME.replace("acme", "newco").replace("Acme", "Newco")).unwrap();
+
+    repository.create(&document, &change()).await.unwrap();
+
+    let write = host.requests_with("PUT").into_iter().next().expect("a write");
+    assert!(!write.body.contains("\"sha\""), "{}", write.body);
+}
+
+#[tokio::test]
+async fn a_missing_catalogue_file_is_no_catalogue_but_a_missing_repository_is_an_error() {
+    // The same 404 means two different things depending on what else 404s
+    // alongside it: `fabric-catalogue.yaml` absent from an otherwise
+    // reachable repository is a catalogue nobody has written yet, but the
+    // repository root 404ing too means the repository or branch itself is
+    // gone — retryable in neither case, but only one of them is "there is
+    // simply no catalogue".
+    let host = FakeGitHost::start(&[(ACME_PATH, ACME)]).await;
+    let stored = repository(&host).catalogue().await.unwrap();
+    assert_eq!(stored.revision, None);
+
+    let unreachable = FakeGitHost::start(&[]).await;
+    let error = repository(&unreachable).catalogue().await.unwrap_err();
+    assert!(matches!(error, RepositoryError::Unavailable { .. }), "{error}");
+}

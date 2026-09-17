@@ -20,6 +20,16 @@ pub(crate) fn client_written(client: &ClientId, revision: &ClientRevision) {
     );
 }
 
+/// The catalogue was committed.
+pub(crate) fn catalogue_written(revision: &ClientRevision) {
+    tracing::info!(
+        event = "clients_repository.catalogue_written",
+        event_id = event_id(DOMAIN_ID, EventType::Success, 3),
+        revision = %revision,
+        "wrote the product catalogue"
+    );
+}
+
 /// A directory under the clients path is not named like a client.
 ///
 /// The name is deliberately not logged: it is content from a repository humans

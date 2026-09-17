@@ -28,6 +28,7 @@ function watchNavigation(): { to: () => string | null } {
   vi.stubGlobal('location', {
     search: window.location.search,
     pathname: window.location.pathname,
+    hash: window.location.hash,
     assign: (url: string) => {
       destination = url
     },

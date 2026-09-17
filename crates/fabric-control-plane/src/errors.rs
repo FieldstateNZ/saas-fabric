@@ -4,10 +4,13 @@ mod from_repository;
 
 #[cfg(test)]
 mod error_tests;
+mod realm_unavailable_reason;
 mod response;
 mod status_mapping;
 
 use fabric_client_model::{ClientId, DesiredStateError, RealmName};
+
+pub use realm_unavailable_reason::RealmUnavailableReason;
 
 use crate::operator::OperatorAuthError;
 
@@ -71,6 +74,23 @@ pub enum ControlPlaneError {
         source: DesiredStateError,
     },
 
+    /// The stored catalogue could not be read.
+    ///
+    /// [`Self::InvalidDesiredState`]'s sibling for the one document that is
+    /// not a client's: same cause — a repository humans also edit by hand
+    /// eventually holds a document that does not parse — and the same
+    /// machine code, because a console reading either has one thing to do
+    /// with it, stop and do not retry, not two different things to branch
+    /// on. Kept as its own variant rather than a placeholder client id in
+    /// [`Self::InvalidDesiredState`], because there is no client whose
+    /// document broke.
+    #[error("the stored catalogue could not be read: {source}")]
+    InvalidCatalogue {
+        /// What was wrong with it.
+        #[source]
+        source: DesiredStateError,
+    },
+
     /// The request did not say which revision it was editing.
     #[error("this request must state the revision it is editing")]
     RevisionRequired,
@@ -78,6 +98,54 @@ pub enum ControlPlaneError {
     /// The client changed between being read and being written.
     #[error("the client changed since it was read; re-read it and apply the change again")]
     RevisionConflict,
+
+    /// The catalogue changed between being read and being written.
+    ///
+    /// [`Self::RevisionConflict`]'s sibling for the one document that is not
+    /// a client's — an operator sees this from the Applications or Settings
+    /// page, where "the *client* changed since it was read" names the wrong
+    /// noun. The two share a machine code: both mean "read it again and redo
+    /// the edit", and a console already knows which page it is showing, so
+    /// it does not need a second code to know what to do.
+    #[error("the catalogue changed since it was read; re-read it and apply the change again")]
+    CatalogueRevisionConflict,
+
+    /// A write would produce a document larger than this platform will
+    /// store.
+    ///
+    /// Not a complaint about the request body — `PUT /identity` removing a
+    /// single compromised redirect URI can still trip this, against a
+    /// document that grew large from many earlier, unrelated writes. What
+    /// is refused is the document the write would *produce*: GitHub's
+    /// contents API cannot read a file back once it is over 1 MB, so a
+    /// document that would cross that line is refused here, before the
+    /// write, rather than discovered the next time somebody tries to read
+    /// it back. See `document_size` for the two limits a write is checked
+    /// against and why they differ. Answered as `422`, not `413`: `413`
+    /// describes a request body that is itself too large, which this is
+    /// not.
+    #[error("the document this write would produce would exceed the {limit}-byte limit")]
+    DocumentTooLarge {
+        /// The limit that was exceeded.
+        limit: usize,
+    },
+
+    /// A client with this id already exists.
+    ///
+    /// Its own variant beside [`Self::RevisionConflict`] rather than a reuse
+    /// of it, because a create has no prior read to have gone stale: there
+    /// is no revision this request believed it was editing, so "the client
+    /// changed since it was read" would name a read that never happened.
+    /// [`ClientService::create_client`](crate::ClientService::create_client)
+    /// is the only place a repository [`Conflict`](crate::RepositoryError::Conflict)
+    /// means this, so the translation happens there rather than in
+    /// `ControlPlaneError::from_repository`, which every other write still
+    /// uses.
+    #[error("a client named {id} already exists")]
+    ClientExists {
+        /// The id that was already taken.
+        id: ClientId,
+    },
 
     /// The operator asked to move a client to a different realm.
     ///
@@ -90,6 +158,30 @@ pub enum ControlPlaneError {
     RealmImmutable {
         /// The realm the client is in.
         current: RealmName,
+    },
+
+    /// A new client would take a realm that is reserved, or already used by
+    /// another client.
+    ///
+    /// Says which. `ClientDocument::create` sets a new client's realm to its
+    /// own id, and Keycloak's realm-create treats finding the realm already
+    /// there as success — so a client id of `master`, or one matching a
+    /// realm another client document already declares, would let the next
+    /// reconciliation pass rewrite that realm using this operator's own
+    /// authority. See
+    /// [`ClientService::create_client`](crate::ClientService::create_client)
+    /// for the whole argument. An earlier version of this message withheld
+    /// which of the two reasons applied, reasoning that either answer would
+    /// confirm some other client's realm exists — but every operator can
+    /// already see every client's realm through `GET /api/clients`, so
+    /// there was nothing left for that omission to protect, only a less
+    /// useful message.
+    #[error("the realm {realm} is unavailable: {reason}")]
+    RealmUnavailable {
+        /// The realm this id would have taken.
+        realm: RealmName,
+        /// Which of the two reasons this realm could not be taken.
+        reason: RealmUnavailableReason,
     },
 
     /// The desired-state repository could not be reached.

@@ -1,13 +1,23 @@
 //! A desired-state repository held in memory.
+//!
+//! In the 121–150 line band. The reason is that this is one struct
+//! together with its constructor and the handful of methods every other
+//! file in this module needs from it — `insert` and `set_unavailable` for
+//! tests, `next_revision` and `check_available` for
+//! `in_memory_behaviour.rs`'s trait impl. Splitting those off `Self` would
+//! not shrink this file so much as move its methods one file over, still
+//! needing the same fields.
 
 use std::collections::BTreeMap;
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use fabric_client_model::{ClientDocument, ClientId, ClientRevision};
 
-use crate::repository::{RepositoryError, StoredClient};
+use crate::repository::RepositoryError;
 
-/// A repository backed by a map, for development and tests.
+pub(super) use super::in_memory_records::{CatalogueRecord, ClientRecord};
+
+/// A repository backed by a map, for tests.
 ///
 /// # It implements the concurrency rule, not a shortcut past it
 ///
@@ -17,13 +27,34 @@ use crate::repository::{RepositoryError, StoredClient};
 /// revision, would make every test of the control plane's conflict handling
 /// pass regardless of whether the handling existed (specification §22).
 ///
-/// What it does **not** do is claim to be durable. Restarting loses everything,
-/// which is why the host only offers it as a development adapter and says so
-/// at startup.
+/// # Nothing but tests selects it
+///
+/// The host's development posture (`DesiredStateConfig::LocalDirectory`)
+/// opens the persistent `LocalClientRepository` in `fabric-control-plane-api`
+/// instead, precisely because restarting this one loses everything — a
+/// property worth keeping here, where a test *wants* a clean repository every
+/// run, and not worth keeping in anything a developer runs more than once.
+/// This type is `pub` only so integration tests outside this crate (a
+/// separate compilation unit, with no access to anything `pub(crate)`) can
+/// build a router against it.
 #[derive(Default)]
 pub struct InMemoryClientRepository {
-    /// The stored clients, keyed by id.
-    pub(super) clients: Mutex<BTreeMap<ClientId, StoredClient>>,
+    /// The stored clients, keyed by id, each rendered — never the typed
+    /// struct. The same reasoning as `catalogue`, applied to the other kind
+    /// of document this repository holds.
+    pub(super) clients: Mutex<BTreeMap<ClientId, ClientRecord>>,
+
+    /// The catalogue, rendered — never the typed struct.
+    ///
+    /// Storing text and parsing it back on every read is not the obvious
+    /// choice for an in-memory fake, but it is the one that keeps this
+    /// repository honest: the Git-backed and local stores both go through
+    /// `Catalogue::render`/`Catalogue::parse` on every write and read, which
+    /// is where an envelope, validation or size bug would actually be
+    /// caught. Holding the typed struct directly would make this the one
+    /// repository an HTTP test could drive without ever exercising that
+    /// round trip.
+    pub(super) catalogue: Mutex<Option<CatalogueRecord>>,
 
     /// The number of writes so far, which is where revisions come from.
     writes: Mutex<u64>,
@@ -45,17 +76,22 @@ impl InMemoryClientRepository {
     ///
     /// # Errors
     ///
-    /// Returns [`RepositoryError`] only if the generated revision could not be
-    /// parsed, which `rev-<digits>` never fails at.
-    pub fn insert(&self, document: ClientDocument) -> Result<ClientRevision, RepositoryError> {
+    /// Returns [`RepositoryError`] if the generated revision could not be
+    /// parsed (which `rev-<digits>` never fails at), or if `document` will
+    /// not render — the same round trip [`ClientRepository::create`](crate::ClientRepository::create)
+    /// applies to every client this repository is asked to store.
+    pub fn insert(&self, document: &ClientDocument) -> Result<ClientRevision, RepositoryError> {
+        let text = document.render().map_err(|_| RepositoryError::Rejected {
+            detail: "Invalid client document".into(),
+        })?;
         let revision = self.next_revision()?;
         let client = document.client().id.clone();
 
         lock(&self.clients).insert(
             client,
-            StoredClient {
-                document,
+            ClientRecord {
                 revision: revision.clone(),
+                text,
             },
         );
 

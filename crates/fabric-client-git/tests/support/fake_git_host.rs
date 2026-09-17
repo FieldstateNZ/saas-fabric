@@ -232,11 +232,18 @@ fn get(state: &Arc<Mutex<State>>, path: &str) -> (u16, String) {
         );
     }
 
+    // The root itself is the one path with no `/`-prefixed children to
+    // strip: every stored key is already relative to it.
+    let prefix = if path.is_empty() {
+        String::new()
+    } else {
+        format!("{path}/")
+    };
     let children: BTreeSet<&str> = state
         .files
         .keys()
         .chain(state.directories.iter())
-        .filter_map(|stored| stored.strip_prefix(&format!("{path}/")))
+        .filter_map(|stored| stored.strip_prefix(prefix.as_str()))
         .filter_map(|rest| rest.split('/').next())
         .collect();
 
@@ -259,13 +266,14 @@ fn get(state: &Arc<Mutex<State>>, path: &str) -> (u16, String) {
     (200, serde_json::Value::Array(entries).to_string())
 }
 
-/// Writes a file, refusing a stale hash.
+/// Writes a file: an unconditional create when nothing is there yet and no
+/// `sha` was sent, otherwise conditional on that `sha` matching.
 fn put(state: &Arc<Mutex<State>>, path: &str, body: &str) -> (u16, String) {
     let Ok(request) = serde_json::from_str::<serde_json::Value>(body) else {
         return (400, "{}".to_owned());
     };
 
-    let expected = request["sha"].as_str().unwrap_or_default();
+    let expected = request.get("sha").and_then(serde_json::Value::as_str);
     let encoded = request["content"].as_str().unwrap_or_default();
     let Ok(decoded) = BASE64.decode(encoded) else {
         return (400, "{}".to_owned());
@@ -273,12 +281,14 @@ fn put(state: &Arc<Mutex<State>>, path: &str, body: &str) -> (u16, String) {
 
     let mut state = state.lock().unwrap();
 
-    match state.files.get(path) {
-        None => return (404, r#"{"message":"Not Found"}"#.to_owned()),
-        Some(blob) if blob.sha != expected => {
-            return (409, r#"{"message":"is at a different sha"}"#.to_owned())
-        }
-        Some(_) => {}
+    match (state.files.get(path), expected) {
+        // An update: refused unless the sha sent is the one currently there.
+        (Some(blob), Some(expected)) if blob.sha == expected => {}
+        (Some(_), _) => return (409, r#"{"message":"is at a different sha"}"#.to_owned()),
+        // A create: nothing there yet, and nothing conditional was asked for.
+        (None, None) => {}
+        // A `sha` naming a path that does not exist at all.
+        (None, Some(_)) => return (404, r#"{"message":"Not Found"}"#.to_owned()),
     }
 
     state.writes += 1;

@@ -17,12 +17,18 @@
 //! types are separate because they carry something the document does not —
 //! reconciliation status — and that difference is real.
 
+mod activity_response;
+mod client_product_response;
 mod client_response;
 mod identity_request;
 mod identity_response;
+mod operator_response;
 mod reconciliation_response;
 
+pub(crate) use activity_response::ActivityResponse;
+pub(crate) use client_product_response::ClientProductResponse;
 pub(crate) use client_response::{ClientListResponse, ClientResponse};
 pub(crate) use identity_request::IdentityRequest;
 pub(crate) use identity_response::IdentityResponse;
+pub(crate) use operator_response::OperatorResponse;
 pub(crate) use reconciliation_response::ReconciliationResponse;

@@ -1,8 +1,11 @@
 # The control plane
 
-- **Status:** Implemented (identity only)
+- **Status:** Implemented (identity). The product catalogue, client creation
+  and the local workbench are implemented and **Proposed** — see
+  [ADR 0021](../decisions/0021-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md)
 - **Related:** [ADR 0008](../decisions/0008-desired-state-is-the-authority.md),
   [ADR 0009](../decisions/0009-operator-identity-is-not-tenant-identity.md),
+  [ADR 0021](../decisions/0021-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md),
   the platform specification §4–§6 and §30
 
 The platform specification describes two planes. The runtime plane — tenant
@@ -31,6 +34,12 @@ And its corollary, which is what most of the design follows from:
 
 This increment implements **Identity** only. The others are named here so the
 shape is visible, not because anything reconciles them yet.
+
+The product catalogue and client product configuration
+([ADR 0021](../decisions/0021-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md))
+reconcile nothing of their own. An application assigned to a client reaches a
+platform service only by becoming an identity client in that client's document,
+which identity reconciliation then converges like any other.
 
 ## The flow
 
@@ -86,6 +95,8 @@ Operator-facing HTTP, in `fabric-control-plane`.
 ```text
 GET    /api/session                      where to sign in       (no operator)
 POST   /api/session                      redeem a code          (no operator)
+GET    /api/operator                     who the API authenticated
+POST   /api/reconciliation               converge every client, as you
 GET    /api/integrations/git             can desired state be read?
 POST   /api/integrations/git/connect     describe the app to create
 GET    /api/integrations/git/created     host callback          (no operator)
@@ -102,11 +113,29 @@ GET    /api/integrations/platform/installed  host callback      (no operator)
 GET    /api/integrations/platform/repositories  what the install reaches
 PUT    /api/integrations/platform/repository    choose one
 DELETE /api/integrations/platform        forget the integration
-GET /api/clients                       list clients
-GET /api/clients/{clientId}            one client's overview
-GET /api/clients/{clientId}/identity   its identity, and reconciliation state
-PUT /api/clients/{clientId}/identity   replace its identity  (If-Match required)
+GET    /api/platform                     what this environment runs
+PUT    /api/platform/components/{component}/hold       stop it advancing
+DELETE /api/platform/components/{component}/hold       let it advance again
+GET    /api/platform/components/{component}/versions   what it could go back to
+POST   /api/platform/components/{component}/rollback   put it back on one
+GET    /api/catalogue                    the product catalogue, and its revision
+POST   /api/catalogue                    apply one command      (If-Match, or If-None-Match: *)
+GET    /api/activity                     recorded operator actions, newest first
+GET    /api/clients                      list clients
+POST   /api/clients                      create one             (refused if the id exists)
+GET    /api/clients/{clientId}           one client's overview
+GET    /api/clients/{clientId}/identity  its identity, and reconciliation state
+PUT    /api/clients/{clientId}/identity  replace its identity   (If-Match required)
+GET    /api/clients/{clientId}/product   its product configuration, and what it resolves to
+PUT    /api/clients/{clientId}/product   replace it             (If-Match required)
+GET    /api/clients/{clientId}/secrets   list its secret paths
+GET    /api/clients/{clientId}/secrets/entry/{path}   metadata, never values
+PUT    /api/clients/{clientId}/secrets/entry/{path}   write a version   (optional If-Match)
+DELETE /api/clients/{clientId}/secrets/entry/{path}   delete every version
+POST   /api/clients/{clientId}/secrets/reveal         reveal values     (path in the body)
 ```
+
+The two session routes are mounted only when the deployment has a sign-in.
 
 Three things it does not do, each of them a rule rather than a gap:
 
@@ -116,9 +145,35 @@ Three things it does not do, each of them a rule rather than a gap:
 2. **It does not expose repository internals.** No path, no branch, no file, no
    YAML (§8). An operator is told "the client changed since you read it", never
    "the blob sha of `clients/acme/client.yaml` moved".
-3. **It does not report a write as applied.** A successful `PUT` answers
-   `pending`. Writing the document and converging the provider are different
-   events that fail independently.
+3. **It does not report a write as applied.** A successful client write —
+   `POST /api/clients`, or a `PUT` of identity or product — answers `pending`.
+   Writing the document and converging the provider are different events that
+   fail independently.
+
+### The product catalogue and client creation
+
+Recorded in
+[ADR 0021](../decisions/0021-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md),
+and proposed rather than accepted. In outline:
+
+- **The catalogue** is one desired-state document, `fabric-catalogue.yaml`, at
+  the root of the client repository. Its `apiVersion: fabric.fieldstate.nz/v1`
+  and `kind: Catalogue` are checked before the body under `spec` is parsed. The
+  envelope is storage only: the API sends the body and a revision. It changes
+  by command rather than by replacement, so release numbers, publication times
+  and activity entries are the server's to assign.
+- **Creating a client** refuses a realm that is reserved or that another client
+  document already declares (`409 realm_unavailable`), then writes one `v2`
+  document — its realm the client id, the two required roles, and
+  `spec.product` — only if no document holds that id, answering
+  `409 client_exists` if one does. It provisions nothing.
+- **A client's product configuration** is `spec.product` in its own document,
+  with every assigned release copied in whole, and each assigned application
+  projected into `spec.identity.clients` as a public client. The shape is in
+  [the client document](client-desired-state.md#specproduct).
+- **Activity** is written in the same write as the operator change it
+  describes. Reconciliation passes are not recorded: what a pass finds is an
+  observation, and observations are not desired state (§6).
 
 ### Desired state is late-bound
 
@@ -141,12 +196,19 @@ is impossible to forget to handle.
 |---|---|---|
 | `managed` | connected by an operator, in the product | n/a — there is none to be wrong |
 | `git` | stated by the deployment | **fatal at startup** |
-| `local_directory` | a directory, held in memory | fatal at startup; development only |
+| `local_directory` | a directory: its top-level `*.yaml` until the first write, then `.fabric-state.json` beside them | fatal at startup, including while another process holds its lock; development only |
 
 A deployment that *states* a repository has opted out of the managed path, so
 stating it wrongly still fails at startup. Silently starting unconfigured would
 hide the mistake behind a screen inviting somebody to connect a repository the
 deployment had already named.
+
+`local_directory` persists. A write survives a restart, which is what makes a
+catalogue with published releases workable locally — and it puts a second
+authority in one directory: once the snapshot exists, edits to the YAML beside
+it are ignored, without a warning.
+[ADR 0021](../decisions/0021-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md)
+§7 has the rest, including what a write flushes and what it does not.
 
 ### Connecting the integration
 
@@ -632,7 +694,7 @@ should not get for free.
 
 ### Who an operator is
 
-Two postures, and a deployment states which one it runs.
+One posture, and a deployment states it.
 
 `mode = "oidc"` is the only posture. The control plane verifies a token
 the platform's own realm issued: the signature against the realm's published
@@ -670,6 +732,23 @@ the control plane would not work under it.
 
 Local development therefore needs a Keycloak. The shipped example says so
 rather than faking it.
+
+**One exception is proposed: the loopback workbench.**
+[ADR 0021](../decisions/0021-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md)
+§7 contradicts the two paragraphs above, and they are left standing beside it
+rather than silently rewritten, because the contradiction is not settled. The
+workbench is not a posture — `mode = "oidc"` is still the only one a deployment
+can state — but it is a development shortcut: an example binary, built into no
+image, that binds `127.0.0.1:8082` and treats any request carrying
+`X-Test-Operator` as the operator `local-workbench`. It refuses, with `421`, a
+request whose `Host` is not `127.0.0.1:8082` or `localhost:8082`, because a
+loopback bind keeps out the network but not a page in a local browser that
+points a name it controls at `127.0.0.1`. The reason given above for refusing a
+shortcut is exactly true of it. It connects no identity provider, no
+sign-in, no secret store and no integration, so nothing it accepts can be
+authorised or converged; what it does allow is working on the catalogue and
+client workflows without a Keycloak. Whether to keep it is owed to the product
+owner.
 
 **The realm needs two things before the OIDC posture works**, and neither is
 created by this application yet:
@@ -722,8 +801,35 @@ console reads on load.
 
 Distinct codes, because an operator needs to tell the cases apart (§23); among them:
 `unauthenticated`, `unknown_client`, `invalid_request`, `desired_state_invalid`,
-`revision_required`, `revision_conflict`, `realm_immutable`,
-`repository_unavailable`, `repository_denied`, `repository_rejected`.
+`revision_required`, `revision_conflict`, `client_exists`, `realm_unavailable`,
+`document_too_large`, `realm_immutable`, `repository_unavailable`,
+`repository_denied`, `repository_rejected`.
+
+The catalogue and client creation add three codes:
+
+| Answer | Means | The operator |
+|---|---|---|
+| `409 client_exists` | creation found a document already at that id | picks another id |
+| `409 realm_unavailable` | creation's realm is reserved, or another client document already declares it. The message names the realm and which of the two, since `GET /api/clients` already shows every client's realm | picks another id |
+| `422 document_too_large` | the document the write would produce is past its limit: 900 KiB for a write that grows one — a creation, a product save, a catalogue command — and 960 KiB for an identity edit, so remediation stays possible on a document growth has already filled. `422` and not `413`: the request body is not what is too large | trims the document in Git |
+
+`409 revision_conflict` means "ask again", in two situations. One is an edit
+against a revision that has moved; its message names the catalogue or the client,
+whichever moved — including a catalogue write that loses the race between its own
+read and its write. The other is a creation that conflicted while nothing is
+stored at that id: a race with another commit on the branch, where sending the
+request again is safe. A creation the Git host refused for a genuine validation
+failure is neither, and stays a rejection, because asking again would change
+nothing. A catalogue write carrying neither `If-Match` nor `If-None-Match: *`
+answers `428 revision_required`.
+
+Stored data that will not parse answers `500 desired_state_invalid`, with no
+`Retry-After`, whether it is a client document, a client's `spec.product` — read
+by the product routes, an identity edit and the activity listing — or the
+catalogue. `GET /api/activity` fails whole on one unreadable client, as
+`GET /api/clients` does on one unreadable document: a partial feed would read as
+a quiet day. Creation reads every client for its realm check, so one unreadable
+client document refuses every creation the same way.
 
 Two things no error says: anything an upstream system said verbatim, and
 anything about the repository's internals.
@@ -735,19 +841,42 @@ would make the normal path look broken.
 
 ## Desired State Repository
 
-`ClientRepository` is the port; `GitClientRepository` is the implementation.
+`ClientRepository` is the port. The domain asks for a client and writes a
+document at a revision; whether that lands as a commit on `main` in
+`saas-fabric-clients` or as an entry in a map is the implementation's business.
 
-The domain asks for a client and writes a document at a revision. Whether that
-lands as a commit on `main` in `saas-fabric-clients` or as an entry in a map is
-the implementation's business — and there is a second implementation,
-`InMemoryClientRepository`, which implements the same concurrency rule rather
-than a shortcut past it.
+| Method | Does | Refuses |
+|---|---|---|
+| `list`, `get` | read clients, each with its revision | — |
+| `update` | replace one client's document | a revision that is no longer current |
+| `create` | write a new client's document | an id a document already holds |
+| `catalogue` | read the catalogue, with no revision before its first write | — |
+| `save_catalogue` | replace the catalogue | a revision that is no longer current, *including* "none" once a catalogue exists |
+| `describe` | name the repository for a log line | — |
+
+`create`, `catalogue` and `save_catalogue` have default bodies that answer "not
+configured", which is why `UnconfiguredRepository` needed no change. The cost is
+that an implementation which forgets one still compiles, and reports itself
+unconfigured for that operation at run time.
+
+| Implementation | Crate | Selected by | Durable |
+|---|---|---|---|
+| `GitClientRepository` | `fabric-client-git` | `managed`, once connected, and `git` | a commit per write: `clients/<id>/client.yaml`, and `fabric-catalogue.yaml` at the repository root |
+| `LocalClientRepository` | `fabric-control-plane-api` | `local_directory`, and the workbench ([ADR 0021](../decisions/0021-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md) §7) | one process: `.fabric-state.json`, replaced by rename in a task of its own, so a write finishes even if its request goes away. Open failures are typed, and a snapshot from before the catalogue envelope is refused |
+| `InMemoryClientRepository` | `fabric-control-plane` | tests only | no — but it renders and parses every client document and the catalogue on every write and read, as the durable stores do |
+| `UnconfiguredRepository` | `fabric-control-plane` | `managed`, before a repository is connected | — |
+
+The three that store anything implement the same concurrency rule rather than a
+shortcut past it.
 
 **Optimistic concurrency.** A revision is the stored file's blob hash. A write
 carries the hash the caller believed it was editing, and the hosting API applies
 it only if that hash is still current. The check is atomic on the server, so a
 second control-plane replica cannot interleave with it. There is no
-last-writer-wins path.
+last-writer-wins path. A create, and the catalogue's first write, carry no hash,
+and the host refuses either for a file that already exists. The local and
+in-memory repositories make the same comparisons under a lock, with counters for
+revisions.
 
 **No Git library.** The adapter speaks the hosting provider's contents API over
 HTTPS. `git2`, `gix` and `gitoxide` are banned workspace-wide, which keeps "Git
@@ -919,6 +1048,22 @@ emits a structured audit event carrying who requested it, which client, the
 domain operation, and the resulting revision; the log pipeline supplies the
 time.
 
+| Write | Event |
+|---|---|
+| an identity edit | `control_plane.audit.identity_updated` |
+| client creation | `control_plane.audit.client_created` |
+| a product save | `control_plane.audit.product_updated` |
+| a catalogue command | `control_plane.audit.catalogue_changed` |
+| a secret operation | `control_plane.audit.client_secret` |
+
+The catalogue event names no client, because the catalogue has none: it carries
+`resource = "catalogue"` and the entry the command changed, and takes its
+operation from the activity entry the command appended, so the audit record and
+what `GET /api/activity` shows cannot disagree. That activity is a view kept in
+desired state
+([ADR 0021](../decisions/0021-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md) §6),
+not a replacement for these events.
+
 Git history is a **second** copy: the commit message carries a `Requested-by:`
 trailer, because every commit is authored by the platform's machine identity and
 would otherwise record only that SaaS Fabric changed something. It is not
@@ -930,9 +1075,17 @@ Nothing in the audit module is handed a value that could contain one.
 
 ## What this increment does not include
 
-Client creation, deletion of anything, OpenFGA/OpenBao/Grafana/Envoy
-reconciliation, database provisioning, a workflow engine, and provisioning the
-realm's own console client and operator role.
+Deletion of anything — a client, an application, or an assignment, whose
+removal is refused
+([ADR 0021](../decisions/0021-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md) §5)
+— OpenFGA/OpenBao/Grafana/Envoy reconciliation, database provisioning,
+deploying application components, DNS names and certificates for them,
+observing their runtime health, a workflow engine, and provisioning the realm's
+own console client and operator role.
+
+Client creation is in, as a desired-state write and nothing more: a created
+client has a document and, once converged, a realm. Routing, data placement and
+a secret boundary are still the unbuilt rest of that workflow.
 
 Runtime-binding publication is now split rather than wholly absent: ADR 0018
 builds the producer (`fabric-runtime-publication`, its port, its filesystem

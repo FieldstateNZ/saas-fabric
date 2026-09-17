@@ -21,6 +21,7 @@ impl ControlPlaneError {
             RepositoryError::NotPermitted => Self::RepositoryDenied,
             RepositoryError::Rejected { .. } => Self::RepositoryRejected,
             RepositoryError::Invalid { client, source } => Self::InvalidDesiredState { client, source },
+            RepositoryError::InvalidCatalogue { source } => Self::InvalidCatalogue { source },
         }
     }
 }

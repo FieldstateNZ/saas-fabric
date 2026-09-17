@@ -1,4 +1,13 @@
 //! Changing a client's identity, which means writing a document to Git.
+//!
+//! In the 121–150 line band. The reason is that this is one method,
+//! `set_identity`, whose own rustdoc is the load-bearing part of the file:
+//! the eight ordered steps, and specifically why steps 2 and 7 have to come
+//! where they do, are a single piece of reasoning about one write. Splitting
+//! the merge, the size check or the write into their own functions would
+//! not shrink that reasoning — it would just make it harder to see that the
+//! order across all eight steps is the thing being protected, not any one
+//! of them alone.
 
 use fabric_client_model::{ClientId, ClientRevision, IdentityConfiguration};
 
@@ -41,8 +50,10 @@ impl ClientService {
     ///
     /// Returns [`ControlPlaneError`] if the client does not exist, the request
     /// would move the realm, the identity breaks a validation rule, the
-    /// revision has moved on — [`ControlPlaneError::RevisionConflict`] — or
-    /// the repository could not be written.
+    /// revision has moved on — [`ControlPlaneError::RevisionConflict`] — the
+    /// stored product section will not parse —
+    /// [`ControlPlaneError::InvalidDesiredState`] — the rendered document is
+    /// too large to store, or the repository could not be written.
     pub async fn set_identity(
         &self,
         operator: &Operator,
@@ -68,10 +79,36 @@ impl ClientService {
             return Ok(current);
         }
 
-        let updated = current
+        let with_new_identity = current
             .document
             .with_identity(identity)
             .map_err(ControlPlaneError::InvalidRequest)?;
+
+        // Split from the identity merge above on purpose. `with_activity`
+        // reads `spec.product` before appending to it, and that section came
+        // from the stored document, not from this request — a version of it
+        // that will not parse is the platform's problem, the same failure
+        // `GET /api/clients` reports for a client document that will not
+        // parse at all, not something this write asked for.
+        let updated = with_new_identity
+            .with_activity(self.product_event(operator, client, "Identity updated"))
+            .map_err(|source| ControlPlaneError::InvalidDesiredState {
+                client: client.clone(),
+                source,
+            })?;
+
+        // Measured before the write, not left to the repository to
+        // discover: GitHub's contents API cannot read a file this size back,
+        // so a document that grows past it must be refused here rather than
+        // committed and then unreadable. Checked against the *remediation*
+        // limit, not the ordinary one `create_client` and `set_product` use
+        // — an identity edit is exactly how an operator removes a
+        // compromised redirect URI or role, and the ordinary limit would
+        // block that edit on the very document most in need of it. See
+        // `document_size`'s own rustdoc for the full argument.
+        crate::document_size::check_remediation(
+            &updated.render().map_err(ControlPlaneError::InvalidRequest)?,
+        )?;
 
         let change = ChangeContext {
             requested_by: operator.subject().to_owned(),

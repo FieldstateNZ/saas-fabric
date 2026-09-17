@@ -69,7 +69,7 @@ control-plane API and console that produce that desired state. See
 
 | Not built | Why |
 |---|---|
-| Configuration, Feature, Storage, Events, Secrets APIs (§27) | Same architecture, separate slices. The binding format already carries their state, so adding them changes no tenant model. |
+| Configuration, Feature, Storage, Events, Secrets APIs (§27) | Same architecture, separate slices. The binding format already carries their state, so adding them changes no tenant model. The product catalogue ([ADR 0021](../decisions/0021-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md)) declares features, plans and non-secret configuration in desired state, and nothing publishes them to the runtime — it is not these APIs. |
 | The Experience API | Belongs in SaaS Fabric, but it composes identity, tenant enablement, permissions, feature state and application UX declaration — it needs the foundation merged underneath it first. |
 | Runtime binding publication | Reconciliation now exists — it converges Keycloak onto client desired state — but nothing yet writes what the *runtime* reads. `ResourceSource` is still the contract, and publishing into it is a reconciliation target beside Keycloak rather than a control-plane mutation reaching into a registry (ADR 0008). |
 | A JWKS refresher | Only relevant in the opt-in defence-in-depth identity mode, where key rotation currently means rebuilding the reader. |

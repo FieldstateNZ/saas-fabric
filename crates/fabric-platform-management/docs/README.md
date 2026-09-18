@@ -214,24 +214,123 @@ repository connection.
   environment's data sources — never per id), implemented by
   `fabric-platform-git`'s adapter over
   `environments/<environment>/data-sources.yaml`. Not a supertrait of
-  `DesiredState`: the two are combined instead by `PlatformRepository`
-  (`binding/repository.rs`), `trait PlatformRepository: DesiredState +
-  DataSourceState {}` with a blanket impl, which is what
-  `PlatformDesiredState::connect` accepts — a caller that already has the
-  binding never needs a second one for data sources, and no existing
-  `DesiredState` implementor had to grow a `DataSourceState` half it does
-  not use.
-- **`DataSources`** — the service over that port: `list` reads what is
-  declared, unchanged; `declare` computes the revision itself (a caller's
-  value is never trusted), plans the complete list the write should produce,
-  and returns `Declared::Unchanged` without calling the port at all when
-  nothing about the declaration differs from what is held. The planning rule
-  itself is a pure function (`data_sources/plan.rs`), tested on its own.
+  `DesiredState`: the two (and `PlacementState`, below) are combined instead
+  by `PlatformRepository` (`binding/repository.rs`), `trait
+  PlatformRepository: DesiredState + DataSourceState + PlacementState { async
+  fn write_environment(...) -> Result<(), DesiredStateError>; }`. **No
+  blanket impl any more** (ADR 0023 part 2, B4): `write_environment` writes
+  the data-sources and placements documents together in one atomic commit,
+  which nothing generic over the three ports alone can know how to do, so
+  every connectable type -- `PlatformGitRepository`
+  (`fabric-platform-git/src/port/environment.rs`, over
+  `update_files_atomically` with two `FileChange`s), the late-bound binding
+  (`binding/environment.rs`, by delegation), and every test fixture that
+  connects to one -- supplies its own. `PlatformDesiredState::connect` still
+  accepts one `Arc<dyn PlatformRepository>` and a caller that already has
+  the binding still never needs a second one for data sources or
+  placements.
+- **`DataSources`** — the service over `DataSourceState` alone for `list`
+  and `declare`: `list` reads what is declared, unchanged; `declare`
+  computes the revision itself (a caller's value is never trusted), plans
+  the complete list the write should produce, and returns
+  `Declared::Unchanged` without calling the port at all when nothing about
+  the declaration differs from what is held. The planning rule itself is a
+  pure function (`data_sources/plan.rs`), tested on its own. `remove`
+  (`data_sources/service/remove.rs`, ADR 0023 part 2) is the one operation
+  on this service that needs every port, so it takes `repository: &dyn
+  PlatformRepository` per call rather than reaching through the service's
+  own `DataSourceState`-only field -- see "Placement" below.
 
 `DataSources` is a second service beside `PlatformManagement`, not a method on
 it — see `fabric-control-plane`'s `PlatformBinding`, which holds one of each
 over the same late-bound repository. Neither one's tests need the other's
 ports.
+
+## Placement
+
+[ADR 0023](../../../docs/decisions/0023-data-sources-are-environment-desired-state-and-placement-is-recorded.md)
+part 2 adds the record: a client's `spec.data.<logical>` is intent, and
+placing it -- choosing a declared data source that admits it, allocating the
+tenant's isolation, and recording the outcome -- is a Fabric write. It lives
+in its own module, `placements.rs`, beside `data_sources.rs`, and shares
+only the late-bound repository connection.
+
+- **`DataIntent`** -- a structural twin of `fabric_client_model::DataIntent`
+  (same three fields, same `PlacementClassDocument`), declared again here
+  rather than depended on: this crate holds the rules that decide where a
+  data source lives, `fabric-client-model` parses a client's document, and
+  neither may depend on the other (`docs/architecture/crate-dependencies.md`
+  gives only `fabric-control-plane` that edge, since only it composes a
+  client's document with an environment's declared data sources). The one
+  caller with both types in scope converts between them.
+- **`PlacementRecord`** -- the fact, once `select` has decided it: `tenant`,
+  `logical`, `data_source`, and the wire's own `IsolationModelDocument` --
+  never a second declaration of `database {}` / `schema {schema}` /
+  `discriminator {column, value}`, so a hand-editable `placements.yaml` can
+  never disagree with what publication would copy from it. Publication
+  reads this and copies it; it never recomputes it (ADR 0007, ADR 0018).
+- **`select` (`placements/select.rs`, `placements/select/pick.rs`)** -- the
+  only place that decides. Pure: everything it needs is a parameter,
+  including `now`, so a test needs no clock, repository or I/O. Ordered
+  rules: `AlreadyPlaced` if the (tenant, logical) pair is already held;
+  candidates are declared sources whose placement class,
+  `accepts_new_tenants` and `writable` match (and whose `residency.region`
+  matches when the intent stated one -- `provider` is carried, never
+  matched); on `shared`, the least-loaded candidate wins, isolated by
+  `discriminator` naming the tenant id as the value, refusing
+  `DiscriminatorValueTaken` only if a *different* tenant already holds that
+  value -- the same tenant repeating its own value across a second logical
+  data source on the same source is not a collision (B2); on any other
+  class, a data source is one tenant's -- the lowest-id candidate with **no**
+  held placement at all wins, isolated as a whole `database {}`. When no
+  candidate is left, the message says which of two things is true:
+  `NoDataSourceAdmits` if nothing declared even matched the class, region
+  or capabilities (says what to declare), or `AllMatchingSourcesOccupied`
+  if something did but -- on a non-shared class -- every match already has
+  a tenant (N2: kept apart so an operator is not sent to declare a data
+  source they already declared).
+- **`PlacementState`** -- the port: `read_placements` / `write_placements`,
+  the same whole-document compare-and-swap shape `DataSourceState` is,
+  implemented by `fabric-platform-git`'s adapter over
+  `environments/<environment>/placements.yaml`. See `PlatformRepository`,
+  above, for how it joins the binding.
+- **`Placements`** -- the service over `Arc<dyn PlatformRepository>` (one
+  field for every port, not two separate ones, because `place` needs
+  `write_environment`) plus a clock: `for_client(environment, client: &str,
+  intents)` previews every logical data source a client's document names,
+  without writing, returning `Placed` / `Placeable` / `Refused` for each --
+  three states, not two, because "nothing recorded yet, and it would
+  place" and "nothing recorded, and it would be refused" are different
+  facts an operator acts on differently. `place(environment, client: &str,
+  logical, intent, at)` reparses `client` as a `TenantId` itself
+  (`PlacementRefusal::TenantIdInvalid` if it is not one -- N11, so the
+  control plane never does this conversion), checks the held placements
+  revision immediately after reading it and before data sources are even
+  read (N9), then calls `write_environment` with the data sources it read
+  and the placements list with `select`'s new record appended -- one
+  atomic commit, so a data source declared between this call's own reads
+  moving is a `Conflict` too, not only a stale placements revision.
+  `DataSources::remove` takes a `repository: &dyn PlatformRepository` per
+  call (the one operation on `DataSources` that needs every port) and
+  refuses `DataSourceInUse` naming every tenant still placed, deduplicated
+  -- one tenant with two logical placements on the source being removed is
+  named once.
+- **Held-document validation** (`placements/held.rs`,
+  `placements/held/rules.rs`) -- `check_held_placements`, `check_held`'s
+  sibling: a break-glass edit to `placements.yaml` keeps working by
+  design, so a document this crate did not write can reach `select`, which
+  is only pure if what it is handed is coherent. Refuses a duplicate
+  (tenant, logical) pair, a `data_source` nothing declares, an isolation
+  kind its data source's placement class does not serve
+  (`held/rules.rs::isolation_matches_class`), a discriminator `column` that
+  does not match the source's own declared column, a second whole-database
+  placement on one non-shared source (regardless of tenant -- it is one
+  tenant's, full stop), or two *different* tenants recorded with one
+  discriminator value on one data source. What it does **not** check: that
+  a held discriminator value equals the tenant it belongs to -- `select`
+  always allocates the tenant's own id, but the record is the fact once
+  written, and a break-glass value is honoured as written (ADR 0023, "Bad,
+  and accepted").
 
 ## Getting started
 
@@ -323,3 +422,13 @@ let statuses = service.statuses("production").await?;
   from `PlatformError::DesiredState` for the same reason `NotAdvancing` is:
   the request was understood and refused on its own terms before anything
   was read.
+- `write_environment` always re-renders **both** documents, even the one
+  that did not change, and what that costs its revision depends on who
+  wrote the file last. For a file only Fabric has ever written, the
+  re-render reproduces the same bytes, so a content-addressed adapter
+  (`PlatformGitRepository`) hands back the same revision — placing one
+  tenant does not move the data-sources `ETag`. For a break-glass file with
+  a comment written *inside* the entry list (not the preserved header),
+  the comment is not part of any entry this crate models and is dropped on
+  re-render — the bytes differ, so that file's revision *does* move, even
+  though nothing about what it declares changed.

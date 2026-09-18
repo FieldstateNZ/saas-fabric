@@ -162,15 +162,22 @@ sources it refers to.
 schemaVersion: 1
 environment: lucentroot
 placements:
-  acme:
-    primary:
-      dataSource: shared-postgres-nz-01
-      isolation:
-        kind: discriminator
-        column: tenant_key
-        value: acme
-      placedAt: 2026-09-18T02:14:00Z
+  - tenant: acme
+    logical: primary
+    data_source: shared-postgres-nz-01
+    isolation:
+      kind: discriminator
+      column: tenant_key
+      value: acme
+    placed_at: 2026-09-18T02:14:00Z
 ```
+
+`placements` is a list, each entry carrying its own `tenant` and `logical`
+rather than a map keyed by either — the same reason `data-sources.yaml` is a
+list keyed by nothing: the file is parsed with the wire's own
+`PlacementRecord` shape, sorted by (`tenant`, `logical`) so an unrelated
+edit produces no diff, and a second declaration of the same shape as a map
+is a second place for the two to disagree.
 
 Publication reads this record and copies it into the tenant binding. It never
 recomputes it. That is how this decision meets
@@ -196,6 +203,19 @@ provisioning a database or a schema, which nothing in the platform does. The
 control plane refuses the placement with the reason, and the console shows
 the client as *not placed* with that reason, rather than binding a tenant to a
 database that was never made. Provisioning is the next decision, not this one.
+
+**Every non-shared class holds at most one tenant, and that is the whole
+rule -- not a separate check.** The selector considers a `dedicated`,
+`high_availability`, `regulated`, `development` or `ephemeral` data source a
+candidate only while it holds no placement at all; the first tenant to ask
+for that class takes it. A second tenant is refused, and the message says
+which of two things is true: nothing declared admits the class or region at
+all (the operator's next step is to declare one), or something does and
+every matching data source already has a tenant (the operator's next step
+is provisioning, which this decision does not build). Collapsing the two
+into one message would send an operator to declare a data source they
+already declared; keeping them apart costs one more refusal variant, named
+for what it is rather than folded into "nothing admits this".
 
 **Placement runs when something changes and can be asked for.** A client
 creation, a change to `spec.data`, or a new data source that accepts tenants

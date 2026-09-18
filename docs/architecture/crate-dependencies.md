@@ -52,6 +52,7 @@ about separately (ADR 0016).
 fabric-core            (the only crate both planes share)
 
 fabric-client-model    → fabric-core
+                       → fabric-runtime-publication (spec.data's own vocabulary)
 
 fabric-reconciliation  → fabric-core
                        → fabric-client-model
@@ -128,6 +129,19 @@ published from it — there is one declaration of the shape, not two. Both
 crates are in neither plane, so the edge stays inside the "everyone may
 depend on `fabric-core`, and now on this" footing the section below already
 gives `fabric-runtime-publication`.
+
+`fabric-client-model`'s own edge to `fabric-runtime-publication` (ADR 0023
+part 2) is the same argument, one level up the chain: `spec.data.<logical>`'s
+`DataIntent.class` reuses `PlacementClassDocument` rather than declaring a
+third copy of the six placement classes, so a client's stated intent and a
+data source's declared placement can never name the same class two different
+ways. `fabric-platform-management` cannot see `fabric-client-model` in the
+other direction — only `fabric-control-plane` depends on both — so the
+selector that actually matches an intent to a data source (ADR 0023 part 2)
+takes its own structurally-identical `DataIntent`, converted by the one
+caller in scope of both. Reusing `fabric-client-model`'s type there would
+require either crate to depend on the other for no reason the graph already
+needs.
 
 `fabric-deployment-kubernetes` implements the optional `DeploymentObserver`
 port. It depends only on `fabric-core` and `fabric-platform-management`; only

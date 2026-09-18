@@ -4,11 +4,20 @@ Atomic multi-file desired-state mutation in the platform repository, over
 the Git Data API, and the `fabric_platform_management::DesiredState` adapter
 built on it. Since ADR 0023 part 1 it is also the
 `fabric_platform_management::DataSourceState` adapter for
-`environments/<env>/data-sources.yaml`, over the same
-repository and the same `update_files_atomically`. `DataSourceState` is not
-`DesiredState`'s supertrait; implementing both is what makes this type a
-`fabric_platform_management::PlatformRepository` for free (a blanket impl,
-not a trait this crate names). In neither plane (see
+`environments/<env>/data-sources.yaml`, and since ADR 0023 part 2 the
+`fabric_platform_management::PlacementState` adapter for
+`environments/<env>/placements.yaml`, over the same repository and the same
+`update_files_atomically`. Neither `DataSourceState` nor `PlacementState`
+is `DesiredState`'s supertrait. This crate also names
+`fabric_platform_management::PlatformRepository` explicitly
+(`src/port/environment.rs`) — that trait stopped being a pure blanket trait
+in ADR 0023 part 2 (B4): its one required method,
+`write_environment(environment, write: EnvironmentWrite<'_>, message) ->
+Result<(), DesiredStateError>`, writes the data-sources and placements
+documents together in one atomic commit, which nothing generic over the
+three independent ports could know how to do, so this crate supplies its
+own — `update_files_atomically` with two `FileChange`s, one per document,
+each with its own expected revision. In neither plane (see
 `docs/architecture/crate-dependencies.md`).
 Depends on `fabric-core`, `fabric-git-host` (shared App-credential exchange),
 `fabric-platform-management` (the port implemented; also the source of
@@ -28,9 +37,11 @@ fabric_platform_management::{Channel, Hold, UpdatePolicy}` — only `Hold` and
   `describe() -> String` (`"{owner}/{repository} on {branch}"` — no
   credential, no API base URL). Implements
   `fabric_platform_management::DesiredState` and, since ADR 0023 part 1,
-  `DataSourceState` too -- not a supertrait of `DesiredState`; the two are
-  independent ports this type happens to answer both of, which is what
-  makes it a `PlatformRepository` (via a blanket impl) for free.
+  `DataSourceState`, and since ADR 0023 part 2, `PlacementState` -- none a
+  supertrait of another -- and, also since part 2 (B4), `PlatformRepository`
+  itself, explicitly: `write_environment` is a required method with no
+  honest blanket implementation, so this crate names the trait and supplies
+  it (`src/port/environment.rs`).
 - `PlatformRepositoryConfig { api_base_url, owner, repository, branch,
   http_timeout_seconds, operation_timeout_seconds }`. `.validate()`. No
   path-prefix or file-list field — which files a change touches is decided
@@ -81,6 +92,12 @@ fabric_platform_management::{Channel, Hold, UpdatePolicy}` — only `Hold` and
 - `CommitRevision(String)` — a whole-branch revision, returned from a
   successful write.
 - `StoredFile { path, text, revision: FileRevision }`.
+- `fabric_platform_management::EnvironmentWrite<'a> { data_sources: (&'a
+  [DataSourceDeclaration], Option<&'a DesiredRevision>), placements: (&'a
+  [PlacementRecord], Option<&'a DesiredRevision>) }` — not this crate's own
+  type, but the argument `write_environment` takes; named here because
+  `port/environment.rs` is the one place in this crate that builds one
+  apart. Re-exported by `fabric-platform-management`, not by this crate.
 
 ## Internal modules
 
@@ -164,6 +181,48 @@ fabric_platform_management::{Channel, Hold, UpdatePolicy}` — only `Hold` and
   existing file, or `at: Some(stale)`, both answer
   `PlatformGitError::Conflict`, the same compare-and-swap `set_component_hold`
   uses.
+- `port/placements.rs` + `port/placements/{document,header,read,write}.rs`
+  (ADR 0023 part 2) — `impl PlacementState for PlatformGitRepository`, both
+  methods wrapped in `within_budget`, mirroring `port/data_sources.rs`
+  exactly. `document.rs`: `Document` (header captured verbatim,
+  `SCHEMA_VERSION: u32 = 1`, `Envelope { schema_version, environment,
+  placements: Vec<PlacementRecord> }` camelCase at the envelope level, each
+  entry `PlacementRecord` itself; every write sorts by (tenant, logical) so
+  an unrelated edit produces no diff). `header.rs`: `header_of` — a third
+  copy of `components/document.rs`'s function, for the same reason the
+  data-sources copy exists: `components.rs` must not know data sources
+  exist, and neither of those two may know placements do either. `read.rs`:
+  `read_placements_file` (shared by the port's read and write; refuses a
+  document naming a different environment), `placements_path(environment)
+  -> String` (`environments/{environment}/placements.yaml`). `write.rs`:
+  `write_placements_file`, `CREATE_HEADER` (says, in the platform
+  repository's own voice, that the record is written by Fabric when a
+  tenant is placed and is what publication copies) — `at: None` on an
+  existing file, or `at: Some(stale)`, both answer
+  `PlatformGitError::Conflict`, the same compare-and-swap `write_data_sources_file`
+  uses. Both `port/data_sources.rs` and `port/placements.rs` widen their
+  own `document`/`read`/`write` submodules to `pub(crate)` (from private)
+  so `port/environment.rs`, a sibling rather than a descendant of either,
+  can reach `Document::{new,render,header}`, `{data_sources,placements}_path`
+  and each `CREATE_HEADER` without a second declaration of any of them.
+- `port/environment.rs` (ADR 0023 part 2, B4) — `impl PlatformRepository
+  for PlatformGitRepository`, `write_environment` wrapped in
+  `within_budget` like every other port method. Reads both documents
+  independently (each carries its own `head`; they do not need to share
+  one — `update_files_atomically` retries from a fresh head if either
+  moved between the two reads, exactly as it would for one document
+  alone), builds each one's `FileChange` through a shared `file_change`
+  helper (header-preserving, compare-and-swap, parameterised by a render
+  closure so it does not need to know which document type it is building),
+  and writes both in one call to `update_files_atomically`. Because Git
+  blobs are content-addressed, re-rendering a document that has not
+  actually changed reproduces the same bytes and therefore the same blob
+  `FileRevision` — a `place`/`remove` that only touches one document does
+  not move the sibling's revision, *unless* the sibling is a break-glass
+  file with a comment written inside the entry list (not the header),
+  which this crate's model does not preserve and which therefore changes
+  the bytes on re-render even though nothing about the document's meaning
+  did.
 - `port.rs` + `port/{budget,budget/bearer,errors,reading,wanted}.rs` — the
   `impl DesiredState for PlatformGitRepository` (all six methods —
   `components`, `component`, `advance`, `roll_back`, `pause`, `resume` —
@@ -209,6 +268,18 @@ fabric_platform_management::{Channel, Hold, UpdatePolicy}` — only `Hold` and
    exists, and `at: Some(_)` when it does not**, both as `Conflict` — "create"
    and "replace" are not interchangeable, and neither silently becomes the
    other.
+10. **`write_placements_file` keeps the same rule.** `at: None` on an
+    existing file, or `at: Some(_)` on an absent one, both `Conflict` — the
+    same discipline `write_data_sources_file` states, applied to the
+    sibling document.
+11. **`write_environment` writes both documents or neither, in one commit
+    — never the appearance of one without the other.** ADR 0023 part 2
+    (B4) exists to close exactly the race two independent single-document
+    writes leave open: `place` reading data sources and writing
+    placements while `remove` reads placements and writes data sources
+    could interleave and leave a placement naming a source nothing
+    declares. `port/environment.rs` must not be "simplified" back into two
+    calls to `write_data_sources_file`/`write_placements_file`.
 
 ## Notes
 
@@ -232,3 +303,12 @@ fabric_platform_management::{Channel, Hold, UpdatePolicy}` — only `Hold` and
   writes the header and one commit, a replace preserves a hand-written
   header and comments, and the fixture parses and re-renders byte-identical
   below its header.
+- `tests/placement_state.rs` and `tests/fixtures/placements.yaml` are
+  `data_source_state.rs`'s sibling for the third port, against the same
+  fake host support, proving the same properties for `placements.yaml`.
+- `tests/environment_write.rs` (ADR 0023 part 2, B4) proves
+  `write_environment` itself: creating both documents for the first time
+  is one commit; a replace writes both at their own revisions in one
+  commit; and a moved sibling — one revision stale, the other current — is
+  refused with neither document written, checked against the fake host's
+  own commit count.

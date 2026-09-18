@@ -14,6 +14,8 @@ export type ErrorCode =
   | 'repository_rejected'
   | 'platform_not_managed'
   | 'invalid_data_source'
+  | 'placement_refused'
+  | 'data_source_in_use'
 
 /**
  * A refusal from the control plane.

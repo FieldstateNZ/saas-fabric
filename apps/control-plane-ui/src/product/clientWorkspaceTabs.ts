@@ -9,6 +9,7 @@ export const CLIENT_TABS = [
   'Overview',
   'Applications',
   'Configuration',
+  'Data',
   'Identity',
   'Domains',
   'Activity',

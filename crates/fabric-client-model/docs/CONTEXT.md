@@ -5,9 +5,18 @@ The control plane's desired-state model. Depends on `fabric-core`, `serde`,
 
 ## Public surface
 
-- `Client { id: ClientId, display_name: String, hosts: Vec<Host>, identity: IdentityConfiguration }`
+- `Client { id: ClientId, display_name: String, hosts: Vec<Host>, identity: IdentityConfiguration,
+  authorization: AuthorizationConfiguration, secrets: Option<SecretsConfiguration>,
+  data: BTreeMap<LogicalDataSourceName, DataIntent> }`
   — the *modelled view*. Complete enough to render a screen and reconcile
   identity from; **not** complete enough to serialise as desired state.
+- `DataIntent { class: PlacementClassDocument, provider: Option<String>, region: Option<String> }`
+  — one logical data source's declared intent (ADR 0023 part 2),
+  `spec.data.<logical>`. `class` reuses `fabric_runtime_publication::PlacementClassDocument`
+  rather than a third declaration of the same six values -- see this crate's
+  `Cargo.toml` for the dependency this adds and why it is allowed. `deny_unknown_fields`.
+  Never matched or interpreted here: whether a declared data source admits
+  the intent is `fabric-platform-management`'s selector, not this crate's.
 - `ClientDocument` — `parse(&str)`, `client() -> &Client`, `into_client()`,
   `with_identity(IdentityConfiguration) -> Result<Self, _>`, `render() -> Result<String, _>`.
   Holds the whole parsed YAML *and* the typed view. `with_identity` replaces
@@ -82,6 +91,9 @@ The control plane's desired-state model. Depends on `fabric-core`, `serde`,
 10. **`v1` keeps parsing, and the migrator stays total.** Every
     `RedirectUriKind` has an arm, including the private-use one that `v1`
     could not hold. A mixed list is refused, never resolved.
+11. **`spec.data`'s `class` stays the wire's own `PlacementClassDocument`.**
+    A second enum here could disagree with what a data source declares --
+    the whole argument ADR 0023 part 2 makes for the dependency.
 
 ## Design notes
 

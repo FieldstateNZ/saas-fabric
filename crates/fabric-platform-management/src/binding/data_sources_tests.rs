@@ -18,7 +18,7 @@ use tokio::sync::Notify;
 use super::PlatformDesiredState;
 use crate::{
     ComponentDesired, DataSourceDeclaration, DataSourceState, DataSourcesRead, DesiredRevision, DesiredState,
-    DesiredStateError, PlatformRepository,
+    DesiredStateError, EnvironmentWrite, PlacementRecord, PlacementState, PlacementsRead, PlatformRepository,
 };
 
 fn declaration(id: &str) -> DataSourceDeclaration {
@@ -179,6 +179,46 @@ impl DataSourceState for Repo {
         let mut revision = self.revision.lock().unwrap_or_else(PoisonError::into_inner);
         *revision = Some(revision.unwrap_or(0) + 1);
 
+        Ok(())
+    }
+}
+
+/// `PlatformDesiredState::connect` requires `Arc<dyn PlatformRepository>`
+/// (ADR 0023 part 2 added `PlacementState` to it) -- nothing in this file
+/// exercises this half of `Repo`, so it answers a fixed empty read and
+/// does not record the write. `binding/placements_tests.rs` is where this
+/// port's own generation-tagging is proved.
+#[async_trait::async_trait]
+impl PlacementState for Repo {
+    async fn read_placements(&self, _: &str) -> Result<PlacementsRead, DesiredStateError> {
+        Ok(PlacementsRead {
+            revision: Some(DesiredRevision::new("1")),
+            placements: Vec::new(),
+        })
+    }
+
+    async fn write_placements(
+        &self,
+        _: &str,
+        _: &[PlacementRecord],
+        _: Option<&DesiredRevision>,
+        _: &str,
+    ) -> Result<(), DesiredStateError> {
+        Ok(())
+    }
+}
+
+/// `PlatformRepository::write_environment` has no blanket implementation
+/// (ADR 0023 part 2, B4) -- unused here, `binding/environment_tests.rs` is
+/// where it is proved.
+#[async_trait::async_trait]
+impl PlatformRepository for Repo {
+    async fn write_environment(
+        &self,
+        _: &str,
+        _: EnvironmentWrite<'_>,
+        _: &str,
+    ) -> Result<(), DesiredStateError> {
         Ok(())
     }
 }

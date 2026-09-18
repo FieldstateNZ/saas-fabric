@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use crate::binding::bound::Bound;
-use crate::{DataSourceState, DesiredState, DesiredStateError};
+use crate::{DataSourceState, DesiredState, DesiredStateError, PlacementState, PlatformRepository};
 
 /// The guarded half of a platform binding.
 ///
@@ -86,6 +86,33 @@ impl Live {
         match &self.bound {
             Bound::Nothing => Err(DesiredStateError::NotConnected),
             Bound::Repository(repository) => Ok(Arc::clone(repository) as Arc<dyn DataSourceState>),
+            Bound::Unusable(detail) => Err(DesiredStateError::Unavailable {
+                detail: detail.as_str().to_owned(),
+            }),
+        }
+    }
+
+    /// The live repository's `PlacementState` half, or the refusal that
+    /// says why there is none. [`data_source_repository`](Self::data_source_repository)'s
+    /// sibling, upcasting the same way (ADR 0023 part 2).
+    pub(super) fn placement_repository(&self) -> Result<Arc<dyn PlacementState>, DesiredStateError> {
+        match &self.bound {
+            Bound::Nothing => Err(DesiredStateError::NotConnected),
+            Bound::Repository(repository) => Ok(Arc::clone(repository) as Arc<dyn PlacementState>),
+            Bound::Unusable(detail) => Err(DesiredStateError::Unavailable {
+                detail: detail.as_str().to_owned(),
+            }),
+        }
+    }
+
+    /// The live repository whole, for [`write_environment`](PlatformRepository::write_environment),
+    /// which needs every port at once and cannot be reached through any
+    /// one upcast above. No cast at all: `Bound::Repository` already
+    /// stores exactly this type.
+    pub(super) fn platform_repository(&self) -> Result<Arc<dyn PlatformRepository>, DesiredStateError> {
+        match &self.bound {
+            Bound::Nothing => Err(DesiredStateError::NotConnected),
+            Bound::Repository(repository) => Ok(Arc::clone(repository)),
             Bound::Unusable(detail) => Err(DesiredStateError::Unavailable {
                 detail: detail.as_str().to_owned(),
             }),

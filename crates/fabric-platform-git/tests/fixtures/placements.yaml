@@ -1,0 +1,24 @@
+# Which data source each tenant's intent is placed on, and how it is isolated.
+#
+# Machine-managed by SaaS Fabric Platform Management. Written by Fabric when
+# a tenant is placed, in a deterministic layout, so a hand edit survives as
+# values and not as formatting. Editing it by hand is the break-glass path
+# and is expected to keep working.
+#
+# This is the record ADR 0023 part 2 makes the fact: publication copies it
+# into a tenant's binding rather than recomputing it. Nothing here is a
+# credential.
+#
+# See environments/README.md for the complete contract.
+---
+schemaVersion: 1
+environment: lucentroot
+placements:
+- tenant: acme
+  logical: primary
+  data_source: shared-postgres-nz-01
+  isolation:
+    kind: discriminator
+    column: tenant_key
+    value: acme
+  placed_at: 2026-09-18T02:14:00Z

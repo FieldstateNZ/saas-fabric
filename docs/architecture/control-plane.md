@@ -120,6 +120,7 @@ GET    /api/platform/components/{component}/versions   what it could go back to
 POST   /api/platform/components/{component}/rollback   put it back on one
 GET    /api/platform/data-sources        what this environment can place a tenant's data on
 PUT    /api/platform/data-sources/{dataSourceId}       declare one, or correct it   (If-Match required)
+DELETE /api/platform/data-sources/{dataSourceId}       remove one, refused while a tenant is placed on it (If-Match required)
 GET    /api/catalogue                    the product catalogue, and its revision
 POST   /api/catalogue                    apply one command      (If-Match, or If-None-Match: *)
 GET    /api/activity                     recorded operator actions, newest first
@@ -130,6 +131,8 @@ GET    /api/clients/{clientId}/identity  its identity, and reconciliation state
 PUT    /api/clients/{clientId}/identity  replace its identity   (If-Match required)
 GET    /api/clients/{clientId}/product   its product configuration, and what it resolves to
 PUT    /api/clients/{clientId}/product   replace it             (If-Match required)
+GET    /api/clients/{clientId}/placements              every logical data source, and what is true of each
+POST   /api/clients/{clientId}/placements/{logical}    place it                       (If-Match required)
 GET    /api/clients/{clientId}/secrets   list its secret paths
 GET    /api/clients/{clientId}/secrets/entry/{path}   metadata, never values
 PUT    /api/clients/{clientId}/secrets/entry/{path}   write a version   (optional If-Match)
@@ -666,9 +669,65 @@ held document a hand edit made incoherent (two entries with one id, say)
 with `500 desired_state_invalid`, the same code a broken client document
 already answers.
 
-This is the whole of slice 1. Nothing here places a tenant on a data source,
-and nothing is published to the runtime yet — both are later slices ADR 0023
-names and neither is built.
+That was the whole of slice 1. Removing one is `DELETE
+/api/platform/data-sources/{dataSourceId}`, the same `If-Match` discipline
+as the write above, refused with `409 data_source_in_use` naming every
+tenant still placed on it while a placement (below) still names it — the
+publisher would refuse that publication anyway (ADR 0023 part 4, not
+built), and refusing the edit is the earlier, clearer place to say so.
+Removing an id nothing declares, or one nothing ever placed, still answers
+`200` with the list that follows; the file is never deleted.
+
+### Placement
+
+[ADR 0023](../decisions/0023-data-sources-are-environment-desired-state-and-placement-is-recorded.md)
+part 2: a client's `spec.data.<logical>` is intent, not placement. Placing
+it — choosing a declared data source that admits it, allocating the
+tenant's isolation, and recording the outcome — is a Fabric write, recorded
+in `environments/<environment>/placements.yaml` beside the data sources it
+refers to. Publication (ADR 0023 part 4, not built) will read this record
+and copy it into the tenant's runtime binding; it will never recompute it.
+
+`GET /api/clients/{clientId}/placements` reads the client's document, and
+for every logical data source its `spec.data` names, previews what placing
+it would do — without writing anything. The body carries the placements
+document's `revision` (also sent as `ETag`, exactly like the data-sources
+route), and one entry per logical data source: its stated `intent`
+(`class`, `provider`, `region`), and either `placed` (the data source,
+isolation and timestamp) or `refusal` (why `select` would not place it) —
+never both, and both `null` together means "nothing recorded, and nothing
+refuses it" (placeable). `POST /api/clients/{clientId}/placements/{logical}`
+places that one logical data source's already-declared intent — the intent
+is not in the request body, since it already lives in the client's own
+document — and requires `If-Match` naming the placements revision, under
+the same missing/stale rules the data-sources route states. `{logical}`
+must both parse as a logical data-source name (`400` otherwise) and be one
+the client's document actually declares (`422 placement_refused`, "the
+client declares no data source named …", if not). A refusal `select`
+itself makes — no data source declared for the class, the tenant already
+placed, a discriminator collision — is the same `422 placement_refused`,
+with the refusal's own words as the message. Either held document, the
+data sources or the placements, being a hand edit made incoherent answers
+`500 desired_state_invalid`, the same code a broken client document
+already does.
+
+**On a shared data source, the discriminator value recorded is the tenant
+id** — unique within the platform by construction, and the placements
+document refuses two tenants recorded with one value on one data source
+regardless. **Dedicated and every other non-shared class are one tenant's**:
+a data source already holding a placement is not a candidate for a second
+one, so a second tenant asking for the same class is refused — and the
+message distinguishes two cases: nothing declared admits the class or
+region at all (`NoDataSourceAdmits`, naming what to declare), or something
+does and every one that matches already has a tenant
+(`AllMatchingSourcesOccupied`, naming provisioning as the next step rather
+than a declaration that already exists). Neither is a special case in the
+API — both surface as the same `placed`/`refusal` pair, and the same
+`422 placement_refused` when asked for explicitly, with whichever
+refusal's own words as the message.
+
+Nothing here unplaces a tenant, and nothing is published to the runtime
+yet — both are later work ADR 0023 names and neither is built.
 
 ### What the platform panel reports
 

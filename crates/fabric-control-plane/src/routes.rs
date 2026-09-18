@@ -49,6 +49,7 @@ pub const API_PREFIX: &str = "/api";
 /// POST       /api/platform/components/{c}/rollback  put it back on one
 /// GET        /api/platform/data-sources             what this environment can place a tenant's data on
 /// PUT        /api/platform/data-sources/{id}        declare one, or correct it            (If-Match)
+/// DELETE     /api/platform/data-sources/{id}        remove one, refused while a tenant is placed on it (If-Match)
 /// GET/POST   /api/catalogue                         the product catalogue / apply one command
 /// GET        /api/activity                          every recorded action, newest first
 /// GET        /api/operator                          who is signed in
@@ -56,6 +57,8 @@ pub const API_PREFIX: &str = "/api";
 /// GET        /api/clients/{clientId}                one client's overview
 /// GET/PUT    /api/clients/{clientId}/product        its product config / replace it   (If-Match)
 /// GET/PUT    /api/clients/{clientId}/identity       its identity and reconciliation state / replace it
+/// GET        /api/clients/{clientId}/placements               every logical data source, and what is true of each
+/// POST       /api/clients/{clientId}/placements/{logical}     place it                              (If-Match)
 /// GET        /api/clients/{clientId}/secrets                    list its secret paths
 /// GET/PUT/DELETE /api/clients/{clientId}/secrets/entry/{path}  metadata / write / delete a version
 /// POST       /api/clients/{clientId}/secrets/reveal             reveal values   (path in the body)
@@ -99,6 +102,11 @@ pub(crate) fn control_plane_routes(state: ControlPlaneState) -> Router {
         .route(
             "/clients/{client_id}/identity",
             get(handlers::get_identity).put(handlers::put_identity),
+        )
+        .route("/clients/{client_id}/placements", get(handlers::list_placements))
+        .route(
+            "/clients/{client_id}/placements/{logical}",
+            post(handlers::place_data_source),
         )
         // A wildcard tail, so `database/primary` arrives whole rather than as
         // a segment that cannot contain a separator. The router does not

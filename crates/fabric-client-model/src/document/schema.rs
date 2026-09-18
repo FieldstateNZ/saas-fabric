@@ -95,6 +95,12 @@ pub(super) struct SpecShape {
     /// Where this client's secrets live, once a boundary exists.
     #[serde(default)]
     pub(super) secrets: Option<crate::SecretsConfiguration>,
+
+    /// What this client wants placed, by logical data source (ADR 0023
+    /// part 2). Defaulted, because every document written before this
+    /// section existed has none.
+    #[serde(default)]
+    pub(super) data: std::collections::BTreeMap<fabric_core::LogicalDataSourceName, crate::DataIntent>,
 }
 
 #[cfg(test)]

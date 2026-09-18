@@ -6,7 +6,9 @@ the currently-live platform repository, and (since PR #72, ADR 0022) an
 optional read-only bridge to independently observed deployment evidence.
 Since ADR 0023 part 1 it also decides what an environment declares about its
 data sources — a second declared resource, `data_sources.rs`, over the same
-late-bound repository. In neither plane (see
+late-bound repository. Since ADR 0023 part 2 it also places a client's data
+intent on one of those declared sources and records the outcome —
+`placements.rs`, a third module over the same repository. In neither plane (see
 `docs/architecture/crate-dependencies.md`) — no transport, no HTTP, no Git,
 no Kubernetes client. Depends on `fabric-core` and, since ADR 0023,
 `fabric-runtime-publication` (also in neither plane — reused for the wire's
@@ -40,9 +42,10 @@ own data-source sub-types rather than re-declared, so a hand-editable
   is_connected(&self) -> bool`. `async fn connect(&self, repository: Arc<dyn
   PlatformRepository>)`, `async fn unusable(&self, detail: &str)`, `async fn
   disconnect(&self)` — all wait for every in-flight operation against the
-  *previous* binding (drain). Implements both `DesiredState` and
-  `DataSourceState` itself, so it is interchangeable with either port it
-  wraps — see `PlatformRepository` below.
+  *previous* binding (drain). Implements `DesiredState`, `DataSourceState`,
+  `PlacementState` and `PlatformRepository` itself (the last by delegation
+  in `binding/environment.rs`, untagging both halves' revisions), so it is
+  interchangeable with any port it wraps — see `PlatformRepository` below.
 - `DesiredState` (async trait) — `components(environment) ->
   Vec<String>`; `component(environment, component) -> ComponentDesired`;
   `advance(environment, component, release, at: &DesiredRevision, message)`;
@@ -119,7 +122,14 @@ own data-source sub-types rather than re-declared, so a hand-editable
   `Registry(#[from] RegistryError)`, `NotAdvancing { component }`,
   `NotRollable { component, version }`, `InvalidDataSource(#[from]
   DataSourceRule)` (ADR 0023 part 1 — kept apart from `DesiredState` because
-  it is refused on its own terms, before anything is read or written).
+  it is refused on its own terms, before anything is read or written),
+  `InvalidHeldDataSources { detail }` (a hand-edited `data-sources.yaml`
+  `check_held` refused), `PlacementRefused(#[from] PlacementRefusal)` (ADR
+  0023 part 2 — `select` refused the intent), `InvalidHeldPlacements
+  { detail }` (`InvalidHeldDataSources`'s sibling, from
+  `check_held_placements`), `DataSourceInUse { id: DataSourceId, tenants:
+  Vec<TenantId> }` (a data source `DataSources::remove` refused to drop
+  because a placement still names it).
 - `ComponentStatus { component, desired: Version, newer: Option<Version>,
   running: Running, observation: Option<DeploymentObservation>, policy,
   artifact: ArtifactKind, hold, desired_state: DesiredStateStatus,
@@ -188,25 +198,142 @@ own data-source sub-types rather than re-declared, so a hand-editable
   if present", per document (the whole environment's data sources), never per
   id. Not a supertrait of `DesiredState` — see `PlatformRepository`.
 - `PlatformRepository` (`binding/repository.rs`) — `trait PlatformRepository:
-  DesiredState + DataSourceState {}`, with a blanket `impl<T: DesiredState +
-  DataSourceState + ?Sized> PlatformRepository for T {}`. What
-  `PlatformDesiredState::connect` accepts: one connected repository answers
-  both ports, because `environments/ENV/data-sources.yaml` lives beside
-  `components.yaml` in the same repository, written by the same credential
-  (ADR 0023 part 1). Nothing has to name this trait to satisfy it — any type
-  already implementing both ports is a `PlatformRepository` for free, and no
-  existing `DesiredState` implementor (including test fakes never connected
-  to a binding) had to grow a `DataSourceState` half it does not use.
+  DesiredState + DataSourceState + PlacementState { async fn
+  write_environment(&self, environment: &str, write: EnvironmentWrite<'_>,
+  message: &str) -> Result<(), DesiredStateError>; }`. **Not a pure blanket
+  trait any more** (ADR 0023 part 2, B4): `write_environment` writes the
+  data-sources and placements documents in one atomic commit, and a generic
+  implementation over the three independent ports cannot know how to do
+  that, so every connectable type must name this trait and supply its own
+  atomic write — `PlatformGitRepository` (`fabric-platform-git`,
+  `src/port/environment.rs`) over `update_files_atomically` with two
+  `FileChange`s, the late-bound binding (`binding/environment.rs`) by
+  delegation untagging both revisions against one generation, and every
+  test fixture that connects to a binding needs its own implementation too.
+  What `PlatformDesiredState::connect` accepts: one connected repository
+  answers every port, because `environments/ENV/placements.yaml` lives
+  beside `data-sources.yaml` and `components.yaml` in the same repository,
+  written by the same credential (ADR 0023 parts 1 and 2).
+- `EnvironmentWrite<'a> { data_sources: (&'a [DataSourceDeclaration],
+  Option<&'a DesiredRevision>), placements: (&'a [PlacementRecord],
+  Option<&'a DesiredRevision>) }` (`binding/repository.rs`) — what
+  `write_environment` takes: both documents' complete lists, each with the
+  revision it was read at. The unchanged half is re-rendered from the list
+  the caller read even when nothing about it changed; for a file only
+  Fabric has written that reproduces the same bytes, so a content-addressed
+  adapter gives back the same revision and the sibling does not move, but
+  for a break-glass file with a comment *inside* the entry list (not the
+  preserved header) the comment is dropped on re-render, the bytes differ,
+  and the sibling's revision moves even though nothing about its meaning
+  did.
 - `DataSources { state: Arc<dyn DataSourceState> }` — `new(state)`. `async fn
   list(environment) -> DataSourcesRead` (read-only). `async fn
   declare(environment, declaration, at: Option<&DesiredRevision>) ->
   Result<Declared, PlatformError>` — validates first, then computes the
   revision itself (1 for a new id, held + 1 on any other field changing,
   unchanged when nothing does), and calls the port at all only when
-  something is actually being written.
+  something is actually being written; uses `write_data_sources` alone, a
+  single-document compare-and-swap. `async fn remove(environment, id, at:
+  Option<&DesiredRevision>, repository: &dyn PlatformRepository) ->
+  Result<Declared, PlatformError>` (ADR 0023 part 2) — reads both
+  documents through `repository` (not `self.state`: this is the one
+  operation on this service that needs every port, to call
+  `write_environment` rather than `write_data_sources` alone), refuses
+  `DataSourceInUse` naming every tenant still placed on `id` (deduplicated
+  — one tenant with two logical placements on the source being removed is
+  named once), otherwise writes both documents in one commit, the data
+  sources without `id` and the placements list unchanged. `repository` is
+  taken per call, not at construction, so the check and the write see the
+  same state; `DataSources::new`'s own constructor is unchanged by ADR 0023
+  part 2 (`data_sources/service/remove.rs`).
 - `Declared` — `Written(DataSourcesRead)` | `Unchanged(DataSourcesRead)`, so a
   caller can tell "nothing changed" from "this is what changed to" without
   comparing documents itself.
+- `DataIntent { class: PlacementClassDocument, provider: Option<String>,
+  region: Option<String> }` (ADR 0023 part 2) — a structural twin of
+  `fabric_client_model::DataIntent`, declared again here rather than
+  depended on (neither crate may depend on the other; `fabric-control-plane`
+  is the one caller with both types in scope and converts between them).
+- `PlacementRecord { tenant: TenantId, logical: LogicalDataSourceName,
+  data_source: DataSourceId, isolation: IsolationModelDocument, placed_at:
+  String }` (`Serialize`/`Deserialize`, `deny_unknown_fields`) — the fact,
+  once `select` has decided it. `isolation` is the wire's own
+  `IsolationModelDocument`, never a second declaration of its three shapes.
+- `IsolationModelDocument` — re-exported from `fabric_runtime_publication`
+  at this crate's root, same reason as the data-source sub-types:
+  `Database {}` | `Schema { schema: SchemaName }` | `Discriminator { column:
+  FieldName, value: String }`.
+- `PlacementsRead { revision: Option<DesiredRevision>, placements:
+  Vec<PlacementRecord> }` — placements sorted by (tenant, logical);
+  `revision` is `Option` at the port for the same reason `DataSourcesRead`'s
+  is, and the binding always fills it with `Some`.
+- `PlacementState` (async trait) — `read_placements(environment) ->
+  PlacementsRead`; `write_placements(environment, placements: &[…], at:
+  Option<&DesiredRevision>, message) -> Result<(), DesiredStateError>` — the
+  same whole-document compare-and-swap shape `DataSourceState` is. Not a
+  supertrait of `DesiredState` — see `PlatformRepository`.
+- `select(intent: &DataIntent, tenant: &TenantId, logical:
+  &LogicalDataSourceName, declared: &[DataSourceDeclaration], held:
+  &[PlacementRecord], now: &str) -> Result<PlacementRecord,
+  PlacementRefusal>` (`placements/select.rs`, `placements/select/pick.rs`)
+  — pure, the only place ADR 0023 part 2 lets this decision be made. Order:
+  `AlreadyPlaced` if `held` already has (tenant, logical); candidates are
+  `declared` entries matching `intent.class`, `accepts_new_tenants`,
+  `writable`, and `residency.region` when `intent.region` is stated
+  (`provider` never matched); on `Shared`, the candidate with the fewest
+  held placements wins (ties by lowest id), isolated by `Discriminator`
+  naming the tenant id as `value` — a collision is checked against
+  *different* tenants only, since the value is always this tenant's own id
+  and a second logical placement of its own on the same source legitimately
+  repeats it (B2) — refusing `DiscriminatorValueTaken` if a different
+  tenant already holds that value; on any other class, the lowest-id
+  candidate with **no** held placement wins, isolated by `Database {}`
+  (`Schema` is never produced — ADR 0006 calls it inert); no candidate at
+  either step is `NoDataSourceAdmits { class, region, provider }` when
+  nothing declared even matched the class/region/capabilities, or
+  `AllMatchingSourcesOccupied { class }` when something did but — because
+  the class is not `Shared` — every one that matched already holds a
+  tenant (N2: kept apart from `NoDataSourceAdmits` so an operator is never
+  sent to declare a data source they already declared).
+- `PlacementRefusal` (`thiserror`) — `AlreadyPlaced { tenant, logical }` |
+  `NoDataSourceAdmits { class, region, provider }` |
+  `AllMatchingSourcesOccupied { class }` | `DiscriminatorValueTaken {
+  data_source, value }` | `TenantIdInvalid { client }` (the client id
+  `Placements::place`/`for_client` reparse as a `TenantId` is not one,
+  N11). Each variant's `Display` is the operator-facing message; none names
+  a file.
+- `PlacementOutcome` — `Placed(PlacementRecord)` | `Placeable` |
+  `Refused(PlacementRefusal)`. Three states, not two: "nothing recorded, and
+  `select` would place it" and "nothing recorded, and `select` would refuse
+  it" are different facts a caller acts on differently.
+- `ClientPlacements { revision: Option<DesiredRevision>, entries:
+  BTreeMap<LogicalDataSourceName, PlacementOutcome> }` — what
+  `Placements::for_client` found, one entry per logical data source asked
+  about.
+- `Placements { repository: Arc<dyn PlatformRepository>, clock: Arc<dyn
+  Clock> }` — `new(repository, clock)`. One field for every port, not two
+  separate `Arc`s: `place` needs `write_environment`, which only exists on
+  the combined trait, and both operations' own signatures are fixed by ADR
+  0023 part 2 with no room for an extra parameter to carry it in instead.
+  `async fn for_client(environment, client: &str, intents:
+  &BTreeMap<LogicalDataSourceName, DataIntent>) -> Result<ClientPlacements,
+  PlatformError>` — reparses `client` as a `TenantId` itself (N11, refusing
+  `PlacementRefusal::TenantIdInvalid` if it is not one, so the control
+  plane never does this conversion), reads both held documents (validating
+  each), runs `select` per intent without writing, and returns the
+  preview. `async fn place(environment, client: &str, logical, intent, at:
+  Option<&DesiredRevision>) -> Result<PlacementsRead, PlatformError>` —
+  reparses `client` the same way, checks `at` against the held placements
+  revision *immediately after reading it* and before data sources are even
+  read (N9; same precondition-before-planning order as
+  `DataSources::declare`), computes `now` via a fallible `stamp()` that
+  refuses `DesiredStateError::Unavailable` rather than record an empty
+  `placed_at` when the clock cannot be formatted as RFC 3339 (N4), then
+  calls `write_environment` with the data sources it read (unchanged) and
+  the placements list with `select`'s new record appended. Split across
+  `service.rs` (the struct, `place`), `service/for_client.rs` (`for_client`),
+  and `service/stamp.rs` (`stamp`); `tenant_id.rs` holds the shared
+  reparse, since both operations need it.
 
 ## Internal modules
 
@@ -215,16 +342,18 @@ own data-source sub-types rather than re-declared, so a hand-editable
   grammars (`parse` for OCI tags, `parse_chart` for Helm chart versions,
   which may carry build metadata).
 - `binding.rs` +
-  `binding/{bound,data_sources,delegate,generation,holding,live,repository,swap}.rs`
+  `binding/{bound,data_sources,delegate,environment,generation,holding,live,placements,repository,swap}.rs`
   — `PlatformDesiredState`. `bound.rs`: `Bound` enum, holding
-  `Arc<dyn PlatformRepository>` once connected (not `Arc<dyn DesiredState>` —
-  a connected repository must answer both ports). `repository.rs`:
-  `PlatformRepository` trait plus its blanket impl — no supertrait
-  relationship between `DesiredState` and `DataSourceState`, on purpose (see
-  its own rustdoc for why a combined trait was chosen over one). `live.rs`:
+  `Arc<dyn PlatformRepository>` once connected. `repository.rs`:
+  `PlatformRepository` trait (no supertrait relationship among
+  `DesiredState`/`DataSourceState`/`PlacementState`, on purpose -- see its
+  own rustdoc) plus `EnvironmentWrite`; no blanket impl any more, since
+  `write_environment` needs a real one (ADR 0023 part 2, B4). `live.rs`:
   `Live` (the `Bound` + generation counter under one `RwLock`), and
-  `repository()`/`data_source_repository()`, which upcast the stored
-  `Arc<dyn PlatformRepository>` to each port in turn. `swap.rs`:
+  `repository()`/`data_source_repository()`/`placement_repository()`/
+  `platform_repository()`, which upcast the stored `Arc<dyn
+  PlatformRepository>` to each port in turn (`platform_repository()`
+  hands back the whole trait, unupcast, for `write_environment`). `swap.rs`:
   `connect`/`unusable`/`disconnect`, all via a private `set` that bumps the
   generation; `connect` takes `Arc<dyn PlatformRepository>`. `generation.rs`:
   `tag`/`untag` a `DesiredRevision` with the binding generation it was read
@@ -239,22 +368,55 @@ own data-source sub-types rather than re-declared, so a hand-editable
   at the boundary. `data_sources.rs`: the same shape as `delegate.rs`, for
   `impl DataSourceState for PlatformDesiredState` — `read_data_sources`
   always returns `Some` revision, even for an absent file, via
-  `tag_presence`.
+  `tag_presence`. `placements.rs`: the same shape again, for `impl
+  PlacementState for PlatformDesiredState`. `environment.rs`: `impl
+  PlatformRepository for PlatformDesiredState` — `write_environment`
+  untags *both* halves' revisions against the one generation read under
+  the one guard, so a rebind between the read and the write refuses both
+  at once rather than leaving one checked and the other trusted.
 - `charts.rs` — `ChartIndex` trait alone.
 - `data_sources.rs` +
   `data_sources/{declaration,held,plan,port,read,rule,service,validate}.rs`
-  (ADR 0023 part 1) — `declaration.rs`: `DataSourceDeclaration`,
-  `Discriminator`, `into_document`. `validate.rs`: `DataSourceDeclaration::validate`,
-  the `DataSourceRule` checks. `rule.rs`: `DataSourceRule`, `PoolField`.
-  `held.rs` (`pub(crate)`): `check_held(declarations) -> Result<(),
-  DesiredStateError>` — refuses a held document a hand edit made incoherent
-  (two entries with one id, or an entry that no longer validates); called by
-  both `list` and `declare` on *every* read, not only on write, since a
-  break-glass edit can land between any two calls. `port.rs`:
-  `DataSourceState` trait. `read.rs`: `DataSourcesRead`. `service.rs`:
-  `DataSources`, `Declared`. `plan.rs` (`pub(crate)`): `plan(held, incoming)
-  -> Plan` — the pure revision/no-op decision behind `declare`, tested on its
-  own in `plan_tests.rs`.
+  + `data_sources/service/remove.rs`
+  (ADR 0023 part 1, part 2 for `remove`) — `declaration.rs`:
+  `DataSourceDeclaration`, `Discriminator`, `into_document`. `validate.rs`:
+  `DataSourceDeclaration::validate`, the `DataSourceRule` checks. `rule.rs`:
+  `DataSourceRule`, `PoolField`. `held.rs` (`pub(crate) mod`, crate-wide so
+  `placements::service` and `data_sources::service::remove` can both reach
+  it): `check_held(declarations) -> Result<(), DesiredStateError>` —
+  refuses a held document a hand edit made incoherent (two entries with one
+  id, or an entry that no longer validates); called by `list`, `declare`
+  and `remove` on *every* read, not only on write, since a break-glass edit
+  can land between any two calls. `port.rs`: `DataSourceState` trait.
+  `read.rs`: `DataSourcesRead`. `service.rs`: `DataSources`, `Declared`
+  (its own docs now say what `remove` does too, not only `declare`).
+  `service/remove.rs`: `DataSources::remove`, split out once the method
+  needed `write_environment` and grew past this crate's line budget.
+  `plan.rs` (`pub(crate)`): `plan(held, incoming) -> Plan` — the pure
+  revision/no-op decision behind `declare`, tested on its own in
+  `plan_tests.rs`.
+- `placements.rs` +
+  `placements/{held,intent,outcome,port,read,record,refusal,select,service,tenant_id}.rs`
+  + `placements/held/rules.rs` + `placements/select/pick.rs` +
+  `placements/service/{for_client,stamp}.rs`
+  (ADR 0023 part 2) — `intent.rs`: `DataIntent`. `record.rs`:
+  `PlacementRecord`. `refusal.rs`: `PlacementRefusal`, its `Display`
+  messages, and the one-line reason this file sits in the 121-150 line band
+  (one enum, one message-building helper per non-trivial variant, and
+  splitting either from the other would separate a refusal from the words
+  an operator reads for it). `outcome.rs`: `PlacementOutcome`,
+  `ClientPlacements`. `port.rs`: `PlacementState` trait. `read.rs`:
+  `PlacementsRead`. `held.rs` (`pub(crate) mod`): `check_held_placements(placements,
+  declared) -> Result<(), PlatformError>` — `data_sources::held::check_held`'s
+  sibling, called by `for_client`, `place` and `DataSources::remove` on
+  every read; delegates the isolation/class match to `held/rules.rs`
+  (`isolation_matches_class`), split out to keep this file under the line
+  budget. `select.rs` + `select/pick.rs`: `select`, the pure selector, and
+  its rules 3-5 (`pick_shared`, `pick_exclusive`). `tenant_id.rs`: the
+  client-id-to-`TenantId` reparse shared by `place` and `for_client` (N11).
+  `service.rs` + `service/for_client.rs` + `service/stamp.rs`: `Placements`,
+  `for_client` (preview, no write), `place` (write, via
+  `write_environment`), `stamp` (the fallible RFC 3339 clock read, N4).
 - `desired_state.rs` + `desired_state/{component,errors,port}.rs` —
   `ComponentDesired`, `DesiredRevision`, `Hold`, `DesiredStateError`,
   `DesiredState` trait.
@@ -330,6 +492,12 @@ own data-source sub-types rather than re-declared, so a hand-editable
    the observer, and nothing here infers a running version from desired
    state having changed — a running version is only ever evidence handed in
    by whatever implements the port (ADR 0022).
+10. **`select` is the only place a placement is decided, and it never runs
+    again for a tenant already placed.** `Placements::place` and
+    `Placements::for_client` both check `held` for the (tenant, logical)
+    pair before calling `select`; publication reads `PlacementRecord` and
+    copies it, it never recomputes one — the record is the fact, not a
+    formula run again (ADR 0007, ADR 0023 part 2).
 
 ## Notes
 

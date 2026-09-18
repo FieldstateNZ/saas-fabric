@@ -14,6 +14,14 @@ mod binding_tests;
 #[path = "binding/data_sources_tests.rs"]
 mod data_sources_tests;
 
+#[cfg(test)]
+#[path = "binding/placements_tests.rs"]
+mod placements_tests;
+
+#[cfg(test)]
+#[path = "binding/environment_tests.rs"]
+mod environment_tests;
+
 use std::sync::Arc;
 
 use tokio::sync::{RwLock, RwLockReadGuard};
@@ -23,13 +31,15 @@ use self::live::Live;
 mod bound;
 mod data_sources;
 mod delegate;
+mod environment;
 mod generation;
 mod holding;
 mod live;
+mod placements;
 mod repository;
 mod swap;
 
-pub use repository::PlatformRepository;
+pub use repository::{EnvironmentWrite, PlatformRepository};
 
 /// The platform repository this control plane is currently connected to.
 ///

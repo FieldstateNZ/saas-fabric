@@ -570,7 +570,17 @@ def check_dependency_direction(graph: Graph) -> list[Failure]:
             "fabric-data-api",
         },
         # The control plane. A separate graph, sharing only `fabric-core`.
-        "fabric-client-model": {"fabric-core"},
+        #
+        # Its edge to `fabric-runtime-publication` (ADR 0023 part 2) is not a
+        # transport edge, and mirrors why `fabric-platform-management` has the
+        # same edge below: `DataIntent.class` reuses the wire's own
+        # `PlacementClassDocument` rather than a third declaration of the six
+        # placement classes, so a client document's stated intent can never
+        # name a class a data source could not also declare. Both crates are
+        # in neither plane, so this stays on the "everyone may depend on
+        # `fabric-core`, and now on this" footing `fabric-runtime-publication`
+        # already has.
+        "fabric-client-model": {"fabric-core", "fabric-runtime-publication"},
         "fabric-reconciliation": {"fabric-core", "fabric-client-model"},
         "fabric-control-plane": {
             "fabric-core",

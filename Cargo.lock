@@ -270,6 +270,7 @@ name = "fabric-client-model"
 version = "0.3.0"
 dependencies = [
  "fabric-core",
+ "fabric-runtime-publication",
  "serde",
  "serde_norway",
  "thiserror",

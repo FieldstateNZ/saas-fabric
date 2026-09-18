@@ -4,11 +4,18 @@ Atomic, multi-file desired-state mutation in the platform repository, over
 the Git Data API — and the `DesiredState` adapter that lets
 `fabric-platform-management` read and move it. Since ADR 0023 part 1 it is
 also the `DataSourceState` adapter for what an environment can place a
-tenant's data on, over the same repository and the same atomic-write
-primitive. `DataSourceState` is not `DesiredState`'s supertrait; this crate
-implements both directly, which is what makes it a `PlatformRepository`
-(`fabric-platform-management`'s combined trait, satisfied by a blanket
-impl) for free -- the one thing `PlatformDesiredState::connect` accepts.
+tenant's data on, and since ADR 0023 part 2 it is the `PlacementState`
+adapter for what a tenant is recorded placed on, over the same repository
+and the same atomic-write primitive. Neither `DataSourceState` nor
+`PlacementState` is `DesiredState`'s supertrait; this crate implements all
+three directly. That alone no longer makes it a `PlatformRepository` for
+free: since ADR 0023 part 2 (B4) that trait carries a fourth, required
+method, `write_environment`, with no honest generic default (writing two
+documents in one atomic commit is not something three independent ports
+can be combined into automatically), so this crate names
+`PlatformRepository` explicitly and supplies it itself (`src/port/environment.rs`,
+over `update_files_atomically` with two `FileChange`s) -- still the one
+thing `PlatformDesiredState::connect` accepts.
 This is the platform's own equivalent of
 `fabric-client-git`, using the same credential mechanism (`fabric-git-host`)
 against a completely separate GitHub App and repository.
@@ -17,7 +24,8 @@ Sits in neither plane (see
 [`docs/architecture/crate-dependencies.md`](../../../docs/architecture/crate-dependencies.md)).
 Depends on `fabric-core`, `fabric-git-host` (the App credential) and
 `fabric-platform-management` (the update-policy rules this crate serialises,
-and the `DesiredState` port it implements).
+and the `DesiredState`/`DataSourceState`/`PlacementState`/`PlatformRepository`
+ports it implements).
 
 ## Why this crate exists
 
@@ -112,6 +120,34 @@ and it deliberately does not stop there — see "Concurrency" below.
   different environment than the one it was read for. Every entry in the
   envelope is `DataSourceDeclaration` itself — this crate never re-declares
   the shape.
+- **The `PlacementState` port (`port/placements.rs` + friends, ADR 0023
+  part 2)** — a third declared document, `environments/<env>/placements.yaml`,
+  beside `data-sources.yaml`, over the identical header-preserving,
+  compare-and-swap shape as both: `document.rs`'s `Document` mirrors
+  `data_sources::document::Document` exactly, down to the schema-version
+  probe; `header.rs` is its own copy of `header_of` for the same reason
+  `data_sources::header`'s is -- `components.rs` must not know data
+  sources exist, and neither of the two may know placements do either.
+  Every entry in the envelope is `PlacementRecord` itself, sorted by
+  (tenant, logical) on every write so an unrelated edit produces no diff.
+  `CREATE_HEADER` says, in the platform repository's own voice, that the
+  record is written by Fabric when a tenant is placed and is what
+  publication copies.
+- **`write_environment` (`port/environment.rs`, ADR 0023 part 2, B4)** —
+  writes the data-sources and placements documents in one atomic commit,
+  closing the race two independent single-document writes leave open
+  (`place` reading data sources and writing placements while `remove`
+  reads placements and writes data sources could interleave and leave a
+  placement naming a source nothing declares). Reads both documents
+  independently, builds each one's `FileChange` through a shared
+  header-preserving, compare-and-swap helper, and hands both to
+  `update_files_atomically` in one call. Because blobs are content-addressed,
+  re-rendering a document that did not change reproduces the same bytes and
+  the same `FileRevision` -- placing one tenant does not move the
+  data-sources revision, *except* for a break-glass file with a comment
+  written inside the entry list (not the header), which this crate's model
+  does not preserve, so that file's bytes -- and its revision -- do change
+  on a re-render even though nothing about what it declares did.
 
 ## How the pieces fit
 
@@ -152,8 +188,9 @@ let repository = PlatformGitRepository::new(
     SystemClock::shared(),
 )?;
 
-// implements fabric_platform_management::DesiredState and DataSourceState
-// directly, so it is a PlatformRepository for free:
+// implements fabric_platform_management::DesiredState, DataSourceState,
+// PlacementState and PlatformRepository (the last explicitly -- it is not
+// free any more, see "Key concepts" above):
 let binding = fabric_platform_management::PlatformDesiredState::unconnected();
 binding.connect(Arc::new(repository)).await;
 ```
@@ -190,6 +227,12 @@ to the state it was taken against").
   over a hypothetical direct call regardless: `fabric-platform-management`'s
   `DataSources` service is what computes the revision and decides whether
   anything changed at all.
+- **Reading or recording an environment's placements** — through the port,
+  `fabric_platform_management::PlacementState::read_placements`/
+  `write_placements`; `PlatformGitRepository::read_placements_file`/
+  `write_placements_file` underneath are `pub(crate)`. Prefer the port here
+  too: `fabric-platform-management`'s `Placements` service is what runs the
+  selector and decides what gets written.
 
 ## Gotchas
 
@@ -232,3 +275,24 @@ to the state it was taken against").
   `components/document.rs`'s function of the same name, not a shared one —
   the two documents' headers are allowed to diverge, and sharing the
   function would tempt `components.rs` into knowing data sources exist.
+- `port/placements/header.rs::header_of` is the same deliberate copy again,
+  one level further removed: `components.rs` must not know data sources
+  exist, and neither of those two may know placements do either. Three
+  copies of eight lines is the smaller cost.
+- `port/data_sources.rs` and `port/placements.rs` widen their `document`,
+  `read` and `write` submodules to `pub(crate)` (from the crate-private
+  default) purely so `port/environment.rs` -- a sibling of both, not a
+  descendant of either -- can reach `Document::new`/`render`/`header`, the
+  path functions and each `CREATE_HEADER` without a second declaration.
+  Nothing outside `port/` should rely on that widened visibility; it exists
+  for this one cross-port caller.
+- `write_environment` re-renders **both** documents on every call, even the
+  one nothing asked to change. For a file only Fabric has ever written that
+  reproduces identical bytes, so its blob hash -- and therefore its
+  `FileRevision` -- does not move: placing a tenant does not disturb an
+  operator's data-sources `ETag`. A break-glass file with a hand-written
+  comment *inside* the entry list (as opposed to the preserved header) is
+  the one case where this is not true -- the comment is not part of any
+  entry this crate models, is dropped on re-render, and the resulting byte
+  difference does move that file's revision, even though nothing about
+  what it declares changed.

@@ -1,6 +1,8 @@
 //! What can go wrong looking at, or moving, a component.
 
-use crate::{DataSourceRule, DesiredStateError, RegistryError};
+use fabric_core::{DataSourceId, TenantId};
+
+use crate::{DataSourceRule, DesiredStateError, PlacementRefusal, RegistryError};
 
 /// What can go wrong looking at, or moving, a component.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -81,5 +83,46 @@ pub enum PlatformError {
         /// What `check_held` found wrong, in its own words -- never a
         /// file path.
         detail: String,
+    },
+
+    /// The selector would not place this intent (ADR 0023 part 2).
+    ///
+    /// Kept distinct from `DesiredState` for the same reason
+    /// `InvalidDataSource` is: the request was understood and refused on
+    /// its own terms, against declared and held state, before anything
+    /// was written.
+    #[error(transparent)]
+    PlacementRefused(#[from] PlacementRefusal),
+
+    /// A held placements document is no longer something to trust: a hand
+    /// edit gave one tenant's logical data source two entries, named a
+    /// data source nothing declares, recorded an isolation kind its data
+    /// source does not serve, or gave two tenants one discriminator value
+    /// on one data source (`placements::held::check_held_placements`, run
+    /// on every read).
+    ///
+    /// `InvalidHeldDataSources`'s sibling, kept apart from `DesiredState`
+    /// for the same reason that one is: a coherence problem in a document
+    /// this platform itself authored, not an outage upstream of it.
+    #[error("{detail}")]
+    InvalidHeldPlacements {
+        /// What `check_held_placements` found wrong, in its own words --
+        /// never a file path.
+        detail: String,
+    },
+
+    /// A data source cannot be removed while a placement still names it
+    /// (ADR 0023 part 2): the publisher already refuses to publish a
+    /// placement whose data source does not exist, and refusing the edit
+    /// here is the earlier, clearer place to say so.
+    #[error(
+        "{id} is placed for {}",
+        tenants.iter().map(TenantId::as_str).collect::<Vec<_>>().join(", ")
+    )]
+    DataSourceInUse {
+        /// The data source a removal was asked for.
+        id: DataSourceId,
+        /// Every tenant still placed on it.
+        tenants: Vec<TenantId>,
     },
 }

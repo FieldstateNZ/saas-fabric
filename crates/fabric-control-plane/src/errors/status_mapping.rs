@@ -20,9 +20,6 @@ impl ControlPlaneError {
     /// an operator acts on survives anyway in the machine code beside it, where
     /// every one of them has its own. The platform's own arms follow the same
     /// rule in `platform.rs`.
-    ///
-    /// One arm here used to be a block for no reason but to keep this lint
-    /// quiet. Saying so is better than the trick.
     #[allow(
         clippy::match_same_arms,
         reason = "arms are grouped by cause; codes keep them apart"
@@ -107,10 +104,12 @@ impl ControlPlaneError {
                 StatusCode::INTERNAL_SERVER_ERROR
             }
 
-            // 422, joining `DocumentTooLarge`: understood, and what was
-            // asked for cannot be acted on. The fix is to change what was
-            // submitted, not to retry it.
-            Self::InvalidDataSource(_) => StatusCode::UNPROCESSABLE_ENTITY,
+            // 422, joining `DocumentTooLarge`: understood, and cannot be
+            // acted on, so the fix is to change what was submitted.
+            // `LogicalDataSourceNotDeclared` shares this (ADR 0023 part 2).
+            Self::InvalidDataSource(_) | Self::LogicalDataSourceNotDeclared { .. } => {
+                StatusCode::UNPROCESSABLE_ENTITY
+            }
 
             // 503 and retryable: Git being briefly unreachable is the ordinary
             // transient failure of this API.

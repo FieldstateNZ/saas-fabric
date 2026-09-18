@@ -31,4 +31,14 @@ pub struct PlatformBinding {
     /// disagree about which platform repository is live — see
     /// `fabric-control-plane-api`'s `startup::platform::establish`.
     pub data_sources: Arc<fabric_platform_management::DataSources>,
+
+    /// Placing a client's data intent, and previewing what placing it would
+    /// do (ADR 0023 part 2).
+    ///
+    /// Built over the same late-bound `repository` above and the same
+    /// `data_sources` beside it, so a placement is decided against the
+    /// same declared data sources an operator's own `GET
+    /// /api/platform/data-sources` would show — see
+    /// `fabric-control-plane-api`'s `startup::platform::establish`.
+    pub placements: Arc<fabric_platform_management::Placements>,
 }

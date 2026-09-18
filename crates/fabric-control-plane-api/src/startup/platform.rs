@@ -5,11 +5,12 @@ use std::sync::Arc;
 use fabric_control_plane::PlatformBinding;
 use fabric_core::Clock;
 use fabric_platform_management::{
-    ChartIndex, DataSourceState, DataSources, DesiredState, PlatformDesiredState, PlatformManagement,
-    Registry,
+    ChartIndex, DataSourceState, DataSources, DesiredState, Placements, PlatformDesiredState,
+    PlatformManagement, PlatformRepository, Registry,
 };
 use fabric_registry::{HelmCharts, OciRegistry};
 
+mod budget;
 mod sweeping;
 
 pub(super) use sweeping::start_sweeping;
@@ -72,31 +73,7 @@ pub fn establish(
         return Ok(None);
     };
 
-    if config.operation_timeout_seconds == 0 {
-        return Err(
-            "platform_management.operation_timeout_seconds must be at least 1: zero would time \
-             out every operation immediately"
-                .to_owned(),
-        );
-    }
-
-    // Saturating, so a deployment that wrote something absurd is refused rather
-    // than wrapping round into a sum that looks small enough.
-    let longest = config
-        .operation_timeout_seconds
-        .saturating_add(http_timeout_seconds);
-
-    if longest >= request_timeout_seconds {
-        return Err(format!(
-            "platform_management.operation_timeout_seconds ({}) plus git_host.http_timeout_seconds \
-             ({http_timeout_seconds}) must be less than request_timeout_seconds \
-             ({request_timeout_seconds}): an operator's disconnect waits for the operation already \
-             in flight, which runs for the budget plus the one call the budget cannot cut short, \
-             and that wait has to sit below one request with room left for the rest of the \
-             disconnect",
-            config.operation_timeout_seconds
-        ));
-    }
+    budget::validate(config, http_timeout_seconds, request_timeout_seconds)?;
 
     let registry = OciRegistry::new(
         &config.registry.base_url,
@@ -135,11 +112,18 @@ pub fn establish(
     let data_sources = Arc::new(DataSources::new(
         Arc::clone(&repository) as Arc<dyn DataSourceState>
     ));
+    // Over the same `repository` and `clock` as `data_sources` above --
+    // see `PlatformBinding::placements`'s own rustdoc.
+    let placements = Arc::new(Placements::new(
+        Arc::clone(&repository) as Arc<dyn PlatformRepository>,
+        Arc::clone(clock),
+    ));
 
     Ok(Some(PlatformBinding {
         service: Arc::new(service),
         repository,
         data_sources,
+        placements,
         environment: config.environment.clone(),
     }))
 }

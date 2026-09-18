@@ -128,3 +128,20 @@ export async function declareDataSource(
     body: JSON.stringify(input),
   })
 }
+
+/**
+ * Removes a data source that no placement references.
+ *
+ * `revision` is the data-sources document revision this operator last read,
+ * always sent as `If-Match` -- the same precondition `declareDataSource`
+ * sends. A data source a held placement still names is refused as
+ * `409 data_source_in_use`, with the tenants that hold it in the message;
+ * removing one nothing references answers with the data-sources list, the
+ * same body `getDataSources` and `declareDataSource` return.
+ */
+export async function removeDataSource(id: string, revision: string): Promise<DataSources> {
+  return request<DataSources>(`/api/platform/data-sources/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+    headers: { 'If-Match': `"${revision}"` },
+  })
+}

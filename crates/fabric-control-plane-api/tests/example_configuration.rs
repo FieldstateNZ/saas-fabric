@@ -8,9 +8,11 @@
 
 use std::path::PathBuf;
 
-use fabric_client_model::{ClientDocument, API_VERSION, API_VERSION_V2};
+use fabric_client_model::{ClientDocument, DataIntent, API_VERSION, API_VERSION_V2};
 use fabric_control_plane::OperatorConfig;
 use fabric_control_plane_api::config::{ControlPlaneAppConfig, DesiredStateConfig, IdentityProviderConfig};
+use fabric_core::LogicalDataSourceName;
+use fabric_platform_management::PlacementClassDocument;
 
 /// The repository root, from this crate's manifest directory.
 fn repository_root() -> PathBuf {
@@ -126,12 +128,40 @@ fn every_example_client_document_parses() {
 fn an_example_client_carries_sections_the_control_plane_does_not_model() {
     // The examples are what demonstrate the preservation guarantee. One that
     // held only identity would make the guarantee untestable by inspection.
+    // `data` is not in this list any more -- ADR 0023 part 2 made it typed,
+    // and the test below exercises that through the real loader instead.
     let text = std::fs::read_to_string(repository_root().join("examples/clients/acme.yaml"))
         .expect("the acme example must exist");
 
     assert!(text.contains("features:"));
-    assert!(text.contains("data:"));
     assert!(ClientDocument::parse(&text).is_ok());
+}
+
+#[test]
+fn an_example_clients_data_intent_reaches_the_typed_model() {
+    // The acme example's `spec.data.primary` is what pins `DataIntent`
+    // parsing against a real, shipped document rather than only an inline
+    // fixture.
+    let text = std::fs::read_to_string(repository_root().join("examples/clients/acme.yaml"))
+        .expect("the acme example must exist");
+
+    let client = ClientDocument::parse(&text)
+        .expect("the acme example parses")
+        .into_client();
+
+    let primary = client
+        .data
+        .get(&LogicalDataSourceName::try_new("primary").expect("a valid logical data source name"))
+        .expect("the acme example declares a primary data intent");
+
+    assert_eq!(
+        *primary,
+        DataIntent {
+            class: PlacementClassDocument::Dedicated,
+            provider: Some("sql".to_owned()),
+            region: Some("au-east".to_owned()),
+        }
+    );
 }
 
 #[test]

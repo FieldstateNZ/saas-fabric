@@ -14,6 +14,7 @@
 
 use axum::extract::{FromRequest, FromRequestParts, Request};
 use fabric_client_model::{ClientId, DesiredStateError};
+use fabric_core::DataSourceId;
 use http::request::Parts;
 use serde::de::DeserializeOwned;
 
@@ -59,6 +60,39 @@ impl<S: Send + Sync> FromRequestParts<S> for ClientPath {
     }
 }
 
+/// The data source id from the request path, already validated.
+///
+/// # Why this is a lookup key and never a path
+///
+/// ADR 0023 keeps `DataSourceId` a key an adapter looks up in a document it
+/// already read, never a segment it builds a repository path from. This
+/// extractor is what makes that true at the boundary: a value that is not a
+/// [`DataSourceId`] is refused here, before a handler ever sees it, so there
+/// is no later point where an unchecked string could be handed to the
+/// repository.
+pub(crate) struct DataSourceIdPath(pub(crate) DataSourceId);
+
+impl<S: Send + Sync> FromRequestParts<S> for DataSourceIdPath {
+    type Rejection = ControlPlaneError;
+
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        let axum::extract::Path(params) =
+            axum::extract::Path::<std::collections::HashMap<String, String>>::from_request_parts(
+                parts, state,
+            )
+            .await
+            .map_err(|_| invalid("dataSourceId", "the request path names no data source".to_owned()))?;
+
+        let value = params
+            .get("data_source_id")
+            .ok_or_else(|| invalid("dataSourceId", "the request path names no data source".to_owned()))?;
+
+        DataSourceId::try_new(value)
+            .map(Self)
+            .map_err(|error| invalid("dataSourceId", error.to_string()))
+    }
+}
+
 /// A JSON request body, bounded and rejected in this crate's error shape.
 pub(crate) struct BoundedJson<T>(pub(crate) T);
 
@@ -90,6 +124,12 @@ fn invalid(field: &'static str, detail: String) -> ControlPlaneError {
 /// `serde_json`'s message names the offending field and position, which is the
 /// most useful thing an operator can be told and names nothing internal — the
 /// body is the operator's own.
-fn malformed(detail: String) -> ControlPlaneError {
+///
+/// `pub(crate)` rather than private: a handler that accepts part of its body
+/// as a closed set of words rather than through `Deserialize` alone — the
+/// data-source `placement` field, say — reports the same way a body that
+/// failed to parse at all does, rather than inventing a second shape for
+/// "the JSON was fine but the value was not".
+pub(crate) fn malformed(detail: String) -> ControlPlaneError {
     ControlPlaneError::InvalidRequest(DesiredStateError::Malformed { detail })
 }

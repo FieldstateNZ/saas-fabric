@@ -47,7 +47,8 @@ pub(crate) use integration::{
 pub(crate) use list_activity::list_activity;
 pub(crate) use list_clients::list_clients;
 pub(crate) use platform::{
-    get_platform, pause_component, resume_component, roll_back_component, rollback_candidates,
+    declare_data_source, get_platform, list_data_sources, pause_component, resume_component,
+    roll_back_component, rollback_candidates,
 };
 pub(crate) use put_identity::put_identity;
 pub(crate) use put_product::put_product;

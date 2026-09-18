@@ -73,6 +73,7 @@ fabric-platform-git    → fabric-core
                        → fabric-platform-management (the update policy)
 
 fabric-platform-management → fabric-core            (the rules; no transport)
+                       → fabric-runtime-publication (a data source's own sub-types)
 
 fabric-registry        → fabric-platform-management  (implements Registry)
 
@@ -118,6 +119,15 @@ defines the `Registry` port and is handed an implementation, because *which*
 registry and *how it authenticates* is a separate integration from the platform
 repository's credential and the two must stay separable — the GitHub App that
 writes desired state is not, and must never become, the registry credential.
+
+Its edge to `fabric-runtime-publication` (ADR 0023) is not a transport edge:
+it reuses that crate's own sub-types for a declared data source (connector,
+connection selector, placement, residency, pool, capabilities) so a
+hand-editable `data-sources.yaml` can never disagree with the document
+published from it — there is one declaration of the shape, not two. Both
+crates are in neither plane, so the edge stays inside the "everyone may
+depend on `fabric-core`, and now on this" footing the section below already
+gives `fabric-runtime-publication`.
 
 `fabric-deployment-kubernetes` implements the optional `DeploymentObserver`
 port. It depends only on `fabric-core` and `fabric-platform-management`; only

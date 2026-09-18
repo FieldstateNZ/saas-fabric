@@ -17,6 +17,7 @@ use fabric_platform_management::{
 use crate::PlatformGitRepository;
 
 mod budget;
+mod data_sources;
 mod errors;
 mod reading;
 mod wanted;

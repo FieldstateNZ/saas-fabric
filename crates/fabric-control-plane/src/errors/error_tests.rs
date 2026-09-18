@@ -2,7 +2,9 @@
 
 use axum::response::IntoResponse as _;
 use fabric_client_model::{ClientId, DesiredStateError, RealmName};
-use fabric_platform_management::{DesiredStateError as PlatformDesiredStateError, PlatformError};
+use fabric_platform_management::{
+    DataSourceRule, DesiredStateError as PlatformDesiredStateError, PlatformError,
+};
 use http::StatusCode;
 
 use crate::operator::OperatorAuthError;
@@ -34,6 +36,7 @@ fn every_failure_has_its_own_machine_code() {
         ControlPlaneError::RepositoryRejected,
         ControlPlaneError::IntegrationRefused("no such repository".to_owned()),
         ControlPlaneError::IntegrationMoved,
+        ControlPlaneError::InvalidDataSource(DataSourceRule::SharedNeedsDiscriminator),
     ];
 
     let mut codes: Vec<&str> = errors.iter().map(ControlPlaneError::code).collect();
@@ -145,6 +148,24 @@ fn a_stale_platform_decision_is_not_advertised_as_retryable() {
 }
 
 #[test]
+fn a_broken_held_document_is_not_advertised_as_retryable_either() {
+    // 500 never carries `Retry-After` in this API (`response.rs` attaches
+    // it only to `503`), but a coherence problem in a document this
+    // platform authored is exactly the case that must never look
+    // retryable: no amount of waiting fixes a file nobody has corrected.
+    let response = ControlPlaneError::Platform(PlatformError::InvalidHeldDataSources {
+        detail: "shared-postgres-nz-01 is declared more than once".to_owned(),
+    })
+    .into_response();
+
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    assert!(
+        response.headers().get(http::header::RETRY_AFTER).is_none(),
+        "a broken document is not something retrying will fix"
+    );
+}
+
+#[test]
 fn an_integration_that_moved_is_a_conflict_rather_than_a_refusal_or_an_outage() {
     // It reaches an operator from their own click on a repository: a disconnect
     // or another operator's rebind landed between the page they read and the
@@ -184,4 +205,74 @@ fn a_missing_client_is_reported_as_unknown_rather_than_as_a_repository_failure()
 
     assert_eq!(error.status(), StatusCode::NOT_FOUND);
     assert_eq!(error.code(), "unknown_client");
+}
+
+#[test]
+fn a_declared_data_source_rule_is_unprocessable_with_the_rules_own_words() {
+    // The request was understood; what it asked for breaks ADR 0023 part 1,
+    // and the fix is to change what was submitted rather than to retry it —
+    // the same 422 `DocumentTooLarge` answers for the same reason.
+    let error = ControlPlaneError::InvalidDataSource(DataSourceRule::SharedNeedsDiscriminator);
+
+    assert_eq!(error.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(error.code(), "invalid_data_source");
+    assert_eq!(
+        error.public_message(),
+        DataSourceRule::SharedNeedsDiscriminator.to_string()
+    );
+}
+
+#[test]
+fn a_platform_invalid_data_source_wrapped_generically_still_answers_the_structural_arm() {
+    // A handler that lets `?` wrap `PlatformError::InvalidDataSource` in
+    // `ControlPlaneError::Platform`, rather than unwrapping it itself, must
+    // still answer the same 422 `invalid_data_source` the direct variant
+    // above does -- the structural arms in `status_mapping::platform` and
+    // `status_mapping::codes` are what make the handler's own translation
+    // unnecessary.
+    let direct = ControlPlaneError::InvalidDataSource(DataSourceRule::SharedNeedsDiscriminator);
+    let wrapped = ControlPlaneError::Platform(PlatformError::InvalidDataSource(
+        DataSourceRule::SharedNeedsDiscriminator,
+    ));
+
+    assert_eq!(wrapped.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(wrapped.code(), "invalid_data_source");
+    assert_eq!(wrapped.code(), direct.code());
+}
+
+#[test]
+fn a_broken_held_data_sources_document_is_a_server_error_sharing_the_catalogues_code() {
+    // `check_held`'s own refusal -- a duplicate id, or an entry that no
+    // longer validates -- not an adapter's `DesiredStateError::Refused`,
+    // which also covers a revoked credential and must not be told to an
+    // operator the same way. Shares `InvalidDesiredState`/`InvalidCatalogue`'s
+    // status and code rather than falling to the generic platform
+    // mapping's `503`.
+    let error = ControlPlaneError::Platform(PlatformError::InvalidHeldDataSources {
+        detail: "shared-postgres-nz-01 is declared more than once".to_owned(),
+    });
+
+    assert_eq!(error.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(error.code(), "desired_state_invalid");
+    assert!(error.public_message().contains("declared more than once"));
+}
+
+#[test]
+fn an_adapter_refusal_falls_to_the_generic_platform_mapping_not_the_held_documents_code() {
+    // `fabric-platform-git`'s port maps a revoked credential and a
+    // rejected write to the same `DesiredStateError::Refused` `check_held`
+    // uses for a broken document -- but `check_held`'s own failure now
+    // arrives as `PlatformError::InvalidHeldDataSources`, so a bare
+    // `Refused` reaching here is genuinely the adapter's, and must answer
+    // the same retryable `503` hold and rollback get, not `500
+    // desired_state_invalid` -- telling an operator whose GitHub App was
+    // revoked that their data-sources file is broken would send them to
+    // fix the wrong thing.
+    let error =
+        ControlPlaneError::Platform(PlatformError::DesiredState(PlatformDesiredStateError::Refused {
+            detail: "the platform repository refused the platform's credential".to_owned(),
+        }));
+
+    assert_eq!(error.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(error.code(), "platform_unavailable");
 }

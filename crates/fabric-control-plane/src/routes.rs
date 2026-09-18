@@ -4,13 +4,14 @@
 //! table naming every path it serves kept beside the `.route(...)` calls it
 //! describes, so the two cannot drift apart.
 
-use axum::routing::{get, post, put};
+use axum::routing::{get, post};
 use axum::Router;
 
 use crate::handlers;
 use crate::state::ControlPlaneState;
 
 mod integrations;
+mod platform;
 
 /// The path prefix every control-plane route is nested under.
 ///
@@ -41,10 +42,13 @@ pub const API_PREFIX: &str = "/api";
 /// PUT        /api/integrations/{git,platform}/repository  choose one
 /// GET        /api/integrations/{git,platform}/created     host callback   (no operator)
 /// GET        /api/integrations/{git,platform}/installed   host callback   (no operator)
+/// One handler set is a nested router built in routes::platform:
 /// GET        /api/platform                          what this environment runs
 /// PUT/DELETE /api/platform/components/{c}/hold      stop it advancing / let it advance again
 /// GET        /api/platform/components/{c}/versions  what it could go back to
 /// POST       /api/platform/components/{c}/rollback  put it back on one
+/// GET        /api/platform/data-sources             what this environment can place a tenant's data on
+/// PUT        /api/platform/data-sources/{id}        declare one, or correct it            (If-Match)
 /// GET/POST   /api/catalogue                         the product catalogue / apply one command
 /// GET        /api/activity                          every recorded action, newest first
 /// GET        /api/operator                          who is signed in
@@ -76,25 +80,7 @@ pub(crate) fn control_plane_routes(state: ControlPlaneState) -> Router {
 
     let clients = Router::new()
         .route("/reconciliation", post(handlers::converge))
-        .route("/platform", get(handlers::get_platform))
-        // The component *is* named, and the environment still is not: a
-        // component name is a key looked up in a manifest this platform
-        // already trusts, unlike the environment parameter that used to be here.
-        .route(
-            "/platform/components/{component}/hold",
-            put(handlers::pause_component).delete(handlers::resume_component),
-        )
-        .route(
-            "/platform/components/{component}/versions",
-            get(handlers::rollback_candidates),
-        )
-        // A POST, because it is an act rather than a resource an operator
-        // composed: they name a version, and what gets written — three digests
-        // and a hold, in one commit — is the platform's to resolve.
-        .route(
-            "/platform/components/{component}/rollback",
-            post(handlers::roll_back_component),
-        )
+        .merge(platform::routes())
         .route(
             "/catalogue",
             get(handlers::get_catalogue).post(handlers::change_catalogue),

@@ -1,8 +1,18 @@
 //! Which platform repository is live, and swapping it.
+//!
+//! In the 121-150 line band (docs/architecture/file-size-policy.md): a
+//! small struct -- `PlatformDesiredState`, three methods -- whose rustdoc has
+//! to explain a genuinely subtle concurrency contract (the drain, the
+//! generation tag, the three-state Bound) inseparably from the type it
+//! documents, not a struct that grew.
 
 #[cfg(test)]
 #[path = "binding/binding_tests.rs"]
 mod binding_tests;
+
+#[cfg(test)]
+#[path = "binding/data_sources_tests.rs"]
+mod data_sources_tests;
 
 use std::sync::Arc;
 
@@ -11,11 +21,15 @@ use tokio::sync::{RwLock, RwLockReadGuard};
 use self::live::Live;
 
 mod bound;
+mod data_sources;
 mod delegate;
 mod generation;
 mod holding;
 mod live;
+mod repository;
 mod swap;
+
+pub use repository::PlatformRepository;
 
 /// The platform repository this control plane is currently connected to.
 ///

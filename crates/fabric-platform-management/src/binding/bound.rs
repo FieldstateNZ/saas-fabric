@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use crate::{DesiredState, SafeDiagnostic};
+use crate::{PlatformRepository, SafeDiagnostic};
 
 /// What the binding currently holds.
 ///
@@ -15,8 +15,8 @@ pub(super) enum Bound {
     /// Nobody has connected a repository.
     Nothing,
 
-    /// A repository, live.
-    Repository(Arc<dyn DesiredState>),
+    /// A repository, live -- both ports, one adapter (`PlatformRepository`).
+    Repository(Arc<dyn PlatformRepository>),
 
     /// An operator connected one, and this platform could not build or
     /// authenticate against it.

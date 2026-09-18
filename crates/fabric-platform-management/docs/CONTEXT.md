@@ -3,12 +3,18 @@
 Decides which version of a platform component an environment should run:
 channels, update policy, discovery, rollback, the late-bound connection to
 the currently-live platform repository, and (since PR #72, ADR 0022) an
-optional read-only bridge to independently observed deployment evidence. In
-neither plane (see `docs/architecture/crate-dependencies.md`) — no
-transport, no HTTP, no Git, no Kubernetes client. Depends only on
-`fabric-core`, plus `async-trait`, `serde`, `thiserror`, `time`, `tokio`
-(declares `sync` and `rt`; links the workspace's additive `macros`,
-`rt-multi-thread`, `sync`, `time` set, as its Cargo.toml says), `tracing`.
+optional read-only bridge to independently observed deployment evidence.
+Since ADR 0023 part 1 it also decides what an environment declares about its
+data sources — a second declared resource, `data_sources.rs`, over the same
+late-bound repository. In neither plane (see
+`docs/architecture/crate-dependencies.md`) — no transport, no HTTP, no Git,
+no Kubernetes client. Depends on `fabric-core` and, since ADR 0023,
+`fabric-runtime-publication` (also in neither plane — reused for the wire's
+own data-source sub-types rather than re-declared, so a hand-editable
+`data-sources.yaml` cannot disagree with what gets published from it), plus
+`async-trait`, `serde`, `thiserror`, `time`, `tokio` (declares `sync` and
+`rt`; links the workspace's additive `macros`, `rt-multi-thread`, `sync`,
+`time` set, as its Cargo.toml says), `tracing`.
 
 ## Public surface (all re-exported from `lib.rs`)
 
@@ -32,10 +38,11 @@ transport, no HTTP, no Git, no Kubernetes client. Depends only on
 - `PlatformDesiredState` — the late-bound binding.
   `PlatformDesiredState::unconnected() -> Arc<Self>`. `async fn
   is_connected(&self) -> bool`. `async fn connect(&self, repository: Arc<dyn
-  DesiredState>)`, `async fn unusable(&self, detail: &str)`, `async fn
+  PlatformRepository>)`, `async fn unusable(&self, detail: &str)`, `async fn
   disconnect(&self)` — all wait for every in-flight operation against the
-  *previous* binding (drain). Implements `DesiredState` itself, so it is
-  interchangeable with the port it wraps.
+  *previous* binding (drain). Implements both `DesiredState` and
+  `DataSourceState` itself, so it is interchangeable with either port it
+  wraps — see `PlatformRepository` below.
 - `DesiredState` (async trait) — `components(environment) ->
   Vec<String>`; `component(environment, component) -> ComponentDesired`;
   `advance(environment, component, release, at: &DesiredRevision, message)`;
@@ -110,7 +117,9 @@ transport, no HTTP, no Git, no Kubernetes client. Depends only on
   sweep(environment, state: &SweepState) -> SweepResult`.
 - `PlatformError` — `DesiredState(#[from] DesiredStateError)`,
   `Registry(#[from] RegistryError)`, `NotAdvancing { component }`,
-  `NotRollable { component, version }`.
+  `NotRollable { component, version }`, `InvalidDataSource(#[from]
+  DataSourceRule)` (ADR 0023 part 1 — kept apart from `DesiredState` because
+  it is refused on its own terms, before anything is read or written).
 - `ComponentStatus { component, desired: Version, newer: Option<Version>,
   running: Running, observation: Option<DeploymentObservation>, policy,
   artifact: ArtifactKind, hold, desired_state: DesiredStateStatus,
@@ -138,6 +147,66 @@ transport, no HTTP, no Git, no Kubernetes client. Depends only on
   find" record.
 - `SafeDiagnostic` — `sanitise(text: &str) -> Self` (redacts credential
   prefixes, caps at 200 chars), `as_str()`, `Display`. The only constructor.
+- `DataSourceDeclaration { id: DataSourceId, revision: BindingRevision,
+  connector: ConnectorId, connection: ConnectionSelectorDocument, placement:
+  PlacementClassDocument, residency: DataResidencyDocument, pool:
+  PoolSettingsDocument, capabilities: DataSourceCapabilitiesDocument,
+  discriminator: Option<Discriminator>, labels: BTreeMap<String, String> }`
+  (`Serialize`/`Deserialize`, `deny_unknown_fields`) — ADR 0023 part 1.
+  `into_document(self) -> DataSourceDocument` drops `discriminator`
+  field-by-field; `validate(&self) -> Result<(), DataSourceRule>` is the
+  whole rule set below.
+- `Discriminator { column: FieldName }` — the one field the wire's
+  `DataSourceDocument` does not carry.
+- `ConnectorId`, `ConnectionSelectorDocument`, `PlacementClassDocument`,
+  `DataResidencyDocument`, `PoolSettingsDocument`,
+  `DataSourceCapabilitiesDocument`, `DataSourceDocument`, `FieldName`,
+  `ConnectionName` — re-exported straight from `fabric_runtime_publication`
+  at this crate's root, not redeclared, so a caller that builds or reads a
+  declaration names the wire's own types without a second Cargo dependency.
+- `DataSourceRule` — `SharedNeedsDiscriminator` | `DiscriminatorOnlyWhenShared
+  { placement: PlacementClassDocument }` | `ZeroPool { field: PoolField }` |
+  `EmptyLabel` | `MalformedSecretReference` | `ConnectionKindNotDeclarable`
+  (the wire's `Default {}` connection shape — an operator names a connection
+  or a secret, never leaves it unstated). Fields are the wire's own typed
+  enum or `PoolField`, not a pre-rendered word, so the platform's phrasing
+  lives in one place, the `Display` impl. `PoolField` — `MaxConnections` |
+  `IdleTimeoutSeconds` | `AcquireTimeoutSeconds`, naming which pool setting
+  was zero. Each `DataSourceRule` variant's `Display` is the message an
+  operator reads; none names a file.
+- `DataSourcesRead { revision: Option<DesiredRevision>, declarations:
+  Vec<DataSourceDeclaration> }` — declarations sorted by id; `revision` is
+  `Option` at the port because an adapter's truth about a file is genuinely
+  optional there (`None` when no file exists yet for the environment asked
+  about — per document, not per id). `PlatformDesiredState` always fills it
+  with `Some` before a caller above the binding ever sees it, tagging even
+  an absent file with a generation.
+- `DataSourceState` (async trait) — `read_data_sources(environment) ->
+  DataSourcesRead`; `write_data_sources(environment, declarations: &[…], at:
+  Option<&DesiredRevision>, message) -> Result<(), DesiredStateError>` — a
+  whole-document compare-and-swap replace, `at: None` meaning "create; refuse
+  if present", per document (the whole environment's data sources), never per
+  id. Not a supertrait of `DesiredState` — see `PlatformRepository`.
+- `PlatformRepository` (`binding/repository.rs`) — `trait PlatformRepository:
+  DesiredState + DataSourceState {}`, with a blanket `impl<T: DesiredState +
+  DataSourceState + ?Sized> PlatformRepository for T {}`. What
+  `PlatformDesiredState::connect` accepts: one connected repository answers
+  both ports, because `environments/ENV/data-sources.yaml` lives beside
+  `components.yaml` in the same repository, written by the same credential
+  (ADR 0023 part 1). Nothing has to name this trait to satisfy it — any type
+  already implementing both ports is a `PlatformRepository` for free, and no
+  existing `DesiredState` implementor (including test fakes never connected
+  to a binding) had to grow a `DataSourceState` half it does not use.
+- `DataSources { state: Arc<dyn DataSourceState> }` — `new(state)`. `async fn
+  list(environment) -> DataSourcesRead` (read-only). `async fn
+  declare(environment, declaration, at: Option<&DesiredRevision>) ->
+  Result<Declared, PlatformError>` — validates first, then computes the
+  revision itself (1 for a new id, held + 1 on any other field changing,
+  unchanged when nothing does), and calls the port at all only when
+  something is actually being written.
+- `Declared` — `Written(DataSourcesRead)` | `Unchanged(DataSourcesRead)`, so a
+  caller can tell "nothing changed" from "this is what changed to" without
+  comparing documents itself.
 
 ## Internal modules
 
@@ -145,18 +214,47 @@ transport, no HTTP, no Git, no Kubernetes client. Depends only on
 - `version.rs` + `version/{ordering,parse}.rs` — `Version`, `Channel`; two
   grammars (`parse` for OCI tags, `parse_chart` for Helm chart versions,
   which may carry build metadata).
-- `binding.rs` + `binding/{bound,delegate,generation,holding,live,swap}.rs`
-  — `PlatformDesiredState`. `bound.rs`: `Bound` enum. `live.rs`: `Live`
-  (the `Bound` + generation counter under one `RwLock`). `swap.rs`:
+- `binding.rs` +
+  `binding/{bound,data_sources,delegate,generation,holding,live,repository,swap}.rs`
+  — `PlatformDesiredState`. `bound.rs`: `Bound` enum, holding
+  `Arc<dyn PlatformRepository>` once connected (not `Arc<dyn DesiredState>` —
+  a connected repository must answer both ports). `repository.rs`:
+  `PlatformRepository` trait plus its blanket impl — no supertrait
+  relationship between `DesiredState` and `DataSourceState`, on purpose (see
+  its own rustdoc for why a combined trait was chosen over one). `live.rs`:
+  `Live` (the `Bound` + generation counter under one `RwLock`), and
+  `repository()`/`data_source_repository()`, which upcast the stored
+  `Arc<dyn PlatformRepository>` to each port in turn. `swap.rs`:
   `connect`/`unusable`/`disconnect`, all via a private `set` that bumps the
-  generation. `generation.rs`: `tag`/`untag` a `DesiredRevision` with the
-  binding generation it was read through — a mismatch is `Conflict`, not a
-  refusal. `holding.rs`: `held()`/`writing()` produce an *owned* read guard;
-  `outliving(guard, future)` spawns the delegated call in its own task so a
-  dropped caller cancels nothing. `delegate.rs`: the actual
+  generation; `connect` takes `Arc<dyn PlatformRepository>`. `generation.rs`:
+  `tag`/`untag` a `DesiredRevision` with the binding generation it was read
+  through — a mismatch is `Conflict`, not a refusal — plus
+  `tag_presence`/`untag_presence`, the same idea for a data-sources read
+  whose file may not exist: the *absence* of a file is generation-tagged
+  too, so a create decided through this binding is exactly as generation-safe
+  as a replace. `holding.rs`: `held()`/`writing()` produce an *owned* read
+  guard; `outliving(guard, future)` spawns the delegated call in its own
+  task so a dropped caller cancels nothing. `delegate.rs`: the actual
   `impl DesiredState for PlatformDesiredState`, tagging/untagging revisions
-  at the boundary.
+  at the boundary. `data_sources.rs`: the same shape as `delegate.rs`, for
+  `impl DataSourceState for PlatformDesiredState` — `read_data_sources`
+  always returns `Some` revision, even for an absent file, via
+  `tag_presence`.
 - `charts.rs` — `ChartIndex` trait alone.
+- `data_sources.rs` +
+  `data_sources/{declaration,held,plan,port,read,rule,service,validate}.rs`
+  (ADR 0023 part 1) — `declaration.rs`: `DataSourceDeclaration`,
+  `Discriminator`, `into_document`. `validate.rs`: `DataSourceDeclaration::validate`,
+  the `DataSourceRule` checks. `rule.rs`: `DataSourceRule`, `PoolField`.
+  `held.rs` (`pub(crate)`): `check_held(declarations) -> Result<(),
+  DesiredStateError>` — refuses a held document a hand edit made incoherent
+  (two entries with one id, or an entry that no longer validates); called by
+  both `list` and `declare` on *every* read, not only on write, since a
+  break-glass edit can land between any two calls. `port.rs`:
+  `DataSourceState` trait. `read.rs`: `DataSourcesRead`. `service.rs`:
+  `DataSources`, `Declared`. `plan.rs` (`pub(crate)`): `plan(held, incoming)
+  -> Plan` — the pure revision/no-op decision behind `declare`, tested on its
+  own in `plan_tests.rs`.
 - `desired_state.rs` + `desired_state/{component,errors,port}.rs` —
   `ComponentDesired`, `DesiredRevision`, `Hold`, `DesiredStateError`,
   `DesiredState` trait.

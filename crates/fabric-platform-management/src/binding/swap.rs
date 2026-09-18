@@ -43,14 +43,18 @@ use std::sync::Arc;
 
 use crate::binding::bound::Bound;
 use crate::binding::PlatformDesiredState;
-use crate::{DesiredState, SafeDiagnostic};
+use crate::{PlatformRepository, SafeDiagnostic};
 
 impl PlatformDesiredState {
     /// Points the platform at a repository, replacing whatever was there.
     ///
     /// Waits for every operation already running against the old repository,
-    /// so nothing lands in it after this returns.
-    pub async fn connect(&self, repository: Arc<dyn DesiredState>) {
+    /// so nothing lands in it after this returns. Takes a
+    /// [`PlatformRepository`] rather than a `DesiredState` alone, because a
+    /// connected repository must answer both ports this binding delegates:
+    /// `data-sources.yaml` lives beside `components.yaml` in the one
+    /// repository being connected here.
+    pub async fn connect(&self, repository: Arc<dyn PlatformRepository>) {
         self.set(Bound::Repository(repository)).await;
     }
 

@@ -264,4 +264,16 @@ pub enum ControlPlaneError {
     /// The identity provider could not be reached to redeem a code.
     #[error("the identity provider is unavailable")]
     SignInUnavailable,
+
+    /// A declared data source breaks one of ADR 0023 part 1's rules.
+    ///
+    /// A `422` with the rule's own words as the message, not the `503` an
+    /// unrecognised platform failure would otherwise get -- answered by
+    /// the structural arm in `errors::status_mapping::platform`/`::codes`,
+    /// which matches `Platform(PlatformError::InvalidDataSource(_))`
+    /// directly, so this variant is never constructed in production and
+    /// exists only for symmetry with the other named refusals here (and
+    /// so a test can name it without reaching into `PlatformError`).
+    #[error(transparent)]
+    InvalidDataSource(#[from] fabric_platform_management::DataSourceRule),
 }

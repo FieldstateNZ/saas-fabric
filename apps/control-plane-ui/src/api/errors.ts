@@ -12,6 +12,8 @@ export type ErrorCode =
   | 'repository_unavailable'
   | 'repository_denied'
   | 'repository_rejected'
+  | 'platform_not_managed'
+  | 'invalid_data_source'
 
 /**
  * A refusal from the control plane.

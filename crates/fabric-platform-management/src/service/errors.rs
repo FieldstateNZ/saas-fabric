@@ -1,6 +1,6 @@
 //! What can go wrong looking at, or moving, a component.
 
-use crate::{DesiredStateError, RegistryError};
+use crate::{DataSourceRule, DesiredStateError, RegistryError};
 
 /// What can go wrong looking at, or moving, a component.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -50,5 +50,36 @@ pub enum PlatformError {
 
         /// What was asked for, as the caller wrote it.
         version: String,
+    },
+
+    /// A declared data source breaks one of ADR 0023 part 1's placement
+    /// rules.
+    ///
+    /// Kept distinct from `DesiredState` above because the request was
+    /// understood and refused on its own terms, before anything was read
+    /// or written -- the same reason `NotAdvancing` is not folded into a
+    /// transport failure either.
+    #[error(transparent)]
+    InvalidDataSource(#[from] DataSourceRule),
+
+    /// A held data-sources document is no longer something to trust: a
+    /// hand edit gave two entries the same id, or made an entry fail its
+    /// own validation (`data_sources::held::check_held`, run on every
+    /// read).
+    ///
+    /// Kept apart from `DesiredState`'s own `Refused` above, which an
+    /// adapter also answers for its own reasons -- a revoked credential,
+    /// a host rejecting a write, a document declaring a schema version
+    /// this platform does not read. Those are outage-shaped failures
+    /// upstream of this platform and get the generic mapping's retryable
+    /// answer; this one is a coherence problem in a document this
+    /// platform itself authored, and no retry fixes it. Collapsing the
+    /// two would tell an operator whose GitHub App was revoked that their
+    /// data-sources file is broken.
+    #[error("{detail}")]
+    InvalidHeldDataSources {
+        /// What `check_held` found wrong, in its own words -- never a
+        /// file path.
+        detail: String,
     },
 }

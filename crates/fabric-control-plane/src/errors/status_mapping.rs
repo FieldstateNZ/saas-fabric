@@ -100,11 +100,17 @@ impl ControlPlaneError {
             Self::DocumentTooLarge { .. } => StatusCode::UNPROCESSABLE_ENTITY,
 
             // A stored document that will not parse is the platform's problem,
-            // not the caller's, and no retry fixes it — whether the document
-            // is a client's or the catalogue's.
+            // not the caller's, and no retry fixes it -- whether the document
+            // is a client's or the catalogue's (a held data-sources document
+            // in the same shape shares the code from `platform.rs` instead).
             Self::InvalidDesiredState { .. } | Self::InvalidCatalogue { .. } => {
                 StatusCode::INTERNAL_SERVER_ERROR
             }
+
+            // 422, joining `DocumentTooLarge`: understood, and what was
+            // asked for cannot be acted on. The fix is to change what was
+            // submitted, not to retry it.
+            Self::InvalidDataSource(_) => StatusCode::UNPROCESSABLE_ENTITY,
 
             // 503 and retryable: Git being briefly unreachable is the ordinary
             // transient failure of this API.

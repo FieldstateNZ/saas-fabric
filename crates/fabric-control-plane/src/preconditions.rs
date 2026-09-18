@@ -1,6 +1,7 @@
 //! Reading the revision a write claims to be editing.
 
 use fabric_client_model::ClientRevision;
+use fabric_platform_management::DesiredRevision;
 use http::header::{IF_MATCH, IF_NONE_MATCH};
 use http::HeaderMap;
 
@@ -36,6 +37,20 @@ use crate::ControlPlaneError;
 /// including a value that is not a legal revision. They share one error
 /// because they share one remedy: read the resource and send its entity tag.
 pub(crate) fn required_revision(headers: &HeaderMap) -> Result<ClientRevision, ControlPlaneError> {
+    let unquoted = required_tag(headers)?;
+
+    ClientRevision::try_new(unquoted).map_err(|_| ControlPlaneError::RevisionRequired)
+}
+
+/// The single strong entity tag `If-Match` carries, syntactically checked
+/// but not yet turned into any particular revision type.
+///
+/// Every revision this API reads back from `If-Match` shares the same
+/// header-level rules — see this module's doc comment for what each refusal
+/// above means — so this is the one place that parses the header, and
+/// [`required_revision`] and [`required_platform_revision`] each turn the
+/// result into their own opaque type.
+fn required_tag(headers: &HeaderMap) -> Result<&str, ControlPlaneError> {
     let mut values = headers.get_all(IF_MATCH).iter();
 
     let value = values.next().ok_or(ControlPlaneError::RevisionRequired)?;
@@ -52,12 +67,22 @@ pub(crate) fn required_revision(headers: &HeaderMap) -> Result<ClientRevision, C
         return Err(ControlPlaneError::RevisionRequired);
     }
 
-    let unquoted = value
+    Ok(value
         .strip_prefix('"')
         .and_then(|rest| rest.strip_suffix('"'))
-        .unwrap_or(value);
+        .unwrap_or(value))
+}
 
-    ClientRevision::try_new(unquoted).map_err(|_| ControlPlaneError::RevisionRequired)
+/// [`required_revision`]'s sibling for Platform Management's own opaque
+/// revision, carried on `environments/<environment>/data-sources.yaml`
+/// (ADR 0023 part 1) rather than on a client document.
+///
+/// `DesiredRevision::new` is infallible — it is an opaque token an adapter
+/// compares by equality and never parses — so, unlike [`ClientRevision`],
+/// there is no shape to reject here beyond the header-level rules
+/// [`required_tag`] already enforces.
+pub(crate) fn required_platform_revision(headers: &HeaderMap) -> Result<DesiredRevision, ControlPlaneError> {
+    required_tag(headers).map(DesiredRevision::new)
 }
 
 /// Extracts the revision a conditional create-or-replace expects, or `None`
@@ -83,14 +108,20 @@ pub(crate) fn required_revision(headers: &HeaderMap) -> Result<ClientRevision, C
 /// [`required_revision`] whenever `If-Match` is the header that decides this
 /// request — including when neither header is present at all.
 pub(crate) fn optional_revision(headers: &HeaderMap) -> Result<Option<ClientRevision>, ControlPlaneError> {
-    let create_only =
-        headers.get(IF_NONE_MATCH).is_some_and(|value| value == "*") && !headers.contains_key(IF_MATCH);
-
-    if create_only {
+    if wants_create_only(headers) {
         return Ok(None);
     }
 
     required_revision(headers).map(Some)
+}
+
+/// Whether the caller declared "only if it does not yet exist" rather than
+/// naming a revision to replace — the one check [`optional_revision`] uses.
+/// Platform Management's own writes have no sibling that accepts this: every
+/// environment always has a revision to name, even one with nothing declared
+/// yet, so [`required_platform_revision`] is the only way in for those.
+fn wants_create_only(headers: &HeaderMap) -> bool {
+    headers.get(IF_NONE_MATCH).is_some_and(|value| value == "*") && !headers.contains_key(IF_MATCH)
 }
 
 /// Renders a revision as a strong entity tag.
@@ -99,6 +130,11 @@ pub(crate) fn optional_revision(headers: &HeaderMap) -> Result<Option<ClientRevi
 /// construction — the revision *is* a function of the content.
 pub(crate) fn entity_tag(revision: &ClientRevision) -> String {
     format!("\"{revision}\"")
+}
+
+/// [`entity_tag`]'s sibling for Platform Management's own revision.
+pub(crate) fn platform_entity_tag(revision: &DesiredRevision) -> String {
+    format!("\"{}\"", revision.as_str())
 }
 
 #[cfg(test)]
@@ -198,5 +234,28 @@ mod tests {
             optional_revision(&HeaderMap::new()),
             Err(ControlPlaneError::RevisionRequired)
         ));
+    }
+
+    #[test]
+    fn a_platform_revision_accepts_any_syntactically_unambiguous_token() {
+        // Unlike `ClientRevision`, `DesiredRevision` does not validate a
+        // character set -- it is opaque all the way down, so the only
+        // refusals left are the header-level ones every revision shares.
+        let revision = required_platform_revision(&if_match("\"rev-1\"")).unwrap();
+
+        assert_eq!(revision.as_str(), "rev-1");
+    }
+
+    #[test]
+    fn a_platform_wildcard_is_refused_rather_than_treated_as_any_revision() {
+        assert!(required_platform_revision(&if_match("*")).is_err());
+    }
+
+    #[test]
+    fn a_platform_entity_tag_round_trips() {
+        let revision = DesiredRevision::new("rev-1");
+        let tag = platform_entity_tag(&revision);
+
+        assert_eq!(required_platform_revision(&if_match(&tag)).unwrap(), revision);
     }
 }

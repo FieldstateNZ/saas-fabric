@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use crate::binding::bound::Bound;
-use crate::{DesiredState, DesiredStateError};
+use crate::{DataSourceState, DesiredState, DesiredStateError};
 
 /// The guarded half of a platform binding.
 ///
@@ -57,17 +57,35 @@ impl Live {
         self.generation
     }
 
-    /// The live repository, or the refusal that says why there is none.
+    /// The live repository's `DesiredState` half, or the refusal that says
+    /// why there is none.
     ///
     /// Hands back the [`Arc`] rather than a `&dyn DesiredState`, because the
     /// task that runs the operation outlives this borrow: a reference into the
     /// guard could not be moved into it. Cloning an `Arc` to answer
     /// [`is_connected`](super::PlatformDesiredState::is_connected) is a cheap
     /// price for that.
+    ///
+    /// Upcasts from the stored `Arc<dyn PlatformRepository>` -- a coercion
+    /// the compiler performs because `DesiredState` is a supertrait of
+    /// `PlatformRepository`, not a cast this code writes by hand.
     pub(super) fn repository(&self) -> Result<Arc<dyn DesiredState>, DesiredStateError> {
         match &self.bound {
             Bound::Nothing => Err(DesiredStateError::NotConnected),
-            Bound::Repository(repository) => Ok(Arc::clone(repository)),
+            Bound::Repository(repository) => Ok(Arc::clone(repository) as Arc<dyn DesiredState>),
+            Bound::Unusable(detail) => Err(DesiredStateError::Unavailable {
+                detail: detail.as_str().to_owned(),
+            }),
+        }
+    }
+
+    /// The live repository's `DataSourceState` half, or the refusal that
+    /// says why there is none. [`repository`](Self::repository)'s sibling,
+    /// upcasting the other way.
+    pub(super) fn data_source_repository(&self) -> Result<Arc<dyn DataSourceState>, DesiredStateError> {
+        match &self.bound {
+            Bound::Nothing => Err(DesiredStateError::NotConnected),
+            Bound::Repository(repository) => Ok(Arc::clone(repository) as Arc<dyn DataSourceState>),
             Bound::Unusable(detail) => Err(DesiredStateError::Unavailable {
                 detail: detail.as_str().to_owned(),
             }),

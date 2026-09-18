@@ -23,4 +23,12 @@ pub struct PlatformBinding {
     /// The late-bound repository, so a connected integration can point it
     /// somewhere and a disconnected one can take it away.
     pub repository: Arc<fabric_platform_management::PlatformDesiredState>,
+
+    /// Declaring and reading this environment's data sources (ADR 0023
+    /// part 1).
+    ///
+    /// Built over the same late-bound `repository` above, so the two never
+    /// disagree about which platform repository is live — see
+    /// `fabric-control-plane-api`'s `startup::platform::establish`.
+    pub data_sources: Arc<fabric_platform_management::DataSources>,
 }

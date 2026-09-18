@@ -6,7 +6,7 @@ use fabric_control_plane::{GitIntegration, IntegrationTarget, SecretValue};
 use fabric_core::Clock;
 use fabric_git_host::GitCredential;
 use fabric_platform_git::{PlatformGitRepository, PlatformRepositoryConfig};
-use fabric_platform_management::{DesiredState, PlatformDesiredState};
+use fabric_platform_management::{PlatformDesiredState, PlatformRepository};
 
 /// Composes the platform repository from a connected integration.
 ///
@@ -101,7 +101,7 @@ impl IntegrationTarget for PlatformManagementTarget {
         // does not swap until every operation already running against the
         // repository it is replacing has finished.
         self.binding
-            .connect(Arc::new(platform) as Arc<dyn DesiredState>)
+            .connect(Arc::new(platform) as Arc<dyn PlatformRepository>)
             .await;
 
         Ok(())

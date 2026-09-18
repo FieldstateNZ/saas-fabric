@@ -11,6 +11,14 @@ use http::StatusCode;
 /// unrelated failures in one arm and delete the comment explaining each. The
 /// distinction an operator acts on survives in the machine code beside it,
 /// where every one of them has its own — see `codes.rs`.
+///
+/// One pair here does share a code too: `InvalidDataSource`'s structural
+/// arm answers the same 422 `NotRollable` does, for unrelated reasons.
+/// Saying so is better than merging them into an arm with two causes.
+#[allow(
+    clippy::match_same_arms,
+    reason = "arms are grouped by cause; the comment above says which ones share a status"
+)]
 pub(super) fn status(error: &PlatformError) -> StatusCode {
     match error {
         // Nothing is connected, or the manifest does not name this component.
@@ -48,6 +56,25 @@ pub(super) fn status(error: &PlatformError) -> StatusCode {
         // and unlike a 404 there *is* a component here, it just has no such
         // release to return to.
         PlatformError::NotRollable { .. } => StatusCode::UNPROCESSABLE_ENTITY,
+
+        // A declared data source breaks one of ADR 0023 part 1's rules.
+        // Structural, so this is answered the same way whether a handler
+        // unwraps `PlatformError::InvalidDataSource` itself or lets `?` wrap
+        // it in `ControlPlaneError::Platform` -- 422, joining `NotRollable`:
+        // understood, and what was asked for cannot be acted on, so the fix
+        // is to change what was submitted rather than to retry it.
+        PlatformError::InvalidDataSource(_) => StatusCode::UNPROCESSABLE_ENTITY,
+
+        // A held data-sources document a hand edit made incoherent -- a
+        // duplicate id, or an entry that no longer validates
+        // (`data_sources::held::check_held`, run on every read). Not the
+        // caller's fault and no retry fixes it, so it shares
+        // `ControlPlaneError::InvalidDesiredState`/`InvalidCatalogue`'s 500
+        // rather than falling to the catch-all below -- unlike an
+        // adapter's own `Refused` (a revoked credential, a host rejecting
+        // a write, an unreadable or wrong-schema file), which is exactly
+        // that catch-all's 503, the same as hold and rollback answer.
+        PlatformError::InvalidHeldDataSources { .. } => StatusCode::INTERNAL_SERVER_ERROR,
 
         // Platform Management reached a registry or the platform repository and
         // could not get an answer. 503, not 500: nothing is wrong with the

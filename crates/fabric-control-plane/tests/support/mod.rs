@@ -19,13 +19,15 @@ use fabric_client_model::{ClientDocument, ClientRevision};
 use fabric_control_plane::testing::AcceptingOperator;
 use fabric_control_plane::{
     build_control_plane, ControlPlaneConfig, ControlPlaneDeps, DesiredStateBinding, IdentityProviderFactory,
-    InMemoryClientRepository, OperatorToken,
+    InMemoryClientRepository, OperatorToken, PlatformBinding,
 };
 use fabric_core::Clock;
 use fabric_reconciliation::testing::FakeIdentityProvider;
 use fabric_reconciliation::{IdentityProvider, ReconciliationStatusStore};
 use http::{header, Request, Response};
 use tower::ServiceExt as _;
+
+pub mod platform_fixture;
 
 /// The operator every test authenticates as.
 pub const OPERATOR: &str = "brett@example.com";
@@ -188,7 +190,7 @@ pub const SECRET_VALUE: &str = "a-value-that-must-not-leak";
 
 /// Builds a control plane holding one client.
 pub fn control_plane() -> TestControlPlane {
-    build(None)
+    build(None, None)
 }
 
 /// Builds a control plane holding one client, converging against `provider`
@@ -200,12 +202,21 @@ pub fn control_plane() -> TestControlPlane {
 /// /api/reconciliation`, the real door an operator uses — so it is the one
 /// caller of this function.
 pub fn control_plane_with_identity_provider(provider: Arc<FakeIdentityProvider>) -> TestControlPlane {
-    build(Some(Arc::new(FakeIdentityProviderFactory(provider))))
+    build(Some(Arc::new(FakeIdentityProviderFactory(provider))), None)
 }
 
-/// Shared by both constructors above; only what lends the identity provider
-/// its authority differs between them.
-fn build(identity_provider: Option<Arc<dyn IdentityProviderFactory>>) -> TestControlPlane {
+/// Builds a control plane with a platform bound, for tests that drive
+/// `/api/platform/*` against something other than "nothing is managed".
+pub fn control_plane_with_platform(platform: PlatformBinding) -> TestControlPlane {
+    build(None, Some(platform))
+}
+
+/// Shared by every constructor above; only what lends the identity
+/// provider's authority and which platform is bound differ between them.
+fn build(
+    identity_provider: Option<Arc<dyn IdentityProviderFactory>>,
+    platform: Option<PlatformBinding>,
+) -> TestControlPlane {
     let repository = Arc::new(InMemoryClientRepository::new());
     let revision = repository
         .insert(&ClientDocument::parse(ACME).expect("the fixture document must parse"))
@@ -233,8 +244,7 @@ fn build(identity_provider: Option<Arc<dyn IdentityProviderFactory>>) -> TestCon
     let services = build_control_plane(
         &config,
         ControlPlaneDeps {
-            // Nothing connected, which is what the platform routes report.
-            platform: None,
+            platform,
             platform_integration: None,
             client_secrets: Some(Arc::new(FakeClientSecrets)),
             desired_state: Arc::clone(&binding),

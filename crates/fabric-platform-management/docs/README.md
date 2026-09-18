@@ -122,9 +122,11 @@ never be used to connect one.
 
 Three states, not an `Option` (`Bound` in `binding/bound.rs`): `Nothing` (no
 operator has connected a repository — a console renders "not connected");
-`Repository(Arc<dyn DesiredState>)` (live); `Unusable(SafeDiagnostic)` (an
-operator connected one and it does not work — reported as broken, not as
-"not connected", because those lead an operator to different actions).
+`Repository(Arc<dyn PlatformRepository>)` (live — both ports, one adapter,
+so `data-sources.yaml` and `components.yaml` are always answered by the same
+connected repository); `Unusable(SafeDiagnostic)` (an operator connected one
+and it does not work — reported as broken, not as "not connected", because
+those lead an operator to different actions).
 
 **An unbind drains.** Changing the binding (`connect`/`disconnect`/`unusable`)
 takes the write lock, so it completes only once every operation that began
@@ -176,6 +178,61 @@ not a scheduler (something else decides cadence) and is not a distributed
 lock (two control planes sweeping at once both decide independently; the
 loser's write is refused as stale, which is wasteful and not dangerous).
 
+## Data sources
+
+[ADR 0023](../../../docs/decisions/0023-data-sources-are-environment-desired-state-and-placement-is-recorded.md)
+part 1 adds a second declared resource beside components: what an environment
+can place a tenant's data on. It lives in its own module, `data_sources.rs`,
+and shares nothing with channels, discovery or rollback except the late-bound
+repository connection.
+
+- **`DataSourceDeclaration`** — one data source: the wire's own sub-types
+  (`ConnectorId`, `ConnectionSelectorDocument`, `PlacementClassDocument`,
+  `DataResidencyDocument`, `PoolSettingsDocument`,
+  `DataSourceCapabilitiesDocument` — all re-exported from this crate's root,
+  straight from `fabric_runtime_publication`, so a caller never has to depend
+  on that crate directly) plus `Discriminator`, the one field the wire does
+  not carry. `into_document` drops it on the way to the published shape;
+  placement copies it into a tenant binding later (ADR 0023 part 2, not
+  built).
+- **`DataSourceRule`** — why a declaration is refused: a shared source with
+  no discriminator column, a discriminator on anything else, a pool setting
+  of zero (`ZeroPool { field: PoolField }`), a label with an empty key or
+  value, a malformed secret reference, or the wire's third connection
+  shape — `Default {}`, the connector's own single connection — which an
+  operator can never declare (`ConnectionKindNotDeclarable`). Every field is
+  the wire's own typed enum (`PlacementClassDocument`) or this crate's
+  (`PoolField`), never a pre-rendered word, so the platform's phrasing lives
+  in one place, the `Display` impl. Checked by
+  `DataSourceDeclaration::validate` before anything is read or written; a
+  hand-edited held document is re-checked on every read by `check_held`
+  (`data_sources/held.rs`), so a `default` connection slipped in outside
+  this API is refused there too.
+- **`DataSourceState`** — the port: `read_data_sources` /
+  `write_data_sources`, a whole-document read and a compare-and-swap replace
+  (`at: None` meaning "create; refuse if present", per document — the whole
+  environment's data sources — never per id), implemented by
+  `fabric-platform-git`'s adapter over
+  `environments/<environment>/data-sources.yaml`. Not a supertrait of
+  `DesiredState`: the two are combined instead by `PlatformRepository`
+  (`binding/repository.rs`), `trait PlatformRepository: DesiredState +
+  DataSourceState {}` with a blanket impl, which is what
+  `PlatformDesiredState::connect` accepts — a caller that already has the
+  binding never needs a second one for data sources, and no existing
+  `DesiredState` implementor had to grow a `DataSourceState` half it does
+  not use.
+- **`DataSources`** — the service over that port: `list` reads what is
+  declared, unchanged; `declare` computes the revision itself (a caller's
+  value is never trusted), plans the complete list the write should produce,
+  and returns `Declared::Unchanged` without calling the port at all when
+  nothing about the declaration differs from what is held. The planning rule
+  itself is a pure function (`data_sources/plan.rs`), tested on its own.
+
+`DataSources` is a second service beside `PlatformManagement`, not a method on
+it — see `fabric-control-plane`'s `PlatformBinding`, which holds one of each
+over the same late-bound repository. Neither one's tests need the other's
+ports.
+
 ## Getting started
 
 ```rust,ignore
@@ -214,6 +271,14 @@ let statuses = service.statuses("production").await?;
   attach it with `PlatformManagement::with_observer`. The port is optional by
   design: a deployment with no observation binding configured keeps working
   exactly as before, with `Running::Unknown`.
+- **Declaring or correcting a data source** — call
+  `DataSources::declare(environment, declaration, at)`. `at` is the revision
+  the caller read; `None` is valid only when nothing has been declared for
+  the *environment* yet — per document, not per id, since one document holds
+  every data source an environment declares — and a stale value is a
+  `DesiredStateError::Conflict`. The binding this platform runs always tags
+  a revision, even for an environment with nothing declared, so in
+  production `at` is never actually `None`; see `PlatformDesiredState`.
 
 ## Gotchas
 
@@ -253,3 +318,8 @@ let statuses = service.statuses("production").await?;
   distinguish "never asked" from "asked and got nothing coherent" in the
   `running` field itself (the richer detail, when there is any, lives in
   `ComponentStatus::observation`).
+- `PlatformError::InvalidDataSource` wraps a `DataSourceRule` transparently
+  — it is a validation refusal, not a repository failure, and is kept apart
+  from `PlatformError::DesiredState` for the same reason `NotAdvancing` is:
+  the request was understood and refused on its own terms before anything
+  was read.

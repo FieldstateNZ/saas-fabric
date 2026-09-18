@@ -12,6 +12,8 @@ interface FieldProps {
   readonly error?: string | null | undefined
   /** Forwarded to the underlying `<input>` — for a caller that needs to move focus onto this field itself, such as `ClientDetailsStep` after a taken Client ID. Every other caller leaves it unset. */
   readonly ref?: Ref<HTMLInputElement>
+  /** Shows the value without allowing it to change, such as an id once the row it names already exists. */
+  readonly readOnly?: boolean
 }
 
 /**
@@ -38,6 +40,7 @@ export function Field({
   hint,
   error,
   ref,
+  readOnly = false,
 }: FieldProps) {
   return (
     <label className="form-field">
@@ -50,6 +53,7 @@ export function Field({
         type={type}
         value={value}
         required={required}
+        readOnly={readOnly}
         maxLength={4096}
         aria-invalid={error ? true : undefined}
         onChange={(event) => {

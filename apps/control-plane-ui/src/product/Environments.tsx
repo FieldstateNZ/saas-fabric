@@ -1,10 +1,11 @@
 import { useState } from 'react'
 
 import type { EnvironmentRegistration } from '../api/catalogue-types'
+import { DataSourcesPanel } from '../components/DataSourcesPanel'
 import { Panel } from '../console/Panel'
 import { PlatformViews } from '../console/PlatformViews'
 import type { PlatformState } from '../hooks/usePlatform'
-import { Field } from './Field'
+import { EnvironmentRegistrationForm } from './EnvironmentRegistrationForm'
 import { SaveNotice } from './SaveNotice'
 import type { CatalogueState } from './useCatalogue'
 
@@ -12,19 +13,21 @@ import type { CatalogueState } from './useCatalogue'
 const empty: EnvironmentRegistration = { id: '', name: '', consoleUrl: '', description: '' }
 
 /**
- * The environment this deployment manages (see {@link PlatformViews}), and
- * links to every other independently authenticated operator console.
+ * The environment this deployment manages (see {@link PlatformViews}), the
+ * data sources it declares for placing a tenant's data (see
+ * `DataSourcesPanel`, ADR 0023 part 1), and links to every other
+ * independently authenticated operator console.
  *
- * Registering a link does not provision or connect anything — the control
+ * Registering a link does not provision or connect anything -- the control
  * plane holds no credential for another deployment's console, so this is a
  * directory an operator maintains by hand, not a control that reaches out to
  * verify what it points at.
  *
- * This file sits in file-size-policy.md's 121-150 line band: the platform
- * view, the registration form, and the list of already-registered
- * environments are one page's worth of one small directory, not three
- * concerns — the form and the list both exist only to edit and show the
- * same `state.value?.catalogue.environments`.
+ * The registration form lives in `EnvironmentRegistrationForm`, split out
+ * once this file grew past a comfortable size for it: the platform view, the
+ * data sources panel, and the list of already-registered environments are
+ * already one page's worth of concerns without also carrying the form's
+ * own field-by-field wiring.
  */
 export function Environments({
   state,
@@ -39,6 +42,7 @@ export function Environments({
   return (
     <>
       <PlatformViews platform={platform} environments />
+      <DataSourcesPanel />
       <SaveNotice
         error={state.saveError}
         success={success}
@@ -55,10 +59,14 @@ export function Environments({
         </button>
       </div>
       {editing && (
-        <form
-          className="panel panel-body"
-          onSubmit={(event) => {
-            event.preventDefault()
+        <EnvironmentRegistrationForm
+          environment={editing}
+          onChange={setEditing}
+          saving={state.saving}
+          onCancel={() => {
+            setEditing(null)
+          }}
+          onSubmit={() => {
             void state.save({ action: 'saveEnvironment', environment: editing }).then((saved) => {
               if (saved) {
                 setEditing(null)
@@ -66,58 +74,7 @@ export function Environments({
               }
             })
           }}
-        >
-          <fieldset disabled={state.saving}>
-            <div className="form-grid">
-              <Field
-                label="Environment ID"
-                required
-                value={editing.id}
-                onChange={(id) => {
-                  setEditing({ ...editing, id })
-                }}
-              />
-              <Field
-                label="Environment name"
-                required
-                value={editing.name}
-                onChange={(name) => {
-                  setEditing({ ...editing, name })
-                }}
-              />
-              <Field
-                label="Console URL"
-                required
-                type="url"
-                value={editing.consoleUrl}
-                onChange={(consoleUrl) => {
-                  setEditing({ ...editing, consoleUrl })
-                }}
-                hint="An HTTPS operator-console origin, such as https://console.example.com."
-              />
-              <Field
-                label="Description"
-                value={editing.description}
-                onChange={(description) => {
-                  setEditing({ ...editing, description })
-                }}
-              />
-            </div>
-            <div className="form-actions">
-              <button className="primary-button" type="submit">
-                Save environment
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setEditing(null)
-                }}
-              >
-                Cancel
-              </button>
-            </div>
-          </fieldset>
-        </form>
+        />
       )}
       {state.value?.catalogue.environments.map((environment) => (
         <Panel key={environment.id} title={environment.name}>

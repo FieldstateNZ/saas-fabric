@@ -2,9 +2,11 @@
 
 mod body;
 mod brake;
+mod data_sources;
 mod rollback;
 
 pub(crate) use brake::{pause_component, resume_component};
+pub(crate) use data_sources::{declare_data_source, list_data_sources};
 pub(crate) use rollback::{roll_back_component, rollback_candidates};
 
 use axum::extract::State;

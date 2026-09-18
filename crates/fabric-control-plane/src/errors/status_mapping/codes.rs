@@ -7,6 +7,15 @@ use crate::ControlPlaneError;
 impl ControlPlaneError {
     /// A stable machine-readable code, so a client branches on this rather
     /// than on message text.
+    ///
+    /// `InvalidDataSource`'s two arms -- the direct variant and the one
+    /// structurally wrapped in `Platform` -- share a body because they are
+    /// the same failure reaching this match two different ways, not two
+    /// causes that happen to agree.
+    #[allow(
+        clippy::match_same_arms,
+        reason = "InvalidDataSource's two arms are one cause reaching this match two ways"
+    )]
     #[must_use]
     pub const fn code(&self) -> &'static str {
         match self {
@@ -16,7 +25,8 @@ impl ControlPlaneError {
             // The catalogue shares this code with a client's document
             // deliberately — see `ControlPlaneError::InvalidCatalogue` — so a
             // console does not need a second code to know what to do with
-            // it.
+            // it. A held data-sources document that fails the same way
+            // shares the code too, from the structural arm below.
             Self::InvalidDesiredState { .. } | Self::InvalidCatalogue { .. } => "desired_state_invalid",
             Self::RevisionRequired => "revision_required",
             // The catalogue shares this code with a client's revision
@@ -62,6 +72,18 @@ impl ControlPlaneError {
                 "platform_state_moved"
             }
             Self::Platform(PlatformError::NotRollable { .. }) => "version_not_rollable",
+            // Structural, so a declaration's own rule violation keeps its
+            // code (422, `invalid_data_source`) whether a handler unwraps it
+            // itself or lets `?` wrap it in `Self::Platform` -- see
+            // `Self::InvalidDataSource` above, which this shares a status and
+            // code with.
+            Self::Platform(PlatformError::InvalidDataSource(_)) => "invalid_data_source",
+            // A held data-sources document a hand edit made incoherent --
+            // a duplicate id, or an entry that no longer validates.
+            // Shares `InvalidDesiredState`/`InvalidCatalogue`'s code above
+            // for the reason their own doc comments give: one thing to do
+            // with any of the three, stop and do not retry.
+            Self::Platform(PlatformError::InvalidHeldDataSources { .. }) => "desired_state_invalid",
             Self::Platform(_) => "platform_unavailable",
             Self::GitHostRefused => "git_host_refused",
             Self::IntegrationRefused(_) => "integration_refused",
@@ -88,6 +110,7 @@ impl ControlPlaneError {
             Self::SignInUnavailable => "sign_in_unavailable",
             Self::RepositoryDenied => "repository_denied",
             Self::RepositoryRejected => "repository_rejected",
+            Self::InvalidDataSource(_) => "invalid_data_source",
         }
     }
 }

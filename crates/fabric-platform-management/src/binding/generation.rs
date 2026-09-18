@@ -55,3 +55,57 @@ pub(super) fn untag(generation: u64, at: &DesiredRevision) -> Result<DesiredRevi
 
     Ok(DesiredRevision::new(revision))
 }
+
+/// The payload `tag_presence` writes for a read that found no file.
+const ABSENT: &str = "absent";
+
+/// The payload prefix `tag_presence` writes for a read that found one,
+/// right before the adapter's own revision text.
+const PRESENT: &str = "present:";
+
+/// [`tag`]'s sibling for a read that may or may not have found a file.
+///
+/// # Why an absent file still needs a tag
+///
+/// [`tag`] only has something to embed a generation *in* when the adapter
+/// handed back a revision. A read that found no file has nothing -- and a
+/// create decided from that bare `None` would reach `write_data_sources`
+/// carrying no generation at all, so a rebind between the read and the
+/// write could let it land in a repository the decision was never taken
+/// about. That is the same failure [`untag`] already refuses for a
+/// replace; tagging the absence too closes it for a create, by never
+/// handing back a bare `None` in the first place.
+pub(super) fn tag_presence(generation: u64, revision: Option<&DesiredRevision>) -> DesiredRevision {
+    let payload = revision.map_or_else(
+        || ABSENT.to_owned(),
+        |revision| format!("{PRESENT}{}", revision.as_str()),
+    );
+
+    DesiredRevision::new(format!("{generation}{SEPARATOR}{payload}"))
+}
+
+/// [`untag`]'s sibling: recovers what the adapter should see -- `None` to
+/// create, `Some` to replace -- refusing a token from any other
+/// generation exactly as `untag` does.
+pub(super) fn untag_presence(
+    generation: u64,
+    at: &DesiredRevision,
+) -> Result<Option<DesiredRevision>, DesiredStateError> {
+    let (tagged, payload) = at
+        .as_str()
+        .split_once(SEPARATOR)
+        .ok_or(DesiredStateError::Conflict)?;
+
+    if tagged.parse::<u64>() != Ok(generation) {
+        return Err(DesiredStateError::Conflict);
+    }
+
+    if payload == ABSENT {
+        return Ok(None);
+    }
+
+    payload
+        .strip_prefix(PRESENT)
+        .map(|revision| Some(DesiredRevision::new(revision)))
+        .ok_or(DesiredStateError::Conflict)
+}

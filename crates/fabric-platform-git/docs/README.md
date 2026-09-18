@@ -2,9 +2,16 @@
 
 Atomic, multi-file desired-state mutation in the platform repository, over
 the Git Data API — and the `DesiredState` adapter that lets
-`fabric-platform-management` read and move it. This is the platform's own
-equivalent of `fabric-client-git`, using the same credential mechanism
-(`fabric-git-host`) against a completely separate GitHub App and repository.
+`fabric-platform-management` read and move it. Since ADR 0023 part 1 it is
+also the `DataSourceState` adapter for what an environment can place a
+tenant's data on, over the same repository and the same atomic-write
+primitive. `DataSourceState` is not `DesiredState`'s supertrait; this crate
+implements both directly, which is what makes it a `PlatformRepository`
+(`fabric-platform-management`'s combined trait, satisfied by a blanket
+impl) for free -- the one thing `PlatformDesiredState::connect` accepts.
+This is the platform's own equivalent of
+`fabric-client-git`, using the same credential mechanism (`fabric-git-host`)
+against a completely separate GitHub App and repository.
 
 Sits in neither plane (see
 [`docs/architecture/crate-dependencies.md`](../../../docs/architecture/crate-dependencies.md)).
@@ -91,6 +98,20 @@ and it deliberately does not stop there — see "Concurrency" below.
   *two* sources (the chart, and a values repository with its own unrelated
   `targetRevision`), and matching on chart name alone would not be enough in
   general — both `repository` and `chart` must agree.
+- **The `DataSourceState` port (`port/data_sources.rs` + friends, ADR 0023
+  part 1)** — a second declared document, `environments/<env>/data-sources.yaml`,
+  beside `components.yaml`, over the same header-preserving, compare-and-swap
+  shape: `document.rs`'s `Document` mirrors `components::Document` (a
+  `schemaVersion` gate, the header captured verbatim and written back
+  unchanged); `header.rs` is its own copy of `header_of` rather than a shared
+  one, because the rule is that `components.rs` must not know data sources
+  exist; `read.rs`/`write.rs` are the same `at: None` (create, refused if
+  present) / `at: Some(revision)` (replace, refused unless still at that
+  revision) compare-and-swap `set_component_hold` uses, both answering
+  `Conflict` on a mismatch, and both refusing a document that names a
+  different environment than the one it was read for. Every entry in the
+  envelope is `DataSourceDeclaration` itself — this crate never re-declares
+  the shape.
 
 ## How the pieces fit
 
@@ -131,7 +152,8 @@ let repository = PlatformGitRepository::new(
     SystemClock::shared(),
 )?;
 
-// implements fabric_platform_management::DesiredState directly:
+// implements fabric_platform_management::DesiredState and DataSourceState
+// directly, so it is a PlatformRepository for free:
 let binding = fabric_platform_management::PlatformDesiredState::unconnected();
 binding.connect(Arc::new(repository)).await;
 ```
@@ -160,6 +182,14 @@ to the state it was taken against").
   branch is being written to faster than 4 retries can keep up with. Check
   what else is committing to it; this is not a bug in this crate to fix by
   raising `ATTEMPTS` blindly.
+- **Reading or declaring an environment's data sources** — through the
+  port, `fabric_platform_management::DataSourceState::read_data_sources`/
+  `write_data_sources`; that is the only way in from outside this crate --
+  `PlatformGitRepository::read_data_sources_file`/`write_data_sources_file`
+  underneath it are `pub(crate)`, not directly callable. Prefer the port
+  over a hypothetical direct call regardless: `fabric-platform-management`'s
+  `DataSources` service is what computes the revision and decides whether
+  anything changed at all.
 
 ## Gotchas
 
@@ -198,3 +228,7 @@ to the state it was taken against").
   `PlatformGitError`. Every *other* status from that call (including a
   `422`) is a genuine `PlatformGitError`, precisely so a misconfiguration
   can never be reinterpreted as contention and retried forever.
+- `port/data_sources/header.rs::header_of` is a deliberate copy of
+  `components/document.rs`'s function of the same name, not a shared one —
+  the two documents' headers are allowed to diverge, and sharing the
+  function would tempt `components.rs` into knowing data sources exist.

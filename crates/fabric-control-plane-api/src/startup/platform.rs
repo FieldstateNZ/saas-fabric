@@ -5,7 +5,8 @@ use std::sync::Arc;
 use fabric_control_plane::PlatformBinding;
 use fabric_core::Clock;
 use fabric_platform_management::{
-    ChartIndex, DesiredState, PlatformDesiredState, PlatformManagement, Registry,
+    ChartIndex, DataSourceState, DataSources, DesiredState, PlatformDesiredState, PlatformManagement,
+    Registry,
 };
 use fabric_registry::{HelmCharts, OciRegistry};
 
@@ -127,9 +128,18 @@ pub fn establish(
             )?,
         ))
     };
+    // Built over the same `repository`, so a data-source read or write and
+    // every other platform operation agree about which repository is live —
+    // see `PlatformDesiredState`'s own rustdoc for why that binding is late
+    // and shared rather than each caller holding its own.
+    let data_sources = Arc::new(DataSources::new(
+        Arc::clone(&repository) as Arc<dyn DataSourceState>
+    ));
+
     Ok(Some(PlatformBinding {
         service: Arc::new(service),
         repository,
+        data_sources,
         environment: config.environment.clone(),
     }))
 }

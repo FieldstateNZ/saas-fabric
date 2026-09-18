@@ -7,6 +7,7 @@
  */
 import { request } from './client'
 import type { Platform, PlatformIntegration, RollbackCandidates } from './types'
+import type { DataSourceInput, DataSources } from './data-source-types'
 
 /**
  * What this deployment's environment is asked to run.
@@ -87,5 +88,43 @@ export async function rollBackComponent(
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ version, note }),
+  })
+}
+
+/**
+ * Every data source declared for this deployment's one environment
+ * (ADR 0023 part 1).
+ *
+ * Takes no environment name, for the same reason `getPlatform` does not: a
+ * deployment manages the one environment it was deployed into, and there is
+ * nowhere else for a second name to reach.
+ */
+export async function getDataSources(): Promise<DataSources> {
+  return request<DataSources>('/api/platform/data-sources')
+}
+
+/**
+ * Declares a data source, or corrects one that already exists.
+ *
+ * `revision` is the document revision this operator last read, always sent
+ * as `If-Match`. There is no "nothing declared yet" case that skips it: the
+ * late-bound binding always has a fact to compare-and-swap on -- the
+ * generation tag, even when no file exists -- so the very first declaration
+ * in an environment reads that tag from `getDataSources` and sends it back,
+ * exactly like every later one. `If-None-Match` is not accepted on this
+ * route.
+ */
+export async function declareDataSource(
+  id: string,
+  input: DataSourceInput,
+  revision: string,
+): Promise<DataSources> {
+  return request<DataSources>(`/api/platform/data-sources/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      'If-Match': `"${revision}"`,
+    },
+    body: JSON.stringify(input),
   })
 }

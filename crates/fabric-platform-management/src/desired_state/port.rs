@@ -5,24 +5,10 @@ use crate::{ComponentDesired, DesiredRevision, DesiredStateError, Hold, Release}
 /// Where an environment's desired state is kept.
 ///
 /// Implemented by an adapter that knows how the platform repository is laid
-/// out. Nothing here knows which files carry a pin.
-///
-/// # Every operation must be bounded, and never by cancellation
-///
-/// A contract, not a hope: the platform binding holds a lock across these
-/// calls, so the longest one can take is the longest an operator's disconnect
-/// can wait, and that is cut off by the API's request timeout. Bounding each
-/// request separately is not enough — an operation is many of them — so bound
-/// the *operation*, answering [`Unavailable`](DesiredStateError::Unavailable)
-/// when the budget is spent. Bound it by refusing to **start** a request it
-/// cannot afford, never by abandoning a write already sent: one dropped
-/// mid-flight releases the binding while it may still land, in a repository
-/// the platform has by then reported it stopped writing to. So an operation
-/// ends within its budget plus the one request it may still have running.
-///
-/// Every write answers [`Conflict`](DesiredStateError::Conflict) if the state
-/// it was decided against has moved since it was read, and the other variants
-/// for what they name — said once here rather than under each method.
+/// out. Nothing here knows which files carry a pin. Every operation must be
+/// bounded and every write answers [`Conflict`](DesiredStateError::Conflict)
+/// on stale state — see the module doc for both, said once there rather
+/// than under each method here.
 #[async_trait::async_trait]
 pub trait DesiredState: Send + Sync {
     /// Every component an environment describes.

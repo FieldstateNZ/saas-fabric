@@ -118,6 +118,8 @@ PUT    /api/platform/components/{component}/hold       stop it advancing
 DELETE /api/platform/components/{component}/hold       let it advance again
 GET    /api/platform/components/{component}/versions   what it could go back to
 POST   /api/platform/components/{component}/rollback   put it back on one
+GET    /api/platform/data-sources        what this environment can place a tenant's data on
+PUT    /api/platform/data-sources/{dataSourceId}       declare one, or correct it   (If-Match required)
 GET    /api/catalogue                    the product catalogue, and its revision
 POST   /api/catalogue                    apply one command      (If-Match, or If-None-Match: *)
 GET    /api/activity                     recorded operator actions, newest first
@@ -632,6 +634,41 @@ was never moving.
 `advance` remains structurally unable to express a hold. That is what
 guarantees an automatic pass cannot clear one in order to succeed, and it is
 why these are separate operations rather than an argument to it.
+
+### Data sources
+
+[ADR 0023](../decisions/0023-data-sources-are-environment-desired-state-and-placement-is-recorded.md)
+part 1: `environments/<environment>/data-sources.yaml`, beside
+`components.yaml`, is what an environment can place a tenant's data on — a
+connector, a connection, a placement class, residency, pool sizing,
+capabilities and, on a shared source, the discriminator column. It is
+declared through the console the same way a client or the product catalogue
+is: `GET /api/platform/data-sources` reads every declared data source and its
+revision; `PUT /api/platform/data-sources/{dataSourceId}` declares or corrects
+one.
+
+Unlike the catalogue, this route never accepts `If-None-Match: *`. The
+late-bound platform binding always has a fact to compare a write against —
+it tags even an environment with nothing declared yet with a generation, so
+there is no state "only if absent" could mean that `If-Match` cannot already
+say. `revision` on `GET /api/platform/data-sources` is therefore always a
+non-null opaque string, with `ETag` always sent, even for an empty
+environment; `PUT` always requires `If-Match: "<revision>"`, including for
+the very first declaration, which reads first, gets that tag, and sends it
+back. A missing `If-Match` is `428 revision_required`; a stale one is `409
+revision_conflict`; a request carrying `If-None-Match: *` and no `If-Match`
+is `428 revision_required` too, not the create-if-absent path a catalogue
+write offers. `PUT` also refuses a declaration that breaks one of ADR 0023
+part 1's rules — a shared source with no discriminator column, or the
+wire's `default` connection shape, an operator can never name — with `422
+invalid_data_source` before anything is read or written, and answers a
+held document a hand edit made incoherent (two entries with one id, say)
+with `500 desired_state_invalid`, the same code a broken client document
+already answers.
+
+This is the whole of slice 1. Nothing here places a tenant on a data source,
+and nothing is published to the runtime yet — both are later slices ADR 0023
+names and neither is built.
 
 ### What the platform panel reports
 

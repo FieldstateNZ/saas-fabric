@@ -291,6 +291,7 @@ The reasoning, the licence audit, and the consequences are recorded in
 | [0020](docs/decisions/0020-keyed-writes-name-their-key-arguments.md) | Keyed writes name their key arguments; the tenant predicate is still sent whole |
 | [0021](docs/decisions/0021-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md) | The product catalogue is desired state, and the console creates clients |
 | [0022](docs/decisions/0022-running-versions-come-from-deployment-evidence.md) | Running versions come from deployment evidence |
+| [0023](docs/decisions/0023-data-sources-are-environment-desired-state-and-placement-is-recorded.md) | Data sources are environment desired state, and placement is recorded rather than inferred |
 
 ## Running it
 

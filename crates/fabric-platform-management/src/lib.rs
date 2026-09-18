@@ -22,6 +22,7 @@
 mod artifact;
 mod binding;
 mod charts;
+mod data_sources;
 mod desired_state;
 mod diagnostic;
 mod discovery;
@@ -35,11 +36,25 @@ mod sweep;
 mod version;
 
 pub use artifact::{ArtifactKind, ArtifactSource, Release};
-pub use binding::PlatformDesiredState;
+pub use binding::{PlatformDesiredState, PlatformRepository};
 pub use charts::ChartIndex;
+pub use data_sources::{
+    DataSourceDeclaration, DataSourceRule, DataSourceState, DataSources, DataSourcesRead, Declared,
+    Discriminator, PoolField,
+};
 pub use desired_state::{ComponentDesired, DesiredRevision, DesiredState, DesiredStateError, Hold};
 pub use diagnostic::SafeDiagnostic;
 pub use discovery::{Discovery, History, ReleaseUnit, ResolvedImage};
+// The wire's own sub-types, re-exported because they are the field types of
+// `DataSourceDeclaration` (ADR 0023 part 1): a caller that builds or reads a
+// declaration has to name them, and the only crates allowed to depend on the
+// wire directly are this one and the publisher's future caller. A re-export
+// adds no Cargo edge for anyone.
+pub use fabric_runtime_publication::{
+    ConnectionName, ConnectionSelectorDocument, ConnectorId, DataResidencyDocument,
+    DataSourceCapabilitiesDocument, DataSourceDocument, FieldName, PlacementClassDocument,
+    PoolSettingsDocument,
+};
 pub use observation::{DeploymentHealth, DeploymentObservation, DeploymentObserver, WorkloadObservation};
 pub use policy::UpdatePolicy;
 pub use registry::{Provenance, Registry, RegistryError, Resolved};

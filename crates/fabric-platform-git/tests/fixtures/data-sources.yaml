@@ -1,0 +1,37 @@
+# What this environment can place a tenant's data on.
+#
+# Machine-managed by SaaS Fabric Platform Management. Everything below this
+# header is written by Fabric in a deterministic layout, so a hand edit
+# survives as values and not as formatting. Editing it by hand is the
+# break-glass path and is expected to keep working.
+#
+# Desired state only. The runtime reads what is *published* from this file
+# (ADR 0023 in the application repository); nothing here is a credential,
+# and a connection is a name the connector holds or a reference to a secret.
+#
+# See environments/README.md for the complete contract.
+---
+schemaVersion: 1
+environment: lucentroot
+dataSources:
+- id: shared-postgres-nz-01
+  revision: 3
+  connector: postgres-nz
+  connection:
+    kind: named
+    name: shared
+  placement: shared
+  residency:
+    region: nz
+    jurisdiction: NZ
+  pool:
+    max_connections: 20
+    idle_timeout_seconds: 300
+    acquire_timeout_seconds: 5
+  capabilities:
+    writable: true
+    accepts_new_tenants: true
+  discriminator:
+    column: tenant_key
+  labels:
+    owner: platform

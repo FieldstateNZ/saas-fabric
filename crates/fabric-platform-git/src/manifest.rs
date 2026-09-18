@@ -33,7 +33,7 @@ impl PlatformGitRepository {
         if document.manifest.environment != environment {
             return Err(PlatformGitError::Rejected {
                 detail: format!(
-                    "{path} describes '{}', not '{environment}'",
+                    "the components manifest declares environment '{}', not '{environment}'",
                     document.manifest.environment
                 ),
             });

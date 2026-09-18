@@ -68,7 +68,7 @@ image.
 | Releases | Validate and publish immutable numbered snapshots. Existing assignments retain their exact version until explicitly changed. |
 | Components | Application component inventory plus existing platform hold/resume/rollback operations. |
 | Client definition | Edit typed custom fields, defaults and required values; increment shared definition version. |
-| Environments | Inspect current deployment and register links to other independently authenticated operator consoles. |
+| Environments | Inspect current deployment; declare or correct the data sources it can place a tenant on (ADR 0023 part 1); register links to other independently authenticated operator consoles. |
 | Integrations | Existing Git application installation, repository selection and platform connection workflows. |
 | Reconciliation | Trigger the existing identity reconciler with operator authority and inspect each client's latest outcome. Passes are observations and are not recorded as activity. In the workbench no identity provider is connected, so a pass is refused as unavailable. |
 | Settings | Persist platform display name, new-client defaults and show authenticated operator identity. |
@@ -76,10 +76,18 @@ image.
 ## API and storage
 
 Authenticated additions: GET/POST `/api/catalogue`, POST `/api/clients`,
-GET/PUT `/api/clients/{id}/product`, GET `/api/activity`, GET `/api/operator`.
+GET/PUT `/api/clients/{id}/product`, GET `/api/activity`, GET `/api/operator`,
+GET `/api/platform/data-sources`, PUT `/api/platform/data-sources/{dataSourceId}`.
 The first catalogue write requires `If-None-Match: *`; every later one, and every
 product save, requires the strong `If-Match` revision. Product responses and a
-created client carry an `ETag`.
+created client carry an `ETag`. A data source's precondition works differently:
+the late-bound binding always has a generation tag to compare-and-swap on, even
+before any file exists, so `GET /api/platform/data-sources` always answers a
+non-null `revision` and an `ETag`, for an environment that has declared nothing
+yet as much as for one that has. `PUT /api/platform/data-sources/{dataSourceId}`
+therefore always requires `If-Match`, including the very first declaration --
+there is no `If-None-Match: *` case on this route, and a request without
+`If-Match` is refused.
 
 | Answer | When |
 | --- | --- |
@@ -87,7 +95,8 @@ created client carry an `ETag`.
 | `409 realm_unavailable` | creating a client whose realm is reserved or already declared by another client; the message names the realm and which of the two |
 | `409 revision_conflict` | a stale edit, whose message names the catalogue or the client; or a creation that lost a race on the branch, which can be sent again. A creation the Git host refused as invalid stays a rejection instead |
 | `422 document_too_large` | the document the write would produce is past its limit: 900 KiB for a creation, product save or catalogue command, 960 KiB for an identity edit, so a compromised callback can still be removed from a document growth has filled |
-| `500 desired_state_invalid` | stored data that will not parse — a client's `spec.product`, or the catalogue — which no retry fixes. One unreadable client fails the whole activity listing, and every creation |
+| `422 invalid_data_source` | a data source declaration ADR 0023 part 1 refuses -- a shared placement with no discriminator column, any other placement with one, a zero pool value, an empty label, a default connection kind (a connector's single default connection is never something an operator declares), or a malformed secret reference; the message is the rule's own words |
+| `500 desired_state_invalid` | stored data that will not parse — a client's `spec.product`, the catalogue, or an environment's data-sources document (a hand edit gave two entries the same id, or made one invalid) — which no retry fixes. One unreadable client fails the whole activity listing, and every creation |
 
 The Git adapter stores `fabric-catalogue.yaml` at the repository root, and each
 client's product state as `spec.product` inside its existing client document; in

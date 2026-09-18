@@ -2,7 +2,14 @@
 
 Atomic multi-file desired-state mutation in the platform repository, over
 the Git Data API, and the `fabric_platform_management::DesiredState` adapter
-built on it. In neither plane (see `docs/architecture/crate-dependencies.md`).
+built on it. Since ADR 0023 part 1 it is also the
+`fabric_platform_management::DataSourceState` adapter for
+`environments/<env>/data-sources.yaml`, over the same
+repository and the same `update_files_atomically`. `DataSourceState` is not
+`DesiredState`'s supertrait; implementing both is what makes this type a
+`fabric_platform_management::PlatformRepository` for free (a blanket impl,
+not a trait this crate names). In neither plane (see
+`docs/architecture/crate-dependencies.md`).
 Depends on `fabric-core`, `fabric-git-host` (shared App-credential exchange),
 `fabric-platform-management` (the port implemented; also the source of
 `Channel`, `Hold`, `UpdatePolicy`, re-declared in `components.rs` via `pub use
@@ -19,7 +26,11 @@ fabric_platform_management::{Channel, Hold, UpdatePolicy}` — only `Hold` and
 - `PlatformGitRepository` — `new(config: &PlatformRepositoryConfig,
   credential: GitCredential, clock: Arc<dyn Clock>) -> Result<Self, String>`.
   `describe() -> String` (`"{owner}/{repository} on {branch}"` — no
-  credential, no API base URL). Implements `fabric_platform_management::DesiredState`.
+  credential, no API base URL). Implements
+  `fabric_platform_management::DesiredState` and, since ADR 0023 part 1,
+  `DataSourceState` too -- not a supertrait of `DesiredState`; the two are
+  independent ports this type happens to answer both of, which is what
+  makes it a `PlatformRepository` (via a blanket impl) for free.
 - `PlatformRepositoryConfig { api_base_url, owner, repository, branch,
   http_timeout_seconds, operation_timeout_seconds }`. `.validate()`. No
   path-prefix or file-list field — which files a change touches is decided
@@ -135,6 +146,24 @@ fabric_platform_management::{Channel, Hold, UpdatePolicy}` — only `Hold` and
   -> String` (`environments/{environment}/components.yaml`, the one place
   this path is spelled out).
 - `model.rs` — `FileRevision`, `CommitRevision`, `StoredFile`, `FileChange`.
+- `port/data_sources.rs` + `port/data_sources/{document,header,read,write}.rs`
+  (ADR 0023 part 1) — `impl DataSourceState for PlatformGitRepository`, both
+  methods wrapped in `within_budget` like every `DesiredState` method.
+  `document.rs`: `Document` (mirrors `components::Document` — header
+  captured verbatim, `SCHEMA_VERSION: u32 = 1`, `Envelope { schema_version,
+  environment, data_sources: Vec<DataSourceDeclaration> }` camelCase at the
+  envelope level, each entry the wire's own shape). `header.rs`:
+  `header_of` — a deliberate copy of `components/document.rs`'s function of
+  the same name rather than a shared one, so `components.rs` stays ignorant
+  of data sources. `read.rs`: `read_data_sources_file` (shared by the port's
+  read and write; refuses a document naming a different environment),
+  `data_sources_path(environment) -> String`
+  (`environments/{environment}/data-sources.yaml`). `write.rs`:
+  `write_data_sources_file`, `CREATE_HEADER` (ADR 0023's fixed text, used
+  only the first time an environment declares one) — `at: None` on an
+  existing file, or `at: Some(stale)`, both answer
+  `PlatformGitError::Conflict`, the same compare-and-swap `set_component_hold`
+  uses.
 - `port.rs` + `port/{budget,budget/bearer,errors,reading,wanted}.rs` — the
   `impl DesiredState for PlatformGitRepository` (all six methods —
   `components`, `component`, `advance`, `roll_back`, `pause`, `resume` —
@@ -176,6 +205,10 @@ fabric_platform_management::{Channel, Hold, UpdatePolicy}` — only `Hold` and
    own state against itself — the latter only proves nothing changed during
    the write, not that the write is still being applied to the state it was
    decided against.
+9. **`write_data_sources_file` refuses `at: None` when the file already
+   exists, and `at: Some(_)` when it does not**, both as `Conflict` — "create"
+   and "replace" are not interchangeable, and neither silently becomes the
+   other.
 
 ## Notes
 
@@ -193,3 +226,9 @@ fabric_platform_management::{Channel, Hold, UpdatePolicy}` — only `Hold` and
   repository's own CI, redundantly with `check_writable` here — CI proves
   coherence at the commit it ran on; this crate re-checks the state it
   actually reads, which may not be a state CI has seen yet.
+- `tests/data_source_state.rs` and `tests/fixtures/data-sources.yaml` drive
+  the same fake host support the `components.yaml` tests use
+  (`tests/support/fake_platform_host.rs`) — absent file reads empty, a create
+  writes the header and one commit, a replace preserves a hand-written
+  header and comments, and the fixture parses and re-renders byte-identical
+  below its header.

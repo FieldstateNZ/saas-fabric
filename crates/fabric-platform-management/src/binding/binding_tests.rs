@@ -9,8 +9,8 @@ use tokio::sync::Notify;
 
 use super::PlatformDesiredState;
 use crate::{
-    ArtifactSource, Channel, ComponentDesired, DesiredRevision, DesiredState, DesiredStateError, Release,
-    UpdatePolicy,
+    ArtifactSource, Channel, ComponentDesired, DataSourceDeclaration, DataSourceState, DataSourcesRead,
+    DesiredRevision, DesiredState, DesiredStateError, PlatformRepository, Release, UpdatePolicy,
 };
 
 /// A repository that is reachable, and whose reads fail.
@@ -63,6 +63,30 @@ impl DesiredState for Connected {
     }
 
     async fn resume(&self, _: &str, _: &str, _: &DesiredRevision, _: &str) -> Result<(), DesiredStateError> {
+        Ok(())
+    }
+}
+
+/// `PlatformDesiredState::connect` takes `Arc<dyn PlatformRepository>`
+/// (ADR 0023 part 1), which requires both `DesiredState` and
+/// `DataSourceState` -- not a supertrait relationship, but every type
+/// connected here must answer both ports. This fake's answer mirrors
+/// component -- reachable, and its reads fail.
+#[async_trait::async_trait]
+impl DataSourceState for Connected {
+    async fn read_data_sources(&self, _: &str) -> Result<DataSourcesRead, DesiredStateError> {
+        Err(DesiredStateError::Unavailable {
+            detail: "the platform repository timed out".to_owned(),
+        })
+    }
+
+    async fn write_data_sources(
+        &self,
+        _: &str,
+        _: &[DataSourceDeclaration],
+        _: Option<&DesiredRevision>,
+        _: &str,
+    ) -> Result<(), DesiredStateError> {
         Ok(())
     }
 }
@@ -368,6 +392,30 @@ impl DesiredState for Fake {
     }
 }
 
+/// `PlatformDesiredState::connect` requires `Arc<dyn PlatformRepository>`
+/// (ADR 0023 part 1) -- both `DesiredState` and `DataSourceState`, not one
+/// as the other's supertrait. Nothing in this file exercises this half of
+/// Fake, so it answers a fixed empty read and does not record the write.
+#[async_trait::async_trait]
+impl DataSourceState for Fake {
+    async fn read_data_sources(&self, _: &str) -> Result<DataSourcesRead, DesiredStateError> {
+        Ok(DataSourcesRead {
+            revision: Some(DesiredRevision::new(&self.revision)),
+            declarations: Vec::new(),
+        })
+    }
+
+    async fn write_data_sources(
+        &self,
+        _: &str,
+        _: &[DataSourceDeclaration],
+        _: Option<&DesiredRevision>,
+        _: &str,
+    ) -> Result<(), DesiredStateError> {
+        Ok(())
+    }
+}
+
 /// The hold a pause writes.
 fn hold() -> crate::Hold {
     crate::Hold {
@@ -450,7 +498,9 @@ async fn a_disconnect_waits_for_the_write_already_in_flight() {
     let started = Arc::clone(&a.started);
 
     let binding = PlatformDesiredState::unconnected();
-    binding.connect(Arc::clone(&a) as Arc<dyn DesiredState>).await;
+    binding
+        .connect(Arc::clone(&a) as Arc<dyn PlatformRepository>)
+        .await;
 
     let disconnecting = {
         let journal = Arc::clone(&journal);
@@ -492,7 +542,9 @@ async fn a_rebind_waits_the_same_way() {
     let started = Arc::clone(&a.started);
 
     let binding = PlatformDesiredState::unconnected();
-    binding.connect(Arc::clone(&a) as Arc<dyn DesiredState>).await;
+    binding
+        .connect(Arc::clone(&a) as Arc<dyn PlatformRepository>)
+        .await;
 
     let rebinding = {
         let journal = Arc::clone(&journal);
@@ -500,7 +552,7 @@ async fn a_rebind_waits_the_same_way() {
 
         move |binding: Arc<PlatformDesiredState>| {
             tokio::spawn(async move {
-                binding.connect(b as Arc<dyn DesiredState>).await;
+                binding.connect(b as Arc<dyn PlatformRepository>).await;
                 journal
                     .lock()
                     .unwrap_or_else(PoisonError::into_inner)
@@ -531,7 +583,9 @@ async fn a_decision_read_before_a_rebind_is_refused_after_it() {
     let b = Fake::quick("B", "sha-b");
 
     let binding = PlatformDesiredState::unconnected();
-    binding.connect(Arc::clone(&a) as Arc<dyn DesiredState>).await;
+    binding
+        .connect(Arc::clone(&a) as Arc<dyn PlatformRepository>)
+        .await;
 
     let decided = binding
         .component("lucentroot", "saas-fabric")
@@ -539,7 +593,9 @@ async fn a_decision_read_before_a_rebind_is_refused_after_it() {
         .expect("A answers")
         .revision;
 
-    binding.connect(Arc::clone(&b) as Arc<dyn DesiredState>).await;
+    binding
+        .connect(Arc::clone(&b) as Arc<dyn PlatformRepository>)
+        .await;
 
     assert_eq!(
         binding
@@ -568,7 +624,9 @@ async fn a_decision_read_before_a_disconnect_is_refused_after_a_reconnect_to_the
     let a = Fake::quick("A", "sha-a");
 
     let binding = PlatformDesiredState::unconnected();
-    binding.connect(Arc::clone(&a) as Arc<dyn DesiredState>).await;
+    binding
+        .connect(Arc::clone(&a) as Arc<dyn PlatformRepository>)
+        .await;
 
     let decided = binding
         .component("lucentroot", "saas-fabric")
@@ -577,7 +635,9 @@ async fn a_decision_read_before_a_disconnect_is_refused_after_a_reconnect_to_the
         .revision;
 
     binding.disconnect().await;
-    binding.connect(Arc::clone(&a) as Arc<dyn DesiredState>).await;
+    binding
+        .connect(Arc::clone(&a) as Arc<dyn PlatformRepository>)
+        .await;
 
     assert_eq!(
         binding
@@ -604,7 +664,9 @@ async fn the_adapter_sees_the_revision_it_handed_out() {
     let a = Fake::quick("A", "sha-a");
 
     let binding = PlatformDesiredState::unconnected();
-    binding.connect(Arc::clone(&a) as Arc<dyn DesiredState>).await;
+    binding
+        .connect(Arc::clone(&a) as Arc<dyn PlatformRepository>)
+        .await;
 
     let decided = binding
         .component("lucentroot", "saas-fabric")
@@ -644,7 +706,9 @@ async fn a_revision_this_binding_did_not_hand_out_is_refused() {
     let a = Fake::quick("A", "sha-a");
 
     let binding = PlatformDesiredState::unconnected();
-    binding.connect(Arc::clone(&a) as Arc<dyn DesiredState>).await;
+    binding
+        .connect(Arc::clone(&a) as Arc<dyn PlatformRepository>)
+        .await;
 
     assert_eq!(
         binding
@@ -670,7 +734,9 @@ async fn pause_and_resume_are_bound_to_the_generation_too() {
     let b = Fake::quick("B", "sha-b");
 
     let binding = PlatformDesiredState::unconnected();
-    binding.connect(Arc::clone(&a) as Arc<dyn DesiredState>).await;
+    binding
+        .connect(Arc::clone(&a) as Arc<dyn PlatformRepository>)
+        .await;
 
     let decided = binding
         .component("lucentroot", "saas-fabric")
@@ -678,7 +744,9 @@ async fn pause_and_resume_are_bound_to_the_generation_too() {
         .expect("A answers")
         .revision;
 
-    binding.connect(Arc::clone(&b) as Arc<dyn DesiredState>).await;
+    binding
+        .connect(Arc::clone(&b) as Arc<dyn PlatformRepository>)
+        .await;
 
     assert_eq!(
         binding
@@ -725,7 +793,9 @@ async fn an_operation_outlives_a_caller_that_stopped_waiting() {
     let started = Arc::clone(&a.started);
 
     let binding = PlatformDesiredState::unconnected();
-    binding.connect(Arc::clone(&a) as Arc<dyn DesiredState>).await;
+    binding
+        .connect(Arc::clone(&a) as Arc<dyn PlatformRepository>)
+        .await;
 
     let at = binding
         .component("lucentroot", "saas-fabric")

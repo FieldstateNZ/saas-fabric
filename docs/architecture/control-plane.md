@@ -123,6 +123,7 @@ PUT    /api/platform/data-sources/{dataSourceId}       declare one, or correct i
 DELETE /api/platform/data-sources/{dataSourceId}       remove one, refused while a tenant is placed on it (If-Match required)
 GET    /api/catalogue                    the product catalogue, and its revision
 POST   /api/catalogue                    apply one command      (If-Match, or If-None-Match: *)
+GET    /api/catalogue/runtime            the catalogue the runtime would be given, derived on read
 GET    /api/activity                     recorded operator actions, newest first
 GET    /api/clients                      list clients
 POST   /api/clients                      create one             (refused if the id exists)
@@ -728,6 +729,30 @@ refusal's own words as the message.
 
 Nothing here unplaces a tenant, and nothing is published to the runtime
 yet — both are later work ADR 0023 names and neither is built.
+
+### Runtime catalogue
+
+[ADR 0023](../decisions/0023-data-sources-are-environment-desired-state-and-placement-is-recorded.md)
+part 3: an application's published release declares the logical resources
+it exposes through the Data API — `resources` on the definition, each with
+the wire's own fields (logical data source, collection, key field,
+operations, queryable fields), spelled camelCase in the API and saved with
+the rest of the definition through `POST /api/catalogue`'s `saveApplication`
+command. Saving checks the application's own resources (unique names,
+non-empty duplicate-free operations, a key field among a restricting
+queryable list); publishing additionally refuses a name a *different*
+application has already published, naming both. A draft never takes a name.
+
+`GET /api/catalogue/runtime` derives, on every read and from nothing stored,
+the `catalog.json` the runtime would be given: for each application its
+newest release's resources, so a newer release supersedes its own older
+definition of a name; sorted by name; each row carrying the application and
+version it came from. The body carries the product catalogue's `revision`,
+because that is the document a change to this view is made in. A conflict —
+two applications' newest releases declaring one name — is reachable only by
+a hand edit, and answers `500 desired_state_invalid` naming the resource and
+both applications; nothing picks a winner. Nothing here publishes: part 4
+builds the controller that hands this document to the runtime.
 
 ### What the platform panel reports
 

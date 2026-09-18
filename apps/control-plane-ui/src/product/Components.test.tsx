@@ -39,6 +39,7 @@ const catalogue: Catalogue = {
         plans: [],
         fields: [],
         navigation: [],
+        resources: [],
       },
       releases: [],
     },

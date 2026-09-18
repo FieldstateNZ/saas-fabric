@@ -22,6 +22,7 @@ mod get_client;
 mod get_identity;
 mod get_operator;
 mod get_product;
+mod get_runtime_catalogue;
 mod integration;
 mod list_activity;
 mod list_clients;
@@ -41,6 +42,7 @@ pub(crate) use get_client::get_client;
 pub(crate) use get_identity::get_identity;
 pub(crate) use get_operator::get_operator;
 pub(crate) use get_product::get_product;
+pub(crate) use get_runtime_catalogue::get_runtime_catalogue;
 pub(crate) use integration::{
     begin_connection, begin_install, choose_repository, created, disconnect, get_integration,
     get_platform_integration, installed, list_repositories, ClientConfigurationFlow, PlatformManagementFlow,

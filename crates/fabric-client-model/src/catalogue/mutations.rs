@@ -6,7 +6,7 @@
 //! function would still leave this file naming all six and stitching their
 //! results into one activity record — the coordination, not the individual
 //! arms, is what makes this one function.
-use super::validation::{invalid, text};
+use super::validation::{check_cross_application_conflicts, invalid, text};
 use super::{
     Application, ApplicationDefinition, ApplicationRelease, Catalogue, CatalogueCommand, ProductActivity,
 };
@@ -70,12 +70,24 @@ impl Catalogue {
             }
             CatalogueCommand::PublishApplication { id, note } => {
                 text(&note, "Release note", true, 2048)?;
+                let draft = next
+                    .applications
+                    .iter()
+                    .find(|a| a.id == id)
+                    .ok_or_else(|| invalid("Application does not exist"))?
+                    .draft
+                    .clone();
+                draft.validate(true)?;
+                // Publish-time only, and never on a save: this is the one
+                // rule that needs the rest of the catalogue, not just this
+                // application's own draft, so it lives here rather than in
+                // `ApplicationDefinition::validate` (ADR 0023 part 3).
+                check_cross_application_conflicts(&id, &draft.resources, &next.applications)?;
                 let app = next
                     .applications
                     .iter_mut()
                     .find(|a| a.id == id)
                     .ok_or_else(|| invalid("Application does not exist"))?;
-                app.draft.validate(true)?;
                 if app.releases.last().is_some_and(|r| r.definition == app.draft) {
                     return Err(invalid("This definition is already published"));
                 }
@@ -167,6 +179,83 @@ mod tests {
             matches!(error, DesiredStateError::InvalidField { ref detail, .. } if detail.contains("reserved")),
             "{error}"
         );
+    }
+
+    #[test]
+    fn publishing_a_resource_name_another_application_already_published_is_refused() {
+        let resource = crate::catalogue::ApplicationResource {
+            name: fabric_core::LogicalResourceName::try_new("customers").unwrap(),
+            data_source: fabric_core::LogicalDataSourceName::try_new("primary").unwrap(),
+            collection: fabric_runtime_publication::CollectionName::try_new("customers").unwrap(),
+            key_field: fabric_runtime_publication::FieldName::try_new("id").unwrap(),
+            operations: vec![fabric_core::OperationKind::Read],
+            queryable_fields: vec![],
+        };
+        let plan = crate::catalogue::ApplicationPlan {
+            id: ClientId::try_new("standard").unwrap(),
+            name: "Standard".into(),
+            description: String::new(),
+            features: vec![],
+            configuration: crate::catalogue::ConfigurationValues::default(),
+        };
+        let mut catalogue = Catalogue {
+            applications: vec![Application {
+                id: ClientId::try_new("other").unwrap(),
+                draft: ApplicationDefinition {
+                    name: "Other".into(),
+                    ..ApplicationDefinition::default()
+                },
+                releases: vec![super::ApplicationRelease {
+                    version: 1,
+                    note: String::new(),
+                    published_at: 0,
+                    definition: ApplicationDefinition {
+                        name: "Other".into(),
+                        resources: vec![resource.clone()],
+                        plans: vec![plan],
+                        ..ApplicationDefinition::default()
+                    },
+                }],
+            }],
+            ..Catalogue::default()
+        };
+        catalogue = catalogue
+            .apply(
+                CatalogueCommand::CreateApplication {
+                    id: ClientId::try_new("workspec").unwrap(),
+                    name: "WorkSpec".into(),
+                },
+                "brett@example.com",
+                1,
+            )
+            .unwrap();
+        catalogue.applications[1].draft = ApplicationDefinition {
+            name: "WorkSpec".into(),
+            resources: vec![resource],
+            plans: vec![crate::catalogue::ApplicationPlan {
+                id: ClientId::try_new("standard").unwrap(),
+                name: "Standard".into(),
+                description: String::new(),
+                features: vec![],
+                configuration: crate::catalogue::ConfigurationValues::default(),
+            }],
+            ..ApplicationDefinition::default()
+        };
+
+        let error = catalogue
+            .apply(
+                CatalogueCommand::PublishApplication {
+                    id: ClientId::try_new("workspec").unwrap(),
+                    note: "Initial release".into(),
+                },
+                "brett@example.com",
+                2,
+            )
+            .unwrap_err();
+
+        let message = error.to_string();
+        assert!(message.contains("workspec"), "{message}");
+        assert!(message.contains("other"), "{message}");
     }
 
     #[test]

@@ -51,6 +51,7 @@ pub const API_PREFIX: &str = "/api";
 /// PUT        /api/platform/data-sources/{id}        declare one, or correct it            (If-Match)
 /// DELETE     /api/platform/data-sources/{id}        remove one, refused while a tenant is placed on it (If-Match)
 /// GET/POST   /api/catalogue                         the product catalogue / apply one command
+/// GET        /api/catalogue/runtime                 the catalogue the runtime would be given
 /// GET        /api/activity                          every recorded action, newest first
 /// GET        /api/operator                          who is signed in
 /// GET/POST   /api/clients                           list clients / create one
@@ -88,6 +89,7 @@ pub(crate) fn control_plane_routes(state: ControlPlaneState) -> Router {
             "/catalogue",
             get(handlers::get_catalogue).post(handlers::change_catalogue),
         )
+        .route("/catalogue/runtime", get(handlers::get_runtime_catalogue))
         .route("/activity", get(handlers::list_activity))
         .route("/operator", get(handlers::get_operator))
         .route(

@@ -58,6 +58,22 @@ The control plane's desired-state model. Depends on `fabric-core`, `serde`,
 - `API_VERSION = "fabric.fieldstate.nz/v1"` (deprecated, still read),
   `API_VERSION_V2 = "fabric.fieldstate.nz/v2"` (written), `KIND = "Client"`.
 
+- `catalogue::ApplicationResource { name: LogicalResourceName, data_source:
+  LogicalDataSourceName, collection: CollectionName, key_field: FieldName
+  (default `id`), operations: Vec<OperationKind> (default read, list),
+  queryable_fields: Vec<FieldName> }` — camelCase, `deny_unknown_fields`;
+  `into_definition() -> (LogicalResourceName, ResourceDefinitionDocument)`
+  is field by field. `ApplicationDefinition.resources` is
+  `#[serde(default, skip_serializing_if = Vec::is_empty)]` so pre-existing
+  releases parse and re-render unchanged. Validation lives in
+  `catalogue/validation/resource.rs`: per-definition rules on every save,
+  and `check_cross_application_conflicts` at publication only (releases of
+  other applications, never their drafts).
+- `catalogue::{DerivedCatalogue, DerivedResource, CatalogueConflict}` and
+  `Catalogue::runtime_catalogue() -> Result<DerivedCatalogue, CatalogueConflict>`
+  (`catalogue/runtime_catalogue.rs`): newest release per application,
+  sorted by name, pure; `DerivedCatalogue::into_document() -> CatalogDocument`.
+
 ## Hard invariants — do not break
 
 1. **`with_identity` must never round-trip through `Client`.** The raw document

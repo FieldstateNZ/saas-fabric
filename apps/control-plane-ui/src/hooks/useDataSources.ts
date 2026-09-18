@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 
-import { declareDataSource, getDataSources } from '../api/platform'
+import { declareDataSource, getDataSources, removeDataSource } from '../api/platform'
 import { ControlPlaneError, isControlPlaneError } from '../api/errors'
 import type { DataSourceInput, DataSources } from '../api/data-source-types'
 import { describe } from './useClients'
@@ -40,6 +40,12 @@ export interface DataSourcesState {
   readonly refresh: () => void
   /** Declares or corrects one data source. Resolves to whether it was applied. */
   readonly declare: (id: string, input: DataSourceInput) => Promise<boolean>
+  /**
+   * Removes a data source that no placement references. Resolves to whether
+   * it was applied -- refused as `409 data_source_in_use` comes back the
+   * same way a stale write does, through `saveError`.
+   */
+  readonly remove: (id: string) => Promise<boolean>
 }
 
 export function useDataSources(): DataSourcesState {
@@ -119,5 +125,41 @@ export function useDataSources(): DataSourcesState {
     [saving, value],
   )
 
-  return { value, loading, loadError, unmanaged, saving, saveError, conflict, refresh, declare }
+  const remove = useCallback(
+    async (id: string) => {
+      if (value === null || saving) {
+        return false
+      }
+
+      setSaving(true)
+      setSaveError(null)
+      setConflict(false)
+
+      try {
+        const next = await removeDataSource(id, value.revision)
+        setValue(next)
+        return true
+      } catch (error: unknown) {
+        setSaveError(describe(error))
+        setConflict(isControlPlaneError(error) && error.isConflict)
+        return false
+      } finally {
+        setSaving(false)
+      }
+    },
+    [saving, value],
+  )
+
+  return {
+    value,
+    loading,
+    loadError,
+    unmanaged,
+    saving,
+    saveError,
+    conflict,
+    refresh,
+    declare,
+    remove,
+  }
 }

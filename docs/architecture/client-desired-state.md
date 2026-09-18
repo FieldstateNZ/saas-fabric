@@ -169,6 +169,7 @@ everything else is the same in both.
 | `spec.identity.clients[].redirect.uris` | yes (**`v2` only**) | non-empty; every entry's kind must be admitted by the strategy — see below |
 | `spec.identity.clients[].redirectUris` | yes (**`v1` only**) | `https://` anywhere; `http://` only on loopback or under `.internal`; at most one trailing `*`. Replaced by `redirect` in `v2`, and refused in a `v2` document |
 | `spec.product` | no | owned: refused unless exactly the shape under [`spec.product`](#specproduct) |
+| `spec.data` | no | read, not owned: typed and refused unless exactly the shape under [`spec.data`](#specdata), but nothing in this crate writes it (see that section) |
 | anything else under `spec` | — | preserved untouched |
 
 ### What each redirect strategy admits
@@ -399,6 +400,63 @@ in `spec.identity.clients`, replacing any entry with the same id:
 
 An identity edit does not project. A projected client that an identity edit
 removes is written back by the next product save.
+
+## `spec.data`
+
+**Proposed** in
+[ADR 0023 part 2](../decisions/0023-data-sources-are-environment-desired-state-and-placement-is-recorded.md).
+What a client's document asks Fabric to place its data on, by logical data
+source. Intent, not placement — placing it is a separate act the control
+plane records elsewhere (`environments/<environment>/placements.yaml`), never
+by writing back into this document.
+
+**Read, not owned.** `spec.product` and `spec.identity` are sections this
+model both reads and writes; `spec.data` this increment only reads. Nothing
+in `fabric-client-model` or the control plane's handlers edits it -- an
+operator states intent some other way, not decided by this slice, and
+`ClientDocument` has no `with_data` to call. Typed anyway, for the reason
+below.
+
+```yaml
+spec:
+  data:
+    primary:
+      class: dedicated
+      provider: sql
+      region: au-east
+```
+
+| Path | Required | Rule |
+|---|---|---|
+| `spec.data.<logical>` | no | keyed by a valid logical data source name; any number of entries, including none |
+| `spec.data.<logical>.class` | yes | one of `shared`, `dedicated`, `high_availability`, `regulated`, `development`, `ephemeral` — the wire's own spelling, `snake_case`, reusing `fabric-runtime-publication`'s `PlacementClassDocument` rather than a second declaration of the same six values |
+| `spec.data.<logical>.provider` | no | free text, carried and shown; nothing declares one on a data source yet, so nothing here is ever matched against it |
+| `spec.data.<logical>.region` | no | free text; matched against a candidate data source's `residency.region`, exactly, when stated |
+
+**`high-availability` is not a spelling this model reads.** An earlier draft
+of this document format used the hyphenated form; the wire's own
+`high_availability` is what a data source declares, and `spec.data` states
+its intent in the same vocabulary so the two can never silently disagree
+about what a "high availability" class even means. A document carrying the
+hyphenated spelling is refused as an unknown variant, the same as any other
+typo in an enum field.
+
+**Absent reads as empty.** A document with no `spec.data` reads as a client
+that asks nothing to be placed — which is every document written before this
+section existed, and every client created before an operator visits its Data
+tab. Unknown fields inside one entry are refused, for the same reason
+`spec.identity` and `spec.product` refuse them: the control plane's selector
+has to understand the whole of what it is being asked, not a shape it
+half-recognises.
+
+**Why it is typed at all, unlike `spec.product`'s sibling sections.** Nothing
+here is provisioned or reconciled by this crate — `fabric-client-model`
+contains no I/O and knows nothing of `fabric-platform-management`'s declared
+data sources. It is typed anyway because the selector
+(`fabric-platform-management`, ADR 0023 part 2) has to read `class` as the
+same enum a data source declares `placement` in, and a `serde_norway::Value`
+read at the selector's call site would let a typo through as silently as an
+untyped `spec.identity` once did.
 
 ## What may never appear
 

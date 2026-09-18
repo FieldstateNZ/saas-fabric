@@ -12,11 +12,15 @@
 //! rejections are translated here, in one place, rather than left to whichever
 //! handler happened to be reached.
 
+mod logical_data_source_path;
+
 use axum::extract::{FromRequest, FromRequestParts, Request};
 use fabric_client_model::{ClientId, DesiredStateError};
 use fabric_core::DataSourceId;
 use http::request::Parts;
 use serde::de::DeserializeOwned;
+
+pub(crate) use logical_data_source_path::LogicalDataSourcePath;
 
 use crate::ControlPlaneError;
 
@@ -115,7 +119,13 @@ impl<T: DeserializeOwned, S: Send + Sync> FromRequest<S> for BoundedJson<T> {
 }
 
 /// A field the caller got wrong.
-fn invalid(field: &'static str, detail: String) -> ControlPlaneError {
+///
+/// `pub(super)` rather than private: `logical_data_source_path` below is
+/// its own file for the same reason `ClientPath` and `DataSourceIdPath`
+/// are not (`docs/architecture/file-size-policy.md`'s 150-line limit),
+/// and needs this to report the same way the other two path extractors
+/// do.
+pub(super) fn invalid(field: &'static str, detail: String) -> ControlPlaneError {
     ControlPlaneError::InvalidRequest(DesiredStateError::InvalidField { field, detail })
 }
 

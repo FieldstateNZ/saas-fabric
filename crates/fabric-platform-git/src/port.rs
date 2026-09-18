@@ -18,7 +18,9 @@ use crate::PlatformGitRepository;
 
 mod budget;
 mod data_sources;
+mod environment;
 mod errors;
+mod placements;
 mod reading;
 mod wanted;
 

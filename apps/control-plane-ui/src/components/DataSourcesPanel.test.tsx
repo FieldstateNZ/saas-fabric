@@ -312,3 +312,141 @@ describe('the data sources panel: the form follows the row being edited', () => 
     expect(screen.queryByDisplayValue(dedicated.id)).not.toBeInTheDocument()
   })
 })
+
+describe('the data sources panel: the Remove flow', () => {
+  it('asks for confirmation before sending the DELETE, and cancel backs out without sending anything', async () => {
+    const stored: DataSources = { environment: 'lucentroot', revision: 'rev-1', dataSources: [shared] }
+    const calls: { method: string; url: string }[] = []
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: string, init?: RequestInit) => {
+        const url = input
+        const method = init?.method ?? 'GET'
+
+        if (url === '/api/platform/data-sources' && method === 'GET') {
+          return Promise.resolve(jsonResponse(200, stored))
+        }
+        calls.push({ method, url })
+        return Promise.resolve(jsonResponse(404, { error: { code: 'not_found', message: 'unused' } }))
+      }),
+    )
+    const user = userEvent.setup()
+
+    render(<DataSourcesPanel />)
+    await user.click(await screen.findByRole('button', { name: 'Remove' }))
+
+    expect(screen.getByText(`Remove ${shared.id}?`)).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Cancel' }))
+
+    expect(screen.queryByText(`Remove ${shared.id}?`)).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Remove' })).toBeInTheDocument()
+    expect(calls).toHaveLength(0)
+  })
+
+  it('confirming sends DELETE with If-Match at the current revision, and a 200 reloads the list', async () => {
+    const stored: DataSources = { environment: 'lucentroot', revision: 'rev-1', dataSources: [shared] }
+    const calls: { method: string; url: string; ifMatch: string | null }[] = []
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: string, init?: RequestInit) => {
+        const url = input
+        const method = init?.method ?? 'GET'
+
+        if (url === '/api/platform/data-sources' && method === 'GET') {
+          return Promise.resolve(jsonResponse(200, stored))
+        }
+        if (url === `/api/platform/data-sources/${shared.id}` && method === 'DELETE') {
+          calls.push({ method, url, ifMatch: new Headers(init?.headers).get('If-Match') })
+          return Promise.resolve(
+            jsonResponse(200, { environment: 'lucentroot', revision: 'rev-2', dataSources: [] }),
+          )
+        }
+        return Promise.resolve(jsonResponse(404, { error: { code: 'not_found', message: 'unused' } }))
+      }),
+    )
+    const user = userEvent.setup()
+
+    render(<DataSourcesPanel />)
+    await user.click(await screen.findByRole('button', { name: 'Remove' }))
+    await user.click(screen.getByRole('button', { name: 'Confirm' }))
+
+    await waitFor(() => {
+      expect(calls).toHaveLength(1)
+    })
+    expect(calls[0]?.ifMatch).toBe('"rev-1"')
+    expect(await screen.findByText(/no data sources declared/i)).toBeInTheDocument()
+  })
+
+  it('a 409 data_source_in_use shows the message the server sent, naming the tenants', async () => {
+    const stored: DataSources = { environment: 'lucentroot', revision: 'rev-1', dataSources: [shared] }
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: string, init?: RequestInit) => {
+        const url = input
+        const method = init?.method ?? 'GET'
+
+        if (url === '/api/platform/data-sources' && method === 'GET') {
+          return Promise.resolve(jsonResponse(200, stored))
+        }
+        if (url === `/api/platform/data-sources/${shared.id}` && method === 'DELETE') {
+          return Promise.resolve(
+            jsonResponse(409, {
+              error: { code: 'data_source_in_use', message: 'placed for acme, initech' },
+            }),
+          )
+        }
+        return Promise.resolve(jsonResponse(404, { error: { code: 'not_found', message: 'unused' } }))
+      }),
+    )
+    const user = userEvent.setup()
+
+    render(<DataSourcesPanel />)
+    await user.click(await screen.findByRole('button', { name: 'Remove' }))
+    await user.click(screen.getByRole('button', { name: 'Confirm' }))
+
+    expect(await screen.findByText('placed for acme, initech')).toBeInTheDocument()
+    // The row is still there -- refused, not removed -- and the confirm step
+    // has closed rather than staying open on a request that already failed.
+    expect(screen.getByText(shared.id)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Remove' })).toBeInTheDocument()
+    // A 409 in use is not a stale write: there is nothing a reload fixes, so
+    // the reload affordance must not appear alongside it.
+    expect(screen.queryByText(/reload latest version/i)).not.toBeInTheDocument()
+  })
+
+  it('a 409 revision_conflict shows the reload affordance instead of the message alone', async () => {
+    const stored: DataSources = { environment: 'lucentroot', revision: 'rev-1', dataSources: [shared] }
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: string, init?: RequestInit) => {
+        const url = input
+        const method = init?.method ?? 'GET'
+
+        if (url === '/api/platform/data-sources' && method === 'GET') {
+          return Promise.resolve(jsonResponse(200, stored))
+        }
+        if (url === `/api/platform/data-sources/${shared.id}` && method === 'DELETE') {
+          return Promise.resolve(
+            jsonResponse(409, { error: { code: 'revision_conflict', message: 'stale' } }),
+          )
+        }
+        return Promise.resolve(jsonResponse(404, { error: { code: 'not_found', message: 'unused' } }))
+      }),
+    )
+    const user = userEvent.setup()
+
+    render(<DataSourcesPanel />)
+    await user.click(await screen.findByRole('button', { name: 'Remove' }))
+    await user.click(screen.getByRole('button', { name: 'Confirm' }))
+
+    // Unlike `data_source_in_use`, a stale revision is exactly what a reload
+    // fixes -- the same distinction `ClientDataTab` draws for a refused vs a
+    // conflicted `Place`.
+    expect(await screen.findByText(/reload latest version/i)).toBeInTheDocument()
+  })
+})

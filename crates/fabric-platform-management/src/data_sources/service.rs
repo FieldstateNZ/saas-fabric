@@ -1,5 +1,6 @@
 //! Declaring an environment's data sources, and reading what is declared.
 
+mod remove;
 #[cfg(test)]
 #[path = "service_tests.rs"]
 mod service_tests;
@@ -13,15 +14,19 @@ use crate::data_sources::port::DataSourceState;
 use crate::data_sources::read::DataSourcesRead;
 use crate::{DesiredRevision, DesiredStateError, PlatformError};
 
-/// What `DataSources::declare` did.
+/// What `DataSources::declare` or [`remove`](DataSources::remove) did.
+///
+/// `declare` uses both variants -- an unchanged declaration writes
+/// nothing. `remove` uses both too, for the same reason: an id nothing
+/// declares is already the state being asked for, so removing it is
+/// `Unchanged` rather than a write that would touch nothing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Declared {
-    /// The declaration changed what was held. The read that followed the
-    /// write.
+    /// The document changed. The read that followed the write.
     Written(DataSourcesRead),
 
-    /// Nothing about the declaration differed from what was already held,
-    /// so nothing was written. The read that found that out.
+    /// Nothing differed from what was already held, so nothing was
+    /// written. The read that found that out.
     Unchanged(DataSourcesRead),
 }
 

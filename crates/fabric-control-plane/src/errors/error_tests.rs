@@ -2,8 +2,9 @@
 
 use axum::response::IntoResponse as _;
 use fabric_client_model::{ClientId, DesiredStateError, RealmName};
+use fabric_core::{DataSourceId, LogicalDataSourceName, TenantId};
 use fabric_platform_management::{
-    DataSourceRule, DesiredStateError as PlatformDesiredStateError, PlatformError,
+    DataSourceRule, DesiredStateError as PlatformDesiredStateError, PlacementRefusal, PlatformError,
 };
 use http::StatusCode;
 
@@ -13,6 +14,18 @@ use crate::ControlPlaneError;
 
 fn client() -> ClientId {
     ClientId::try_new("acme").unwrap()
+}
+
+fn logical() -> LogicalDataSourceName {
+    LogicalDataSourceName::try_new("primary").unwrap()
+}
+
+fn tenant() -> TenantId {
+    TenantId::try_new("acme").unwrap()
+}
+
+fn data_source() -> DataSourceId {
+    DataSourceId::try_new("shared-postgres-nz-01").unwrap()
 }
 
 #[test]
@@ -37,6 +50,11 @@ fn every_failure_has_its_own_machine_code() {
         ControlPlaneError::IntegrationRefused("no such repository".to_owned()),
         ControlPlaneError::IntegrationMoved,
         ControlPlaneError::InvalidDataSource(DataSourceRule::SharedNeedsDiscriminator),
+        ControlPlaneError::LogicalDataSourceNotDeclared { logical: logical() },
+        ControlPlaneError::Platform(PlatformError::DataSourceInUse {
+            id: data_source(),
+            tenants: vec![tenant()],
+        }),
     ];
 
     let mut codes: Vec<&str> = errors.iter().map(ControlPlaneError::code).collect();
@@ -275,4 +293,75 @@ fn an_adapter_refusal_falls_to_the_generic_platform_mapping_not_the_held_documen
 
     assert_eq!(error.status(), StatusCode::SERVICE_UNAVAILABLE);
     assert_eq!(error.code(), "platform_unavailable");
+}
+
+#[test]
+fn a_placement_refused_by_the_selector_and_a_logical_source_the_client_never_declared_share_one_code() {
+    // ADR 0023 part 2: `select` refuses an intent no declared data source
+    // admits, and a handler refuses a `{logical}` the client's own document
+    // never named before `select` is ever asked -- different causes, and
+    // deliberately the same answer, because to an operator both mean "this
+    // cannot be placed" and the message beside the code says which.
+    let refused_by_selector =
+        ControlPlaneError::Platform(PlatformError::PlacementRefused(PlacementRefusal::AlreadyPlaced {
+            tenant: tenant(),
+            logical: logical(),
+        }));
+    let not_declared = ControlPlaneError::LogicalDataSourceNotDeclared { logical: logical() };
+
+    assert_eq!(refused_by_selector.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(not_declared.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(refused_by_selector.code(), "placement_refused");
+    assert_eq!(refused_by_selector.code(), not_declared.code());
+    assert_ne!(
+        refused_by_selector.public_message(),
+        not_declared.public_message(),
+        "the same code still carries a message that says which of the two happened"
+    );
+}
+
+#[test]
+fn a_broken_held_placements_document_is_a_server_error_sharing_the_data_sources_code() {
+    // `placements::held::check_held_placements`'s own refusal -- a
+    // duplicate (tenant, logical) pair, a data source nothing declares, an
+    // isolation kind its data source does not serve, or two tenants with
+    // one discriminator value. `InvalidHeldDataSources`'s sibling, and
+    // shares its `500 desired_state_invalid` for the same reason: a
+    // coherence problem in a document this platform itself authored, not
+    // an outage upstream of it.
+    let error = ControlPlaneError::Platform(PlatformError::InvalidHeldPlacements {
+        detail: "acme is placed more than once for primary".to_owned(),
+    });
+
+    assert_eq!(error.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(error.code(), "desired_state_invalid");
+    assert!(error.public_message().contains("placed more than once"));
+}
+
+#[test]
+fn a_data_source_still_in_use_is_a_conflict_naming_every_tenant_placed_on_it() {
+    // ADR 0023 part 2: removing a data source a placement still references
+    // is refused, and the message names every tenant so an operator knows
+    // who has to be unplaced first -- never a file, never an internal id
+    // beyond the one they asked to remove.
+    let error = ControlPlaneError::Platform(PlatformError::DataSourceInUse {
+        id: data_source(),
+        tenants: vec![
+            TenantId::try_new("acme").unwrap(),
+            TenantId::try_new("globex").unwrap(),
+        ],
+    });
+
+    assert_eq!(error.status(), StatusCode::CONFLICT);
+    assert_eq!(error.code(), "data_source_in_use");
+    assert!(
+        error.public_message().contains("acme"),
+        "{}",
+        error.public_message()
+    );
+    assert!(
+        error.public_message().contains("globex"),
+        "{}",
+        error.public_message()
+    );
 }

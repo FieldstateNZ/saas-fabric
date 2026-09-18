@@ -56,6 +56,14 @@ export function DataSourcesPanel() {
     })
   }
 
+  function remove(id: string): Promise<boolean> {
+    // Same reason `submit` clears it: a remove that fails right after a
+    // previous declare succeeded should not still show that old
+    // confirmation beside the new refusal.
+    setSuccess(null)
+    return dataSources.remove(id)
+  }
+
   return (
     <section className="panel">
       <header className="panel-header">
@@ -119,9 +127,11 @@ export function DataSourcesPanel() {
                   <DataSourceRow
                     key={dataSource.id}
                     dataSource={dataSource}
+                    saving={dataSources.saving}
                     onEdit={() => {
                       setForm({ mode: 'editing', dataSource })
                     }}
+                    onRemove={() => remove(dataSource.id)}
                   />
                 ))}
               </tbody>

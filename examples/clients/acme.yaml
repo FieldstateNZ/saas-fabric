@@ -44,13 +44,17 @@ spec:
           uris:
             - https://www.example.com/callback
 
-  # Sections the control plane does not model yet. They are here precisely so
+  # A section the control plane does not model yet. It is here precisely so
   # the examples demonstrate the guarantee that matters most: editing identity
-  # through the API leaves every one of them untouched.
+  # through the API leaves it untouched.
   features:
     invoicing: true
     analytics: false
 
+  # What this client wants placed, by logical data source. Read as intent
+  # (ADR 0023 part 2) -- typed and validated on the way in, but not written
+  # by anything in this control plane yet; placing it is a separate act
+  # recorded in the platform repository, never back into this document.
   data:
     primary:
       class: dedicated

@@ -121,7 +121,11 @@ describe('ClientWorkspace: switching tabs does not re-read the product', () => {
     expect(reads).toBe(1)
 
     const user = userEvent.setup()
-    for (const name of ['Applications', 'Configuration', 'Domains', 'Activity', 'Secrets', 'Health', 'Overview']) {
+    // 'Data' proves the tab bar renders it at all: `getByRole` throws if the
+    // button is not there. `Identity` is left out, the way it already was --
+    // it makes its own unstubbed request, which is a different behaviour to
+    // prove than this test's.
+    for (const name of ['Applications', 'Configuration', 'Data', 'Domains', 'Activity', 'Secrets', 'Health', 'Overview']) {
       await user.click(screen.getByRole('button', { name }))
     }
 

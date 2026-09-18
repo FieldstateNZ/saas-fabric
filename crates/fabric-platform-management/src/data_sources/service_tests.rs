@@ -3,14 +3,19 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, PoisonError};
 
-use fabric_core::{BindingRevision, DataSourceId};
+use fabric_core::{BindingRevision, DataSourceId, LogicalDataSourceName, TenantId};
 use fabric_runtime_publication::{
     ConnectionName, ConnectionSelectorDocument, ConnectorId, DataResidencyDocument,
-    DataSourceCapabilitiesDocument, PlacementClassDocument, PoolSettingsDocument,
+    DataSourceCapabilitiesDocument, FieldName, IsolationModelDocument, PlacementClassDocument,
+    PoolSettingsDocument,
 };
 
 use super::{DataSources, Declared};
-use crate::{DataSourceDeclaration, DataSourceState, DataSourcesRead, DesiredRevision, DesiredStateError};
+use crate::{
+    ComponentDesired, DataSourceDeclaration, DataSourceState, DataSourcesRead, DesiredRevision, DesiredState,
+    DesiredStateError, EnvironmentWrite, PlacementRecord, PlacementState, PlacementsRead, PlatformError,
+    PlatformRepository,
+};
 
 fn declaration(id: &str) -> DataSourceDeclaration {
     DataSourceDeclaration {
@@ -264,4 +269,454 @@ async fn at_none_is_refused_when_a_file_is_already_present_even_with_an_identica
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
         .is_empty());
+}
+
+/// A repository that answers every port and lets a test decouple what a
+/// read reports from what `write_environment`'s compare-and-swap checks
+/// against -- the shape B4's own service-level tests need: a placement
+/// recorded between `remove`'s read of placements and its write is a
+/// revision `read_placements` already reported, but one `write_environment`
+/// no longer accepts.
+struct FakeRepository {
+    declarations: Mutex<Vec<DataSourceDeclaration>>,
+    data_sources_read_revision: Mutex<Option<u64>>,
+    data_sources_actual_revision: Mutex<Option<u64>>,
+    placements: Mutex<Vec<PlacementRecord>>,
+    placements_read_revision: Mutex<Option<u64>>,
+    placements_actual_revision: Mutex<Option<u64>>,
+    writes: Mutex<Vec<EnvironmentWriteSeen>>,
+}
+
+/// One `write_environment` call, as the fake saw it.
+struct EnvironmentWriteSeen {
+    data_sources: Vec<DataSourceDeclaration>,
+    placements: Vec<PlacementRecord>,
+}
+
+impl FakeRepository {
+    /// A repository whose reads and writes agree -- the ordinary case.
+    fn coherent(
+        declarations: Vec<DataSourceDeclaration>,
+        placements: Vec<PlacementRecord>,
+        revision: u64,
+    ) -> Self {
+        Self {
+            declarations: Mutex::new(declarations),
+            data_sources_read_revision: Mutex::new(Some(revision)),
+            data_sources_actual_revision: Mutex::new(Some(revision)),
+            placements: Mutex::new(placements),
+            placements_read_revision: Mutex::new(Some(revision)),
+            placements_actual_revision: Mutex::new(Some(revision)),
+            writes: Mutex::new(Vec::new()),
+        }
+    }
+
+    /// A repository whose placements moved after this test's read but
+    /// before its write -- what `remove` sees is `read_revision`, what its
+    /// write is checked against is `actual_revision`.
+    fn placements_moved_after_the_read(
+        declarations: Vec<DataSourceDeclaration>,
+        placements: Vec<PlacementRecord>,
+        data_sources_revision: u64,
+        read_revision: u64,
+        actual_revision: u64,
+    ) -> Self {
+        Self {
+            declarations: Mutex::new(declarations),
+            data_sources_read_revision: Mutex::new(Some(data_sources_revision)),
+            data_sources_actual_revision: Mutex::new(Some(data_sources_revision)),
+            placements: Mutex::new(placements),
+            placements_read_revision: Mutex::new(Some(read_revision)),
+            placements_actual_revision: Mutex::new(Some(actual_revision)),
+            writes: Mutex::new(Vec::new()),
+        }
+    }
+
+    fn writes(&self) -> Vec<EnvironmentWriteSeen> {
+        // `EnvironmentWriteSeen` carries no `Clone`; tests that need this
+        // only ever check `.len()` or are the sole owner by then, so a
+        // drain suffices and avoids adding a derive nothing else needs.
+        let mut writes = self.writes.lock().unwrap_or_else(PoisonError::into_inner);
+        std::mem::take(&mut *writes)
+    }
+}
+
+#[async_trait::async_trait]
+impl DesiredState for FakeRepository {
+    async fn components(&self, _: &str) -> Result<Vec<String>, DesiredStateError> {
+        Ok(Vec::new())
+    }
+
+    async fn component(&self, _: &str, _: &str) -> Result<ComponentDesired, DesiredStateError> {
+        Err(DesiredStateError::NotFound {
+            what: "unused".to_owned(),
+        })
+    }
+
+    async fn advance(
+        &self,
+        _: &str,
+        _: &str,
+        _: &crate::Release,
+        _: &DesiredRevision,
+        _: &str,
+    ) -> Result<(), DesiredStateError> {
+        Ok(())
+    }
+
+    async fn roll_back(
+        &self,
+        _: &str,
+        _: &str,
+        _: &crate::Release,
+        _: &crate::Hold,
+        _: &DesiredRevision,
+        _: &str,
+    ) -> Result<(), DesiredStateError> {
+        Ok(())
+    }
+
+    async fn pause(
+        &self,
+        _: &str,
+        _: &str,
+        _: &crate::Hold,
+        _: &DesiredRevision,
+        _: &str,
+    ) -> Result<(), DesiredStateError> {
+        Ok(())
+    }
+
+    async fn resume(&self, _: &str, _: &str, _: &DesiredRevision, _: &str) -> Result<(), DesiredStateError> {
+        Ok(())
+    }
+}
+
+#[async_trait::async_trait]
+impl DataSourceState for FakeRepository {
+    async fn read_data_sources(&self, _: &str) -> Result<DataSourcesRead, DesiredStateError> {
+        Ok(DataSourcesRead {
+            revision: (*self
+                .data_sources_read_revision
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner))
+            .map(|revision| DesiredRevision::new(revision.to_string())),
+            declarations: self
+                .declarations
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .clone(),
+        })
+    }
+
+    async fn write_data_sources(
+        &self,
+        _: &str,
+        _: &[DataSourceDeclaration],
+        _: Option<&DesiredRevision>,
+        _: &str,
+    ) -> Result<(), DesiredStateError> {
+        Ok(())
+    }
+}
+
+#[async_trait::async_trait]
+impl PlacementState for FakeRepository {
+    async fn read_placements(&self, _: &str) -> Result<PlacementsRead, DesiredStateError> {
+        Ok(PlacementsRead {
+            revision: (*self
+                .placements_read_revision
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner))
+            .map(|revision| DesiredRevision::new(revision.to_string())),
+            placements: self
+                .placements
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .clone(),
+        })
+    }
+
+    async fn write_placements(
+        &self,
+        _: &str,
+        _: &[PlacementRecord],
+        _: Option<&DesiredRevision>,
+        _: &str,
+    ) -> Result<(), DesiredStateError> {
+        Ok(())
+    }
+}
+
+#[async_trait::async_trait]
+impl PlatformRepository for FakeRepository {
+    async fn write_environment(
+        &self,
+        _: &str,
+        write: EnvironmentWrite<'_>,
+        _: &str,
+    ) -> Result<(), DesiredStateError> {
+        let expected_data_sources = write.data_sources.1.map(|revision| revision.as_str().to_owned());
+        let actual_data_sources = self
+            .data_sources_actual_revision
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .map(|revision| revision.to_string());
+        if expected_data_sources != actual_data_sources {
+            return Err(DesiredStateError::Conflict);
+        }
+
+        let expected_placements = write.placements.1.map(|revision| revision.as_str().to_owned());
+        let actual_placements = self
+            .placements_actual_revision
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .map(|revision| revision.to_string());
+        if expected_placements != actual_placements {
+            return Err(DesiredStateError::Conflict);
+        }
+
+        *self.declarations.lock().unwrap_or_else(PoisonError::into_inner) = write.data_sources.0.to_vec();
+        *self.placements.lock().unwrap_or_else(PoisonError::into_inner) = write.placements.0.to_vec();
+
+        let mut data_sources_revision = self
+            .data_sources_actual_revision
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        *data_sources_revision = Some(data_sources_revision.unwrap_or(0) + 1);
+        *self
+            .data_sources_read_revision
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = *data_sources_revision;
+        drop(data_sources_revision);
+
+        let mut placements_revision = self
+            .placements_actual_revision
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        *placements_revision = Some(placements_revision.unwrap_or(0) + 1);
+        *self
+            .placements_read_revision
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = *placements_revision;
+        drop(placements_revision);
+
+        self.writes
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(EnvironmentWriteSeen {
+                data_sources: write.data_sources.0.to_vec(),
+                placements: write.placements.0.to_vec(),
+            });
+
+        Ok(())
+    }
+}
+
+/// The same shape `declaration` builds, but shared -- the class two
+/// tenants can legitimately both be recorded placed on, which
+/// `removing_a_data_source_a_placement_still_names_is_refused` needs.
+fn shared_declaration(id: &str) -> DataSourceDeclaration {
+    let mut declared = declaration(id);
+    declared.placement = PlacementClassDocument::Shared;
+    declared.discriminator = Some(crate::Discriminator {
+        column: FieldName::try_new("tenant_key").expect("a valid field name"),
+    });
+    declared
+}
+
+fn placement(tenant: &str, data_source: &str) -> PlacementRecord {
+    PlacementRecord {
+        tenant: TenantId::try_new(tenant).expect("a valid tenant id"),
+        logical: LogicalDataSourceName::try_new("primary").expect("a valid logical data source name"),
+        data_source: DataSourceId::try_new(data_source).expect("a valid data source id"),
+        isolation: IsolationModelDocument::Discriminator {
+            column: FieldName::try_new("tenant_key").expect("a valid field name"),
+            value: tenant.to_owned(),
+        },
+        placed_at: "2026-09-18T02:14:00Z".to_owned(),
+    }
+}
+
+#[tokio::test]
+async fn removing_an_unreferenced_data_source_writes_both_documents_in_one_commit() {
+    let repository = FakeRepository::coherent(vec![declaration("a"), declaration("b")], vec![], 5);
+    let service = DataSources::new(Arc::new(Fake::seeded(vec![], 0)) as Arc<dyn DataSourceState>);
+
+    let outcome = service
+        .remove(
+            "lucentroot",
+            &DataSourceId::try_new("a").unwrap(),
+            Some(&DesiredRevision::new("5")),
+            &repository,
+        )
+        .await
+        .expect("removes");
+
+    let Declared::Written(read) = outcome else {
+        panic!("removing a declared id must write");
+    };
+    assert_eq!(read.declarations.len(), 1);
+    assert_eq!(read.declarations[0].id.as_str(), "b");
+
+    let writes = repository.writes();
+    assert_eq!(writes.len(), 1, "one commit, both documents");
+    assert_eq!(writes[0].data_sources.len(), 1);
+    assert!(writes[0].placements.is_empty());
+}
+
+#[tokio::test]
+async fn removing_a_data_source_a_placement_still_names_is_refused() {
+    let repository = FakeRepository::coherent(
+        vec![shared_declaration("a")],
+        vec![placement("acme", "a"), placement("initech", "a")],
+        5,
+    );
+    let service = DataSources::new(Arc::new(Fake::seeded(vec![], 0)) as Arc<dyn DataSourceState>);
+
+    let failure = service
+        .remove(
+            "lucentroot",
+            &DataSourceId::try_new("a").unwrap(),
+            Some(&DesiredRevision::new("5")),
+            &repository,
+        )
+        .await
+        .expect_err("two tenants still hold placements on it");
+
+    let PlatformError::DataSourceInUse { id, tenants } = failure else {
+        panic!("expected DataSourceInUse, got {failure:?}");
+    };
+    assert_eq!(id.as_str(), "a");
+    assert_eq!(tenants.len(), 2);
+    assert!(repository.writes().is_empty());
+}
+
+#[tokio::test]
+async fn removing_an_id_nothing_declares_writes_nothing() {
+    let repository = FakeRepository::coherent(vec![declaration("a")], vec![], 5);
+    let service = DataSources::new(Arc::new(Fake::seeded(vec![], 0)) as Arc<dyn DataSourceState>);
+
+    let outcome = service
+        .remove(
+            "lucentroot",
+            &DataSourceId::try_new("never-declared").unwrap(),
+            Some(&DesiredRevision::new("5")),
+            &repository,
+        )
+        .await
+        .expect("removing an absent id is a no-op, not an error");
+
+    assert!(matches!(outcome, Declared::Unchanged(_)));
+    assert!(repository.writes().is_empty());
+}
+
+#[tokio::test]
+async fn removing_the_only_declared_data_source_leaves_an_empty_list() {
+    let repository = FakeRepository::coherent(vec![declaration("a")], vec![], 5);
+    let service = DataSources::new(Arc::new(Fake::seeded(vec![], 0)) as Arc<dyn DataSourceState>);
+
+    let outcome = service
+        .remove(
+            "lucentroot",
+            &DataSourceId::try_new("a").unwrap(),
+            Some(&DesiredRevision::new("5")),
+            &repository,
+        )
+        .await
+        .expect("removes the only declaration");
+
+    let Declared::Written(read) = outcome else {
+        panic!("removing a declared id must write");
+    };
+    assert!(read.declarations.is_empty());
+
+    let writes = repository.writes();
+    assert_eq!(writes.len(), 1);
+    assert!(
+        writes[0].data_sources.is_empty(),
+        "the file is written empty, not left alone"
+    );
+}
+
+#[tokio::test]
+async fn a_stale_at_is_refused_before_placements_are_even_read() {
+    let repository = FakeRepository::coherent(vec![declaration("a")], vec![], 5);
+    let service = DataSources::new(Arc::new(Fake::seeded(vec![], 0)) as Arc<dyn DataSourceState>);
+
+    let failure = service
+        .remove(
+            "lucentroot",
+            &DataSourceId::try_new("a").unwrap(),
+            Some(&DesiredRevision::new("4")),
+            &repository,
+        )
+        .await
+        .expect_err("revision 4 was never the held revision");
+
+    assert!(matches!(
+        failure,
+        PlatformError::DesiredState(DesiredStateError::Conflict)
+    ));
+    assert!(repository.writes().is_empty());
+}
+
+#[tokio::test]
+async fn a_placement_recorded_between_removes_read_and_write_is_a_conflict() {
+    // B4: `remove` reads placements, decides nothing is in the way, and
+    // only then writes both documents. This fake's `read_placements`
+    // reports revision 1 -- what `remove` itself sees and therefore builds
+    // its write against -- while `write_environment`'s compare-and-swap is
+    // checked against revision 2, standing in for a placement some other
+    // caller recorded in the window between the two.
+    let repository = FakeRepository::placements_moved_after_the_read(vec![declaration("a")], vec![], 5, 1, 2);
+    let service = DataSources::new(Arc::new(Fake::seeded(vec![], 0)) as Arc<dyn DataSourceState>);
+
+    let failure = service
+        .remove(
+            "lucentroot",
+            &DataSourceId::try_new("a").unwrap(),
+            Some(&DesiredRevision::new("5")),
+            &repository,
+        )
+        .await
+        .expect_err("a placement landed between the read and the write");
+
+    assert!(matches!(
+        failure,
+        PlatformError::DesiredState(DesiredStateError::Conflict)
+    ));
+}
+
+#[tokio::test]
+async fn data_source_in_use_names_a_tenant_placed_twice_on_it_only_once() {
+    // N8: a tenant with `primary` and `audit` both shared on the source
+    // being removed is one tenant, not two -- see B2.
+    let repository = FakeRepository::coherent(
+        vec![shared_declaration("a")],
+        vec![
+            placement("acme", "a"),
+            PlacementRecord {
+                logical: LogicalDataSourceName::try_new("audit").unwrap(),
+                ..placement("acme", "a")
+            },
+        ],
+        5,
+    );
+    let service = DataSources::new(Arc::new(Fake::seeded(vec![], 0)) as Arc<dyn DataSourceState>);
+
+    let failure = service
+        .remove(
+            "lucentroot",
+            &DataSourceId::try_new("a").unwrap(),
+            Some(&DesiredRevision::new("5")),
+            &repository,
+        )
+        .await
+        .expect_err("acme still holds a placement on it");
+
+    let PlatformError::DataSourceInUse { tenants, .. } = failure else {
+        panic!("expected DataSourceInUse, got {failure:?}");
+    };
+    assert_eq!(tenants.len(), 1, "{tenants:?}");
 }

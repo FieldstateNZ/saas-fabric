@@ -1,6 +1,6 @@
 //! Tests for reading and editing a stored client document.
 
-use crate::{ClientDocument, DesiredStateError, IdentityConfiguration, RealmName, RoleName};
+use crate::{ClientDocument, DataIntent, DesiredStateError, IdentityConfiguration, RealmName, RoleName};
 use crate::{RedirectStrategyKind, RedirectUriKind};
 
 /// A `v1` document with a section this model does not model, so both
@@ -97,6 +97,88 @@ fn reads_the_modelled_view_of_a_valid_document() {
     assert_eq!(client.identity.realm.as_str(), "acme");
     assert_eq!(client.identity.roles.len(), 2);
     assert_eq!(client.identity.clients.len(), 1);
+
+    let primary = client
+        .data
+        .get(&fabric_core::LogicalDataSourceName::try_new("primary").unwrap())
+        .expect("the fixture declares a primary data intent");
+    assert_eq!(
+        primary.class,
+        fabric_runtime_publication::PlacementClassDocument::Dedicated
+    );
+}
+
+/// A minimal, valid client document with the given `spec.data` section (or
+/// an empty string for none), dedicated to the tests below -- built fresh
+/// rather than sliced out of `ACME` with a string replace, so a later,
+/// unrelated change to that fixture cannot silently break what these pin.
+fn minimal_client_with_data(data_section: &str) -> String {
+    format!(
+        r"
+apiVersion: fabric.fieldstate.nz/v2
+kind: Client
+metadata:
+  name: acme
+spec:
+  displayName: Acme
+  identity:
+    realm: acme
+    roles:
+      - Client Realm Administrator
+      - Client Realm User
+{data_section}"
+    )
+}
+
+#[test]
+fn a_document_with_no_data_section_reads_as_an_empty_map() {
+    let text = minimal_client_with_data("");
+
+    let client = ClientDocument::parse(&text).unwrap().into_client();
+
+    assert!(client.data.is_empty());
+}
+
+#[test]
+fn an_unknown_field_inside_a_data_intent_is_refused() {
+    let text = minimal_client_with_data(
+        "  data:
+    primary:
+      class: dedicated
+      bogus: true
+",
+    );
+
+    assert!(matches!(
+        ClientDocument::parse(&text),
+        Err(DesiredStateError::Malformed { .. })
+    ));
+}
+
+#[test]
+fn the_wires_high_availability_spelling_round_trips_through_the_document() {
+    let text = minimal_client_with_data(
+        "  data:
+    primary:
+      class: high_availability
+      region: au-east
+",
+    );
+
+    let client = ClientDocument::parse(&text).unwrap().into_client();
+    let primary = client
+        .data
+        .get(&fabric_core::LogicalDataSourceName::try_new("primary").unwrap())
+        .unwrap();
+
+    assert_eq!(
+        *primary,
+        DataIntent {
+            class: fabric_runtime_publication::PlacementClassDocument::HighAvailability,
+            provider: None,
+            region: Some("au-east".to_owned()),
+        }
+    );
 }
 
 #[test]

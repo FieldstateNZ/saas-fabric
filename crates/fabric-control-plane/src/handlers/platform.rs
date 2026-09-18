@@ -2,11 +2,15 @@
 
 mod body;
 mod brake;
-mod data_sources;
+// `pub(crate)` rather than private: `handlers::placements` (ADR 0023 part
+// 2) reuses `data_sources::placement::console_word`, so this module and
+// `placement` within it both have to be reachable from outside `platform`'s
+// own subtree.
+pub(crate) mod data_sources;
 mod rollback;
 
 pub(crate) use brake::{pause_component, resume_component};
-pub(crate) use data_sources::{declare_data_source, list_data_sources};
+pub(crate) use data_sources::{declare_data_source, list_data_sources, remove_data_source};
 pub(crate) use rollback::{roll_back_component, rollback_candidates};
 
 use axum::extract::State;

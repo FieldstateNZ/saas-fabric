@@ -76,6 +76,30 @@ pub(super) fn status(error: &PlatformError) -> StatusCode {
         // that catch-all's 503, the same as hold and rollback answer.
         PlatformError::InvalidHeldDataSources { .. } => StatusCode::INTERNAL_SERVER_ERROR,
 
+        // The selector refused to place this intent (ADR 0023 part 2): no
+        // declared data source admits the intent's class, region or
+        // acceptance of new tenants, the tenant is already placed, or a
+        // discriminator value collided. 422, joining `InvalidDataSource`
+        // and `NotRollable`: understood, and what was asked for cannot be
+        // acted on, so the fix is to change what was submitted -- declare
+        // a data source that admits it -- rather than to retry it.
+        PlatformError::PlacementRefused(_) => StatusCode::UNPROCESSABLE_ENTITY,
+
+        // A held placements document a hand edit made incoherent --
+        // `placements::held::check_held_placements`'s own refusal, the same
+        // shape as `InvalidHeldDataSources` above and sharing its 500 for
+        // the same reason: a coherence problem in a document this platform
+        // itself authored, not an outage upstream of it.
+        PlatformError::InvalidHeldPlacements { .. } => StatusCode::INTERNAL_SERVER_ERROR,
+
+        // A data source cannot be removed while a placement still names it
+        // (ADR 0023 part 2). 409, not 422: the request is well-formed and
+        // would succeed once every placement it names is gone, so this is
+        // a conflict with other state rather than something wrong with the
+        // request itself -- the same reason a stale revision is 409 and
+        // not 400.
+        PlatformError::DataSourceInUse { .. } => StatusCode::CONFLICT,
+
         // Platform Management reached a registry or the platform repository and
         // could not get an answer. 503, not 500: nothing is wrong with the
         // request, desired state is untouched, and the operator's next step is

@@ -35,6 +35,36 @@ spec:
 The full contract, including what the platform requires and what it refuses, is
 [`docs/architecture/client-desired-state.md`](../../../docs/architecture/client-desired-state.md).
 
+## Data placement intent
+
+`spec.data.<logical>` says what a client wants placed, not where it landed:
+
+```yaml
+spec:
+  data:
+    primary:
+      class: dedicated          # shared | dedicated | high_availability | regulated | development | ephemeral
+      provider: sql              # free text, carried and shown, never matched
+      region: au-east            # matched against a data source's residency.region when present
+```
+
+`DataIntent { class, provider, region }` reuses the wire's own
+`PlacementClassDocument` for `class` -- this crate depends on
+`fabric-runtime-publication` for exactly that one type, so a client's intent
+and a declared data source's placement can never disagree about what
+`shared` or `high_availability` mean (ADR 0023 part 2). `class` is spelled
+the wire's `snake_case` way -- `high_availability`, never the document's
+earlier hyphenated `high-availability`.
+
+Placing an intent -- choosing a data source that admits it and recording the
+outcome -- is `fabric-platform-management`'s job, not this crate's: nothing
+here reaches Git, an environment, or a declared data source. `Client.data`
+is empty for every document written before this section existed, which reads
+as "this client asks for nothing" rather than an error.
+
+See `docs/architecture/client-desired-state.md`'s `spec.data` section for the
+full contract.
+
 ## Two schema versions, and the migrator between them
 
 `v2` ships **beside** `v1`, which is the policy this crate already wrote down

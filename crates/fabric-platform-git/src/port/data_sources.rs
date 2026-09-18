@@ -5,10 +5,10 @@
 //! binding holds a lock across this call regardless of which port an
 //! operation belongs to.
 
-mod document;
+pub(crate) mod document;
 mod header;
-mod read;
-mod write;
+pub(crate) mod read;
+pub(crate) mod write;
 
 use fabric_platform_management::{
     DataSourceDeclaration, DataSourceState, DataSourcesRead, DesiredRevision, DesiredStateError,

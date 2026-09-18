@@ -24,7 +24,13 @@ use crate::ControlPlaneError;
 /// Exhaustive rather than a fallback default: if the wire ever grows a
 /// seventh placement class, this fails to compile rather than silently
 /// rendering nothing for it.
-pub(super) const fn console_word(placement: PlacementClassDocument) -> &'static str {
+///
+/// `pub(crate)` rather than `pub(super)`: `handlers::placements` (ADR 0023
+/// part 2) renders a client's `spec.data.<logical>.class` in this same
+/// word, over the same `PlacementClassDocument` a data source's own
+/// `placement` is -- reusing this rather than a second translation is
+/// what keeps the two from drifting apart.
+pub(crate) const fn console_word(placement: PlacementClassDocument) -> &'static str {
     match placement {
         PlacementClassDocument::Shared => "shared",
         PlacementClassDocument::Dedicated => "dedicated",

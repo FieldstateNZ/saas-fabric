@@ -10,7 +10,8 @@ use tokio::sync::Notify;
 use super::PlatformDesiredState;
 use crate::{
     ArtifactSource, Channel, ComponentDesired, DataSourceDeclaration, DataSourceState, DataSourcesRead,
-    DesiredRevision, DesiredState, DesiredStateError, PlatformRepository, Release, UpdatePolicy,
+    DesiredRevision, DesiredState, DesiredStateError, EnvironmentWrite, PlacementRecord, PlacementState,
+    PlacementsRead, PlatformRepository, Release, UpdatePolicy,
 };
 
 /// A repository that is reachable, and whose reads fail.
@@ -68,10 +69,10 @@ impl DesiredState for Connected {
 }
 
 /// `PlatformDesiredState::connect` takes `Arc<dyn PlatformRepository>`
-/// (ADR 0023 part 1), which requires both `DesiredState` and
-/// `DataSourceState` -- not a supertrait relationship, but every type
-/// connected here must answer both ports. This fake's answer mirrors
-/// component -- reachable, and its reads fail.
+/// (ADR 0023 parts 1 and 2), which requires `DesiredState`,
+/// `DataSourceState` and `PlacementState` -- not a supertrait relationship,
+/// but every type connected here must answer every port. This fake's
+/// answer mirrors component -- reachable, and its reads fail.
 #[async_trait::async_trait]
 impl DataSourceState for Connected {
     async fn read_data_sources(&self, _: &str) -> Result<DataSourcesRead, DesiredStateError> {
@@ -85,6 +86,44 @@ impl DataSourceState for Connected {
         _: &str,
         _: &[DataSourceDeclaration],
         _: Option<&DesiredRevision>,
+        _: &str,
+    ) -> Result<(), DesiredStateError> {
+        Ok(())
+    }
+}
+
+/// `DataSourceState for Connected`'s sibling above, for the third port
+/// (ADR 0023 part 2).
+#[async_trait::async_trait]
+impl PlacementState for Connected {
+    async fn read_placements(&self, _: &str) -> Result<PlacementsRead, DesiredStateError> {
+        Err(DesiredStateError::Unavailable {
+            detail: "the platform repository timed out".to_owned(),
+        })
+    }
+
+    async fn write_placements(
+        &self,
+        _: &str,
+        _: &[PlacementRecord],
+        _: Option<&DesiredRevision>,
+        _: &str,
+    ) -> Result<(), DesiredStateError> {
+        Ok(())
+    }
+}
+
+/// `PlatformRepository::write_environment` has no blanket implementation
+/// any more (ADR 0023 part 2, B4) -- every type this file connects must
+/// answer it directly. Nothing here exercises it, so it mirrors the two
+/// ports above: reachable, and its reads fail before any write would be
+/// attempted through it.
+#[async_trait::async_trait]
+impl PlatformRepository for Connected {
+    async fn write_environment(
+        &self,
+        _: &str,
+        _: EnvironmentWrite<'_>,
         _: &str,
     ) -> Result<(), DesiredStateError> {
         Ok(())
@@ -393,9 +432,10 @@ impl DesiredState for Fake {
 }
 
 /// `PlatformDesiredState::connect` requires `Arc<dyn PlatformRepository>`
-/// (ADR 0023 part 1) -- both `DesiredState` and `DataSourceState`, not one
-/// as the other's supertrait. Nothing in this file exercises this half of
-/// Fake, so it answers a fixed empty read and does not record the write.
+/// (ADR 0023 parts 1 and 2) -- `DesiredState`, `DataSourceState` and
+/// `PlacementState`, not one as another's supertrait. Nothing in this file
+/// exercises either of the last two halves of Fake, so both answer a fixed
+/// empty read and neither records its write.
 #[async_trait::async_trait]
 impl DataSourceState for Fake {
     async fn read_data_sources(&self, _: &str) -> Result<DataSourcesRead, DesiredStateError> {
@@ -410,6 +450,40 @@ impl DataSourceState for Fake {
         _: &str,
         _: &[DataSourceDeclaration],
         _: Option<&DesiredRevision>,
+        _: &str,
+    ) -> Result<(), DesiredStateError> {
+        Ok(())
+    }
+}
+
+#[async_trait::async_trait]
+impl PlacementState for Fake {
+    async fn read_placements(&self, _: &str) -> Result<PlacementsRead, DesiredStateError> {
+        Ok(PlacementsRead {
+            revision: Some(DesiredRevision::new(&self.revision)),
+            placements: Vec::new(),
+        })
+    }
+
+    async fn write_placements(
+        &self,
+        _: &str,
+        _: &[PlacementRecord],
+        _: Option<&DesiredRevision>,
+        _: &str,
+    ) -> Result<(), DesiredStateError> {
+        Ok(())
+    }
+}
+
+/// See `Connected`'s own impl above for why this exists at all: nothing in
+/// this file exercises it.
+#[async_trait::async_trait]
+impl PlatformRepository for Fake {
+    async fn write_environment(
+        &self,
+        _: &str,
+        _: EnvironmentWrite<'_>,
         _: &str,
     ) -> Result<(), DesiredStateError> {
         Ok(())

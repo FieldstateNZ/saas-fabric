@@ -49,6 +49,7 @@ mod authorization;
 /// Product catalogue and client entitlement contracts.
 pub mod catalogue;
 mod client;
+mod data_intent;
 mod document;
 mod errors;
 mod identity;
@@ -57,6 +58,7 @@ mod secrets;
 
 pub use authorization::{AuthorizationConfiguration, Relation, ResourceAuthorization};
 pub use client::Client;
+pub use data_intent::DataIntent;
 pub use document::{ClientDocument, API_VERSION, API_VERSION_V2, KIND};
 pub use errors::DesiredStateError;
 pub use identity::{

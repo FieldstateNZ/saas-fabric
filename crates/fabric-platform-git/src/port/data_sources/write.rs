@@ -15,7 +15,7 @@ use crate::{CommitRevision, FileChange, PlatformGitError};
 /// source. ADR 0023 part 1 states this text; every rewrite after the
 /// first preserves whatever header is actually on the branch instead,
 /// hand edits included.
-const CREATE_HEADER: &str = r"# What this environment can place a tenant's data on.
+pub(crate) const CREATE_HEADER: &str = r"# What this environment can place a tenant's data on.
 #
 # Machine-managed by SaaS Fabric Platform Management. Everything below this
 # header is written by Fabric in a deterministic layout, so a hand edit

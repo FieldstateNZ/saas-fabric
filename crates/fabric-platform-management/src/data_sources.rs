@@ -7,7 +7,7 @@
 //! publisher (part 4) are later slices and are not built here.
 
 mod declaration;
-mod held;
+pub(crate) mod held;
 mod plan;
 mod port;
 mod read;

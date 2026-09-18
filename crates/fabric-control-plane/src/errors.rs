@@ -9,6 +9,7 @@ mod response;
 mod status_mapping;
 
 use fabric_client_model::{ClientId, DesiredStateError, RealmName};
+use fabric_core::LogicalDataSourceName;
 
 pub use realm_unavailable_reason::RealmUnavailableReason;
 
@@ -276,4 +277,20 @@ pub enum ControlPlaneError {
     /// so a test can name it without reaching into `PlatformError`).
     #[error(transparent)]
     InvalidDataSource(#[from] fabric_platform_management::DataSourceRule),
+
+    /// A client's document names no `spec.data` entry for the logical data
+    /// source a placement was asked for (ADR 0023 part 2).
+    ///
+    /// [`fabric_platform_management::PlacementRefusal`]'s sibling for the
+    /// one refusal that never reaches the selector: `select` chooses among
+    /// what an environment declares and holds, and this request never gets
+    /// that far because the client's own document names nothing to place.
+    /// Sharing `PlacementRefused`'s `422` `placement_refused` is deliberate
+    /// -- to an operator both mean "this cannot be placed", and the
+    /// message says why.
+    #[error("the client declares no data source named {logical}")]
+    LogicalDataSourceNotDeclared {
+        /// The logical data source the request named.
+        logical: LogicalDataSourceName,
+    },
 }

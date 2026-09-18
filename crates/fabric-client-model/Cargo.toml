@@ -8,6 +8,16 @@ repository.workspace = true
 
 [dependencies]
 fabric-core.workspace = true
+# `PlacementClassDocument`, for `spec.data.<logical>.class` (ADR 0023 part 2).
+# One vocabulary for intent and placement: this crate's `DataIntent` reuses
+# the wire's own enum rather than declaring a third copy of the six
+# placement classes, so `spec.data`'s `class` can never disagree with the
+# `placement` a data source declares. This crate is control plane, not
+# neither plane -- the edge is legal because `fabric-runtime-publication`
+# is the one in neither plane (docs/architecture/crate-dependencies.md),
+# and anything may depend on it, the same footing
+# `fabric-platform-management`'s own edge to it already stands on.
+fabric-runtime-publication.workspace = true
 
 serde.workspace = true
 serde_norway.workspace = true

@@ -37,6 +37,6 @@ pub(super) fn routes() -> Router<ControlPlaneState> {
         .route("/platform/data-sources", get(handlers::list_data_sources))
         .route(
             "/platform/data-sources/{data_source_id}",
-            put(handlers::declare_data_source),
+            put(handlers::declare_data_source).delete(handlers::remove_data_source),
         )
 }

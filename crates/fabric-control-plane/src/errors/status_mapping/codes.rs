@@ -84,6 +84,20 @@ impl ControlPlaneError {
             // for the reason their own doc comments give: one thing to do
             // with any of the three, stop and do not retry.
             Self::Platform(PlatformError::InvalidHeldDataSources { .. }) => "desired_state_invalid",
+            // ADR 0023 part 2's placement refusal, whichever of `select`'s
+            // rules stopped it. Shares its code with
+            // `LogicalDataSourceNotDeclared` above -- see that variant's
+            // rustdoc for why the two share one answer.
+            Self::Platform(PlatformError::PlacementRefused(_)) => "placement_refused",
+            // A held placements document a hand edit made incoherent.
+            // Shares `InvalidHeldDataSources`'s code above for the same
+            // reason that one shares `InvalidDesiredState`/`InvalidCatalogue`'s.
+            Self::Platform(PlatformError::InvalidHeldPlacements { .. }) => "desired_state_invalid",
+            // Its own code: a data source cannot be removed while a
+            // placement still names it, and the fix -- unplace every
+            // tenant first -- is different from any other `409` this API
+            // answers.
+            Self::Platform(PlatformError::DataSourceInUse { .. }) => "data_source_in_use",
             Self::Platform(_) => "platform_unavailable",
             Self::GitHostRefused => "git_host_refused",
             Self::IntegrationRefused(_) => "integration_refused",
@@ -111,6 +125,9 @@ impl ControlPlaneError {
             Self::RepositoryDenied => "repository_denied",
             Self::RepositoryRejected => "repository_rejected",
             Self::InvalidDataSource(_) => "invalid_data_source",
+            // Shares `PlacementRefused`'s code above -- see
+            // `ControlPlaneError::LogicalDataSourceNotDeclared`'s rustdoc.
+            Self::LogicalDataSourceNotDeclared { .. } => "placement_refused",
         }
     }
 }

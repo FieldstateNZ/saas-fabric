@@ -1,6 +1,12 @@
 //! What a SaaS Fabric client is.
 
-use crate::{AuthorizationConfiguration, ClientId, Host, IdentityConfiguration, SecretsConfiguration};
+use std::collections::BTreeMap;
+
+use fabric_core::LogicalDataSourceName;
+
+use crate::{
+    AuthorizationConfiguration, ClientId, DataIntent, Host, IdentityConfiguration, SecretsConfiguration,
+};
 
 /// A client's desired state, as far as this increment models it.
 ///
@@ -54,4 +60,15 @@ pub struct Client {
     /// guessing a boundary, because a guessed boundary is another client's
     /// boundary sooner or later.
     pub secrets: Option<SecretsConfiguration>,
+
+    /// What this client wants placed, by logical data source (ADR 0023
+    /// part 2).
+    ///
+    /// Intent, not placement: a data source declares what exists, a
+    /// `DataIntent` here declares what a client's document asks for, and
+    /// `fabric-platform-management`'s selector is the only thing that
+    /// decides whether the two meet. Empty for a document with no `data`
+    /// section, which reads as "this client asks for nothing" rather than
+    /// an error — most documents written before this section existed.
+    pub data: BTreeMap<LogicalDataSourceName, DataIntent>,
 }

@@ -78,6 +78,7 @@ CONTROL_PLANE = frozenset(
         "fabric-keycloak",
         "fabric-openbao",
         "fabric-deployment-kubernetes",
+        "fabric-publication-kubernetes",
         "fabric-control-plane-api",
     }
 )
@@ -629,6 +630,10 @@ def check_dependency_direction(graph: Graph) -> list[Failure]:
         # credential.
         "fabric-registry": {"fabric-core", "fabric-platform-management"},
         "fabric-deployment-kubernetes": {"fabric-core", "fabric-platform-management"},
+        # The publisher's Kubernetes adapter (ADR 0018, ADR 0023 part 4). It
+        # implements the port the publication crate defines and decides
+        # nothing itself; the only crate that names a ConfigMap.
+        "fabric-publication-kubernetes": {"fabric-core", "fabric-runtime-publication"},
         "fabric-client-git": {
             "fabric-core",
             "fabric-client-model",
@@ -910,17 +915,28 @@ def check_adapter_containment(graph: Graph) -> list[Failure]:
     )
 
     adapters += ((
-        "fabric-deployment-kubernetes",
+        frozenset({"fabric-deployment-kubernetes", "fabric-publication-kubernetes"}),
         re.compile(r"\bowner_references\b|\bresource_version\b|\bReplicaSet\b|/apis/apps/v1/"),
         "Kubernetes deployment evidence stays inside its read-only adapter",
         "The domain and console consume deployment evidence, never Kubernetes representations.",
     ),)
 
+    adapters += ((
+        "fabric-publication-kubernetes",
+        re.compile(r"/configmaps\b|\bMANAGED_BY_LABEL\b|\bfabric-runtime-(tenants|data-sources|catalog)\b"),
+        "Kubernetes publication objects stay inside the publisher's adapter",
+        "The controller offers documents through the publication port; nothing above the "
+        "adapter names the object they land in.",
+    ),)
+
     failures = []
 
     for owner, pattern, invariant, consequence in adapters:
+        # One adapter usually owns a vocabulary. The two Kubernetes adapters
+        # share the API server's, so an owner may be a set of crates.
+        owners = owner if isinstance(owner, frozenset) else frozenset({owner})
         for crate in graph.crates:
-            if crate == owner:
+            if crate in owners:
                 continue
 
             for path in source_files(crate):

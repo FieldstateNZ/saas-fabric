@@ -81,6 +81,11 @@ fabric-platform-git = { path = "crates/fabric-platform-git" }
 fabric-platform-management = { path = "crates/fabric-platform-management" }
 fabric-registry = { path = "crates/fabric-registry" }
 fabric-deployment-kubernetes = { path = "crates/fabric-deployment-kubernetes" }
+# The other end of ADR 0018: the runtime's three documents, written as
+# ConfigMaps over plain HTTPS with the pod's own identity. Control plane, and
+# the only crate that names a ConfigMap; it decides nothing -- the plan it
+# writes is fabric-runtime-publication's, shared with the filesystem adapter.
+fabric-publication-kubernetes = { path = "crates/fabric-publication-kubernetes" }
 fabric-keycloak = { path = "crates/fabric-keycloak" }
 fabric-openbao = { path = "crates/fabric-openbao" }
 fabric-reconciliation = { path = "crates/fabric-reconciliation" }

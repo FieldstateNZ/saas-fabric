@@ -2,8 +2,7 @@
 
 use super::atomic_write::atomic_write;
 use super::paths::DocumentPaths;
-use crate::verdict::Verdict;
-use crate::{DocumentKind, DocumentManifest, DocumentRevision, PublicationError};
+use crate::{DocumentKind, DocumentManifest, DocumentOutcome, DocumentRevision, PublicationError};
 
 /// Writes one document's payload, then its manifest, unless its verdict says
 /// nothing changed.
@@ -13,11 +12,11 @@ use crate::{DocumentKind, DocumentManifest, DocumentRevision, PublicationError};
 /// drift into touching a *different* document's paths by accident.
 pub(super) fn write_if_needed(
     paths: &DocumentPaths,
-    verdict: Verdict,
+    outcome: DocumentOutcome,
     bytes: &[u8],
     revision: DocumentRevision,
 ) -> Result<(), PublicationError> {
-    if verdict == Verdict::Unchanged {
+    if outcome == DocumentOutcome::Unchanged {
         return Ok(());
     }
 

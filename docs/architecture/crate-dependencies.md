@@ -149,6 +149,17 @@ the control-plane composition root can bind it. It performs bounded GETs using
 the pod identity and returns product-level deployment evidence. It cannot
 write desired state or change Kubernetes resources. See [ADR 0022](../decisions/0022-running-versions-come-from-deployment-evidence.md).
 
+`fabric-publication-kubernetes` implements `fabric-runtime-publication`'s
+`RuntimePublication` port over the same plain-HTTPS transport the observer
+uses (ADR 0018, "The Kubernetes adapter"; ADR 0023 part 4). Its only
+internal edges are `fabric-core` and `fabric-runtime-publication`, so it can
+reach the wire contract and the shared publication plan and nothing in
+either plane; it decides nothing itself. The two Kubernetes adapters share
+the API server's vocabulary (`resource_version` and friends), which the
+architecture check allows for exactly those two crates, and the publisher
+additionally owns the ConfigMap path and object names, which nothing above
+it may mention.
+
 `fabric-registry` implements that port and holds no credential at all: the
 packages are public, so it exchanges an anonymous pull token and reads. A
 credential that does not exist cannot be conflated with the GitHub App that

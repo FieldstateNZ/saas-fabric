@@ -131,6 +131,7 @@ Kubernetes, or opens a connection (§6).
 | [`fabric-client-git`](crates/fabric-client-git) | The client desired-state repository, over the Git host's contents API. One of three crates that know a Git host exists; `fabric-git-host` and `fabric-platform-git` are the others. |
 | [`fabric-openbao`](crates/fabric-openbao) | Where a Fabric instance's secrets and integration record live. The only crate that knows OpenBao exists. |
 | [`fabric-deployment-kubernetes`](crates/fabric-deployment-kubernetes) | Read-only deployment evidence — observed running versions, over plain HTTPS, no `kube` crate (ADR 0022). |
+| [`fabric-publication-kubernetes`](crates/fabric-publication-kubernetes) | Publishes the runtime's three documents as ConfigMaps, over plain HTTPS; decides nothing — the plan is `fabric-runtime-publication`'s (ADR 0018, ADR 0023). |
 | [`fabric-control-plane-api`](crates/fabric-control-plane-api) | The control plane's composition root. |
 
 **In neither plane**

@@ -64,18 +64,19 @@ image.
 | Overview | API-derived inventory, application counts and identity observations. |
 | Clients | Search/filter/sort; three-step creation; edit core and custom configuration; assign published applications and change plans/versions. |
 | Client details | Assigned release snapshots, components and configuration; identity and secret controls; editable declared domains; activity; a Data tab showing each declared logical data source's placement or refusal, and a Place control to request it (ADR 0023 part 2); plan-filtered shell preview. |
-| Applications | Create drafts; edit definitions, container/Helm/capability components, feature dependencies, plans/limits, typed client fields, navigation and hostname templates. |
+| Applications | Create drafts; edit definitions, container/Helm/capability components, the logical resources exposed through the Data API (ADR 0023 part 3), feature dependencies, plans/limits, typed client fields, navigation and hostname templates. |
 | Releases | Validate and publish immutable numbered snapshots. Existing assignments retain their exact version until explicitly changed. |
 | Components | Application component inventory plus existing platform hold/resume/rollback operations. |
 | Client definition | Edit typed custom fields, defaults and required values; increment shared definition version. |
-| Environments | Inspect current deployment; declare, correct or remove the data sources it can place a tenant on (ADR 0023 part 1, part 2); register links to other independently authenticated operator consoles. |
+| Environments | Inspect current deployment; declare, correct or remove the data sources it can place a tenant on (ADR 0023 part 1, part 2); view the derived runtime catalogue, or the conflict that stops it from being derived (ADR 0023 part 3); register links to other independently authenticated operator consoles. |
 | Integrations | Existing Git application installation, repository selection and platform connection workflows. |
 | Reconciliation | Trigger the existing identity reconciler with operator authority and inspect each client's latest outcome. Passes are observations and are not recorded as activity. In the workbench no identity provider is connected, so a pass is refused as unavailable. |
 | Settings | Persist platform display name, new-client defaults and show authenticated operator identity. |
 
 ## API and storage
 
-Authenticated additions: GET/POST `/api/catalogue`, POST `/api/clients`,
+Authenticated additions: GET/POST `/api/catalogue`, GET `/api/catalogue/runtime`
+(the derived runtime catalogue, ADR 0023 part 3), POST `/api/clients`,
 GET/PUT `/api/clients/{id}/product`, GET `/api/activity`, GET `/api/operator`,
 GET `/api/platform/data-sources`, PUT `/api/platform/data-sources/{dataSourceId}`,
 DELETE `/api/platform/data-sources/{dataSourceId}`, GET `/api/clients/{clientId}/placements`,
@@ -106,7 +107,7 @@ already has.
 | `422 invalid_data_source` | a data source declaration ADR 0023 part 1 refuses -- a shared placement with no discriminator column, any other placement with one, a zero pool value, an empty label, a default connection kind (a connector's single default connection is never something an operator declares), or a malformed secret reference; the message is the rule's own words |
 | `422 placement_refused` | placing a logical data source Fabric cannot place -- no declared data source admits the intent, the logical is already placed, or the client's document declares no data source by that name (ADR 0023 part 2); the message is the refusal's own words |
 | `409 data_source_in_use` | removing a data source a held placement still names; the message lists the tenants placed on it |
-| `500 desired_state_invalid` | stored data that will not parse — a client's `spec.product`, the catalogue, or an environment's data-sources document (a hand edit gave two entries the same id, or made one invalid) — which no retry fixes. One unreadable client fails the whole activity listing, and every creation |
+| `500 desired_state_invalid` | stored data that will not parse — a client's `spec.product`, the catalogue, or an environment's data-sources document (a hand edit gave two entries the same id, or made one invalid) — which no retry fixes. One unreadable client fails the whole activity listing, and every creation. `GET /api/catalogue/runtime` answers it too, for a resource name two different applications declare (ADR 0023 part 3) — reachable only through a hand edit, since publishing itself refuses that; the message names the resource and both applications |
 
 The Git adapter stores `fabric-catalogue.yaml` at the repository root, and each
 client's product state as `spec.product` inside its existing client document; in

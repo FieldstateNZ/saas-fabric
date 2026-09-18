@@ -18,6 +18,7 @@ impl ApplicationDefinition {
             "navigation route",
         )?;
         validate_fields(&self.fields)?;
+        self.validate_resources()?;
         for component in &self.components {
             text(&component.name, "Component name", true, 128)?;
             text(&component.reference, "Component reference", true, 1024)?;

@@ -14,6 +14,7 @@ import type {
   ProductActivity,
   StoredCatalogue,
 } from './catalogue-types'
+import type { RuntimeCatalogue } from './runtime-catalogue-types'
 
 /** The catalogue, and the revision to condition the next write on. */
 export function getCatalogue(): Promise<StoredCatalogue> {
@@ -82,4 +83,18 @@ export function getActivity(): Promise<{ activity: ProductActivity[] }> {
 /** Who the control plane believes is making these requests. */
 export function getOperator(): Promise<{ subject: string }> {
   return request<{ subject: string }>('/api/operator')
+}
+
+/**
+ * The derived runtime catalogue: every resource a runtime in this
+ * environment would be given right now, from the newest published release
+ * of whichever application declares it (ADR 0023 part 3).
+ *
+ * Read-only -- there is no command that writes this back. A conflict
+ * between two applications declaring the same resource name, reachable only
+ * through a hand edit, answers `500 desired_state_invalid`; see
+ * `useRuntimeCatalogue`.
+ */
+export function getRuntimeCatalogue(): Promise<RuntimeCatalogue> {
+  return request<RuntimeCatalogue>('/api/catalogue/runtime')
 }

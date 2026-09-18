@@ -28,6 +28,7 @@ function release(version: number, planIds: readonly string[], fieldKeys: readonl
         description: '',
       })),
       navigation: [],
+      resources: [],
     },
   }
 }

@@ -230,10 +230,18 @@ every tenant (ADR 0018). Nothing declares those resources today. This decision
 puts them where the application is defined: a published application release
 in the product catalogue (ADR 0021) carries `resources`, one entry per logical
 resource with the wire's own fields — logical data source, collection, key
-field, operations, queryable fields. The runtime catalogue is the union over
-every published release of every application. Two releases that declare one
-resource name differently are a conflict, refused when the second is published
-and refused again at publication time if a hand edit produces one.
+field, operations, queryable fields. The runtime catalogue is one document
+for the environment, and releases of one application coexist because
+clients are pinned to versions, so for each resource name the derived
+definition is the one from the **newest published release** of the
+application that declares it: a newer release supersedes an older definition
+of the same resource, and a client on an older release sees the newer shape.
+Two **different** applications declaring one resource name is a conflict.
+Publication is what takes a name: the second application's release is
+refused when it is published, naming both applications; a draft never owns a
+name, because an unpublished draft blocking the rightful owner's next release
+would be the wrong way round. A conflict that a hand edit produces is
+reported by the derivation, never resolved by guessing a winner.
 
 A resource exists for every tenant whether or not the tenant has the
 application, because a catalogue entry is a name-to-collection mapping and not
@@ -361,6 +369,12 @@ source a tenant may be placed on. Nothing here creates tables.
 **Deprovisioning.** Removing a placement, and what an empty tenants document
 means for a tenant's rows, is the deprovisioning question ADR 0021 already
 owes an answer to.
+
+**A resource on a logical data source a client never asked for.** A
+resource exists for every tenant, but a tenant whose `spec.data` declares no
+binding for the resource's logical data source fails closed at the runtime
+(ADR 0018, `UnboundDataSource`). Nothing cross-checks that at assignment;
+surfacing it on the client's Data tab is owed.
 
 **Multiple environments.** A deployment manages one environment and its files.
 A client placed in two environments is two placement records in two

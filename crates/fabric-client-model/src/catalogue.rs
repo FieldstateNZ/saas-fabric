@@ -5,6 +5,8 @@ mod command;
 mod fields;
 mod mutations;
 mod product;
+mod resource;
+mod runtime_catalogue;
 mod schema;
 mod validation;
 
@@ -13,6 +15,8 @@ pub use application::*;
 pub use command::CatalogueCommand;
 pub use fields::*;
 pub use product::*;
+pub use resource::ApplicationResource;
+pub use runtime_catalogue::{CatalogueConflict, DerivedCatalogue, DerivedResource};
 use schema::Envelope;
 use serde::{Deserialize, Serialize};
 
@@ -144,5 +148,46 @@ mod tests {
             matches!(error, DesiredStateError::UnknownDocumentKind { expected, .. } if expected == "fabric.fieldstate.nz/v1/Catalogue"),
             "{error}"
         );
+    }
+
+    #[test]
+    fn a_release_with_no_resources_key_parses_and_re_renders_without_inventing_one() {
+        // Every release published before ADR 0023 part 3 has no `resources`
+        // key at all. `#[serde(default)]` is what lets this parse; the test
+        // that matters is the one after it -- that rendering the parsed
+        // result back does not add the key, which would otherwise turn every
+        // stored release into a diff on the catalogue's next unrelated save.
+        let text = "apiVersion: fabric.fieldstate.nz/v1
+kind: Catalogue
+spec:
+  applications:
+  - id: analytics
+    draft:
+      name: Analytics
+      description: ''
+      domain: ''
+      components: []
+      features: []
+      plans: []
+      fields: []
+      navigation: []
+    releases: []
+  clientFields: []
+  settings:
+    platformName: SaaS Fabric
+    defaultRegion: New Zealand
+    timezone: Pacific/Auckland
+  environments: []
+  activity: []
+  definitionVersion: 0
+";
+
+        let catalogue = Catalogue::parse(text).unwrap();
+
+        assert!(catalogue.applications[0].draft.resources.is_empty());
+
+        let rendered = catalogue.render().unwrap();
+
+        assert!(!rendered.contains("resources"), "{rendered}");
     }
 }

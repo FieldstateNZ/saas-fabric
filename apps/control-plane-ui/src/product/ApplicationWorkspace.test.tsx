@@ -15,6 +15,7 @@ const definition: ApplicationDefinition = {
   plans: [],
   fields: [],
   navigation: [],
+  resources: [],
 }
 
 function state(overrides: Partial<CatalogueState> = {}): CatalogueState {

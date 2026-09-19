@@ -55,6 +55,7 @@ mod errors;
 mod filesystem;
 mod ids;
 mod manifest;
+mod plan;
 mod port;
 mod published_revisions;
 mod report;
@@ -81,6 +82,7 @@ pub use manifest::{
     DocumentKind, DocumentManifest, CATALOG_FILE, CATALOG_MANIFEST_FILE, CONTRACT_VERSION, DATA_SOURCES_FILE,
     DATA_SOURCES_MANIFEST_FILE, TENANTS_FILE, TENANTS_MANIFEST_FILE,
 };
+pub use plan::{plan_publication, DocumentPlan, HeldDocument, HeldDocuments, PublicationPlan};
 pub use port::RuntimePublication;
 pub use published_revisions::PublishedRevisions;
 pub use report::{DocumentOutcome, PublicationReport};

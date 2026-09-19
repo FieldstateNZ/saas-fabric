@@ -17,9 +17,7 @@
 mod adapter;
 mod atomic_write;
 mod held;
-mod parse;
 mod paths;
-mod plan;
 mod write;
 
 pub use adapter::FilesystemRuntimePublication;

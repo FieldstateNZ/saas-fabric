@@ -12,15 +12,12 @@ use std::path::PathBuf;
 
 use async_trait::async_trait;
 
-use super::held::HeldState;
-use super::parse::parse_held_documents;
+use super::held::read_held;
 use super::paths::DocumentPaths;
-use super::plan::PublishPlan;
 use super::write::write_if_needed;
-use crate::validate::validate_snapshot;
 use crate::{
-    DataSourceDocument, DocumentKind, PublicationError, PublicationReport, PublishedRevisions,
-    RuntimePublication, RuntimeSnapshot, TenantBindingDocument,
+    plan_publication, DocumentKind, DocumentPlan, PublicationError, PublicationReport, PublishedRevisions,
+    RuntimePublication, RuntimeSnapshot,
 };
 
 /// Publishes the runtime's three documents to a local filesystem, matching
@@ -59,61 +56,23 @@ impl FilesystemRuntimePublication {
 #[async_trait]
 impl RuntimePublication for FilesystemRuntimePublication {
     async fn current(&self) -> Result<PublishedRevisions, PublicationError> {
-        let held = HeldState::read(&self.tenants, &self.data_sources, &self.catalog)?;
-
-        Ok(PublishedRevisions {
-            tenants: held.tenants_held().map(|held| held.revision),
-            data_sources: held.data_sources_held().map(|held| held.revision),
-            catalog: held.catalog_held().map(|held| held.revision),
-        })
+        Ok(read_held(&self.tenants, &self.data_sources, &self.catalog)?.revisions())
     }
 
     async fn publish(&self, snapshot: &RuntimeSnapshot) -> Result<PublicationReport, PublicationError> {
-        // Read every held fact before a single byte is written (ADR 0018
-        // parts 4-6): validation and every document's verdict both compare
-        // against what is currently on disk.
-        let held = HeldState::read(&self.tenants, &self.data_sources, &self.catalog)?;
+        let held = read_held(&self.tenants, &self.data_sources, &self.catalog)?;
+        let plan = plan_publication(snapshot, &held)?;
 
-        let held_tenants: Vec<TenantBindingDocument> = parse_held_documents(
-            held.tenants_manifest.as_ref(),
-            held.tenants_payload.as_deref(),
-            self.tenants.kind,
-        )?;
-        let held_data_sources: Vec<DataSourceDocument> = parse_held_documents(
-            held.data_sources_manifest.as_ref(),
-            held.data_sources_payload.as_deref(),
-            self.data_sources.kind,
-        )?;
-        validate_snapshot(snapshot, &held_tenants, &held_data_sources)?;
-
-        let plan = PublishPlan::build(snapshot, &held)?;
-
-        // Only now does the first byte get written. Data sources, then the
-        // catalogue, then tenants (ADR 0018 part 3): additions must land
-        // before anything can reference them.
-        write_if_needed(
-            &self.data_sources,
-            plan.data_sources.verdict,
-            &plan.data_sources.bytes,
-            snapshot.data_sources.revision,
-        )?;
-        write_if_needed(
-            &self.catalog,
-            plan.catalog.verdict,
-            &plan.catalog.bytes,
-            snapshot.catalog.revision,
-        )?;
-        write_if_needed(
-            &self.tenants,
-            plan.tenants.verdict,
-            &plan.tenants.bytes,
-            snapshot.tenants.revision,
-        )?;
+        // The order ADR 0018 part 3 requires: a data source before anything
+        // that names it, and tenants last.
+        write(&self.data_sources, &plan.data_sources)?;
+        write(&self.catalog, &plan.catalog)?;
+        write(&self.tenants, &plan.tenants)?;
 
         Ok(PublicationReport {
-            tenants: plan.tenants.verdict.into(),
-            data_sources: plan.data_sources.verdict.into(),
-            catalog: plan.catalog.verdict.into(),
+            tenants: plan.tenants.outcome,
+            data_sources: plan.data_sources.outcome,
+            catalog: plan.catalog.outcome,
         })
     }
 
@@ -125,4 +84,8 @@ impl RuntimePublication for FilesystemRuntimePublication {
             self.catalog.payload.display()
         )
     }
+}
+
+fn write(paths: &DocumentPaths, plan: &DocumentPlan) -> Result<(), PublicationError> {
+    write_if_needed(paths, plan.outcome, &plan.bytes, plan.revision)
 }

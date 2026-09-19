@@ -2,6 +2,7 @@ import { useState } from 'react'
 
 import type { EnvironmentRegistration } from '../api/catalogue-types'
 import { DataSourcesPanel } from '../components/DataSourcesPanel'
+import { RuntimeCataloguePanel } from '../components/RuntimeCataloguePanel'
 import { Panel } from '../console/Panel'
 import { PlatformViews } from '../console/PlatformViews'
 import type { PlatformState } from '../hooks/usePlatform'
@@ -15,8 +16,10 @@ const empty: EnvironmentRegistration = { id: '', name: '', consoleUrl: '', descr
 /**
  * The environment this deployment manages (see {@link PlatformViews}), the
  * data sources it declares for placing a tenant's data (see
- * `DataSourcesPanel`, ADR 0023 part 1), and links to every other
- * independently authenticated operator console.
+ * `DataSourcesPanel`, ADR 0023 part 1), the runtime catalogue derived from
+ * every application's published releases (see `RuntimeCataloguePanel`, ADR
+ * 0023 part 3), and links to every other independently authenticated
+ * operator console.
  *
  * Registering a link does not provision or connect anything -- the control
  * plane holds no credential for another deployment's console, so this is a
@@ -43,6 +46,7 @@ export function Environments({
     <>
       <PlatformViews platform={platform} environments />
       <DataSourcesPanel />
+      <RuntimeCataloguePanel />
       <SaveNotice
         error={state.saveError}
         success={success}

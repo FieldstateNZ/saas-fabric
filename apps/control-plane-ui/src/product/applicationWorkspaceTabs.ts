@@ -9,6 +9,7 @@
 export const APPLICATION_TABS = [
   'Definition',
   'Components',
+  'Resources',
   'Features',
   'Client configuration',
   'Plans',

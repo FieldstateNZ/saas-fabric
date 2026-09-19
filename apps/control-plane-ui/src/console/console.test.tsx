@@ -137,6 +137,7 @@ const emptyApplicationDefinition = (name: string) => ({
   plans: [],
   fields: [],
   navigation: [],
+  resources: [],
 })
 
 const catalogueBodyWithApplications = () => ({

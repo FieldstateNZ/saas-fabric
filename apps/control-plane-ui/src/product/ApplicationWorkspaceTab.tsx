@@ -8,6 +8,7 @@ import { FeatureEditor } from './FeatureEditor'
 import { FieldDefinitions } from './FieldDefinitions'
 import { NavigationEditor } from './NavigationEditor'
 import { PlanEditor } from './PlanEditor'
+import { ResourceEditor } from './ResourceEditor'
 
 /** What every tab of `ApplicationWorkspace` needs, whether or not it uses all of it. */
 interface ApplicationWorkspaceTabProps {
@@ -31,8 +32,8 @@ interface ApplicationWorkspaceTabProps {
  * split exists so each slice has its own focused component, not because the
  * editors disagree about what they are editing.
  *
- * The `switch` has no `default` for its eight real cases, and the one it
- * does have exists only to make a ninth tab a compile error rather than a
+ * The `switch` has no `default` for its nine real cases, and the one it
+ * does have exists only to make a tenth tab a compile error rather than a
  * silent fallthrough: adding a case to {@link ApplicationTab}'s definition
  * without adding one here fails `exhaustive: never = tab` — assigning a
  * type that is not `never` to `never` — rather than quietly rendering
@@ -60,6 +61,16 @@ export function ApplicationWorkspaceTab({
           items={draft.components}
           onChange={(components) => {
             onChange({ ...draft, components })
+          }}
+        />
+      )
+
+    case 'Resources':
+      return (
+        <ResourceEditor
+          items={draft.resources}
+          onChange={(resources) => {
+            onChange({ ...draft, resources })
           }}
         />
       )

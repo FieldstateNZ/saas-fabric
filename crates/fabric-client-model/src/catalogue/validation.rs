@@ -2,10 +2,12 @@
 mod application;
 mod fields;
 mod hostname;
+mod resource;
 use super::{Catalogue, ConfigurationValues};
 use crate::DesiredStateError;
 use fields::check_key;
 pub(super) use fields::{is_timezone, validate_fields, values};
+pub(super) use resource::check_cross_application_conflicts;
 use std::collections::BTreeSet;
 
 pub(crate) fn invalid(detail: impl Into<String>) -> DesiredStateError {

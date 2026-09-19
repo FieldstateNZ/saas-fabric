@@ -44,6 +44,13 @@ pub struct ApplicationDefinition {
     pub fields: Vec<ConfigurationField>,
     /// Client shell navigation, filtered by plan.
     pub navigation: Vec<NavigationItem>,
+    /// Logical resources this application exposes through the Data API
+    /// (ADR 0023 part 3). `#[serde(default)]` lets a release stored before
+    /// this field existed parse unchanged; `skip_serializing_if` keeps it
+    /// that way on the next render, rather than stamping `resources: []`
+    /// onto a document this field did not touch.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub resources: Vec<super::ApplicationResource>,
 }
 /// A deployable or platform capability.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -73,6 +73,29 @@ export interface NavigationItem {
   readonly permission: string
 }
 
+/** One operation a resource may permit through the Data API. */
+export type OperationKind = 'read' | 'list' | 'create' | 'update' | 'delete'
+
+/**
+ * One logical resource an application exposes through the Data API (ADR
+ * 0023 part 3): which data source and collection back it, its key field, the
+ * operations it permits, and which fields a client may filter or page on.
+ *
+ * `dataSource` names a *logical* data source — the name this application's
+ * clients declare in their own `spec.data`, never a `DataSourceId` this
+ * console resolves or a data source declared on `Environments`. Whether that
+ * name refers to anything a given client actually asked for is checked at
+ * the runtime, not here — ADR 0023 notes it as owed.
+ */
+export interface ApplicationResource {
+  readonly name: string
+  readonly dataSource: string
+  readonly collection: string
+  readonly keyField: string
+  readonly operations: readonly OperationKind[]
+  readonly queryableFields: readonly string[]
+}
+
 /**
  * An application, as an operator defines it.
  *
@@ -90,6 +113,7 @@ export interface ApplicationDefinition {
   readonly plans: readonly ApplicationPlan[]
   readonly fields: readonly ConfigurationField[]
   readonly navigation: readonly NavigationItem[]
+  readonly resources: readonly ApplicationResource[]
 }
 
 /**

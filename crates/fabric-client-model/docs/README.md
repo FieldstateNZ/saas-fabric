@@ -65,6 +65,39 @@ as "this client asks for nothing" rather than an error.
 See `docs/architecture/client-desired-state.md`'s `spec.data` section for the
 full contract.
 
+## Resources, and the runtime catalogue derived from them
+
+An application's definition carries `resources`: the logical resources it
+exposes through the Data API, one per name, each with the wire's own fields
+(ADR 0023 part 3):
+
+```yaml
+resources:
+  - name: customers
+    dataSource: primary          # a logical name a client's spec.data uses, never a DataSourceId
+    collection: customers        # what the connector knows the resource by
+    keyField: id                 # default
+    operations: [read, list]     # default; a resource must be deliberately made writable
+    queryableFields: [id, name]  # empty means unrestricted
+```
+
+A definition stored before the field existed parses unchanged, and an empty
+list is not written back, so old releases stay byte-stable. Saving checks
+an application's own resources: unique names, non-empty and duplicate-free
+operations, and a key field that sits among a restricting queryable list.
+Publishing additionally refuses a name a *different* application has
+already **published** — a draft never takes a name, so an unpublished draft
+cannot block the owner's next release.
+
+`Catalogue::runtime_catalogue` derives, from nothing stored, the
+`catalog.json` the runtime would be given: for each application, its newest
+release's resources, so a newer release supersedes its own older definition
+of a name; sorted by name; each `DerivedResource` carrying the application
+and version it came from, and `DerivedCatalogue::into_document` dropping
+that provenance for the wire. Two applications' newest releases declaring
+one name is `CatalogueConflict`, reachable only by a hand edit and reported
+rather than resolved.
+
 ## Two schema versions, and the migrator between them
 
 `v2` ships **beside** `v1`, which is the policy this crate already wrote down

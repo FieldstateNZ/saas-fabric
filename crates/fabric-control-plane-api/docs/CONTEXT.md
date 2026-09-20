@@ -38,7 +38,8 @@ testable.
   `Established::publication` plus the client desired-state binding `establish`
   does not have. `start_publishing` is `start_sweeping`'s sibling: absent
   config or a zero interval spawns nothing, the first tick is immediate, a
-  failed pass never stops the loop.
+  failed pass never stops the loop, nor does a panicking one -- see
+  "Design notes" for the mechanism.
 - `telemetry::init`.
 
 ## Hard invariants — do not break
@@ -68,3 +69,11 @@ testable.
 - `tests/example_configuration.rs` loads `examples/control-plane.toml` and
   parses every document in `examples/clients/`, so a renamed field fails the
   build rather than the example silently rotting.
+- `startup::tick::survive_panic` -- not on the public surface above;
+  `pub(in crate::startup)`, since `operator_keys.rs` is expected to need it
+  too. Runs one scheduled tick in its own `tokio::spawn`ed task, so a panic
+  unwinding out of an adapter is caught as a `JoinError` rather than ending
+  the loop that scheduled it; logs a fixed sentence, never the panic
+  payload. Both `start_sweeping` and `start_publishing` route their tick
+  through it today. `operator_keys.rs`'s `spawn_refresh` has the same
+  unguarded-loop shape and does not yet -- a known gap, not an oversight.

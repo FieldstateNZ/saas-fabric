@@ -90,7 +90,16 @@ pub enum WaitingReason {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PassResult {
     /// It ran, and this is what happened.
-    Ran(PassOutcome),
+    Ran {
+        /// The moment `PublicationState` recorded this outcome at -- the
+        /// one clock `publish_once` reads, so a caller rendering a response
+        /// from this carries the same instant `GET /api/platform` will
+        /// report for this same pass, rather than minting a second, later
+        /// timestamp of its own.
+        at_unix_seconds: u64,
+        /// What happened.
+        outcome: PassOutcome,
+    },
 
     /// Another pass was still going, so this one did nothing.
     ///

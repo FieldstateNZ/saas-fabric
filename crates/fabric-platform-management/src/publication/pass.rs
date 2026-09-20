@@ -6,10 +6,11 @@
 #[path = "pass_tests.rs"]
 mod pass_tests;
 
-use fabric_runtime_publication::{DocumentOutcome, PublicationError, PublicationReport, PublishedRevisions};
+use fabric_runtime_publication::{DocumentOutcome, PublicationReport, PublishedRevisions};
 
 use crate::publication::outcome::{PassOutcome, WaitingReason};
 use crate::publication::protocol::publish_with_retry;
+use crate::publication::publish_error::outcome_from_publish_error;
 use crate::publication::snapshot::compose;
 use crate::publication::RuntimePublisher;
 use crate::SafeDiagnostic;
@@ -66,11 +67,13 @@ impl RuntimePublisher {
     pub(super) async fn run_pass(&self) -> PassOutcome {
         let held = match self.target.current().await {
             Ok(held) => held,
-            Err(error) => {
-                return PassOutcome::Failed {
-                    detail: SafeDiagnostic::sanitise(&error.to_string()),
-                }
-            }
+            // The same exhaustive classifier `publish_with_retry`'s own
+            // failure reaches below, not a blanket `Failed`: `current`'s own
+            // contract only ever returns `Unreadable`, which lands there
+            // too, but one classifier for every error this port can raise
+            // is what keeps that true by construction rather than by both
+            // call sites happening to agree.
+            Err(error) => return outcome_from_publish_error(&error),
         };
 
         let declarations = match self.declared_data_sources().await {
@@ -112,39 +115,5 @@ impl RuntimePublisher {
             ),
             Err(error) => outcome_from_publish_error(&error),
         }
-    }
-}
-
-/// Sorts what the target refused into what an operator can do about it.
-///
-/// [`PublicationError::Unwritable`] is its own case, not folded into
-/// `Refused` with the rest: it is the one variant that may have written
-/// something before failing (the cluster, or the disk, can be
-/// half-updated -- see [`PublicationError`]'s own rustdoc), so it is a
-/// transport failure to retry, the same as [`PublicationError::Unreadable`]
-/// reaching a held document. [`PublicationError::StaleRevision`] joins them:
-/// the next pass reads the revision that moved and offers against it, so it
-/// self-heals the way a transport failure does, not the way a coherence
-/// problem does. Everything else here names a document this platform itself
-/// (or a hand edit) produced in a shape the target will never accept
-/// unchanged -- including a [`PublicationError::DivergentPayload`] that
-/// survived every retry, which means something is still rewriting a
-/// document out from under this pass, not that the pass mis-offered it once.
-fn outcome_from_publish_error(error: &PublicationError) -> PassOutcome {
-    match error {
-        PublicationError::Unwritable { .. }
-        | PublicationError::Unreadable { .. }
-        | PublicationError::StaleRevision { .. } => PassOutcome::Failed {
-            detail: SafeDiagnostic::sanitise(&error.to_string()),
-        },
-        PublicationError::DivergentPayload { .. }
-        | PublicationError::DanglingDataSource { .. }
-        | PublicationError::RetiredDataSourceStillBound { .. }
-        | PublicationError::EmptyingNotIntended { .. }
-        | PublicationError::EmptyCatalogue
-        | PublicationError::EmptyTenantData { .. }
-        | PublicationError::HeldPayloadLost { .. } => PassOutcome::Refused {
-            reason: SafeDiagnostic::sanitise(&error.to_string()),
-        },
     }
 }

@@ -44,6 +44,7 @@ use serde_json::{json, Value};
 use support::platform_fixture::platform_binding;
 use support::{
     as_operator, control_plane_with_platform, control_plane_with_publication, json as body_of, send, TempDir,
+    FIXED_CLOCK_UNIX_SECONDS,
 };
 use tokio::sync::Notify;
 
@@ -219,6 +220,14 @@ async fn publishing_composes_declared_state_into_the_runtimes_three_documents_an
     assert_eq!(body["documents"]["tenants"], 1);
     assert_eq!(body["documents"]["dataSources"], 1);
     assert_eq!(body["documents"]["catalog"], 1);
+    // One clock: the trigger renders its response from the moment
+    // `publish_once` itself recorded the pass at, never a fresh
+    // `SystemClock` read of its own -- so this must be the fixture clock's
+    // value, not merely *some* timestamp.
+    assert_eq!(
+        body["lastPass"]["atUnixSeconds"], FIXED_CLOCK_UNIX_SECONDS,
+        "{body}"
+    );
 
     let tenants_path = dir.path().join("tenants.json");
     let data_sources_path = dir.path().join("data-sources.json");
@@ -323,10 +332,17 @@ async fn publishing_composes_declared_state_into_the_runtimes_three_documents_an
     assert!(acme["data"]["secondary"].is_object(), "{acme}");
 
     // 4. `GET /api/platform` shows the same state the trigger itself just
-    // reported.
+    // reported -- including the moment it happened at: the same fixture
+    // clock value every earlier trigger's response also carried, since
+    // `GET` reads the very `PublicationState` `publish_once` itself wrote
+    // it into rather than a fresh clock read of its own.
     let body = get_platform(&plane.router).await;
     assert_eq!(body["publication"]["lastPass"]["outcome"], "published", "{body}");
     assert_eq!(body["publication"]["documents"]["tenants"], 2, "{body}");
+    assert_eq!(
+        body["publication"]["lastPass"]["atUnixSeconds"], FIXED_CLOCK_UNIX_SECONDS,
+        "{body}"
+    );
     assert!(body["publication"]["target"]
         .as_str()
         .unwrap()

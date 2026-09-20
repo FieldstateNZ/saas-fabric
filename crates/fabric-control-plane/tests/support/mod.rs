@@ -81,6 +81,11 @@ spec:
     invoicing: true
 ";
 
+/// What [`FixedClock::now_unix_seconds`] always answers -- named so a test
+/// asserting against it reads as "the fixture clock's value", not a bare
+/// literal a reader has to go find the definition of to recognise.
+pub const FIXED_CLOCK_UNIX_SECONDS: u64 = 1_700_000_000;
+
 /// A clock that never moves.
 pub struct FixedClock;
 
@@ -90,7 +95,7 @@ impl Clock for FixedClock {
     }
 
     fn now_unix_seconds(&self) -> u64 {
-        1_700_000_000
+        FIXED_CLOCK_UNIX_SECONDS
     }
 }
 

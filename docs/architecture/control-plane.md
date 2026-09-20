@@ -1155,12 +1155,15 @@ retry) when this deployment publishes no runtime state; `PublicationRunning`
 **The panel row, and what it does and does not say.** `GET /api/platform`'s
 `publication` row names the target (`describe()`, never a credential), and
 the revisions the *last published or unchanged pass* reported — `null` for
-every document after a pass that only got as far as `waiting`, `refused` or
-`failed`, since none of those ever read or moved what is held far enough to
-report — and the last pass's outcome — `published`, `unchanged`, `waiting`,
-`refused` or `failed`, with a sanitised detail for the last three. It is
-`null` when no publication target is configured. **It reports what the
-target holds and what the last pass did.
+every document after a `waiting`, `refused` or `failed` pass, not because
+those passes never reached `current()` (most of them do), but because the
+row reports revisions only for a pass that published or found nothing to
+change: a number on the row always means those bytes are what the target
+holds, never a value some other halted pass merely happened to read on its
+way to a refusal it is not this row's job to describe — and the last pass's
+outcome — `published`, `unchanged`, `waiting`, `refused` or `failed`, with a
+sanitised detail for the last three. It is `null` when no publication target
+is configured. **It reports what the target holds and what the last pass did.
 It does not observe the runtime.** There is no port from this crate to the
 runtime plane (§6), so a publication pass completing says nothing about
 whether the runtime has reloaded, is mounting the ConfigMap the kubelet

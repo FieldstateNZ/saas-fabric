@@ -1,6 +1,14 @@
 //! The one thing in this module that touches a port: composing a snapshot
 //! from live platform state and offering it to a publication target, on
 //! demand.
+//!
+//! In the 121-150 line band (docs/architecture/file-size-policy.md):
+//! `RuntimePublisher`, its constructor, and `publish_once` are the type this
+//! whole module exists to name, and `log_pass` is not a second concept
+//! beside them -- it is the one place `PassOutcome`'s match must stay
+//! exhaustive against every variant `publish_once` can produce, so splitting
+//! it out would separate that exhaustiveness check from the only call site
+//! it guards.
 
 #[cfg(test)]
 #[path = "publisher_tests.rs"]
@@ -87,9 +95,13 @@ impl RuntimePublisher {
         let outcome = self.run_pass().await;
 
         self.log_pass(&outcome);
-        state.record(self.clock.now_unix_seconds(), outcome.clone());
+        let at_unix_seconds = self.clock.now_unix_seconds();
+        state.record(at_unix_seconds, outcome.clone());
 
-        PassResult::Ran(outcome)
+        PassResult::Ran {
+            at_unix_seconds,
+            outcome,
+        }
     }
 
     /// Logs one structured event per pass -- `event =

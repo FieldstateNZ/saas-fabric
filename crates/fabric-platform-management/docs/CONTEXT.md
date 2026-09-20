@@ -376,7 +376,11 @@ own data-source sub-types rather than re-declared, so a hand-editable
   amendment) | `PlatformNotConnected` (no operator has connected this
   environment's platform repository yet -- `SweepResult::NotConnected`'s
   sibling, not a failure).
-- `PassResult` — `Ran(PassOutcome)` | `AlreadyRunning`.
+- `PassResult` — `Ran { at_unix_seconds: u64, outcome: PassOutcome }` |
+  `AlreadyRunning`. `at_unix_seconds` is the same moment `PublicationState`
+  just recorded the outcome at -- the one clock `publish_once` reads, so a
+  caller rendering a response from this never mints a second, later
+  timestamp `GET /api/platform` would then disagree with for the same pass.
 
 ## Internal modules
 
@@ -478,7 +482,7 @@ own data-source sub-types rather than re-declared, so a hand-editable
   contract plus one trait; no logic beyond the type definitions.
 - `policy.rs` — `UpdatePolicy` alone.
 - `publication.rs` +
-  `publication/{catalogue_source,compose_error,outcome,pass,pass_tests,protocol,protocol_tests,publisher,publisher_tests,reads,reads_tests,running_guard,snapshot,snapshot_tests,state,testing}.rs`
+  `publication/{catalogue_source,compose_error,outcome,pass,pass_tests,protocol,protocol_tests,publish_error,publisher,publisher_tests,reads,reads_tests,running_guard,snapshot,snapshot_tests,state,testing}.rs`
   (ADR 0023 part 4) — `compose` (`snapshot.rs`, pure: declared data sources +
   recorded placements + derived catalogue + held revisions -> `RuntimeSnapshot`),
   `ComposeError::DuplicatePlacement` | `EmptyTenantBinding` (`compose_error.rs`,
@@ -494,8 +498,10 @@ own data-source sub-types rather than re-declared, so a hand-editable
   `running_guard.rs`: `RunningGuard`, the `Drop`-released re-entry guard
   `publish_once` takes immediately after winning the atomic swap -- released
   on a panic and on cancellation, not only a normal return. `pass.rs`:
-  `run_pass`, the body `publish_once` runs once that guard lets it through,
-  and `outcome_from_publish_error`, which sorts an adapter's
+  `run_pass`, the body `publish_once` runs once that guard lets it through --
+  including the `current()` read at its own top, routed through the same
+  classifier as every other adapter error rather than a blanket `Failed`.
+  `publish_error.rs`: `outcome_from_publish_error`, which sorts an adapter's
   `PublicationError` into `Failed` (`Unwritable`, `Unreadable`,
   `StaleRevision` -- transport problems a retry or the next read fixes) or
   `Refused` (everything else, including an exhausted `DivergentPayload`

@@ -3,7 +3,6 @@
 
 use axum::extract::State;
 use axum::Json;
-use fabric_core::{Clock, SystemClock};
 use fabric_platform_management::PassResult;
 
 use crate::handlers::platform::body::{pass_outcome_word, PublicationRow};
@@ -46,17 +45,22 @@ pub(crate) async fn publish_runtime_state(
 
     match publisher.publish_once(&platform.publication).await {
         PassResult::AlreadyRunning => Err(ControlPlaneError::PublicationRunning),
-        PassResult::Ran(outcome) => {
+        PassResult::Ran {
+            at_unix_seconds,
+            outcome,
+        } => {
             audit::publication_triggered(&operator, pass_outcome_word(&outcome));
 
-            // Rendered from the outcome this call just produced, not a
-            // second `PublicationState` read: the guard is already
-            // released by the time `publish_once` returns (`RunningGuard`
-            // drops as its own call frame unwinds), so a scheduled pass
-            // could start and finish in the gap before a fresh read, and
-            // this response would then describe a pass the operator did
-            // not ask for.
-            let at_unix_seconds = SystemClock::new().now_unix_seconds();
+            // Rendered from the outcome this call just produced, and the
+            // moment `publish_once` itself recorded it at -- not a second
+            // `PublicationState` read (the guard is already released by
+            // the time `publish_once` returns, `RunningGuard` drops as its
+            // own call frame unwinds, so a scheduled pass could start and
+            // finish in the gap before a fresh read) and not a fresh
+            // `SystemClock` read either (the injected clock is what
+            // recorded this pass; minting a second, later timestamp here
+            // would make this response disagree with what `GET
+            // /api/platform` reports for the same pass).
             Ok(Json(PublicationRow::at(publisher, at_unix_seconds, &outcome)))
         }
     }

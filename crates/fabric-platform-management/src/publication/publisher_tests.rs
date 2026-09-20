@@ -259,9 +259,12 @@ async fn waiting_when_the_catalogue_has_no_resources() {
     assert!(
         matches!(
             result,
-            PassResult::Ran(PassOutcome::Waiting {
-                reason: WaitingReason::NoResources
-            })
+            PassResult::Ran {
+                outcome: PassOutcome::Waiting {
+                    reason: WaitingReason::NoResources
+                },
+                ..
+            }
         ),
         "{result:?}"
     );
@@ -281,7 +284,13 @@ async fn refused_when_the_held_data_sources_are_incoherent() {
     let result = publisher.publish_once(&PublicationState::new()).await;
 
     assert!(
-        matches!(result, PassResult::Ran(PassOutcome::Refused { .. })),
+        matches!(
+            result,
+            PassResult::Ran {
+                outcome: PassOutcome::Refused { .. },
+                ..
+            }
+        ),
         "{result:?}"
     );
 }
@@ -300,7 +309,13 @@ async fn refused_on_a_catalogue_conflict() {
     let result = publisher.publish_once(&PublicationState::new()).await;
 
     assert!(
-        matches!(result, PassResult::Ran(PassOutcome::Refused { .. })),
+        matches!(
+            result,
+            PassResult::Ran {
+                outcome: PassOutcome::Refused { .. },
+                ..
+            }
+        ),
         "{result:?}"
     );
 }
@@ -316,7 +331,13 @@ async fn failed_when_an_input_cannot_be_reached() {
 
     let first = publisher.publish_once(&state).await;
     assert!(
-        matches!(first, PassResult::Ran(PassOutcome::Failed { .. })),
+        matches!(
+            first,
+            PassResult::Ran {
+                outcome: PassOutcome::Failed { .. },
+                ..
+            }
+        ),
         "{first:?}"
     );
 
@@ -324,7 +345,13 @@ async fn failed_when_an_input_cannot_be_reached() {
     // rather than answering `AlreadyRunning`.
     let second = publisher.publish_once(&state).await;
     assert!(
-        matches!(second, PassResult::Ran(PassOutcome::Failed { .. })),
+        matches!(
+            second,
+            PassResult::Ran {
+                outcome: PassOutcome::Failed { .. },
+                ..
+            }
+        ),
         "{second:?}"
     );
 }
@@ -343,13 +370,25 @@ async fn published_then_unchanged_on_an_identical_republish() {
 
     let first = publisher.publish_once(&state).await;
     assert!(
-        matches!(first, PassResult::Ran(PassOutcome::Published { .. })),
+        matches!(
+            first,
+            PassResult::Ran {
+                outcome: PassOutcome::Published { .. },
+                ..
+            }
+        ),
         "{first:?}"
     );
 
     let second = publisher.publish_once(&state).await;
     assert!(
-        matches!(second, PassResult::Ran(PassOutcome::Unchanged { .. })),
+        matches!(
+            second,
+            PassResult::Ran {
+                outcome: PassOutcome::Unchanged { .. },
+                ..
+            }
+        ),
         "{second:?}"
     );
 }
@@ -387,7 +426,7 @@ async fn a_pass_already_running_is_skipped_rather_than_queued() {
 
     release.notify_one();
     let finished = running.await.expect("the spawned pass completes");
-    assert!(matches!(finished, PassResult::Ran(_)), "{finished:?}");
+    assert!(matches!(finished, PassResult::Ran { .. }), "{finished:?}");
 
     // And once it has finished, the guard is free again -- checked against a
     // second, ungated publisher over the same state, so this assertion does
@@ -400,7 +439,10 @@ async fn a_pass_already_running_is_skipped_rather_than_queued() {
         Arc::new(FakeCatalogue(Ok(catalog_with_one_resource()))),
         Arc::new(FakePublication::new()),
     );
-    assert!(matches!(ungated.publish_once(&state).await, PassResult::Ran(_)));
+    assert!(matches!(
+        ungated.publish_once(&state).await,
+        PassResult::Ran { .. }
+    ));
 }
 
 /// A [`RuntimePublication`] whose `current` always panics -- proving the
@@ -454,7 +496,7 @@ async fn the_guard_releases_even_when_the_target_panics() {
         Arc::new(FakePublication::new()),
     );
     assert!(
-        matches!(sane.publish_once(&state).await, PassResult::Ran(_)),
+        matches!(sane.publish_once(&state).await, PassResult::Ran { .. }),
         "the guard must be released after a panic, not left AlreadyRunning forever"
     );
 }
@@ -502,7 +544,7 @@ async fn the_guard_releases_when_the_pass_is_cancelled_mid_flight() {
         Arc::new(FakePublication::new()),
     );
     assert!(
-        matches!(sane.publish_once(&state).await, PassResult::Ran(_)),
+        matches!(sane.publish_once(&state).await, PassResult::Ran { .. }),
         "the guard must be released after cancellation, not left AlreadyRunning forever"
     );
 }

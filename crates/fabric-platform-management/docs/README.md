@@ -383,13 +383,16 @@ file under `publication/`.
   the held revision; on `DivergentPayload`, bump *only* the document the
   target named and re-offer the whole snapshot, up to three times (one per
   document). What a fourth divergence, or any other refusal
-  `publish_with_retry` returns, becomes is `pass.rs::outcome_from_publish_error`'s
-  own call: `Unwritable`, `Unreadable` and `StaleRevision` are transport
-  problems a retry or the next read fixes, so they are `Failed`; a fourth
-  `DivergentPayload` and every coherence refusal (`DanglingDataSource`,
-  `RetiredDataSourceStillBound`, `EmptyingNotIntended`, `EmptyCatalogue`,
-  `EmptyTenantData`, `HeldPayloadLost`) name a document a human must fix, so
-  they are `Refused`.
+  `publish_with_retry` returns, becomes is
+  `publish_error.rs::outcome_from_publish_error`'s own call -- the same
+  classifier `run_pass` also routes its own `current()` read's error
+  through, rather than assuming `Failed` on its behalf: `Unwritable`,
+  `Unreadable` and `StaleRevision` are transport problems a retry or the
+  next read fixes, so they are `Failed`; a fourth `DivergentPayload` and
+  every coherence refusal (`DanglingDataSource`, `RetiredDataSourceStillBound`,
+  `EmptyingNotIntended`, `EmptyCatalogue`, `EmptyTenantData`,
+  `HeldPayloadLost`) name a document a human must fix, so they are
+  `Refused`.
 - **`PublicationState`** (`publication/state.rs`) -- `SweepState`'s sibling:
   whether a pass is running, and the last one's `LastPass { at_unix_seconds,
   outcome }`.

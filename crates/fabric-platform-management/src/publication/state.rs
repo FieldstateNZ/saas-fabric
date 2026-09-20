@@ -1,9 +1,9 @@
 //! Whether a publication pass is running now, and what the last one did.
 
-use std::sync::atomic::AtomicBool;
 use std::sync::Mutex;
 
 use crate::publication::outcome::PassOutcome;
+use crate::running_guard::RunningFlag;
 
 /// Guards against two publication passes at once, and remembers the last
 /// one.
@@ -21,7 +21,12 @@ pub struct PublicationState {
     /// and the second's write is refused as stale by the publication target
     /// itself (ADR 0018 part 6). This exists to save the wasted read and
     /// write, not to close a race the port does not already close.
-    pub(super) running: AtomicBool,
+    ///
+    /// A `RunningFlag`, not a bare `AtomicBool`, for the same reason
+    /// `SweepState::running` is one: the swap that claims it and the guard
+    /// that releases it are paired inside `RunningFlag::try_enter`, so
+    /// neither can happen without the other.
+    pub(super) running: RunningFlag,
 
     /// What the last completed pass found.
     last: Mutex<Option<LastPass>>,

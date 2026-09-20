@@ -484,7 +484,10 @@ async fn the_guard_releases_even_when_the_target_panics() {
         }
     })
     .await;
-    assert!(panicked.is_err(), "current() was made to panic");
+    assert!(
+        panicked.unwrap_err().is_panic(),
+        "the join error must be a panic, not a cancellation, or this test would pass for either"
+    );
 
     // Proved against a second, independently built publisher over the same
     // `state` -- the panicking one above is useless for a second call, since

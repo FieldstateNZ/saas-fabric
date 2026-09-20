@@ -1170,6 +1170,9 @@ whether the runtime has reloaded, is mounting the ConfigMap the kubelet
 propagated, or is even running at all — that is the staleness budget ADR
 0018's Kubernetes-adapter notes already name (controller interval + kubelet
 sync + the runtime's own refresh interval), not something this row narrows.
+The console renders this row on the Environments page, beside a **Publish
+now** control that calls the trigger and renders its answer as the row,
+rather than reloading to re-read `GET /api/platform`.
 
 **What is still not built:**
 

@@ -1,4 +1,5 @@
 import { PlatformPanel } from '../components/PlatformPanel'
+import { PublicationPanel } from '../components/PublicationPanel'
 import type { PlatformState } from '../hooks/usePlatform'
 import { EmptyState } from './EmptyState'
 import { PageHeader } from './PageHeader'
@@ -48,26 +49,29 @@ export function PlatformViews({
       )}
       {platform.value &&
         (environments ? (
-          <Panel
-            title={platform.value.environment}
-            action={<Status value="neutral">Current environment</Status>}
-          >
-            <div className="panel-body">
-              <dl className="facts">
-                <dt>Components</dt>
-                <dd>{platform.value.components.length}</dd>
-                <dt>Last check</dt>
-                <dd>
-                  {platform.value.lastCheck
-                    ? new Date(platform.value.lastCheck.atUnixSeconds * 1000).toLocaleString()
-                    : 'Not checked yet'}
-                </dd>
-                <dt>Running state</dt>
-                <dd>{platform.value.components.map((component) => `${component.component}: ${component.observation?.health ?? 'not observed'}`).join(' · ')}</dd>
-              </dl>
-              <a href="#/components">Manage components →</a>
-            </div>
-          </Panel>
+          <>
+            <Panel
+              title={platform.value.environment}
+              action={<Status value="neutral">Current environment</Status>}
+            >
+              <div className="panel-body">
+                <dl className="facts">
+                  <dt>Components</dt>
+                  <dd>{platform.value.components.length}</dd>
+                  <dt>Last check</dt>
+                  <dd>
+                    {platform.value.lastCheck
+                      ? new Date(platform.value.lastCheck.atUnixSeconds * 1000).toLocaleString()
+                      : 'Not checked yet'}
+                  </dd>
+                  <dt>Running state</dt>
+                  <dd>{platform.value.components.map((component) => `${component.component}: ${component.observation?.health ?? 'not observed'}`).join(' · ')}</dd>
+                </dl>
+                <a href="#/components">Manage components →</a>
+              </div>
+            </Panel>
+            <PublicationPanel publication={platform.value.publication} />
+          </>
         ) : (
           <PlatformPanel platform={platform.value} />
         ))}

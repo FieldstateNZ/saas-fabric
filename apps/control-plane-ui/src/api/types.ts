@@ -7,6 +7,8 @@
  * in the API this console talks to.
  */
 
+import type { Publication } from './publication-types'
+
 /** Where a client's identity stands between what Git says and what exists. */
 export type ReconciliationStatus = 'pending' | 'applied' | 'failed' | 'drifted'
 
@@ -301,6 +303,16 @@ export interface Platform {
   readonly environment: string
   readonly components: readonly PlatformComponent[]
   readonly lastCheck: PlatformLastCheck | null
+  /**
+   * The runtime-publication target's state, or `null` when this deployment
+   * publishes no runtime state at all (no `[platform_management.publication]`
+   * configured) — distinct from a configured `Publication` whose `lastPass`
+   * is `null`, which means a target exists and nothing has run against it
+   * yet. Not configured and not yet run send an operator to different
+   * places, the same reason `lastCheck` above is nullable rather than
+   * defaulted.
+   */
+  readonly publication: Publication | null
 }
 
 /** Live evidence, sampled independently of the desired release. */

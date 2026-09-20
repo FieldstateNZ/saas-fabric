@@ -44,7 +44,7 @@ function platformApplication(overrides: Partial<PlatformIntegration> = {}): Plat
 
 function platformState(overrides: Partial<PlatformState> = {}): PlatformState {
   return {
-    value: { environment: 'lucentroot', components: [], lastCheck: null },
+    value: { environment: 'lucentroot', components: [], lastCheck: null, publication: null },
     loading: false,
     error: null,
     unmanaged: false,

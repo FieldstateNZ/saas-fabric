@@ -424,11 +424,13 @@ Not yet built:
 
 - The Configuration, Feature, Storage, Events, and tenant-facing Secrets APIs
   (§27). The binding format already carries their state.
-- **Runtime binding publication.** The producer exists
-  (`fabric-runtime-publication`, ADR 0018) and is proven against the real
-  runtime and Data API, but nothing calls it: no Kubernetes adapter, no
-  scheduled caller, and no provisioner input (`ProvisionedPlacement`) yet
-  exist — see
+- **What runtime publication still leaves to a person.** The control plane
+  composes and publishes the runtime's three documents on a schedule and on
+  request (ADR 0018, ADR 0023); the console does not yet show that row.
+  Raising the runtime stays a platform change, made once the row reports all
+  three published, the environment's `[[connectors]]` names every connector
+  its data sources reference, and the issuer-to-tenant registry (ADR 0019
+  §G4a) covers every placed tenant. Nothing generates the last two — see
   [the control-plane architecture](docs/architecture/control-plane.md#runtime-publication-boundary).
 - **Reconciliation into OpenBao, OpenFGA, Envoy and Grafana.** Client secrets
   and Platform Management's registry and cluster reads already reach OpenBao

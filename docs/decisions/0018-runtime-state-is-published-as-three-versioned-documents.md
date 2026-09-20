@@ -641,6 +641,13 @@ runtime plane at all.
   published once before the runtime is first rolled out — a deployment-time
   step, not a controller default.
 
+  > **Amendment (ADR 0023 §4).** Superseded: the controller that ADR 0023
+  > builds composes and offers all three documents as one all-or-nothing
+  > pass, and refuses to publish anything while the catalogue is empty, so
+  > there is no pass on which tenants or data sources would be written
+  > without a catalogue behind them — the "create empty documents at
+  > startup" behaviour this bullet describes is not built.
+
 ---
 
 ## What downstream work may rely on, without re-deriving any of this

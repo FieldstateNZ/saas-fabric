@@ -5,7 +5,7 @@ use fabric_runtime_publication::IsolationModelDocument;
 
 use crate::data_sources::{DataSourceDeclaration, Discriminator};
 use crate::placements::intent::DataIntent;
-use crate::placements::record::PlacementRecord;
+use crate::placements::record::{PlacementRecord, FIRST_REVISION};
 use crate::placements::refusal::PlacementRefusal;
 
 /// Rule 3: the least-loaded shared candidate, isolated by discriminator.
@@ -61,6 +61,7 @@ pub(super) fn pick_shared(
     Ok(PlacementRecord {
         tenant: tenant.clone(),
         logical: logical.clone(),
+        revision: FIRST_REVISION,
         data_source: chosen.id.clone(),
         isolation: IsolationModelDocument::Discriminator {
             column: discriminator.column.clone(),
@@ -102,6 +103,7 @@ pub(super) fn pick_exclusive(
     Ok(PlacementRecord {
         tenant: tenant.clone(),
         logical: logical.clone(),
+        revision: FIRST_REVISION,
         data_source: chosen.id.clone(),
         isolation: IsolationModelDocument::Database {},
         placed_at: now.to_owned(),

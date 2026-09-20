@@ -405,6 +405,7 @@ async fn for_client_shows_placed_for_an_already_recorded_placement_instead_of_ru
     let existing = PlacementRecord {
         tenant: TenantId::try_new("acme").unwrap(),
         logical: LogicalDataSourceName::try_new("primary").unwrap(),
+        revision: BindingRevision::new(1),
         data_source: DataSourceId::try_new("dedicated-a").unwrap(),
         isolation: IsolationModelDocument::Database {},
         placed_at: "2026-09-18T02:14:00Z".to_owned(),

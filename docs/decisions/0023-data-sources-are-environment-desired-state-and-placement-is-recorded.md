@@ -164,6 +164,7 @@ environment: lucentroot
 placements:
   - tenant: acme
     logical: primary
+    revision: 1                     # this record's own revision; bumped by a break-glass edit
     data_source: shared-postgres-nz-01
     isolation:
       kind: discriminator
@@ -186,6 +187,22 @@ and ADR 0018's refusal to derive placement from a label: the published value
 is the one the record holds, the record was written once by the act that
 allocated it, and a break-glass edit to the record is honoured as written
 rather than overruled by a rule that runs again. The fact is the record.
+
+**Each record carries its own revision, and a tenant's published revision is
+the sum of its records'.** `PlacementRecord.revision` is the same kind of
+number `data-sources.yaml` already carries per entry: nothing in this slice
+edits or removes a record, so nothing bumps it yet, but a future break-glass
+edit that changes what a record says — a different data source, a different
+isolation — must bump it, for the same reason correcting a data source's
+endpoint must. Publication sums a tenant's records into the `revision` on
+that tenant's published binding, rather than taking their maximum or
+tracking a revision of its own: a sum moves forward on every record that is
+added or bumped, and never moves backward, which is the one property the
+runtime's monotonic-revision guard needs — the tenant's binding revision is
+not a fact about any one record, it is a fact about how many times *any* of
+the tenant's data has changed. A second record placed for a tenant, or a
+correction to the one it already has, always advances the sum; nothing here
+removes a record, so nothing here needs the sum to fall.
 
 **On a shared data source, the allocated discriminator value is the tenant
 id.** ADR 0018's objection to `format!("tenant-{client}")` was that a value no

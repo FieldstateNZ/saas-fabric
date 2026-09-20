@@ -47,6 +47,7 @@ fn record(
     PlacementRecord {
         tenant: TenantId::try_new(tenant).expect("a valid tenant id"),
         logical: LogicalDataSourceName::try_new(logical).expect("a valid logical data source name"),
+        revision: fabric_core::BindingRevision::new(1),
         data_source: DataSourceId::try_new(data_source).expect("a valid data source id"),
         isolation,
         placed_at: "2026-09-18T02:14:00Z".to_owned(),

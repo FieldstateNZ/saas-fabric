@@ -27,6 +27,7 @@ function platform(overrides: Partial<Platform> = {}): Platform {
     environment: 'lucentroot',
     components: [component()],
     lastCheck: { atUnixSeconds: 1_700_000_000, outcome: 'success', detail: null },
+    publication: null,
     ...overrides,
   }
 }

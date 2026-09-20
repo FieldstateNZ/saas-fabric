@@ -56,6 +56,10 @@ h1, h2, h3, p { overflow-wrap: anywhere; }
 .status--pending { color: #8a6a23; background: #ecddb7; }
 .status--failed { color: #a8443a; background: #efd5ce; }
 .status--drifted { color: #755486; background: #e9dfed; }
+/* Mirrors `pending`'s colour: a publication pass that found nothing ready resolves on its own once desired state gives it something to do. */
+.status--waiting { color: #8a6a23; background: #ecddb7; }
+/* Mirrors `failed`'s colour: a publication pass the platform refused needs a person to act, the same as a reconciliation failure does. */
+.status--refused { color: #a8443a; background: #efd5ce; }
 /* An operator's own publish, not a reconciliation-observed fact — deliberately
    not `--applied`'s green, which means "the platform observed this took
    effect". A published application definition is neither observed nor

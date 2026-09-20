@@ -89,6 +89,14 @@ reality.
 
 A save answers `pending`, every time, because at that moment it is true.
 
+The Environments page's "Runtime publication" panel is the same discipline
+applied to the runtime's own three documents (ADR 0023 part 4): it states the
+target, the revision each document holds as of the last pass that published
+it or found it unchanged, and what that pass did — never whether the runtime
+has actually reloaded, which is outside what this console can observe. Its
+**Publish now** button runs a pass immediately, as this operator, rather
+than waiting out the schedule.
+
 ## What it lets an operator change
 
 **Realm roles.** Add and remove, except the two the platform requires — those

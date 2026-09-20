@@ -8,7 +8,7 @@ vi.mock('../api/platform', () => ({ getPlatform: vi.fn() }))
 afterEach(() => { vi.resetAllMocks() })
 
 it('clears earlier evidence while refreshing and after an unsuccessful read', async () => {
-  const result: Platform = { environment: 'lucentroot', components: [], lastCheck: null }
+  const result: Platform = { environment: 'lucentroot', components: [], lastCheck: null, publication: null }
   vi.mocked(getPlatform).mockResolvedValueOnce(result)
   const { result: hook } = renderHook(usePlatform)
   await waitFor(() => { expect(hook.current.value).toEqual(result) })

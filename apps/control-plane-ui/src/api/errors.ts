@@ -16,6 +16,8 @@ export type ErrorCode =
   | 'invalid_data_source'
   | 'placement_refused'
   | 'data_source_in_use'
+  | 'publication_not_configured'
+  | 'publication_running'
 
 /**
  * A refusal from the control plane.

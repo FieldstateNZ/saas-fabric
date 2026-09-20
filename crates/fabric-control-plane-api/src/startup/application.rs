@@ -131,10 +131,7 @@ pub async fn build(config: &ControlPlaneAppConfig) -> Result<Application, String
         &services.platform_sweeps,
     );
     platform::start_publishing(
-        config
-            .platform_management
-            .as_ref()
-            .and_then(|platform_management| platform_management.publication.as_ref()),
+        config.platform_management.as_ref(),
         services.publisher.as_ref(),
         &services.publication,
     );

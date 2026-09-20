@@ -10,6 +10,7 @@ mod platform_target;
 mod reserved_names;
 mod serving;
 mod shutdown;
+mod tick;
 
 pub use application::{build, Application};
 pub use shutdown::shutdown_signal;

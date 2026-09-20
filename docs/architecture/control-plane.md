@@ -1139,9 +1139,11 @@ empty derived catalogue is never published — `Waiting`, not an empty write
 starts `RuntimePublisher::publish_once` on an interval
 (`[platform_management.publication].interval_seconds`, default 60), the same
 shape `start_sweeping` already has: absent or zero starts nothing, the first
-tick is immediate, a failed pass never stops the loop. Publication writes
-with the controller's own credential, so — unlike Keycloak reconciliation
-(ADR 0012) — nothing is borrowed and a poll is both safe and correct.
+tick is immediate, a failed pass never stops the loop — nor a panicking one:
+each tick runs in its own task, a panic is logged without its payload, and
+the loop continues. Publication writes with the controller's own credential,
+so — unlike Keycloak reconciliation (ADR 0012) — nothing is borrowed and a
+poll is both safe and correct.
 
 **The trigger.** `POST /api/platform/publication` runs one pass now, as an
 operator, and answers with the row built from the outcome that pass itself

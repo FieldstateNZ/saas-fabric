@@ -10,7 +10,7 @@
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
-use fabric_core::{LogicalDataSourceName, TenantId};
+use fabric_core::{BindingRevision, LogicalDataSourceName, TenantId};
 use fabric_runtime_publication::{FieldName, IsolationModelDocument};
 use tokio::sync::Notify;
 
@@ -24,6 +24,7 @@ fn placement(tenant: &str) -> PlacementRecord {
     PlacementRecord {
         tenant: TenantId::try_new(tenant).expect("a valid tenant id"),
         logical: LogicalDataSourceName::try_new("primary").expect("a valid logical data source name"),
+        revision: BindingRevision::new(1),
         data_source: fabric_core::DataSourceId::try_new("shared-a").expect("a valid data source id"),
         isolation: IsolationModelDocument::Discriminator {
             column: FieldName::try_new("tenant_key").expect("a valid field name"),

@@ -4,8 +4,7 @@
 - **Date:** 2026-09-18
 - **Applies to:** `fabric-platform-management`, `fabric-platform-git`,
   `fabric-control-plane`, `fabric-control-plane-api`, the console, the
-  publication controller and its Kubernetes adapter (neither built yet), and
-  `saas-fabric-platform`
+  publication controller and its Kubernetes adapter, and `saas-fabric-platform`
 - **Related:** [ADR 0003](0003-data-sources-are-first-class-resources.md);
   [ADR 0006](0006-a-shared-data-source-can-only-serve-discriminator-isolation.md);
   [ADR 0007](0007-isolation-is-checked-against-an-observed-fact-not-a-label.md);
@@ -164,6 +163,7 @@ environment: lucentroot
 placements:
   - tenant: acme
     logical: primary
+    revision: 1                     # this record's own revision; bumped by a break-glass edit
     data_source: shared-postgres-nz-01
     isolation:
       kind: discriminator
@@ -186,6 +186,29 @@ and ADR 0018's refusal to derive placement from a label: the published value
 is the one the record holds, the record was written once by the act that
 allocated it, and a break-glass edit to the record is honoured as written
 rather than overruled by a rule that runs again. The fact is the record.
+
+**Each record carries its own revision, and a tenant's published revision is
+the sum of its records'.** `PlacementRecord.revision` is the same kind of
+number `data-sources.yaml` already carries per entry: nothing in this slice
+edits or removes a record, so nothing bumps it yet, but a future break-glass
+edit that changes what a record says — a different data source, a different
+isolation — must bump it, for the same reason correcting a data source's
+endpoint must. Publication sums a tenant's records into the `revision` on
+that tenant's published binding, rather than taking their maximum or
+tracking a revision of its own: a sum moves forward on every record that is
+added or bumped, and never moves backward, which is the one property the
+runtime's monotonic-revision guard needs — the tenant's binding revision is
+not a fact about any one record, it is a fact about how many times *any* of
+the tenant's data has changed. A second record placed for a tenant, or a
+correction to the one it already has, always advances the sum; nothing here
+removes a record, so nothing here needs the sum to fall. **A sum is only
+safe while nothing removes a record**: deleting one while bumping a
+survivor by less than the deleted record's own revision can leave the sum
+exactly where it was, and the runtime, seeing an unmoved revision, keeps
+serving the binding the removed record was part of -- so a hand removal
+must bump a surviving record by at least what it deletes, and until
+deprovisioning is designed (see "What this does not decide") a record must
+not be removed by hand at all.
 
 **On a shared data source, the allocated discriminator value is the tenant
 id.** ADR 0018's objection to `format!("tenant-{client}")` was that a value no
@@ -274,6 +297,21 @@ RoleBinding for the control plane's account into `platform-system`, and the
 runtime Deployment's three whole-volume mounts referencing the ConfigMaps by
 name. The ConfigMaps themselves are declared nowhere, so no Argo sync can
 revert a publication.
+
+> **As built.** The controller is `fabric-platform-management`'s
+> `publication` module (`compose`, `RuntimePublisher`, the offer-and-advance
+> retry in `protocol.rs`) plus `fabric-control-plane`'s
+> `RuntimeCatalogueSource` implementation and `POST /api/platform/publication`,
+> plus `fabric-control-plane-api`'s schedule
+> (`startup/platform/publishing.rs`) and `[platform_management.publication]`
+> configuration. One structural change from the paragraphs above: the
+> `RuntimePublisher` itself is built once, in `build_control_plane`, from
+> `ControlPlaneDeps.publication` — not by `fabric-control-plane-api`'s
+> `startup::platform::establish`, which only builds the *sink* (D5's
+> `PublicationSink`, wrapping `KubernetesRuntimePublication`) and hands it
+> in, because building the `RuntimeCatalogueSource` needs the *client*
+> desired-state binding, which only the composition root's `build` function
+> has in scope alongside the platform binding.
 
 ### 5. The runtime is raised when the publication is complete, and not before
 

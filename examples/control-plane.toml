@@ -194,3 +194,26 @@ mode = "in_memory"
 #     # How often the environment is swept. Zero disables it, and so does
 #     # omitting this whole section.
 #     reconciliation_interval_seconds = 60
+#
+#     # Publishing the runtime's three documents (ADR 0023 part 4). Omitted
+#     # here for the same reason platform_management itself is: nothing to
+#     # publish to without a cluster. Stating it wrongly is fatal at startup,
+#     # the same as the rest of this section; omitting it leaves `GET
+#     # /api/platform` showing no publication row and the trigger route
+#     # answering that nothing is configured.
+#     #
+#     # It needs the platform repository's Role granting `get` and `update`
+#     # on the three named ConfigMaps in this namespace, plus `create`
+#     # namespace-wide -- Kubernetes cannot scope `create` by `resourceNames`,
+#     # since the object does not exist yet at create time -- and the runtime
+#     # Deployment's three volume mounts already referencing them by name --
+#     # both wired by `saas-fabric-platform` since #40, on LucentRoot. A
+#     # deployment whose platform repository predates that lands this
+#     # section with an image advance, not before.
+#     [platform_management.publication]
+#     namespace = "platform-system"
+#
+#     # How often the schedule runs. Zero disables it and keeps the trigger
+#     # working -- `POST /api/platform/publication` still publishes on
+#     # demand either way.
+#     interval_seconds = 60

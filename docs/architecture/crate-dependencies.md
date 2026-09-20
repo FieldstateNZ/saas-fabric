@@ -61,6 +61,9 @@ fabric-control-plane   → fabric-core
                        → fabric-client-model
                        → fabric-reconciliation
                        → fabric-platform-management (the platform surface)
+                       → fabric-runtime-publication (CatalogDocument and the
+                                                     RuntimePublication port;
+                                                     ADR 0023 part 4)
 
 fabric-keycloak        → fabric-core
                        → fabric-client-model
@@ -90,6 +93,10 @@ fabric-openbao         → fabric-core
                                                      IntegrationStore)
 
 fabric-control-plane-api → all of the above (composition root)
+                       → fabric-runtime-publication (validates a configured
+                                                     publication namespace)
+                       → fabric-publication-kubernetes (builds the production
+                                                        publication target)
 ```
 
 Both verified as of the current tree; they match exactly.
@@ -159,6 +166,19 @@ the API server's vocabulary (`resource_version` and friends), which the
 architecture check allows for exactly those two crates, and the publisher
 additionally owns the ConfigMap path and object names, which nothing above
 it may mention.
+
+`fabric-control-plane`'s own edge to `fabric-runtime-publication` is the
+controller half of the same decision (ADR 0023 part 4, D4): it implements
+`RuntimeCatalogueSource` over its client desired-state binding, and
+constructs the `RuntimePublisher` `fabric-platform-management` defines, over
+whatever `RuntimePublication` the host hands it through
+`ControlPlaneDeps.publication` -- a filesystem in tests, production's
+`KubernetesRuntimePublication` in the composition root. That is also why `fabric-control-plane-api` gains its own edges to both
+`fabric-runtime-publication` (to name the `RuntimePublication` trait object
+its own `PublicationSink` is built as) and `fabric-publication-kubernetes`
+(the only crate that builds the production adapter, the same "only the
+composition root binds an adapter" rule `fabric-deployment-kubernetes`
+already follows).
 
 `fabric-registry` implements that port and holds no credential at all: the
 packages are public, so it exchanges an anonymous pull token and reads. A

@@ -19,7 +19,7 @@ use fabric_client_model::{ClientDocument, ClientRevision};
 use fabric_control_plane::testing::AcceptingOperator;
 use fabric_control_plane::{
     build_control_plane, ControlPlaneConfig, ControlPlaneDeps, DesiredStateBinding, IdentityProviderFactory,
-    InMemoryClientRepository, OperatorToken, PlatformBinding,
+    InMemoryClientRepository, OperatorToken, PlatformBinding, PublicationSink,
 };
 use fabric_core::Clock;
 use fabric_reconciliation::testing::FakeIdentityProvider;
@@ -81,6 +81,11 @@ spec:
     invoicing: true
 ";
 
+/// What [`FixedClock::now_unix_seconds`] always answers -- named so a test
+/// asserting against it reads as "the fixture clock's value", not a bare
+/// literal a reader has to go find the definition of to recognise.
+pub const FIXED_CLOCK_UNIX_SECONDS: u64 = 1_700_000_000;
+
 /// A clock that never moves.
 pub struct FixedClock;
 
@@ -90,7 +95,7 @@ impl Clock for FixedClock {
     }
 
     fn now_unix_seconds(&self) -> u64 {
-        1_700_000_000
+        FIXED_CLOCK_UNIX_SECONDS
     }
 }
 
@@ -190,7 +195,7 @@ pub const SECRET_VALUE: &str = "a-value-that-must-not-leak";
 
 /// Builds a control plane holding one client.
 pub fn control_plane() -> TestControlPlane {
-    build(None, None)
+    build(None, None, None)
 }
 
 /// Builds a control plane holding one client, converging against `provider`
@@ -202,20 +207,30 @@ pub fn control_plane() -> TestControlPlane {
 /// /api/reconciliation`, the real door an operator uses — so it is the one
 /// caller of this function.
 pub fn control_plane_with_identity_provider(provider: Arc<FakeIdentityProvider>) -> TestControlPlane {
-    build(Some(Arc::new(FakeIdentityProviderFactory(provider))), None)
+    build(Some(Arc::new(FakeIdentityProviderFactory(provider))), None, None)
 }
 
 /// Builds a control plane with a platform bound, for tests that drive
 /// `/api/platform/*` against something other than "nothing is managed".
 pub fn control_plane_with_platform(platform: PlatformBinding) -> TestControlPlane {
-    build(None, Some(platform))
+    build(None, Some(platform), None)
+}
+
+/// Builds a control plane with a platform bound *and* somewhere to publish
+/// to, for tests that drive `POST /api/platform/publication` and the
+/// `publication` row `GET /api/platform` renders (ADR 0023 part 4) against
+/// something other than "nothing is configured".
+pub fn control_plane_with_publication(platform: PlatformBinding, sink: PublicationSink) -> TestControlPlane {
+    build(None, Some(platform), Some(sink))
 }
 
 /// Shared by every constructor above; only what lends the identity
-/// provider's authority and which platform is bound differ between them.
+/// provider's authority, which platform is bound, and where it publishes
+/// differ between them.
 fn build(
     identity_provider: Option<Arc<dyn IdentityProviderFactory>>,
     platform: Option<PlatformBinding>,
+    publication: Option<PublicationSink>,
 ) -> TestControlPlane {
     let repository = Arc::new(InMemoryClientRepository::new());
     let revision = repository
@@ -246,6 +261,7 @@ fn build(
         ControlPlaneDeps {
             platform,
             platform_integration: None,
+            publication,
             client_secrets: Some(Arc::new(FakeClientSecrets)),
             desired_state: Arc::clone(&binding),
             clock: Arc::new(FixedClock),
@@ -326,4 +342,38 @@ pub fn entity_tag(response: &Response<Body>) -> String {
         .and_then(|value| value.to_str().ok())
         .map(|value| value.trim_matches('"').to_owned())
         .expect("the response must carry an entity tag")
+}
+
+/// A directory under the system temp root, unique per test, removed when it
+/// drops. `tempfile` is not in this workspace's dependency table -- see
+/// `fabric-runtime-publication/tests/filesystem_runtime_publication.rs`,
+/// whose own copy this mirrors, for the same reason.
+pub struct TempDir {
+    path: std::path::PathBuf,
+}
+
+impl TempDir {
+    pub fn new(label: &str) -> Self {
+        let unique = format!(
+            "fabric-control-plane-{label}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("the clock must be after the epoch")
+                .as_nanos()
+        );
+        let path = std::env::temp_dir().join(unique);
+        std::fs::create_dir_all(&path).expect("a temp directory must be creatable");
+        Self { path }
+    }
+
+    pub fn path(&self) -> &std::path::Path {
+        &self.path
+    }
+}
+
+impl Drop for TempDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.path);
+    }
 }

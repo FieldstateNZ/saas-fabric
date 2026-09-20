@@ -336,6 +336,12 @@ pub async fn platform_binding() -> (PlatformBinding, Arc<FakeRepository>) {
             Arc::new(FixedClock) as Arc<dyn Clock>,
         )),
         repository,
+        // Neither is ever set here: `build_control_plane` is what
+        // constructs a publisher, from `ControlPlaneDeps.publication` --
+        // see `control_plane_with_publication` in `support/mod.rs`, the one
+        // caller in this crate's tests that supplies one.
+        publisher: None,
+        publication: Arc::new(fabric_platform_management::PublicationState::new()),
     };
 
     (binding, fake)

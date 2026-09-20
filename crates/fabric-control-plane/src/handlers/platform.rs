@@ -7,10 +7,12 @@ mod brake;
 // `placement` within it both have to be reachable from outside `platform`'s
 // own subtree.
 pub(crate) mod data_sources;
+mod publish;
 mod rollback;
 
 pub(crate) use brake::{pause_component, resume_component};
 pub(crate) use data_sources::{declare_data_source, list_data_sources, remove_data_source};
+pub(crate) use publish::publish_runtime_state;
 pub(crate) use rollback::{roll_back_component, rollback_candidates};
 
 use axum::extract::State;
@@ -55,5 +57,7 @@ pub(crate) async fn get_platform(
         &platform.environment,
         components.as_slice(),
         state.platform_sweeps.last_check().as_ref(),
+        platform.publisher.as_deref(),
+        &platform.publication,
     )))
 }

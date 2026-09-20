@@ -96,7 +96,9 @@ pub use operator::{
     KeyHolder, OidcOperators, Operator, OperatorAuthError, OperatorAuthenticator, OperatorToken,
     VerificationKeys,
 };
-pub use registration::{build_control_plane, ControlPlaneDeps, ControlPlaneServices, PlatformBinding};
+pub use registration::{
+    build_control_plane, ControlPlaneDeps, ControlPlaneServices, PlatformBinding, PublicationSink,
+};
 pub use repository::{
     ChangeContext, ClientRepository, DesiredStateBinding, InMemoryClientRepository, RepositoryError,
     StoredClient,

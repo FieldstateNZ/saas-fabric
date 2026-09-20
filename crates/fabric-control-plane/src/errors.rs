@@ -293,4 +293,26 @@ pub enum ControlPlaneError {
         /// The logical data source the request named.
         logical: LogicalDataSourceName,
     },
+
+    /// This deployment publishes no runtime state (ADR 0023 part 4).
+    ///
+    /// The route is mounted anyway, so a console can say what is missing --
+    /// `PlatformNotManaged`'s own reasoning, one level in: a deployment can
+    /// manage an environment's components and data sources while stating no
+    /// `[platform_management.publication]` section, and an operator asking
+    /// it to publish now needs to be told there is nowhere to publish to.
+    /// Shares `PlatformNotManaged`'s `404` for the same reason, not a `503`:
+    /// this is the same species of absence, fixed only by a config edit and
+    /// a restart, and retrying in five seconds changes nothing.
+    #[error("this deployment publishes no runtime state")]
+    PublicationNotConfigured,
+
+    /// Another publication pass -- scheduled or triggered -- was already in
+    /// flight when this one was asked for.
+    ///
+    /// Not retried here: the guard releases the moment the in-flight pass
+    /// finishes, which an operator who asked for "now" is better placed to
+    /// judge than this API guessing a backoff for them.
+    #[error("a publication pass is already running; try again shortly")]
+    PublicationRunning,
 }

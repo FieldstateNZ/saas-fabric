@@ -16,6 +16,7 @@ environment: lucentroot
 placements:
 - tenant: acme
   logical: primary
+  revision: 1
   data_source: shared-postgres-nz-01
   isolation:
     kind: discriminator

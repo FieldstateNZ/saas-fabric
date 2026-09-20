@@ -29,6 +29,7 @@ mod discovery;
 mod observation;
 mod placements;
 mod policy;
+mod publication;
 mod registry;
 mod selector;
 mod service;
@@ -62,6 +63,10 @@ pub use placements::{
     PlacementState, Placements, PlacementsRead,
 };
 pub use policy::UpdatePolicy;
+pub use publication::{
+    compose, CatalogueSourceError, ComposeError, LastPass, PassOutcome, PassResult, PublicationState,
+    RuntimeCatalogueSource, RuntimePublisher, WaitingReason,
+};
 pub use registry::{Provenance, Registry, RegistryError, Resolved};
 pub use selector::{decide, Decision, Reason};
 pub use service::{PlatformError, PlatformManagement};

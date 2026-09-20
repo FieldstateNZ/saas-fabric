@@ -55,6 +55,8 @@ fn every_failure_has_its_own_machine_code() {
             id: data_source(),
             tenants: vec![tenant()],
         }),
+        ControlPlaneError::PublicationNotConfigured,
+        ControlPlaneError::PublicationRunning,
     ];
 
     let mut codes: Vec<&str> = errors.iter().map(ControlPlaneError::code).collect();
@@ -180,6 +182,20 @@ fn a_broken_held_document_is_not_advertised_as_retryable_either() {
     assert!(
         response.headers().get(http::header::RETRY_AFTER).is_none(),
         "a broken document is not something retrying will fix"
+    );
+}
+
+#[test]
+fn no_publication_target_is_a_not_found_not_an_outage() {
+    // Only a config edit and a restart change this -- the same species of
+    // absence `PlatformNotManaged` is, not a transient one, so it shares
+    // that variant's 404 and never carries `Retry-After`.
+    let response = ControlPlaneError::PublicationNotConfigured.into_response();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    assert!(
+        response.headers().get(http::header::RETRY_AFTER).is_none(),
+        "nothing here will be different in five seconds"
     );
 }
 

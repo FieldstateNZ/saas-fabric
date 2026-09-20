@@ -29,6 +29,11 @@ fabric-core.workspace = true
 fabric-keycloak.workspace = true
 fabric-openbao.workspace = true
 fabric-reconciliation.workspace = true
+# The runtime publisher (ADR 0023 part 4): the wire contract this host
+# validates a configured namespace against, and the Kubernetes adapter it
+# builds `ControlPlaneDeps.publication` from when a deployment states one.
+fabric-runtime-publication.workspace = true
+fabric-publication-kubernetes.workspace = true
 
 async-trait.workspace = true
 axum.workspace = true
@@ -43,6 +48,7 @@ tracing-subscriber.workspace = true
 
 [dev-dependencies]
 http.workspace = true
+tokio = { workspace = true, features = ["test-util"] }
 tower = { workspace = true, features = ["util"] }
 
 [lints]

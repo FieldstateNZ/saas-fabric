@@ -52,6 +52,13 @@ pub struct Application {
 ///    The sweep starts *after* the router is built. One that started earlier
 ///    could advance an environment nobody could yet look at.
 ///
+/// 7. The runtime-publication schedule, when this deployment states
+///    `[platform_management.publication]` (ADR 0023 part 4) -- also
+///    unattended, also started after the router for the same reason as the
+///    sweep, and also answerable on demand: an operator's `POST
+///    /api/platform/publication` works whether or not this schedule is
+///    running.
+///
 /// # Errors
 ///
 /// Returns a message from whichever step failed. What is fatal here changed
@@ -82,7 +89,7 @@ pub async fn build(config: &ControlPlaneAppConfig) -> Result<Application, String
 
     // Before the flows, because one of them connects it.
     // Plus the host's call timeout: that sum is what a disconnect must fit in.
-    let platform_management = platform::establish(
+    let established = platform::establish(
         config.platform_management.as_ref(),
         config.git_host.http_timeout_seconds,
         config.request_timeout_seconds,
@@ -90,7 +97,7 @@ pub async fn build(config: &ControlPlaneAppConfig) -> Result<Application, String
     )?;
 
     let integrations =
-        integration::establish(config, &repository, platform_management.as_ref(), &clock).await?;
+        integration::establish(config, &repository, established.platform.as_ref(), &clock).await?;
 
     let services = build_control_plane(
         &config.control_plane,
@@ -103,8 +110,9 @@ pub async fn build(config: &ControlPlaneAppConfig) -> Result<Application, String
             git_integration: integrations.clients,
             client_secrets: integrations.client_secrets,
 
-            platform: platform_management.clone(),
+            platform: established.platform.clone(),
             platform_integration: integrations.platform,
+            publication: established.publication,
 
             // Always the configured posture. The override exists for tests.
             operators: None,
@@ -114,12 +122,21 @@ pub async fn build(config: &ControlPlaneAppConfig) -> Result<Application, String
         },
     )?;
 
-    // Last, and after the router: a sweep that started before the API was
-    // serving would advance an environment nobody could yet look at.
+    // Last, and after the router: a sweep or a publication pass that started
+    // before the API was serving would advance an environment nobody could
+    // yet look at.
     platform::start_sweeping(
         config.platform_management.as_ref(),
-        platform_management.as_ref(),
+        established.platform.as_ref(),
         &services.platform_sweeps,
+    );
+    platform::start_publishing(
+        config
+            .platform_management
+            .as_ref()
+            .and_then(|platform_management| platform_management.publication.as_ref()),
+        services.publisher.as_ref(),
+        &services.publication,
     );
 
     Ok(Application {

@@ -2,16 +2,21 @@
 
 use std::sync::Arc;
 
+use fabric_platform_management::{
+    PlatformRepository, PublicationState, RuntimeCatalogueSource, RuntimePublisher,
+};
 use fabric_reconciliation::ReconciliationStatusStore;
 
 mod contract;
 mod platform_binding;
+mod publication_sink;
 
 pub use contract::{ControlPlaneDeps, ControlPlaneServices};
 pub use platform_binding::PlatformBinding;
+pub use publication_sink::PublicationSink;
 
 use crate::routes::control_plane_routes;
-use crate::service::ClientService;
+use crate::service::{ClientService, DesiredStateCatalogueSource};
 use crate::state::ControlPlaneState;
 use crate::{logging, ControlPlaneConfig};
 
@@ -38,6 +43,7 @@ pub fn build_control_plane(
         operators,
         platform,
         platform_integration,
+        publication,
         reserved_realms,
         reserved_client_ids,
     } = deps;
@@ -51,6 +57,39 @@ pub fn build_control_plane(
     let statuses = Arc::new(ReconciliationStatusStore::new());
     let platform_sweeps = Arc::new(fabric_platform_management::SweepState::default());
     let health = Arc::new(crate::IntegrationHealth::new());
+
+    // Built once here, whether or not a publisher exists, so `GET
+    // /api/platform` can tell "not configured" (`publisher: None`) apart
+    // from "configured, nothing has run yet" (`publisher: Some`, no last
+    // pass) without an `Option<Option<PublicationState>>` -- see
+    // `PlatformBinding::publication`'s own rustdoc.
+    let publication_state = Arc::new(PublicationState::new());
+
+    // The publisher is constructed here, not passed in whole: it needs the
+    // *client* desired-state binding (`repository`, above) to answer
+    // `RuntimeCatalogueSource`, and only this function ever has both that
+    // and the platform binding in scope at once.
+    let platform = platform.map(|binding| {
+        let publisher = publication.as_ref().map(|sink| {
+            let source: Arc<dyn RuntimeCatalogueSource> =
+                Arc::new(DesiredStateCatalogueSource::new(Arc::clone(repository)));
+
+            Arc::new(RuntimePublisher::new(
+                binding.environment.clone(),
+                Arc::clone(&binding.repository) as Arc<dyn PlatformRepository>,
+                source,
+                Arc::clone(&sink.target),
+                Arc::clone(&clock),
+            ))
+        });
+
+        PlatformBinding {
+            publisher,
+            publication: Arc::clone(&publication_state),
+            ..binding
+        }
+    });
+    let publisher = platform.as_ref().and_then(|binding| binding.publisher.clone());
 
     let service = Arc::new(ClientService::new(
         Arc::clone(repository),
@@ -85,5 +124,7 @@ pub fn build_control_plane(
         statuses,
         health,
         platform_sweeps,
+        publisher,
+        publication: publication_state,
     })
 }

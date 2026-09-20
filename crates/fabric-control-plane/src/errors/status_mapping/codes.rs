@@ -128,6 +128,8 @@ impl ControlPlaneError {
             // Shares `PlacementRefused`'s code above -- see
             // `ControlPlaneError::LogicalDataSourceNotDeclared`'s rustdoc.
             Self::LogicalDataSourceNotDeclared { .. } => "placement_refused",
+            Self::PublicationNotConfigured => "publication_not_configured",
+            Self::PublicationRunning => "publication_running",
         }
     }
 }

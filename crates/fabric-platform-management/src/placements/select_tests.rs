@@ -1,6 +1,6 @@
 //! One test per rule `select` states, in the order the rustdoc numbers them.
 
-use fabric_core::{DataSourceId, LogicalDataSourceName, TenantId};
+use fabric_core::{BindingRevision, DataSourceId, LogicalDataSourceName, TenantId};
 use fabric_runtime_publication::{
     ConnectionName, ConnectionSelectorDocument, ConnectorId, DataResidencyDocument,
     DataSourceCapabilitiesDocument, FieldName, IsolationModelDocument, PlacementClassDocument,
@@ -72,6 +72,7 @@ fn placed(
     PlacementRecord {
         tenant: tenant(tenant_id),
         logical: logical(logical_name),
+        revision: BindingRevision::new(1),
         data_source: source_id(data_source),
         isolation,
         placed_at: NOW.to_owned(),

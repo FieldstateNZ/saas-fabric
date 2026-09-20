@@ -41,4 +41,27 @@ pub struct PlatformBinding {
     /// /api/platform/data-sources` would show — see
     /// `fabric-control-plane-api`'s `startup::platform::establish`.
     pub placements: Arc<fabric_platform_management::Placements>,
+
+    /// Publishes this environment's runtime documents, when this deployment
+    /// has somewhere to publish them (ADR 0023 part 4).
+    ///
+    /// `None` where no publication target is configured — the route stays
+    /// mounted and answers `PublicationNotConfigured` rather than 404, the
+    /// same reasoning `platform`'s own absence gets one level up.
+    /// `build_control_plane` is the only place this is ever `Some`: it is
+    /// built from `ControlPlaneDeps.publication` once, there, over this
+    /// binding's own `repository` above and the client desired-state
+    /// binding — never rebuilt per request.
+    pub publisher: Option<Arc<fabric_platform_management::RuntimePublisher>>,
+
+    /// What the last publication pass found, and whether one is running.
+    ///
+    /// Always present, even when `publisher` is `None` — the alternative,
+    /// `Option<Option<PublicationState>>`, would make "no publisher" and "a
+    /// publisher that has not run yet" two states to tell apart for no
+    /// reader's benefit. `GET /api/platform` decides whether to render a row
+    /// at all from `publisher`, never from this being present, exactly as
+    /// `ControlPlaneServices::platform_sweeps` is always built whether or
+    /// not a platform is managed at all.
+    pub publication: Arc<fabric_platform_management::PublicationState>,
 }

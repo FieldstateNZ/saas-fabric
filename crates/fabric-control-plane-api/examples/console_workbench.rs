@@ -84,6 +84,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ControlPlaneDeps {
             platform: None,
             platform_integration: None,
+            publication: None,
             client_secrets: None,
             desired_state: DesiredStateBinding::to(Arc::new(repository)),
             clock: SystemClock::shared(),

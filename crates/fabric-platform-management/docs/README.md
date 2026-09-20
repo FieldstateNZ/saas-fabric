@@ -332,6 +332,88 @@ only the late-bound repository connection.
   written, and a break-glass value is honoured as written (ADR 0023, "Bad,
   and accepted").
 
+## Publication
+
+[ADR 0023](../../../docs/decisions/0023-data-sources-are-environment-desired-state-and-placement-is-recorded.md)
+part 4 turns what `data_sources.rs` and `placements.rs` hold, plus the
+derived runtime catalogue (`fabric-client-model`, part 3), into the three
+documents `fabric-runtime-publication` writes -- on a schedule the control
+plane drives. It lives in its own module, `publication.rs`, one concept per
+file under `publication/`.
+
+- **`compose`** (`publication/snapshot.rs`) -- pure: declared data sources,
+  recorded placements, the derived catalogue, and what is currently held
+  (`PublishedRevisions`) in, a complete `RuntimeSnapshot` out. Data sources
+  become `DataSourceDocument`s via `into_document`, sorted by id. Placements
+  group by tenant: one `TenantBindingDocument` per tenant with at least one
+  record, its `revision` the **sum** of its records' own (D1 -- a sum, not a
+  maximum, is what makes an add or a break-glass bump always move the
+  binding forward). Every document is offered at the revision `held`
+  reports, or `1` when nothing is held yet -- `compose` never advances a
+  revision itself, and never sets emptying intent. `ComposeError`
+  (`publication/compose_error.rs`, split out once its own rustdoc outgrew
+  sharing a file with `compose`) is what it can refuse:
+  `DuplicatePlacement` in practice -- two records for one tenant's logical
+  data source, the shape a break-glass edit to `placements.yaml` can reach --
+  and `EmptyTenantBinding` beside it for a case that cannot happen in this
+  function's own code today (a tenant only enters the accumulator alongside
+  its first binding) but must still be a value, not a panic, if that ever
+  stops being true.
+- **`RuntimeCatalogueSource`** (`publication/catalogue_source.rs`) -- the
+  seam that lets this crate reach the derived catalogue without depending on
+  `fabric-client-model`: `async fn runtime_catalogue(&self) ->
+  Result<CatalogDocument, CatalogueSourceError>`. The control plane
+  implements it over its own `Catalogue` (not built here). `CatalogueSourceError::Conflict`
+  names the resource and both applications; `Unavailable` is a transport
+  failure, never a path.
+- **`RuntimePublisher`** (`publication/publisher.rs`) -- the one thing in
+  this module that touches a port: `new(environment, Arc<dyn
+  PlatformRepository>, Arc<dyn RuntimeCatalogueSource>, Arc<dyn
+  RuntimePublication>, Arc<dyn Clock>)`, `describe_target()`, `async fn
+  publish_once(&self, &PublicationState) -> PassResult`. Guarded against
+  re-entry by `PublicationState`'s own atomic flag, released by a
+  `RunningGuard` (`publication/running_guard.rs`) whose `Drop` clears it --
+  taken immediately after the swap that sets the flag, so a panic unwinding
+  out of a pass or the caller dropping the future mid-pass (an operator's
+  disconnect, a request timeout) releases it exactly as a normal return
+  does. A plain `store(false, ...)` after the pass's own `.await` would not:
+  that is sequential code, and sequential code after an `.await` is exactly
+  what a panic or a cancellation skips.
+- **The offer-and-advance rule** (D3, `publication/protocol.rs`) -- offer at
+  the held revision; on `DivergentPayload`, bump *only* the document the
+  target named and re-offer the whole snapshot, up to three times (one per
+  document). What a fourth divergence, or any other refusal
+  `publish_with_retry` returns, becomes is
+  `publish_error.rs::outcome_from_publish_error`'s own call -- the same
+  classifier `run_pass` also routes its own `current()` read's error
+  through, rather than assuming `Failed` on its behalf: `Unwritable`,
+  `Unreadable` and `StaleRevision` are transport problems a retry or the
+  next read fixes, so they are `Failed`; a fourth `DivergentPayload` and
+  every coherence refusal (`DanglingDataSource`, `RetiredDataSourceStillBound`,
+  `EmptyingNotIntended`, `EmptyCatalogue`, `EmptyTenantData`,
+  `HeldPayloadLost`) name a document a human must fix, so they are
+  `Refused`.
+- **`PublicationState`** (`publication/state.rs`) -- `SweepState`'s sibling:
+  whether a pass is running, and the last one's `LastPass { at_unix_seconds,
+  outcome }`.
+- **`PassOutcome`** (`publication/outcome.rs`) -- `Published { tenants,
+  data_sources, catalog: DocumentOutcome each, revisions }` | `Unchanged {
+  revisions }` | `Waiting { reason: WaitingReason }` | `Refused { reason:
+  SafeDiagnostic }` | `Failed { detail: SafeDiagnostic }`. Five, mirroring
+  `CheckOutcome`'s own reasoning: an operator acts on each differently.
+  `WaitingReason::NoResources` is an empty derived catalogue -- never
+  published (ADR 0018's "create empty documents at startup" is superseded by
+  this all-or-nothing pass; see that ADR's own amendment) --
+  `WaitingReason::PlatformNotConnected` is no operator having connected this
+  environment's platform repository yet, `SweepResult::NotConnected`'s
+  sibling and not a failure either.
+
+What is not here -- the control plane's `RuntimeCatalogueSource`, the
+`/api/platform` publication row, the operator trigger, and the schedule
+that calls `publish_once` on an interval -- is ADR 0023 part 4's other
+half, built in `fabric-control-plane` and `fabric-control-plane-api`
+against this module's public surface.
+
 ## Getting started
 
 ```rust,ignore

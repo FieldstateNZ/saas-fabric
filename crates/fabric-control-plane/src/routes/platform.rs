@@ -39,4 +39,8 @@ pub(super) fn routes() -> Router<ControlPlaneState> {
             "/platform/data-sources/{data_source_id}",
             put(handlers::declare_data_source).delete(handlers::remove_data_source),
         )
+        // A POST, for the same reason rollback is one above: an operator is
+        // not composing a resource, they are asking the platform to run a
+        // publication pass now rather than wait for the schedule.
+        .route("/platform/publication", post(handlers::publish_runtime_state))
 }

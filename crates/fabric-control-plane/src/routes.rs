@@ -50,6 +50,7 @@ pub const API_PREFIX: &str = "/api";
 /// GET        /api/platform/data-sources             what this environment can place a tenant's data on
 /// PUT        /api/platform/data-sources/{id}        declare one, or correct it            (If-Match)
 /// DELETE     /api/platform/data-sources/{id}        remove one, refused while a tenant is placed on it (If-Match)
+/// POST       /api/platform/publication              publish the runtime's three documents now
 /// GET/POST   /api/catalogue                         the product catalogue / apply one command
 /// GET        /api/catalogue/runtime                 the catalogue the runtime would be given
 /// GET        /api/activity                          every recorded action, newest first

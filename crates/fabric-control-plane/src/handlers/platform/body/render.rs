@@ -1,10 +1,11 @@
 //! Turning what the rules know into what the console reads.
 
 use fabric_platform_management::{
-    ArtifactKind, CheckOutcome, ComponentStatus, DesiredStateStatus, LastCheck, Running, UpdatePolicy,
+    ArtifactKind, CheckOutcome, ComponentStatus, DesiredStateStatus, LastCheck, PublicationState, Running,
+    RuntimePublisher, UpdatePolicy,
 };
 
-use super::{ComponentRow, DiagnosticRow, HoldRow, LastCheckRow, PlatformBody};
+use super::{ComponentRow, DiagnosticRow, HoldRow, LastCheckRow, PlatformBody, PublicationRow};
 
 impl PlatformBody {
     /// Renders an environment's statuses.
@@ -12,11 +13,14 @@ impl PlatformBody {
         environment: &str,
         components: &[ComponentStatus],
         last: Option<&LastCheck>,
+        publisher: Option<&RuntimePublisher>,
+        publication: &PublicationState,
     ) -> Self {
         Self {
             environment: environment.to_owned(),
             components: components.iter().map(ComponentRow::of).collect(),
             last_check: last.map(LastCheckRow::of),
+            publication: publisher.map(|publisher| PublicationRow::of(publisher, publication)),
         }
     }
 }

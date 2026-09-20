@@ -59,6 +59,15 @@ one Kubernetes namespace, and a shared prefix would let one process's override
 land in the other's configuration — where `deny_unknown_fields` would abort
 startup for a reason nobody could see.
 
+`[platform_management]` is the one optional section, deliberately: a
+deployment that manages no platform repository states nothing about it, and
+the platform routes report themselves unconfigured rather than failing
+startup. Nested inside it, `[platform_management.publication]`
+(ADR 0023 part 4) is optional again, on the same footing — a deployment can
+manage components and data sources while publishing no runtime state. Both
+levels still fail startup if stated and stated wrongly: an absent section is
+never the same as a broken one.
+
 ## Secrets
 
 `secrets::resolve` reads the process environment: `keycloak/saas-fabric` becomes

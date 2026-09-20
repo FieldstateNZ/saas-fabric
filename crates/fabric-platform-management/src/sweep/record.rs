@@ -1,8 +1,8 @@
 //! What the last sweep found, for a console line.
 
-use std::sync::atomic::AtomicBool;
 use std::sync::Mutex;
 
+use crate::running_guard::RunningFlag;
 use crate::{PlatformError, SafeDiagnostic, Sweep, Swept};
 
 /// What a sweep found, last time one ran.
@@ -54,7 +54,12 @@ pub enum CheckOutcome {
 #[derive(Debug, Default)]
 pub struct SweepState {
     /// Whether a sweep is in progress.
-    pub(super) running: AtomicBool,
+    ///
+    /// A `RunningFlag`, not a bare `AtomicBool`: the swap that claims it and
+    /// the guard that releases it are paired inside
+    /// `RunningFlag::try_enter`, so nothing here can win the swap without
+    /// also receiving the guard, or clear the flag except by dropping one.
+    pub(super) running: RunningFlag,
 
     /// What the last completed sweep found.
     last: Mutex<Option<LastCheck>>,

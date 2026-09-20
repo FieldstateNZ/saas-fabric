@@ -31,6 +31,7 @@ mod placements;
 mod policy;
 mod publication;
 mod registry;
+mod running_guard;
 mod selector;
 mod service;
 mod status;

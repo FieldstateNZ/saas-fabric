@@ -156,8 +156,13 @@ own data-source sub-types rather than re-declared, so a hand-editable
 - `Sweep { components: Vec<(String, Swept)> }` (`Default`).
 - `Swept` — `Advanced { from, to }` | `Unchanged` | `Failed(PlatformError)`.
 - `SweepResult` — `Ran(Sweep)` | `AlreadyRunning` | `NotConnected`.
-- `SweepState` — holds an `AtomicBool` (`running`) and the last-check record.
-  `record(...)`, exposed via `LastCheck`/`CheckOutcome`.
+- `SweepState` — holds a `RunningFlag` (`running`, `pub(super)`) and the
+  last-check record. `record(...)`, exposed via `LastCheck`/`CheckOutcome`.
+  `running.try_enter()` (crate-wide `running_guard.rs` at the crate root,
+  the same door `PublicationState` uses) is the only way to claim the flag
+  and the only source of the `Drop`-released guard that clears it, so it
+  clears on cancellation and on a panic as well as a normal return -- and
+  nothing can swap the flag without also holding that guard.
 - `LastCheck` / `CheckOutcome` — the persisted "what did the last sweep
   find" record.
 - `SafeDiagnostic` — `sanitise(text: &str) -> Self` (redacts credential
@@ -359,11 +364,11 @@ own data-source sub-types rather than re-declared, so a hand-editable
   &PublicationState) -> PassResult`. Offers at the held revision; on
   `DivergentPayload`, bumps *only* the named document and re-offers, up to
   three times (one per document, `protocol.rs::MAX_RETRIES`). Guarded
-  against re-entry by `PublicationState`'s atomic flag, released by a
-  `RunningGuard` (`Drop`-based, `running_guard.rs`) taken right after the
-  swap -- released on a panic and on cancellation (a dropped future) as well
-  as a normal return, which a post-`.await` `store(false, ...)` would not
-  be.
+  against re-entry by `PublicationState`'s `RunningFlag` -- `running.try_enter()`
+  (crate-wide `running_guard.rs` at the crate root) is the only way to claim
+  it, handing back a `Drop`-released guard only on the call that wins --
+  released on a panic and on cancellation (a dropped future) as well as a
+  normal return, which a post-`.await` `store(false, ...)` would not be.
 - `PublicationState` — `SweepState`'s sibling: `new()`, `last_pass() ->
   Option<LastPass>`.
 - `LastPass { at_unix_seconds: u64, outcome: PassOutcome }`.
@@ -482,7 +487,7 @@ own data-source sub-types rather than re-declared, so a hand-editable
   contract plus one trait; no logic beyond the type definitions.
 - `policy.rs` — `UpdatePolicy` alone.
 - `publication.rs` +
-  `publication/{catalogue_source,compose_error,outcome,pass,pass_tests,protocol,protocol_tests,publish_error,publisher,publisher_tests,reads,reads_tests,running_guard,snapshot,snapshot_tests,state,testing}.rs`
+  `publication/{catalogue_source,compose_error,outcome,pass,pass_tests,protocol,protocol_tests,publish_error,publisher,publisher_tests,reads,reads_tests,snapshot,snapshot_tests,state,testing}.rs`
   (ADR 0023 part 4) — `compose` (`snapshot.rs`, pure: declared data sources +
   recorded placements + derived catalogue + held revisions -> `RuntimeSnapshot`),
   `ComposeError::DuplicatePlacement` | `EmptyTenantBinding` (`compose_error.rs`,
@@ -494,10 +499,11 @@ own data-source sub-types rather than re-declared, so a hand-editable
   a port), the offer-and-advance retry rule (`protocol.rs`, `MAX_RETRIES =
   3`), `PublicationState` + `LastPass` (`state.rs`, `SweepState`'s
   sibling), `PassOutcome` + `WaitingReason` + `PassResult` (`outcome.rs`,
-  `WaitingReason::{NoResources, PlatformNotConnected}`).
-  `running_guard.rs`: `RunningGuard`, the `Drop`-released re-entry guard
-  `publish_once` takes immediately after winning the atomic swap -- released
-  on a panic and on cancellation, not only a normal return. `pass.rs`:
+  `WaitingReason::{NoResources, PlatformNotConnected}`). The re-entry guard
+  `publish_once` takes is `PublicationState::running.try_enter()`, the
+  crate-wide `RunningFlag`/`RunningGuard` pair at the crate root
+  (`running_guard.rs`, see its own entry below) -- not a module here.
+  `pass.rs`:
   `run_pass`, the body `publish_once` runs once that guard lets it through --
   including the `current()` read at its own top, routed through the same
   classifier as every other adapter error rather than a blanket `Failed`.
@@ -517,6 +523,19 @@ own data-source sub-types rather than re-declared, so a hand-editable
   operator trigger, and the schedule (`fabric-control-plane-api`'s
   `startup/platform/{publication,publishing}.rs`) — is not here.
 - `registry.rs` — `Registry` trait, `Resolved`, `Provenance`, `RegistryError`.
+- `running_guard.rs` (private) — `RunningFlag(AtomicBool)` (`Default`) +
+  `RunningGuard<'a> { flag: &'a AtomicBool }` (field private to this
+  module). `RunningFlag::try_enter(&self) -> Option<RunningGuard<'_>>` is
+  the *only* door: it performs the swap and hands back a guard only on the
+  call that wins, so nothing outside this file can swap the flag without
+  also receiving the guard, or clear it except by dropping one -- the
+  pairing is unforgeable, not just conventional. `SweepState::running` and
+  `PublicationState::running` are both a `pub(super)` `RunningFlag`, crate-wide
+  rather than duplicated per module. `Drop` clears the flag on a panic and
+  on cancellation (a dropped future) as well as a normal return — a `store`
+  written after the guarded work's own `.await` reaches none of those.
+  `PlatformManagement::sweep` and `RuntimePublisher::publish_once` both call
+  `try_enter()` immediately, and answer `AlreadyRunning` on `None`.
 - `selector.rs` + `selector/selector_tests.rs` — `decide`, `Decision`,
   `Reason`. Pure.
 - `service.rs` + `service/{backwards,brake,errors,look,reconcile,rollback}.rs`
@@ -533,10 +552,12 @@ own data-source sub-types rather than re-declared, so a hand-editable
   `running`/`observation` at their zero values.
 - `status.rs` + `status/reconciliation.rs` — `ComponentStatus` (with its
   `running`/`observation` fields) and friends, `Reconciliation`.
-- `sweep.rs` + `sweep/{record,types}.rs` — `sweep`/`sweep_once`,
+- `sweep.rs` + `sweep/{record,sweep_tests,types}.rs` — `sweep`/`sweep_once`,
   `SweepState`, `SweepResult`, `Sweep`, `Swept`, `LastCheck`, `CheckOutcome`.
   `sweep_once` calls `reconcile`, never `status`, so a sweep never touches
-  the observer either.
+  the observer either. The re-entry guard `sweep` takes is
+  `SweepState::running.try_enter()`, the crate-wide `RunningFlag`/
+  `RunningGuard` pair (see its own entry above), not a module here.
 
 ## Hard invariants — do not break
 

@@ -1,8 +1,6 @@
 //! Reconciling every component of an environment, on a schedule somebody else
 //! keeps.
 
-use std::sync::atomic::Ordering;
-
 #[cfg(test)]
 mod sweep_tests;
 
@@ -30,20 +28,25 @@ impl PlatformManagement {
     /// state it was decided against. Duplicate sweeps are wasteful and not
     /// dangerous, which is why there is no leader election here.
     ///
+    /// Within one process, re-entry *is* guarded: `state.running.try_enter()`
+    /// hands back a guard only to the call that wins, released by `Drop`, so
+    /// cancellation and a panic release it too, not only a normal return --
+    /// see [`RuntimePublisher::publish_once`](crate::RuntimePublisher::publish_once)
+    /// for the argument, which is the same guard.
+    ///
     /// # Errors
     ///
     /// [`PlatformError`] only if the environment's component list cannot be
     /// read. A component that fails is recorded and the sweep continues.
     pub async fn sweep(&self, environment: &str, state: &SweepState) -> Result<SweepResult, PlatformError> {
-        if state.running.swap(true, Ordering::SeqCst) {
+        let Some(_guard) = state.running.try_enter() else {
             // Deliberately does not touch the record: a skipped sweep found
             // nothing because it did not look, and overwriting the last real
             // answer with that would hide it.
             return Ok(SweepResult::AlreadyRunning);
-        }
+        };
 
         let swept = self.sweep_once(environment).await;
-        state.running.store(false, Ordering::SeqCst);
 
         // Nothing was looked at, so nothing is recorded. The record answers
         // "what did the last attempt find", and this was not an attempt.
@@ -54,6 +57,10 @@ impl PlatformManagement {
             return Ok(SweepResult::NotConnected);
         }
 
+        // Recorded while the guard is still held. Releasing it first --
+        // as before -- let a second sweep start, finish, and record
+        // before this one wrote its own older result, which then landed
+        // last with a later timestamp than the newer record it erased.
         state.record(self.clock().now_unix_seconds(), outcome_of(&swept));
 
         swept.map(SweepResult::Ran)

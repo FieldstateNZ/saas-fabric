@@ -14,14 +14,12 @@
 #[path = "publisher_tests.rs"]
 mod publisher_tests;
 
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use fabric_core::Clock;
 use fabric_runtime_publication::RuntimePublication;
 
 use super::outcome::{PassOutcome, PassResult};
-use super::running_guard::RunningGuard;
 use super::state::PublicationState;
 use crate::PlatformRepository;
 use crate::RuntimeCatalogueSource;
@@ -75,22 +73,19 @@ impl RuntimePublisher {
     /// Runs one publication pass, guarded against a second pass starting
     /// while this one is still in flight.
     ///
-    /// The guard is a `RunningGuard`, taken immediately after this call
-    /// wins the swap, and released by its own `Drop` -- not by a `store`
-    /// written after the pass returns. That is not a style preference: a
-    /// plain `store(false, ...)` placed after `self.run_pass().await` is
-    /// sequential code, and sequential code after an `.await` is exactly
-    /// what a panic unwinding out of `run_pass` skips, and exactly what
-    /// never runs when the caller drops this future at that suspension
-    /// point -- an operator's disconnect, or a request timeout, cancels the
-    /// handler holding it the same way. `Drop` runs on both of those paths
-    /// as well as the ordinary one, which is the only way to make "always
-    /// released" true rather than merely usual.
+    /// `state.running.try_enter()` hands back a `RunningGuard` only to the
+    /// call that wins, released by its own `Drop`, not by a `store` written
+    /// after the pass returns. That distinction matters: a `store(false,
+    /// ...)` placed after `self.run_pass().await` is sequential code, and
+    /// sequential code after an `.await` is exactly what a panic unwinding
+    /// out of `run_pass` skips, and exactly what never runs when the caller
+    /// drops this future at that suspension point. `Drop` runs on both of
+    /// those paths as well as the ordinary one -- see `RunningGuard`'s own
+    /// rustdoc (`running_guard.rs`) for the full argument.
     pub async fn publish_once(&self, state: &PublicationState) -> PassResult {
-        if state.running.swap(true, Ordering::SeqCst) {
+        let Some(_guard) = state.running.try_enter() else {
             return PassResult::AlreadyRunning;
-        }
-        let _guard = RunningGuard { state };
+        };
 
         let outcome = self.run_pass().await;
 

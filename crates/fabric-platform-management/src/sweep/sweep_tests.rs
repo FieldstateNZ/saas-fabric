@@ -156,13 +156,20 @@ impl DesiredState for Several {
     }
 }
 
-fn service(desired_state: &Arc<Several>) -> PlatformManagement {
+/// Builds a service over any `DesiredState`, not only `Several` -- the
+/// fixtures that gate or panic mid-read wrap something other than
+/// `Several`, so they cannot go through `service` below.
+fn service_over(desired_state: Arc<dyn DesiredState>) -> PlatformManagement {
     PlatformManagement::new(
         Arc::new(Registries) as Arc<dyn Registry>,
         Arc::new(Charts::default()) as Arc<dyn ChartIndex>,
-        Arc::clone(desired_state) as Arc<dyn DesiredState>,
+        desired_state,
         Arc::new(fabric_core::SystemClock::new()) as Arc<dyn fabric_core::Clock>,
     )
+}
+
+fn service(desired_state: &Arc<Several>) -> PlatformManagement {
+    service_over(Arc::clone(desired_state) as Arc<dyn DesiredState>)
 }
 
 /// A chart repository holding stated versions.
@@ -408,12 +415,7 @@ async fn a_sweep_already_running_is_skipped_rather_than_queued() {
         first: Mutex::new(true),
     });
 
-    let service = Arc::new(PlatformManagement::new(
-        Arc::new(Registries) as Arc<dyn Registry>,
-        Arc::new(Charts::default()) as Arc<dyn ChartIndex>,
-        Arc::clone(&desired_state) as Arc<dyn DesiredState>,
-        Arc::new(fabric_core::SystemClock::new()) as Arc<dyn fabric_core::Clock>,
-    ));
+    let service = Arc::new(service_over(Arc::clone(&desired_state) as Arc<dyn DesiredState>));
     let guard = Arc::new(SweepState::default());
 
     let running = tokio::spawn({
@@ -435,6 +437,142 @@ async fn a_sweep_already_running_is_skipped_rather_than_queued() {
         service.sweep("lucentroot", &guard).await.unwrap(),
         SweepResult::Ran(_)
     ));
+}
+
+#[tokio::test]
+async fn the_guard_releases_when_the_sweep_is_cancelled_mid_flight() {
+    let entered = Arc::new(tokio::sync::Notify::new());
+    let release = Arc::new(tokio::sync::Notify::new());
+    let desired_state = Arc::new(Gated {
+        inner: Several::new(),
+        entered: Arc::clone(&entered),
+        release: Arc::clone(&release),
+        first: Mutex::new(true),
+    });
+
+    let gated = service_over(desired_state as Arc<dyn DesiredState>);
+    let state = SweepState::default();
+
+    // `select!` polls both branches on this same task -- no second task, no
+    // `abort`, nothing that depends on how a runtime schedules cancellation.
+    // Once `entered` resolves, `gated.sweep(env, &state)` is mid-read, parked
+    // inside `Gated::component`'s own wait on `release`; `select!` drops
+    // that losing branch right there, which is exactly the cancellation a
+    // dropped handler future (an operator's disconnect, a request timeout)
+    // produces -- `release` is never notified, so the sweep could not have
+    // finished on its own.
+    tokio::select! {
+        _ = gated.sweep("lucentroot", &state) => {
+            panic!("the sweep must not finish: release is never notified in this test");
+        }
+        () = entered.notified() => {}
+    }
+
+    // Proved against a second, independently built service, not because
+    // `gated` above would hang if reused: `Gated::component` parks only on
+    // its *first* call (`first` is flipped to `false` before that call
+    // parks), and that call has already been consumed by the cancelled
+    // sweep, so a second `gated.sweep(...)` would now run to completion.
+    // The fresh service exists to prove the *flag* is free, not to dodge
+    // the fixture.
+    let sane_desired_state = Arc::new(Several::new());
+    let sane = service(&sane_desired_state);
+    assert!(
+        matches!(
+            sane.sweep("lucentroot", &state).await.unwrap(),
+            SweepResult::Ran(_)
+        ),
+        "the guard must be released after cancellation, not left AlreadyRunning forever"
+    );
+}
+
+/// Desired state whose `components` call panics -- proving the guard is
+/// released by `RunningGuard`'s `Drop`, not by code sequenced after an
+/// `.await` that a panic unwinding through it never reaches.
+struct PanickingComponents;
+
+#[async_trait::async_trait]
+impl DesiredState for PanickingComponents {
+    async fn components(&self, _: &str) -> Result<Vec<String>, DesiredStateError> {
+        panic!("simulated desired-state failure")
+    }
+
+    async fn component(&self, _: &str, _: &str) -> Result<ComponentDesired, DesiredStateError> {
+        unreachable!("components() always panics first")
+    }
+
+    async fn advance(
+        &self,
+        _: &str,
+        _: &str,
+        _: &Release,
+        _: &DesiredRevision,
+        _: &str,
+    ) -> Result<(), DesiredStateError> {
+        unreachable!("components() always panics first")
+    }
+
+    async fn roll_back(
+        &self,
+        _: &str,
+        _: &str,
+        _: &Release,
+        _: &crate::Hold,
+        _: &DesiredRevision,
+        _: &str,
+    ) -> Result<(), DesiredStateError> {
+        unreachable!("components() always panics first")
+    }
+
+    async fn pause(
+        &self,
+        _: &str,
+        _: &str,
+        _: &crate::Hold,
+        _: &DesiredRevision,
+        _: &str,
+    ) -> Result<(), DesiredStateError> {
+        unreachable!("components() always panics first")
+    }
+
+    async fn resume(&self, _: &str, _: &str, _: &DesiredRevision, _: &str) -> Result<(), DesiredStateError> {
+        unreachable!("components() always panics first")
+    }
+}
+
+#[tokio::test]
+async fn the_guard_releases_even_when_a_component_read_panics() {
+    let state = Arc::new(SweepState::default());
+
+    // Run inside a spawned task so the panic is caught as a `JoinError`
+    // rather than aborting the test process -- what actually matters is
+    // what it leaves behind in `state`, not how the panic itself surfaces.
+    let panicked = tokio::spawn({
+        let state = Arc::clone(&state);
+        async move {
+            let panicking = service_over(Arc::new(PanickingComponents) as Arc<dyn DesiredState>);
+            panicking.sweep("lucentroot", &state).await
+        }
+    })
+    .await;
+    assert!(
+        panicked.unwrap_err().is_panic(),
+        "the join error must be a panic, not a cancellation, or this test would pass for either"
+    );
+
+    // Proved against a second, independently built service over the same
+    // `state` -- the panicking one above is useless for a second call,
+    // since its desired state panics unconditionally, but the guard it
+    // held is `SweepState`'s, and this is the same state.
+    let sane_desired_state = Arc::new(Several::new());
+    let sane = service(&sane_desired_state);
+    assert!(
+        matches!(
+            sane.sweep("lucentroot", &state).await.unwrap(),
+            SweepResult::Ran(_)
+        ),
+        "the guard must be released after a panic, not left AlreadyRunning forever"
+    );
 }
 
 #[tokio::test]

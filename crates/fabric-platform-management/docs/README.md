@@ -371,10 +371,11 @@ file under `publication/`.
   PlatformRepository>, Arc<dyn RuntimeCatalogueSource>, Arc<dyn
   RuntimePublication>, Arc<dyn Clock>)`, `describe_target()`, `async fn
   publish_once(&self, &PublicationState) -> PassResult`. Guarded against
-  re-entry by `PublicationState`'s own atomic flag, released by a
-  `RunningGuard` (`publication/running_guard.rs`) whose `Drop` clears it --
-  taken immediately after the swap that sets the flag, so a panic unwinding
-  out of a pass or the caller dropping the future mid-pass (an operator's
+  re-entry by `PublicationState`'s own `RunningFlag` -- `running.try_enter()`
+  (crate-wide `running_guard.rs`, at the crate root -- shared with
+  `PlatformManagement::sweep`) is the only way to claim it, and it hands
+  back a `RunningGuard` only on the call that wins, so a panic unwinding out
+  of a pass or the caller dropping the future mid-pass (an operator's
   disconnect, a request timeout) releases it exactly as a normal return
   does. A plain `store(false, ...)` after the pass's own `.await` would not:
   that is sequential code, and sequential code after an `.await` is exactly
@@ -438,7 +439,12 @@ let statuses = service.statuses("production").await?;
   &SweepState)` on whatever cadence the host chooses. Check `SweepResult`:
   `AlreadyRunning` (a previous sweep for this state was still in flight —
   the record is untouched, since a skipped sweep found nothing *because it
-  did not look*) and `NotConnected` are both distinct from `Ran(Sweep)`.
+  did not look*) and `NotConnected` are both distinct from `Ran(Sweep)`. The
+  `running` flag is the same crate-wide `RunningFlag` (`running_guard.rs`,
+  at the crate root) the publisher uses: `try_enter()` is the only way to
+  claim it, and the `RunningGuard` it hands back on success releases it by
+  `Drop` — so cancellation or a panic mid-sweep frees it exactly as a normal
+  return does, not only the latter.
 - **Pausing/resuming/rolling back from an operator action** — call
   `PlatformManagement::pause`/`resume`/`roll_back` directly; these are
   operator-triggered writes with their own authorization (upstream of this

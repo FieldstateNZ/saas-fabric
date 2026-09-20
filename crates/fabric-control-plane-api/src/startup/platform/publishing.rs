@@ -80,6 +80,8 @@ async fn publish_once(publisher: &Arc<RuntimePublisher>, state: &Arc<Publication
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
     use fabric_core::SystemClock;
     use fabric_platform_management::{
         CatalogueSourceError, ComponentDesired, DataSourceDeclaration, DataSourcesRead, DesiredRevision,
@@ -92,10 +94,18 @@ mod tests {
 
     use super::*;
 
-    /// Every method panics if called. None of them are, in the test below --
-    /// `start_publishing` with a zero interval returns before a publisher is
-    /// ever touched, which is the property under test.
-    struct Untouched;
+    /// Every method panics if called, except `RuntimePublication::current`,
+    /// which counts its calls and answers `Ok` instead of panicking.
+    ///
+    /// A panic is the wrong failure signal for "was a task spawned despite
+    /// the zero interval": the task runs on a `JoinHandle` this test never
+    /// awaits, so tokio would swallow the panic and the test would pass
+    /// either way. Counting the one call every pass makes first, and never
+    /// letting it panic, is what makes "0 calls" an assertion a broken
+    /// guard can actually fail.
+    struct Untouched {
+        current_calls: Arc<AtomicUsize>,
+    }
 
     #[async_trait::async_trait]
     impl fabric_platform_management::DesiredState for Untouched {
@@ -214,7 +224,8 @@ mod tests {
     #[async_trait::async_trait]
     impl fabric_runtime_publication::RuntimePublication for Untouched {
         async fn current(&self) -> Result<PublishedRevisions, PublicationError> {
-            unreachable!()
+            self.current_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(PublishedRevisions::default())
         }
         async fn publish(&self, _: &RuntimeSnapshot) -> Result<PublicationReport, PublicationError> {
             unreachable!()
@@ -224,19 +235,26 @@ mod tests {
         }
     }
 
-    fn untouched_publisher() -> Arc<RuntimePublisher> {
+    fn untouched_publisher(current_calls: &Arc<AtomicUsize>) -> Arc<RuntimePublisher> {
         Arc::new(RuntimePublisher::new(
             "lucentroot".to_owned(),
-            Arc::new(Untouched),
-            Arc::new(Untouched),
-            Arc::new(Untouched),
+            Arc::new(Untouched {
+                current_calls: Arc::clone(current_calls),
+            }),
+            Arc::new(Untouched {
+                current_calls: Arc::clone(current_calls),
+            }),
+            Arc::new(Untouched {
+                current_calls: Arc::clone(current_calls),
+            }),
             SystemClock::shared(),
         ))
     }
 
     #[tokio::test(start_paused = true)]
     async fn a_zero_interval_spawns_nothing() {
-        let publisher = untouched_publisher();
+        let current_calls = Arc::new(AtomicUsize::new(0));
+        let publisher = untouched_publisher(&current_calls);
         let state = Arc::new(PublicationState::new());
 
         start_publishing(
@@ -249,9 +267,11 @@ mod tests {
         );
 
         // If a task had been spawned despite the zero interval, advancing
-        // time would let it run and touch `Untouched`, panicking. Nothing
-        // panicking, and nothing recorded, is the proof it never started.
+        // time would let it run a whole pass -- `current()` included, and
+        // counted, rather than left to panic somewhere a `JoinHandle`
+        // nobody awaits would swallow silently.
         tokio::time::advance(std::time::Duration::from_secs(3600)).await;
+        assert_eq!(current_calls.load(Ordering::SeqCst), 0);
         assert!(state.last_pass().is_none());
     }
 

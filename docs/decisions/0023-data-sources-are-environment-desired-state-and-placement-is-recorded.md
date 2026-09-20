@@ -201,7 +201,14 @@ runtime's monotonic-revision guard needs — the tenant's binding revision is
 not a fact about any one record, it is a fact about how many times *any* of
 the tenant's data has changed. A second record placed for a tenant, or a
 correction to the one it already has, always advances the sum; nothing here
-removes a record, so nothing here needs the sum to fall.
+removes a record, so nothing here needs the sum to fall. **A sum is only
+safe while nothing removes a record**: deleting one while bumping a
+survivor by less than the deleted record's own revision can leave the sum
+exactly where it was, and the runtime, seeing an unmoved revision, keeps
+serving the binding the removed record was part of -- so a hand removal
+must bump a surviving record by at least what it deletes, and until
+deprovisioning is designed (see "What this does not decide") a record must
+not be removed by hand at all.
 
 **On a shared data source, the allocated discriminator value is the tenant
 id.** ADR 0018's objection to `format!("tenant-{client}")` was that a value no

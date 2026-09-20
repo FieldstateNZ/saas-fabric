@@ -621,7 +621,11 @@ runtime plane at all.
   > object, `POST`s to create one that does not exist, and `PUT`s to replace
   > one that does — it never lists, watches or patches a ConfigMap, so the
   > platform repository's Role should grant exactly those three verbs and no
-  > more.
+  > more. `get` and `update` are `resourceNames`-scoped to the three names,
+  > same as the table above; `create` cannot be — Kubernetes RBAC has
+  > nothing to scope `resourceNames` against for an object that does not
+  > exist yet — so the Role's `create` grant is namespace-wide within
+  > `platform-system`, not per-name.
 - **The controller may run on a schedule.** This is a deliberate asymmetry with
   identity reconciliation, which cannot: [ADR 0012](0012-the-platform-acts-on-keycloak-as-the-operator.md)
   removed the scheduled sweep because Keycloak is acted on with a borrowed

@@ -9,9 +9,12 @@ this one's ports; only the composition root sees them.
 
 ## Public surface
 
-- `build_control_plane(&ControlPlaneConfig, Arc<dyn ClientRepository>, Arc<dyn Clock>)
-  -> Result<ControlPlaneServices, String>`; `ControlPlaneServices { router, statuses, trigger }`.
-  The reconciliation loop is **the host's to start**, not this function's.
+- `build_control_plane(&ControlPlaneConfig, ControlPlaneDeps) -> Result<ControlPlaneServices, String>`;
+  `ControlPlaneServices { router, statuses, health, platform_sweeps, publisher,
+  publication }`. Starting the reconciliation loop, the platform sweep, and the
+  publication schedule (`publisher`/`publication`, ADR 0023 part 4) are all
+  **the host's to do**, not this function's -- it only builds what each needs
+  and hands it back.
 - `ClientRepository` (async trait) — `list()`, `get(&ClientId)`,
   `update(&ClientId, &ClientDocument, &ClientRevision, &ChangeContext) -> ClientRevision`,
   `describe()`. **No `create`, no `delete`** — both absent deliberately.
@@ -44,12 +47,28 @@ this one's ports; only the composition root sees them.
 - `ReconciliationLoop::spawn(...) -> ReconciliationLoopHandle`;
   `ReconciliationTrigger::{new, request_pass}`.
 - `API_PREFIX = "/api"`.
+- `PlatformBinding { service, environment, repository, data_sources,
+  placements, publisher, publication }` (ADR 0023) -- `publisher:
+  Option<Arc<RuntimePublisher>>` is `Some` only when both a platform and a
+  publication target are configured; `publication: Arc<PublicationState>` is
+  always present, so `GET /api/platform`'s row can be `None` from `publisher`
+  alone, with no `Option<Option<_>>`. `POST /api/platform/publication`
+  (`handlers/platform/publish.rs`) runs `publisher.publish_once` and renders
+  the response from the outcome it just returned, never a second
+  `PublicationState` read (a scheduled pass could complete in the gap and
+  make a stale read describe a pass nobody asked for).
 
 ## Hard invariants — do not break
 
-1. **No handler may reach a platform service.** `ControlPlaneState` holds the
-   service and the authenticator, and nothing else. The reconciliation loop is
-   the only thing that talks to a provider.
+1. **No handler may reach an identity provider.** `ControlPlaneState` holds
+   the client domain service and the operator authenticator; no handler holds
+   a Keycloak (or other provider) client, and the reconciliation loop is the
+   only thing that talks to one (ADR 0008, §8). This does **not** forbid
+   reaching *platform* services: handlers read and act on `PlatformManagement`
+   and `RuntimePublisher` through `PlatformBinding` (component versions,
+   rollback, data sources, placements, publication) -- none of that is an
+   identity-provider call, and the rule was never about avoiding a service,
+   only about avoiding Keycloak specifically.
 2. **`set_identity` checks the revision before the no-op short-circuit.**
    Otherwise `If-Match` means "unless it does not matter".
 3. **A write marks reconciliation `Pending` before anything else runs**, and

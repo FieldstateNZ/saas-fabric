@@ -1,7 +1,12 @@
 //! The publication row: what this environment's runtime-publication target
 //! holds, and what the last pass did.
 
-use fabric_platform_management::{LastPass, PassOutcome, PublicationState, RuntimePublisher, WaitingReason};
+mod last_pass_row;
+
+pub(crate) use last_pass_row::pass_outcome_word;
+pub use last_pass_row::LastPassRow;
+
+use fabric_platform_management::{PassOutcome, PublicationState, RuntimePublisher};
 use fabric_runtime_publication::{DocumentRevision, PublishedRevisions};
 
 /// What an operator is told about this environment's runtime publication.
@@ -40,38 +45,33 @@ pub struct PublishedDocumentsRow {
     pub catalog: Option<u64>,
 }
 
-/// One publication pass, as an operator reads it.
-#[derive(Debug, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct LastPassRow {
-    /// When it finished, as seconds since the Unix epoch.
-    ///
-    /// Sent unformatted, exactly as `LastCheckRow::at_unix_seconds` is, so
-    /// the browser renders it in the operator's own timezone.
-    pub at_unix_seconds: u64,
-
-    /// `published` | `unchanged` | `waiting` | `refused` | `failed`.
-    pub outcome: &'static str,
-
-    /// Why, when `outcome` is anything but `published` or `unchanged`.
-    /// Already sanitised by [`fabric_platform_management::SafeDiagnostic`]
-    /// -- never a credential, a response body, or a path.
-    pub detail: Option<String>,
-}
-
 impl PublicationRow {
-    /// Renders this environment's publication state.
+    /// Renders this environment's publication state from what
+    /// `PublicationState` currently holds -- `GET /api/platform`'s own
+    /// read, where there is no fresher outcome to prefer.
     pub(crate) fn of(publisher: &RuntimePublisher, state: &PublicationState) -> Self {
-        let last_pass = state.last_pass();
+        match state.last_pass() {
+            Some(pass) => Self::at(publisher, pass.at_unix_seconds, &pass.outcome),
+            None => Self {
+                target: publisher.describe_target(),
+                documents: PublishedDocumentsRow::default(),
+                last_pass: None,
+            },
+        }
+    }
 
+    /// Renders straight from an outcome and the moment it is reported at,
+    /// without a `PublicationState` read of its own -- the trigger
+    /// handler's own read, over the outcome its own call to `publish_once`
+    /// just returned, so a scheduled pass finishing in the gap between that
+    /// call returning and this rendering can never make the response
+    /// describe a pass the operator did not ask for. See
+    /// `LastPassRow::at`'s own rustdoc for the full argument.
+    pub(crate) fn at(publisher: &RuntimePublisher, at_unix_seconds: u64, outcome: &PassOutcome) -> Self {
         Self {
             target: publisher.describe_target(),
-            documents: last_pass
-                .as_ref()
-                .map_or_else(PublishedDocumentsRow::default, |pass| {
-                    PublishedDocumentsRow::of(&pass.outcome)
-                }),
-            last_pass: last_pass.as_ref().map(LastPassRow::of),
+            documents: PublishedDocumentsRow::of(outcome),
+            last_pass: Some(LastPassRow::at(at_unix_seconds, outcome)),
         }
     }
 }
@@ -97,42 +97,5 @@ impl PublishedDocumentsRow {
             data_sources: revisions.data_sources.map(DocumentRevision::get),
             catalog: revisions.catalog.map(DocumentRevision::get),
         }
-    }
-}
-
-impl LastPassRow {
-    fn of(pass: &LastPass) -> Self {
-        let detail = match &pass.outcome {
-            PassOutcome::Waiting { reason } => Some(waiting_reason_text(reason)),
-            PassOutcome::Refused { reason } => Some(reason.as_str().to_owned()),
-            PassOutcome::Failed { detail } => Some(detail.as_str().to_owned()),
-            PassOutcome::Published { .. } | PassOutcome::Unchanged { .. } => None,
-        };
-
-        Self {
-            at_unix_seconds: pass.at_unix_seconds,
-            outcome: pass_outcome_word(&pass.outcome),
-            detail,
-        }
-    }
-}
-
-/// Why a pass found nothing ready to publish, in an operator's own words.
-fn waiting_reason_text(reason: &WaitingReason) -> String {
-    match reason {
-        WaitingReason::NoResources => "the derived runtime catalogue has no resources yet".to_owned(),
-    }
-}
-
-/// Which word an outcome renders as, shared between [`LastPassRow::of`] and
-/// the trigger handler's own audit record, so the two can never disagree
-/// about what a pass was called.
-pub(crate) fn pass_outcome_word(outcome: &PassOutcome) -> &'static str {
-    match outcome {
-        PassOutcome::Published { .. } => "published",
-        PassOutcome::Unchanged { .. } => "unchanged",
-        PassOutcome::Waiting { .. } => "waiting",
-        PassOutcome::Refused { .. } => "refused",
-        PassOutcome::Failed { .. } => "failed",
     }
 }

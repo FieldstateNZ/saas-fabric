@@ -342,7 +342,7 @@ pub fn entity_tag(response: &Response<Body>) -> String {
 /// A directory under the system temp root, unique per test, removed when it
 /// drops. `tempfile` is not in this workspace's dependency table -- see
 /// `fabric-runtime-publication/tests/filesystem_runtime_publication.rs`,
-/// whose own copy of this this mirrors, for the same reason.
+/// whose own copy this mirrors, for the same reason.
 pub struct TempDir {
     path: std::path::PathBuf,
 }

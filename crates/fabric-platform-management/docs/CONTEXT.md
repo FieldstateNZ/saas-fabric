@@ -359,8 +359,11 @@ own data-source sub-types rather than re-declared, so a hand-editable
   &PublicationState) -> PassResult`. Offers at the held revision; on
   `DivergentPayload`, bumps *only* the named document and re-offers, up to
   three times (one per document, `protocol.rs::MAX_RETRIES`). Guarded
-  against re-entry by `PublicationState`'s atomic flag, released on every
-  path out.
+  against re-entry by `PublicationState`'s atomic flag, released by a
+  `RunningGuard` (`Drop`-based, `running_guard.rs`) taken right after the
+  swap -- released on a panic and on cancellation (a dropped future) as well
+  as a normal return, which a post-`.await` `store(false, ...)` would not
+  be.
 - `PublicationState` — `SweepState`'s sibling: `new()`, `last_pass() ->
   Option<LastPass>`.
 - `LastPass { at_unix_seconds: u64, outcome: PassOutcome }`.
@@ -370,7 +373,9 @@ own data-source sub-types rather than re-declared, so a hand-editable
   SafeDiagnostic }` | `Failed { detail: SafeDiagnostic }`.
 - `WaitingReason` — `NoResources` (the derived catalogue has none yet; ADR
   0018's "create empty documents at startup" is superseded, see that ADR's
-  amendment).
+  amendment) | `PlatformNotConnected` (no operator has connected this
+  environment's platform repository yet -- `SweepResult::NotConnected`'s
+  sibling, not a failure).
 - `PassResult` — `Ran(PassOutcome)` | `AlreadyRunning`.
 
 ## Internal modules
@@ -473,21 +478,34 @@ own data-source sub-types rather than re-declared, so a hand-editable
   contract plus one trait; no logic beyond the type definitions.
 - `policy.rs` — `UpdatePolicy` alone.
 - `publication.rs` +
-  `publication/{catalogue_source,outcome,pass,protocol,protocol_tests,publisher,publisher_tests,reads,snapshot,snapshot_tests,state,testing}.rs`
+  `publication/{catalogue_source,compose_error,outcome,pass,pass_tests,protocol,protocol_tests,publisher,publisher_tests,reads,reads_tests,running_guard,snapshot,snapshot_tests,state,testing}.rs`
   (ADR 0023 part 4) — `compose` (`snapshot.rs`, pure: declared data sources +
-  recorded placements + derived catalogue + held revisions -> `RuntimeSnapshot`;
-  `ComposeError::DuplicatePlacement`), `RuntimeCatalogueSource` +
+  recorded placements + derived catalogue + held revisions -> `RuntimeSnapshot`),
+  `ComposeError::DuplicatePlacement` | `EmptyTenantBinding` (`compose_error.rs`,
+  split out of `snapshot.rs` once the enum's own rustdoc outgrew sharing a file
+  with the computation that raises it), `RuntimeCatalogueSource` +
   `CatalogueSourceError` (`catalogue_source.rs`, the seam that keeps this
   crate off `fabric-client-model`), `RuntimePublisher` (`publisher.rs`:
   `new`, `describe_target`, `publish_once`, the one thing here that touches
   a port), the offer-and-advance retry rule (`protocol.rs`, `MAX_RETRIES =
   3`), `PublicationState` + `LastPass` (`state.rs`, `SweepState`'s
-  sibling), `PassOutcome` + `WaitingReason` + `PassResult` (`outcome.rs`).
-  `pass.rs`: `run_pass`, the body `publish_once` runs once its re-entry
-  guard lets it through; `reads.rs`: reading the three inputs, turning a
-  coherence problem into `Refused` and a transport failure into `Failed`.
-  `testing.rs` (`#[cfg(test)]`): an in-memory `RuntimePublication` fake for
-  `protocol_tests.rs`/`publisher_tests.rs`. The control plane's own half —
+  sibling), `PassOutcome` + `WaitingReason` + `PassResult` (`outcome.rs`,
+  `WaitingReason::{NoResources, PlatformNotConnected}`).
+  `running_guard.rs`: `RunningGuard`, the `Drop`-released re-entry guard
+  `publish_once` takes immediately after winning the atomic swap -- released
+  on a panic and on cancellation, not only a normal return. `pass.rs`:
+  `run_pass`, the body `publish_once` runs once that guard lets it through,
+  and `outcome_from_publish_error`, which sorts an adapter's
+  `PublicationError` into `Failed` (`Unwritable`, `Unreadable`,
+  `StaleRevision` -- transport problems a retry or the next read fixes) or
+  `Refused` (everything else, including an exhausted `DivergentPayload`
+  budget -- a document a human must fix). `reads.rs`: reading the three
+  inputs, turning `DesiredStateError::Refused` and a coherence problem into
+  `Refused`, `NotConnected` into `Waiting { PlatformNotConnected }`, and
+  `Unavailable`/`Conflict` into `Failed`. `testing.rs` (`#[cfg(test)]`): an
+  in-memory `RuntimePublication` fake for
+  `protocol_tests.rs`/`publisher_tests.rs`, with a `publish_attempts()`
+  counter that pins the retry budget from above. The control plane's own half —
   its `RuntimeCatalogueSource` impl (`fabric-control-plane`'s
   `service/runtime_catalogue_source.rs`), the `/api/platform` row, the
   operator trigger, and the schedule (`fabric-control-plane-api`'s

@@ -1144,17 +1144,23 @@ with the controller's own credential, so — unlike Keycloak reconciliation
 (ADR 0012) — nothing is borrowed and a poll is both safe and correct.
 
 **The trigger.** `POST /api/platform/publication` runs one pass now, as an
-operator, and answers with the same row `GET /api/platform` shows once the
-pass finishes. `PublicationNotConfigured` (`503`) when this deployment
-publishes no runtime state; `PublicationRunning` (`409`) when a pass —
-scheduled or triggered — is already in flight.
+operator, and answers with the row built from the outcome that pass itself
+just produced — never a second, separate `last_pass()` read, which a
+scheduled pass could complete in between and make the response describe a
+pass the operator did not ask for. `PublicationNotConfigured` (`404`, the
+same species of absence as `PlatformNotManaged` and just as unhelped by a
+retry) when this deployment publishes no runtime state; `PublicationRunning`
+(`409`) when a pass — scheduled or triggered — is already in flight.
 
 **The panel row, and what it does and does not say.** `GET /api/platform`'s
-`publication` row names the target (`describe()`, never a credential), the
-revision currently held for each document, and the last pass's outcome —
-`published`, `unchanged`, `waiting`, `refused` or `failed`, with a sanitised
-detail for the last three. It is `null` when no publication target is
-configured. **It reports what the target holds and what the last pass did.
+`publication` row names the target (`describe()`, never a credential), and
+the revisions the *last published or unchanged pass* reported — `null` for
+every document after a pass that only got as far as `waiting`, `refused` or
+`failed`, since none of those ever read or moved what is held far enough to
+report — and the last pass's outcome — `published`, `unchanged`, `waiting`,
+`refused` or `failed`, with a sanitised detail for the last three. It is
+`null` when no publication target is configured. **It reports what the
+target holds and what the last pass did.
 It does not observe the runtime.** There is no port from this crate to the
 runtime plane (§6), so a publication pass completing says nothing about
 whether the runtime has reloaded, is mounting the ConfigMap the kubelet

@@ -14,7 +14,8 @@ use fabric_core::{
 use fabric_runtime_publication::{
     CatalogDocument, CollectionName, ConnectionName, ConnectionSelectorDocument, ConnectorId,
     DataResidencyDocument, DataSourceCapabilitiesDocument, FieldName, IsolationModelDocument,
-    PlacementClassDocument, PoolSettingsDocument, ResourceDefinitionDocument,
+    PlacementClassDocument, PoolSettingsDocument, PublicationError, PublicationReport, PublishedRevisions,
+    ResourceDefinitionDocument, RuntimePublication, RuntimeSnapshot,
 };
 use tokio::sync::Notify;
 
@@ -400,4 +401,108 @@ async fn a_pass_already_running_is_skipped_rather_than_queued() {
         Arc::new(FakePublication::new()),
     );
     assert!(matches!(ungated.publish_once(&state).await, PassResult::Ran(_)));
+}
+
+/// A [`RuntimePublication`] whose `current` always panics -- proving the
+/// guard is released by `RunningGuard`'s `Drop`, not by code sequenced after
+/// an `.await` that a panic unwinding through it never reaches.
+struct PanickingPublication;
+
+#[async_trait::async_trait]
+impl RuntimePublication for PanickingPublication {
+    async fn current(&self) -> Result<PublishedRevisions, PublicationError> {
+        panic!("simulated target failure")
+    }
+
+    async fn publish(&self, _: &RuntimeSnapshot) -> Result<PublicationReport, PublicationError> {
+        unreachable!("current() always panics first")
+    }
+
+    fn describe(&self) -> String {
+        "panicking".to_owned()
+    }
+}
+
+#[tokio::test]
+async fn the_guard_releases_even_when_the_target_panics() {
+    let state = Arc::new(PublicationState::new());
+
+    // Run inside a spawned task so the panic is caught as a `JoinError`
+    // rather than aborting the test process -- what actually matters is
+    // what it leaves behind in `state`, not how the panic itself surfaces.
+    let panicked = tokio::spawn({
+        let state = Arc::clone(&state);
+        async move {
+            let panicking = publisher(
+                Arc::new(FakePlatform::ready(vec![], vec![])),
+                Arc::new(FakeCatalogue(Ok(catalog_with_one_resource()))),
+                Arc::new(PanickingPublication),
+            );
+            panicking.publish_once(&state).await
+        }
+    })
+    .await;
+    assert!(panicked.is_err(), "current() was made to panic");
+
+    // Proved against a second, independently built publisher over the same
+    // `state` -- the panicking one above is useless for a second call, since
+    // its target panics unconditionally, but the guard it held is
+    // `PublicationState`'s, and this is the same state.
+    let sane = publisher(
+        Arc::new(FakePlatform::ready(vec![], vec![])),
+        Arc::new(FakeCatalogue(Ok(catalog_with_one_resource()))),
+        Arc::new(FakePublication::new()),
+    );
+    assert!(
+        matches!(sane.publish_once(&state).await, PassResult::Ran(_)),
+        "the guard must be released after a panic, not left AlreadyRunning forever"
+    );
+}
+
+#[tokio::test]
+async fn the_guard_releases_when_the_pass_is_cancelled_mid_flight() {
+    let entered = Arc::new(Notify::new());
+    let release = Arc::new(Notify::new());
+    let catalogue = Arc::new(GatedCatalogue {
+        inner: FakeCatalogue(Ok(catalog_with_one_resource())),
+        entered: Arc::clone(&entered),
+        release: Arc::clone(&release),
+    });
+
+    let gated = publisher(
+        Arc::new(FakePlatform::ready(vec![], vec![])),
+        catalogue,
+        Arc::new(FakePublication::new()),
+    );
+    let state = PublicationState::new();
+
+    // `select!` polls both branches on this same task -- no second task, no
+    // `abort`, nothing that depends on how a runtime schedules cancellation.
+    // Once `entered` resolves, `publish_once(&state)` is mid-read, parked
+    // inside `GatedCatalogue::runtime_catalogue`'s own wait on `release`;
+    // `select!` drops that losing branch right there, which is exactly the
+    // cancellation a dropped handler future (an operator's disconnect, a
+    // request timeout) produces -- `release` is never notified, so the pass
+    // could not have finished on its own.
+    tokio::select! {
+        _ = gated.publish_once(&state) => {
+            panic!("the pass must not finish: release is never notified in this test");
+        }
+        () = entered.notified() => {}
+    }
+
+    // Proved against a second, independently built publisher: `gated`
+    // above still holds the same `GatedCatalogue`, which would block again
+    // on `release` -- nobody ever notifies -- so reusing it here would
+    // hang the very call meant to prove the guard is free, not the
+    // cancellation this test exists to check.
+    let sane = publisher(
+        Arc::new(FakePlatform::ready(vec![], vec![])),
+        Arc::new(FakeCatalogue(Ok(catalog_with_one_resource()))),
+        Arc::new(FakePublication::new()),
+    );
+    assert!(
+        matches!(sane.publish_once(&state).await, PassResult::Ran(_)),
+        "the guard must be released after cancellation, not left AlreadyRunning forever"
+    );
 }

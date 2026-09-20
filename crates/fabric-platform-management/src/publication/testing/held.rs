@@ -38,6 +38,11 @@ pub(super) struct State {
     pub(super) held: PublishedRevisions,
     pub(super) scripted: Script,
     pub(super) writes: Vec<DocumentKind>,
+    /// Every call to `publish`, whether it wrote, settled unchanged, or was
+    /// refused -- what pins the retry budget from above: the protocol may
+    /// offer a snapshot at most once per document plus the original offer,
+    /// never more.
+    pub(super) publish_attempts: usize,
 }
 
 impl State {

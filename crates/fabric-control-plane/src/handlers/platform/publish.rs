@@ -3,6 +3,7 @@
 
 use axum::extract::State;
 use axum::Json;
+use fabric_core::{Clock, SystemClock};
 use fabric_platform_management::PassResult;
 
 use crate::handlers::platform::body::{pass_outcome_word, PublicationRow};
@@ -48,7 +49,15 @@ pub(crate) async fn publish_runtime_state(
         PassResult::Ran(outcome) => {
             audit::publication_triggered(&operator, pass_outcome_word(&outcome));
 
-            Ok(Json(PublicationRow::of(publisher, &platform.publication)))
+            // Rendered from the outcome this call just produced, not a
+            // second `PublicationState` read: the guard is already
+            // released by the time `publish_once` returns (`RunningGuard`
+            // drops as its own call frame unwinds), so a scheduled pass
+            // could start and finish in the gap before a fresh read, and
+            // this response would then describe a pass the operator did
+            // not ask for.
+            let at_unix_seconds = SystemClock::new().now_unix_seconds();
+            Ok(Json(PublicationRow::at(publisher, at_unix_seconds, &outcome)))
         }
     }
 }

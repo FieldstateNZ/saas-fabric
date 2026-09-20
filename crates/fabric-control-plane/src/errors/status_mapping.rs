@@ -31,14 +31,15 @@ impl ControlPlaneError {
             // and for the same reason: in both cases the operator holds no
             // usable identity and their next step is to sign in.
             Self::Unauthenticated(_) | Self::SignInRefused => StatusCode::UNAUTHORIZED,
-            // 404 for both, and they mean different things: one client does
-            // not exist, and for this deployment the connection surface does
-            // not exist. Neither is a permission problem, which is why neither
-            // is a 403 sending an operator to look for a grant.
+            // 404: for this deployment, none of these exists -- a client,
+            // the connection surface, or the publication target. Not a 403
+            // (no grant would fix an absence) and not a 503 (no wait would
+            // either): only a config edit and a restart change any of them.
             Self::UnknownClient(_)
             | Self::IntegrationNotManaged
             | Self::PlatformNotManaged
-            | Self::ConvergenceUnavailable => StatusCode::NOT_FOUND,
+            | Self::ConvergenceUnavailable
+            | Self::PublicationNotConfigured => StatusCode::NOT_FOUND,
             // `InvalidFlow` joins these at 400 rather than 401, and that is
             // the interesting one: its caller is a browser the Git host
             // redirected here, holding no identity to be wrong about. What is
@@ -111,14 +112,13 @@ impl ControlPlaneError {
                 StatusCode::UNPROCESSABLE_ENTITY
             }
 
-            // Four failures, one 503, not all for the same reason: two are
-            // transient (`Retry-After`), a platform waiting for an operator
-            // is not, and `PublicationNotConfigured` joins them
-            // structurally (its own rustdoc) -- the code below tells them apart.
-            Self::RepositoryUnavailable
-            | Self::SignInUnavailable
-            | Self::IntegrationNotConfigured
-            | Self::PublicationNotConfigured => StatusCode::SERVICE_UNAVAILABLE,
+            // Three failures, one 503, not all for the same reason. Two are
+            // transient and carry `Retry-After`; a platform waiting for an
+            // operator does not, retrying will not connect it. The code
+            // below tells all three apart.
+            Self::RepositoryUnavailable | Self::SignInUnavailable | Self::IntegrationNotConfigured => {
+                StatusCode::SERVICE_UNAVAILABLE
+            }
 
             // A pass already holds the publication guard; try again once it
             // releases -- not a wait-out-an-outage 503.

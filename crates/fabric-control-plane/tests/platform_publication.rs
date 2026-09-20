@@ -35,15 +35,24 @@ use fabric_platform_management::{
     DataSourceCapabilitiesDocument, DataSourceDeclaration, DesiredRevision, IsolationModelDocument,
     PlacementClassDocument, PlacementRecord, PoolSettingsDocument,
 };
-use fabric_runtime_publication::FilesystemRuntimePublication;
+use fabric_runtime_publication::{
+    FilesystemRuntimePublication, PublicationError, PublicationReport, PublishedRevisions,
+    RuntimePublication, RuntimeSnapshot,
+};
 use http::StatusCode;
 use serde_json::{json, Value};
 use support::platform_fixture::platform_binding;
 use support::{
     as_operator, control_plane_with_platform, control_plane_with_publication, json as body_of, send, TempDir,
 };
+use tokio::sync::Notify;
 
 const TENANT: &str = "acme";
+/// Deliberately not equal to [`TENANT`]: `compose` must publish exactly
+/// what the record says, never recompute the discriminator value from the
+/// tenant id (ADR 0023 part 2's own record-is-the-fact argument would be
+/// untested if the seeded value and the tenant id happened to agree).
+const DISCRIMINATOR_VALUE: &str = "opaque-7f3";
 const DATA_SOURCE: &str = "shared-postgres-nz-01";
 const RESOURCE: &str = "customers";
 
@@ -89,10 +98,11 @@ fn declared_data_source() -> DataSourceDeclaration {
     }
 }
 
-/// One of `TENANT`'s placements on [`declared_data_source`], isolated by the
-/// tenant's own id -- the same shape `select::pick` would have written, but
-/// seeded directly so a test can control the revision and add a second one
-/// without going through the selector.
+/// One of `TENANT`'s placements on [`declared_data_source`], isolated by an
+/// opaque discriminator value -- the record is seeded directly (not through
+/// `select::pick`, which would allocate the tenant id itself), so a test
+/// can control the revision, add a second one, and prove `compose` copies
+/// the record's own value verbatim rather than recomputing it.
 fn placement(logical: &str, revision: u64) -> PlacementRecord {
     PlacementRecord {
         tenant: TenantId::try_new(TENANT).expect("a valid tenant id"),
@@ -101,7 +111,7 @@ fn placement(logical: &str, revision: u64) -> PlacementRecord {
         data_source: DataSourceId::try_new(DATA_SOURCE).expect("a valid data source id"),
         isolation: IsolationModelDocument::Discriminator {
             column: fabric_platform_management::FieldName::try_new("tenant_key").expect("a valid field name"),
-            value: TENANT.to_owned(),
+            value: DISCRIMINATOR_VALUE.to_owned(),
         },
         placed_at: "2026-09-18T02:14:00Z".to_owned(),
     }
@@ -238,7 +248,10 @@ async fn publishing_composes_declared_state_into_the_runtimes_three_documents_an
         acme["data"]["primary"]["isolation"]["kind"], "discriminator",
         "{acme}"
     );
-    assert_eq!(acme["data"]["primary"]["isolation"]["value"], TENANT, "{acme}");
+    assert_eq!(
+        acme["data"]["primary"]["isolation"]["value"], DISCRIMINATOR_VALUE,
+        "{acme}"
+    );
 
     let data_sources: Value =
         serde_json::from_str(&std::fs::read_to_string(&data_sources_path).unwrap()).expect("valid JSON");
@@ -262,10 +275,13 @@ async fn publishing_composes_declared_state_into_the_runtimes_three_documents_an
     let catalog_mtime = modified(&catalog_path);
 
     // 2. Second pass: everything already matches what is held, so nothing
-    // moves -- not even a manifest.
+    // moves -- not even a manifest. The no-op property does not rest on
+    // mtimes alone: the reported revision must also still read 1, not just
+    // "unchanged" in name.
     let (status, body) = post_publication(&plane.router).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["lastPass"]["outcome"], "unchanged", "{body}");
+    assert_eq!(body["documents"]["tenants"], 1, "{body}");
     assert_eq!(
         modified(&tenants_path),
         tenants_mtime,
@@ -426,13 +442,110 @@ async fn a_hand_edited_catalogue_conflict_is_refused_and_writes_nothing() {
 }
 
 #[tokio::test]
-async fn no_publication_target_configured_answers_service_unavailable() {
+async fn no_publication_target_configured_answers_not_found_and_is_not_retryable() {
     let (platform, _fake) = platform_binding().await;
     let plane = control_plane_with_platform(platform);
 
-    let (status, body) = post_publication(&plane.router).await;
-    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    let response = send(
+        &plane.router,
+        as_operator("POST", "/api/platform/publication")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    assert!(
+        response.headers().get(http::header::RETRY_AFTER).is_none(),
+        "only a config edit and a restart change this; retrying now must not look useful"
+    );
+    let body = body_of(response).await;
     assert_eq!(body["error"]["code"], "publication_not_configured");
+}
+
+/// Wraps a real [`FilesystemRuntimePublication`], but `current` notifies
+/// `entered` and waits on `release` first -- long enough for a concurrent
+/// second trigger to observe the re-entry guard held, the same technique
+/// `fabric-platform-management`'s own `publisher_tests.rs` uses at the unit
+/// level.
+struct GatedTarget {
+    inner: FilesystemRuntimePublication,
+    entered: Arc<Notify>,
+    release: Arc<Notify>,
+}
+
+#[async_trait::async_trait]
+impl RuntimePublication for GatedTarget {
+    async fn current(&self) -> Result<PublishedRevisions, PublicationError> {
+        self.entered.notify_one();
+        self.release.notified().await;
+        self.inner.current().await
+    }
+
+    async fn publish(&self, snapshot: &RuntimeSnapshot) -> Result<PublicationReport, PublicationError> {
+        self.inner.publish(snapshot).await
+    }
+
+    fn describe(&self) -> String {
+        self.inner.describe()
+    }
+}
+
+#[tokio::test]
+async fn a_pass_already_running_answers_409_publication_running() {
+    let dir = TempDir::new("publication-running");
+    let (platform, fake) = platform_binding().await;
+
+    let entered = Arc::new(Notify::new());
+    let release = Arc::new(Notify::new());
+    let gated = GatedTarget {
+        inner: FilesystemRuntimePublication::new(
+            dir.path().join("tenants.json"),
+            dir.path().join("data-sources.json"),
+            dir.path().join("catalog.json"),
+        ),
+        entered: Arc::clone(&entered),
+        release: Arc::clone(&release),
+    };
+    let plane = control_plane_with_publication(
+        platform,
+        PublicationSink {
+            target: Arc::new(gated),
+        },
+    );
+
+    fake.seed(
+        DesiredRevision::new("data-sources-1"),
+        vec![declared_data_source()],
+    );
+    fake.seed_placements(
+        DesiredRevision::new("placements-1"),
+        vec![placement("primary", 1)],
+    );
+    publish_one_application_with_a_resource(&plane.router).await;
+
+    let router = plane.router.clone();
+    let holder = tokio::spawn(async move { post_publication(&router).await });
+
+    entered.notified().await;
+
+    // A second trigger, while the first is gated mid-pass, must be refused
+    // -- not queued behind it.
+    let (status, body) = post_publication(&plane.router).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["error"]["code"], "publication_running");
+
+    release.notify_one();
+    let (first_status, first_body) = holder.await.expect("the gated request completes");
+    assert_eq!(first_status, StatusCode::OK, "{first_body}");
+}
+
+#[tokio::test]
+async fn get_platform_reports_publication_null_when_no_sink_is_configured() {
+    let (platform, _fake) = platform_binding().await;
+    let plane = control_plane_with_platform(platform);
+
+    let body = get_platform(&plane.router).await;
+    assert!(body["publication"].is_null(), "{body}");
 }
 
 #[tokio::test]

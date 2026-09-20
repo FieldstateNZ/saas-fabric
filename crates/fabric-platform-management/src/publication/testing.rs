@@ -54,6 +54,17 @@ impl FakePublication {
             .map(|state| state.writes.clone())
             .unwrap_or_default()
     }
+
+    /// How many times `publish` was called at all -- written, settled
+    /// unchanged, or refused. What pins `protocol::MAX_RETRIES` from above:
+    /// one initial offer plus at most one retry per document in a
+    /// three-document snapshot is four, never more.
+    pub(crate) fn publish_attempts(&self) -> usize {
+        self.state
+            .lock()
+            .map(|state| state.publish_attempts)
+            .unwrap_or_default()
+    }
 }
 
 #[async_trait::async_trait]
@@ -70,6 +81,7 @@ impl RuntimePublication for FakePublication {
             .state
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.publish_attempts += 1;
 
         for (document, offered) in [
             (DocumentKind::DataSources, snapshot.data_sources.revision),

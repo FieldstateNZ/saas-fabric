@@ -350,9 +350,15 @@ file under `publication/`.
   maximum, is what makes an add or a break-glass bump always move the
   binding forward). Every document is offered at the revision `held`
   reports, or `1` when nothing is held yet -- `compose` never advances a
-  revision itself, and never sets emptying intent. `ComposeError::DuplicatePlacement`
-  is the one thing it refuses: two records for one tenant's logical data
-  source, the shape a break-glass edit to `placements.yaml` can reach.
+  revision itself, and never sets emptying intent. `ComposeError`
+  (`publication/compose_error.rs`, split out once its own rustdoc outgrew
+  sharing a file with `compose`) is what it can refuse:
+  `DuplicatePlacement` in practice -- two records for one tenant's logical
+  data source, the shape a break-glass edit to `placements.yaml` can reach --
+  and `EmptyTenantBinding` beside it for a case that cannot happen in this
+  function's own code today (a tenant only enters the accumulator alongside
+  its first binding) but must still be a value, not a panic, if that ever
+  stops being true.
 - **`RuntimeCatalogueSource`** (`publication/catalogue_source.rs`) -- the
   seam that lets this crate reach the derived catalogue without depending on
   `fabric-client-model`: `async fn runtime_catalogue(&self) ->
@@ -365,15 +371,25 @@ file under `publication/`.
   PlatformRepository>, Arc<dyn RuntimeCatalogueSource>, Arc<dyn
   RuntimePublication>, Arc<dyn Clock>)`, `describe_target()`, `async fn
   publish_once(&self, &PublicationState) -> PassResult`. Guarded against
-  re-entry by `PublicationState`'s own atomic flag, released on every path
-  out -- there is no early return that could leave it set, because a pass
-  never propagates an error, it becomes a `PassOutcome` instead (`sweep`'s
-  own shape, for the same reason).
+  re-entry by `PublicationState`'s own atomic flag, released by a
+  `RunningGuard` (`publication/running_guard.rs`) whose `Drop` clears it --
+  taken immediately after the swap that sets the flag, so a panic unwinding
+  out of a pass or the caller dropping the future mid-pass (an operator's
+  disconnect, a request timeout) releases it exactly as a normal return
+  does. A plain `store(false, ...)` after the pass's own `.await` would not:
+  that is sequential code, and sequential code after an `.await` is exactly
+  what a panic or a cancellation skips.
 - **The offer-and-advance rule** (D3, `publication/protocol.rs`) -- offer at
   the held revision; on `DivergentPayload`, bump *only* the document the
   target named and re-offer the whole snapshot, up to three times (one per
-  document). Any other refusal, or a fourth divergence, is `Refused` with
-  the target's own words.
+  document). What a fourth divergence, or any other refusal
+  `publish_with_retry` returns, becomes is `pass.rs::outcome_from_publish_error`'s
+  own call: `Unwritable`, `Unreadable` and `StaleRevision` are transport
+  problems a retry or the next read fixes, so they are `Failed`; a fourth
+  `DivergentPayload` and every coherence refusal (`DanglingDataSource`,
+  `RetiredDataSourceStillBound`, `EmptyingNotIntended`, `EmptyCatalogue`,
+  `EmptyTenantData`, `HeldPayloadLost`) name a document a human must fix, so
+  they are `Refused`.
 - **`PublicationState`** (`publication/state.rs`) -- `SweepState`'s sibling:
   whether a pass is running, and the last one's `LastPass { at_unix_seconds,
   outcome }`.
@@ -382,10 +398,12 @@ file under `publication/`.
   revisions }` | `Waiting { reason: WaitingReason }` | `Refused { reason:
   SafeDiagnostic }` | `Failed { detail: SafeDiagnostic }`. Five, mirroring
   `CheckOutcome`'s own reasoning: an operator acts on each differently.
-  `WaitingReason::NoResources` is the one case today -- an empty derived
-  catalogue is never published (ADR 0018's "create empty documents at
-  startup" is superseded by this all-or-nothing pass; see that ADR's own
-  amendment).
+  `WaitingReason::NoResources` is an empty derived catalogue -- never
+  published (ADR 0018's "create empty documents at startup" is superseded by
+  this all-or-nothing pass; see that ADR's own amendment) --
+  `WaitingReason::PlatformNotConnected` is no operator having connected this
+  environment's platform repository yet, `SweepResult::NotConnected`'s
+  sibling and not a failure either.
 
 What is not here -- the control plane's `RuntimeCatalogueSource`, the
 `/api/platform` publication row, the operator trigger, and the schedule

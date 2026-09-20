@@ -16,9 +16,29 @@ testable.
 - `config::IdentityProviderConfig` — `Keycloak(KeycloakConfig)` | `InMemory`.
   Tagged `mode`.
 - `config::CONFIG_PATH_VAR = "FABRIC_CP_CONFIG"`.
+- `config::PlatformManagementConfig { environment, registry, observation,
+  reconciliation_interval_seconds, operation_timeout_seconds, publication:
+  Option<PublicationConfig> }` -- the whole section optional; a deployment
+  that manages a platform but publishes no runtime state simply omits
+  `publication`.
+- `config::PublicationConfig { namespace, interval_seconds }`
+  (`[platform_management.publication]`, ADR 0023 part 4) --
+  `deny_unknown_fields`; `interval_seconds` defaults to 60, and 0 disables
+  the schedule while leaving `POST /api/platform/publication` working.
+  `namespace` is validated at startup against
+  `fabric_publication_kubernetes::PublicationTarget::validate`, beside the
+  budget check.
 - `secrets::{PREFIX, resolve}`.
 - `startup::{build, Application, shutdown_signal}`;
   `Application { router, listen, reconciliation }`.
+- `startup::platform::{establish, Established, start_sweeping,
+  start_publishing}` -- `establish` builds `Established { platform:
+  Option<PlatformBinding>, publication: Option<PublicationSink> }`; the
+  publisher itself is built later, in `build_control_plane`, from
+  `Established::publication` plus the client desired-state binding `establish`
+  does not have. `start_publishing` is `start_sweeping`'s sibling: absent
+  config or a zero interval spawns nothing, the first tick is immediate, a
+  failed pass never stops the loop.
 - `telemetry::init`.
 
 ## Hard invariants — do not break

@@ -7,6 +7,9 @@
 //! tenant bindings are a single cohesive computation over one input list,
 //! and splitting the grouping step from the function that calls it would
 //! separate the revision-sum rule (D1) from the only place it is applied.
+//! `ComposeError` moved out to `compose_error.rs` -- an error enum and the
+//! computation that raises it are two concepts, not one, and the enum's own
+//! rustdoc was most of what made this file too long to keep them together.
 
 #[cfg(test)]
 #[path = "snapshot_tests.rs"]
@@ -20,30 +23,9 @@ use fabric_runtime_publication::{
     RuntimeSnapshot, TenantBindingDocument, TenantDataBindingDocument, TenantDataBindings,
 };
 
+use super::compose_error::ComposeError;
 use crate::data_sources::DataSourceDeclaration;
 use crate::placements::PlacementRecord;
-
-/// Why [`compose`] could not build a snapshot from what it was given.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum ComposeError {
-    /// One tenant's logical data source is recorded twice.
-    ///
-    /// Held state this crate itself wrote never has this shape --
-    /// `select` refuses a second placement for one (tenant, logical) -- but
-    /// a break-glass edit to `placements.yaml` can produce it, and a
-    /// formula that silently kept one entry over the other would make a
-    /// publication disagree with whichever entry an operator reads in the
-    /// file. `check_held_placements` refuses this same shape for the
-    /// console; this is the same rule at the seam a scheduled pass runs
-    /// through even when nothing reads the list first.
-    #[error("{tenant} has two placements for {logical}")]
-    DuplicatePlacement {
-        /// The tenant with two records.
-        tenant: TenantId,
-        /// The logical data source both records name.
-        logical: LogicalDataSourceName,
-    },
-}
 
 /// Builds the complete snapshot one publication pass offers, from the
 /// platform's declared data sources, recorded placements, and the derived
@@ -125,21 +107,28 @@ fn compose_tenants(placements: &[PlacementRecord]) -> Result<Vec<TenantBindingDo
         accumulator.revision = accumulator.revision.saturating_add(placement.revision.get());
     }
 
-    Ok(by_tenant
+    by_tenant
         .into_iter()
-        .map(|(tenant, accumulator)| TenantBindingDocument {
-            tenant,
-            revision: BindingRevision::new(accumulator.revision),
+        .map(|(tenant, accumulator)| {
             // A tenant only enters `by_tenant` alongside its first logical
-            // binding, so `accumulator.data` is never empty here.
-            data: TenantDataBindings::try_new(accumulator.data)
-                .unwrap_or_else(|_| unreachable!("a tenant is only inserted alongside its first binding")),
-            configuration: None,
-            secrets: None,
-            features: BTreeMap::new(),
-            storage: BTreeMap::new(),
+            // binding, so `accumulator.data` is never empty here -- but a
+            // `ComposeError`, not a panic, is what a caller gets if that
+            // ever stops being true.
+            let Ok(data) = TenantDataBindings::try_new(accumulator.data) else {
+                return Err(ComposeError::EmptyTenantBinding { tenant });
+            };
+
+            Ok(TenantBindingDocument {
+                tenant,
+                revision: BindingRevision::new(accumulator.revision),
+                data,
+                configuration: None,
+                secrets: None,
+                features: BTreeMap::new(),
+                storage: BTreeMap::new(),
+            })
         })
-        .collect())
+        .collect()
 }
 
 /// The revision a document is offered at when nothing is held yet.

@@ -300,8 +300,10 @@ pub enum ControlPlaneError {
     /// `PlatformNotManaged`'s own reasoning, one level in: a deployment can
     /// manage an environment's components and data sources while stating no
     /// `[platform_management.publication]` section, and an operator asking
-    /// it to publish now needs to be told there is nowhere to publish to,
-    /// not met with a 404 for a route that plainly exists.
+    /// it to publish now needs to be told there is nowhere to publish to.
+    /// Shares `PlatformNotManaged`'s `404` for the same reason, not a `503`:
+    /// this is the same species of absence, fixed only by a config edit and
+    /// a restart, and retrying in five seconds changes nothing.
     #[error("this deployment publishes no runtime state")]
     PublicationNotConfigured,
 

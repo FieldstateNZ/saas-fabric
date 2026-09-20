@@ -186,6 +186,20 @@ fn a_broken_held_document_is_not_advertised_as_retryable_either() {
 }
 
 #[test]
+fn no_publication_target_is_a_not_found_not_an_outage() {
+    // Only a config edit and a restart change this -- the same species of
+    // absence `PlatformNotManaged` is, not a transient one, so it shares
+    // that variant's 404 and never carries `Retry-After`.
+    let response = ControlPlaneError::PublicationNotConfigured.into_response();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    assert!(
+        response.headers().get(http::header::RETRY_AFTER).is_none(),
+        "nothing here will be different in five seconds"
+    );
+}
+
+#[test]
 fn an_integration_that_moved_is_a_conflict_rather_than_a_refusal_or_an_outage() {
     // It reaches an operator from their own click on a repository: a disconnect
     // or another operator's rebind landed between the page they read and the

@@ -22,11 +22,13 @@
 //! built against the public surface this module exports, not built here.
 
 mod catalogue_source;
+mod compose_error;
 mod outcome;
 mod pass;
 mod protocol;
 mod publisher;
 mod reads;
+mod running_guard;
 mod snapshot;
 mod state;
 
@@ -34,7 +36,8 @@ mod state;
 pub(crate) mod testing;
 
 pub use catalogue_source::{CatalogueSourceError, RuntimeCatalogueSource};
+pub use compose_error::ComposeError;
 pub use outcome::{PassOutcome, PassResult, WaitingReason};
 pub use publisher::RuntimePublisher;
-pub use snapshot::{compose, ComposeError};
+pub use snapshot::compose;
 pub use state::{LastPass, PublicationState};

@@ -56,6 +56,16 @@ pub struct PlacementRecord {
     /// Defaults to `1` on the way in, so every `placements.yaml` written
     /// before this field existed still parses, and reads as revision 1 --
     /// nothing edited it, so nothing has moved it.
+    ///
+    /// Because the tenant's published revision is a *sum* (D1), removing one
+    /// record while bumping a surviving one by less than the removed
+    /// record's own revision can leave the sum exactly where it was, and the
+    /// runtime -- seeing an unmoved revision -- keeps serving the old
+    /// binding rather than the one with a record gone; a hand removal must
+    /// therefore bump a surviving record by at least the removed record's
+    /// revision, or the sum must fall, which nothing here does yet. Until
+    /// deprovisioning exists (ADR 0021), a record must not be removed by
+    /// hand.
     #[serde(default = "first_revision")]
     pub revision: BindingRevision,
 
@@ -68,4 +78,30 @@ pub struct PlacementRecord {
 
     /// When this was placed, RFC 3339.
     pub placed_at: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A record in the shape every `placements.yaml` was written in before
+    /// this field existed -- no `revision` key at all. Serde's own
+    /// `#[serde(default)]` machinery is format-agnostic, so JSON exercises
+    /// exactly the same default path YAML would; nothing here is specific
+    /// to the file's real on-disk format.
+    #[test]
+    fn a_record_with_no_revision_key_reads_as_revision_one() {
+        let record: PlacementRecord = serde_json::from_str(
+            r#"{
+                "tenant": "acme",
+                "logical": "primary",
+                "data_source": "shared-postgres-nz-01",
+                "isolation": {"kind": "database"},
+                "placed_at": "2026-09-18T02:14:00Z"
+            }"#,
+        )
+        .expect("a record predating this field must still parse");
+
+        assert_eq!(record.revision, BindingRevision::new(1));
+    }
 }

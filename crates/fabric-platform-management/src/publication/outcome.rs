@@ -71,6 +71,16 @@ pub enum WaitingReason {
     /// partial state ADR 0023 part 4 (D3) supersedes ADR 0018's "create
     /// empty documents at startup" to avoid -- see that ADR's amendment.
     NoResources,
+
+    /// No operator has connected this environment's platform repository
+    /// yet.
+    ///
+    /// [`crate::SweepResult::NotConnected`]'s sibling, for the same reason:
+    /// a platform nobody has connected is a running platform waiting for an
+    /// operator, not a broken one, and a read failing that way is not a
+    /// transport problem to retry or a coherence problem to refuse -- there
+    /// is simply nothing to read yet.
+    PlatformNotConnected,
 }
 
 /// Whether a pass ran at all.

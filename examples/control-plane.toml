@@ -202,12 +202,14 @@ mode = "in_memory"
 #     # /api/platform` showing no publication row and the trigger route
 #     # answering that nothing is configured.
 #     #
-#     # It needs the platform repository's Role granting `get`, `create` and
-#     # `update` on the three named ConfigMaps in this namespace, and the
-#     # runtime Deployment's three volume mounts already referencing them by
-#     # name -- both wired by `saas-fabric-platform` since #40, on
-#     # LucentRoot. A deployment whose platform repository predates that
-#     # lands this section with an image advance, not before.
+#     # It needs the platform repository's Role granting `get` and `update`
+#     # on the three named ConfigMaps in this namespace, plus `create`
+#     # namespace-wide -- Kubernetes cannot scope `create` by `resourceNames`,
+#     # since the object does not exist yet at create time -- and the runtime
+#     # Deployment's three volume mounts already referencing them by name --
+#     # both wired by `saas-fabric-platform` since #40, on LucentRoot. A
+#     # deployment whose platform repository predates that lands this
+#     # section with an image advance, not before.
 #     [platform_management.publication]
 #     namespace = "platform-system"
 #

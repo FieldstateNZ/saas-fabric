@@ -121,6 +121,10 @@ async fn a_fourth_divergence_exhausts_the_retry_budget_and_is_refused() {
         "{failure:?}"
     );
     assert!(target.writes().is_empty(), "nothing was ever written");
+    // The budget itself, pinned from above: the original offer plus exactly
+    // `MAX_RETRIES` retries, never a fifth attempt chasing a document that
+    // keeps diverging.
+    assert_eq!(target.publish_attempts(), 4);
 }
 
 #[tokio::test]

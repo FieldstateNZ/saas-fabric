@@ -13,6 +13,7 @@ use fabric_core::Clock;
 use fabric_runtime_publication::RuntimePublication;
 
 use super::outcome::{PassOutcome, PassResult};
+use super::running_guard::RunningGuard;
 use super::state::PublicationState;
 use crate::PlatformRepository;
 use crate::RuntimeCatalogueSource;
@@ -66,18 +67,24 @@ impl RuntimePublisher {
     /// Runs one publication pass, guarded against a second pass starting
     /// while this one is still in flight.
     ///
-    /// The guard is released, and the pass recorded, on every path out of
-    /// this method -- there is no early return that could leave the guard
-    /// set, because the pass itself never propagates an error: every input
-    /// failure becomes a [`PassOutcome`] value instead, the same shape
-    /// [`crate::PlatformManagement::sweep`] uses for the same reason.
+    /// The guard is a `RunningGuard`, taken immediately after this call
+    /// wins the swap, and released by its own `Drop` -- not by a `store`
+    /// written after the pass returns. That is not a style preference: a
+    /// plain `store(false, ...)` placed after `self.run_pass().await` is
+    /// sequential code, and sequential code after an `.await` is exactly
+    /// what a panic unwinding out of `run_pass` skips, and exactly what
+    /// never runs when the caller drops this future at that suspension
+    /// point -- an operator's disconnect, or a request timeout, cancels the
+    /// handler holding it the same way. `Drop` runs on both of those paths
+    /// as well as the ordinary one, which is the only way to make "always
+    /// released" true rather than merely usual.
     pub async fn publish_once(&self, state: &PublicationState) -> PassResult {
         if state.running.swap(true, Ordering::SeqCst) {
             return PassResult::AlreadyRunning;
         }
+        let _guard = RunningGuard { state };
 
         let outcome = self.run_pass().await;
-        state.running.store(false, Ordering::SeqCst);
 
         self.log_pass(&outcome);
         state.record(self.clock.now_unix_seconds(), outcome.clone());

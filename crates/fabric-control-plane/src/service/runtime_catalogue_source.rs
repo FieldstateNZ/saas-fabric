@@ -9,6 +9,7 @@ use fabric_platform_management::{CatalogueSourceError, RuntimeCatalogueSource};
 use fabric_runtime_publication::CatalogDocument;
 
 use crate::repository::DesiredStateBinding;
+use crate::ControlPlaneError;
 
 /// Reads the environment's derived runtime catalogue through the *client*
 /// desired-state binding -- the same one [`crate::ClientService`] reads, not
@@ -40,12 +41,17 @@ impl DesiredStateCatalogueSource {
 #[async_trait::async_trait]
 impl RuntimeCatalogueSource for DesiredStateCatalogueSource {
     async fn runtime_catalogue(&self) -> Result<CatalogDocument, CatalogueSourceError> {
-        let stored = self
-            .repository
-            .current()
-            .catalogue()
-            .await
-            .map_err(|error| CatalogueSourceError::Unavailable(error.to_string()))?;
+        let stored = self.repository.current().catalogue().await.map_err(|error| {
+            // `RepositoryError::Unavailable`'s own `Display` carries
+            // `detail` -- a path, a branch, or an upstream body --
+            // which must never reach `LastPassRow.detail` on a
+            // response. `ControlPlaneError::from_repository` is this
+            // crate's one place that drops it; going through the same
+            // translation every other repository failure in this crate
+            // uses is what keeps this seam from becoming a second place
+            // that forgets to.
+            CatalogueSourceError::Unavailable(ControlPlaneError::from_repository(error).public_message())
+        })?;
 
         let derived = stored
             .catalogue
@@ -76,11 +82,37 @@ mod tests {
             .await
             .expect_err("nothing is bound yet");
 
-        assert!(matches!(error, CatalogueSourceError::Unavailable(_)));
         let CatalogueSourceError::Unavailable(detail) = error else {
-            unreachable!("matched above");
+            panic!("expected Unavailable, got {error:?}");
         };
-        assert_eq!(detail, "no desired-state repository is configured");
+        assert_eq!(
+            detail,
+            "this platform is not connected to a client desired-state repository yet"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_repository_failures_detail_does_not_survive_translation() {
+        // `RepositoryError::Unavailable`'s own `detail` may name a branch, a
+        // path, or an upstream body (`repository/errors.rs`'s own contract);
+        // none of it may reach `CatalogueSourceError::Unavailable`, which a
+        // publication pass carries straight into `LastPassRow.detail`.
+        let repository = Arc::new(InMemoryClientRepository::new());
+        repository.set_unavailable(Some(
+            "github: 500 while reading clients/acme/client.yaml".to_owned(),
+        ));
+        let source = DesiredStateCatalogueSource::new(DesiredStateBinding::to(repository));
+
+        let error = source
+            .runtime_catalogue()
+            .await
+            .expect_err("the repository was made unavailable");
+
+        let CatalogueSourceError::Unavailable(detail) = error else {
+            panic!("expected Unavailable, got {error:?}");
+        };
+        assert!(!detail.contains("clients/acme"), "{detail}");
+        assert!(!detail.contains("github"), "{detail}");
     }
 
     #[tokio::test]

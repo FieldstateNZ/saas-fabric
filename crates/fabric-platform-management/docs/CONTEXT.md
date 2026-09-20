@@ -8,7 +8,12 @@ Since ADR 0023 part 1 it also decides what an environment declares about its
 data sources — a second declared resource, `data_sources.rs`, over the same
 late-bound repository. Since ADR 0023 part 2 it also places a client's data
 intent on one of those declared sources and records the outcome —
-`placements.rs`, a third module over the same repository. In neither plane (see
+`placements.rs`, a third module over the same repository. Since ADR 0023
+part 4 it also composes what is declared and recorded, plus a derived
+runtime catalogue read through a seam this crate defines, into the runtime's
+three documents and offers them to a publication target on demand —
+`publication.rs`, a fourth module, the one place this crate touches a port
+outside `DesiredState`/`DataSourceState`/`PlacementState`. In neither plane (see
 `docs/architecture/crate-dependencies.md`) — no transport, no HTTP, no Git,
 no Kubernetes client. Depends on `fabric-core` and, since ADR 0023,
 `fabric-runtime-publication` (also in neither plane — reused for the wire's
@@ -334,6 +339,39 @@ own data-source sub-types rather than re-declared, so a hand-editable
   `service.rs` (the struct, `place`), `service/for_client.rs` (`for_client`),
   and `service/stamp.rs` (`stamp`); `tenant_id.rs` holds the shared
   reparse, since both operations need it.
+- `compose(declarations: Vec<DataSourceDeclaration>, placements:
+  &[PlacementRecord], catalog: CatalogDocument, held: &PublishedRevisions)
+  -> Result<RuntimeSnapshot, ComposeError>` (ADR 0023 part 4, D2/D3) — pure.
+  Data sources become `DataSourceDocument`s, sorted by id. Placements group
+  by tenant into one `TenantBindingDocument` each, `revision` the *sum* of
+  the tenant's records' own (D1). Every document offered at `held`'s own
+  revision, or `1` when none. Never sets emptying intent.
+  `ComposeError::DuplicatePlacement { tenant, logical }` is the one refusal.
+- `RuntimeCatalogueSource` (async trait) — `async fn runtime_catalogue(&self)
+  -> Result<CatalogDocument, CatalogueSourceError>`. The seam that keeps this
+  crate off `fabric-client-model`; the control plane implements it.
+- `CatalogueSourceError` — `Conflict { resource, applications: (String,
+  String) }` | `Unavailable(String)`.
+- `RuntimePublisher { environment, platform: Arc<dyn PlatformRepository>,
+  catalogue: Arc<dyn RuntimeCatalogueSource>, target: Arc<dyn
+  RuntimePublication>, clock: Arc<dyn Clock> }` — `new(...)`,
+  `describe_target() -> String`, `async fn publish_once(&self, state:
+  &PublicationState) -> PassResult`. Offers at the held revision; on
+  `DivergentPayload`, bumps *only* the named document and re-offers, up to
+  three times (one per document, `protocol.rs::MAX_RETRIES`). Guarded
+  against re-entry by `PublicationState`'s atomic flag, released on every
+  path out.
+- `PublicationState` — `SweepState`'s sibling: `new()`, `last_pass() ->
+  Option<LastPass>`.
+- `LastPass { at_unix_seconds: u64, outcome: PassOutcome }`.
+- `PassOutcome` — `Published { tenants, data_sources, catalog:
+  DocumentOutcome each, revisions: PublishedRevisions }` | `Unchanged {
+  revisions }` | `Waiting { reason: WaitingReason }` | `Refused { reason:
+  SafeDiagnostic }` | `Failed { detail: SafeDiagnostic }`.
+- `WaitingReason` — `NoResources` (the derived catalogue has none yet; ADR
+  0018's "create empty documents at startup" is superseded, see that ADR's
+  amendment).
+- `PassResult` — `Ran(PassOutcome)` | `AlreadyRunning`.
 
 ## Internal modules
 
@@ -434,6 +472,26 @@ own data-source sub-types rather than re-declared, so a hand-editable
   `DeploymentObservation`, `DeploymentObserver`. The whole module is a data
   contract plus one trait; no logic beyond the type definitions.
 - `policy.rs` — `UpdatePolicy` alone.
+- `publication.rs` +
+  `publication/{catalogue_source,outcome,pass,protocol,protocol_tests,publisher,publisher_tests,reads,snapshot,snapshot_tests,state,testing}.rs`
+  (ADR 0023 part 4) — `compose` (`snapshot.rs`, pure: declared data sources +
+  recorded placements + derived catalogue + held revisions -> `RuntimeSnapshot`;
+  `ComposeError::DuplicatePlacement`), `RuntimeCatalogueSource` +
+  `CatalogueSourceError` (`catalogue_source.rs`, the seam that keeps this
+  crate off `fabric-client-model`), `RuntimePublisher` (`publisher.rs`:
+  `new`, `describe_target`, `publish_once`, the one thing here that touches
+  a port), the offer-and-advance retry rule (`protocol.rs`, `MAX_RETRIES =
+  3`), `PublicationState` + `LastPass` (`state.rs`, `SweepState`'s
+  sibling), `PassOutcome` + `WaitingReason` + `PassResult` (`outcome.rs`).
+  `pass.rs`: `run_pass`, the body `publish_once` runs once its re-entry
+  guard lets it through; `reads.rs`: reading the three inputs, turning a
+  coherence problem into `Refused` and a transport failure into `Failed`.
+  `testing.rs` (`#[cfg(test)]`): an in-memory `RuntimePublication` fake for
+  `protocol_tests.rs`/`publisher_tests.rs`. The control plane's own half —
+  its `RuntimeCatalogueSource` impl (`fabric-control-plane`'s
+  `service/runtime_catalogue_source.rs`), the `/api/platform` row, the
+  operator trigger, and the schedule (`fabric-control-plane-api`'s
+  `startup/platform/{publication,publishing}.rs`) — is not here.
 - `registry.rs` — `Registry` trait, `Resolved`, `Provenance`, `RegistryError`.
 - `selector.rs` + `selector/selector_tests.rs` — `decide`, `Decision`,
   `Reason`. Pure.

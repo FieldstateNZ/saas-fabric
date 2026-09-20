@@ -55,6 +55,8 @@ fn every_failure_has_its_own_machine_code() {
             id: data_source(),
             tenants: vec![tenant()],
         }),
+        ControlPlaneError::PublicationNotConfigured,
+        ControlPlaneError::PublicationRunning,
     ];
 
     let mut codes: Vec<&str> = errors.iter().map(ControlPlaneError::code).collect();

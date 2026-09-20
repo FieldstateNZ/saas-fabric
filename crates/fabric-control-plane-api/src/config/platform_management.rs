@@ -1,5 +1,7 @@
 //! Which platform repository this deployment manages, and how often.
 
+use super::PublicationConfig;
+
 /// Platform Management's configuration.
 ///
 /// Absent means **deliberately unconfigured**: a deployment that manages no
@@ -60,6 +62,19 @@ pub struct PlatformManagementConfig {
     /// headroom for the rest of the operation: see `startup::platform`.
     #[serde(default = "default_operation_timeout")]
     pub operation_timeout_seconds: u64,
+
+    /// Whether, and where, this deployment publishes the runtime's three
+    /// documents (ADR 0023 part 4).
+    ///
+    /// `None` — the default, and the same as omitting the whole section —
+    /// means this deployment manages the platform repository but publishes
+    /// no runtime state: `GET /api/platform` shows no publication row, and
+    /// the trigger route answers that nothing is configured. A deployment
+    /// stating this section wrongly fails startup, exactly as a wrongly
+    /// stated `registry` does; a deployment omitting it starts and runs
+    /// with one less capability, exactly as omitting `observation` does.
+    #[serde(default)]
+    pub publication: Option<PublicationConfig>,
 }
 
 /// Where published artifacts are looked up.

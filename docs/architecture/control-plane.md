@@ -121,6 +121,7 @@ POST   /api/platform/components/{component}/rollback   put it back on one
 GET    /api/platform/data-sources        what this environment can place a tenant's data on
 PUT    /api/platform/data-sources/{dataSourceId}       declare one, or correct it   (If-Match required)
 DELETE /api/platform/data-sources/{dataSourceId}       remove one, refused while a tenant is placed on it (If-Match required)
+POST   /api/platform/publication         publish the runtime's three documents now
 GET    /api/catalogue                    the product catalogue, and its revision
 POST   /api/catalogue                    apply one command      (If-Match, or If-None-Match: *)
 GET    /api/catalogue/runtime            the catalogue the runtime would be given, derived on read
@@ -1080,8 +1081,9 @@ Every credential either of them handles is a redacting newtype with no
 ## Runtime publication boundary
 
 [ADR 0018](../decisions/0018-runtime-state-is-published-as-three-versioned-documents.md)
-builds the producer half of this seam; this section is corrected in part by
-that decision — see "The production owner" below for what it supersedes.
+builds the wire contract and the two adapters; [ADR 0023](../decisions/0023-data-sources-are-environment-desired-state-and-placement-is-recorded.md)
+part 4 builds the caller this section used to describe as unbuilt. Both are
+now built, end to end.
 
 ```text
 Git desired state
@@ -1091,82 +1093,100 @@ reconciliation
       ├── Envoy               ← not built
       ├── OpenBao             ← not built
       ├── OpenFGA             ← not built
-      └── runtime bindings    ← producer built (ADR 0018); no caller yet
+      └── runtime bindings    ← producer, controller and both adapters built
 ```
 
-The runtime plane reads tenant bindings, DataSources and the resource
+The runtime plane still reads tenant bindings, DataSources and the resource
 catalogue from files a controller writes, and resolves them in memory with no
-control-plane dependency (§6, §7). That must not change: publishing a binding
+control-plane dependency (§6, §7). That has not changed: publishing a binding
 is another reconciliation target, on the same footing as Keycloak, and
 **not** a control-plane mutation reaching into a runtime registry.
 
-**What is built.** `fabric-runtime-publication` — a crate in **neither**
-plane, exactly as `fabric-core` is — owns the wire contract for the three
-documents (`tenants.json`, `data-sources.json`, `catalog.json`) and the
-sidecar manifest published beside each one, the `RuntimePublication` port
-(`current`, `publish`, `describe`), and a filesystem adapter that writes all
-three atomically (temp file, `fsync`, `rename`, payload before manifest). The
-port's guards refuse a whole publication before any byte is written: a stale
-or same-revision-divergent document, a tenant naming a DataSource this same
-publication does not include, a data-sources document dropping an id the
-*held* tenants document still references, and a non-empty document going
-empty without the caller stating that intent. A composed acceptance test,
-`fabric-runtime-publication/tests/published_state_serves_two_tenants.rs`,
-publishes a fixture through the real port and then drives the real
-`fabric_tenant_runtime::build_runtime` and the real `fabric_data_api::build_data_api`
-router over the result — the proof that the producer and the runtime plane
-agree on the wire without sharing a Rust type.
+**The four inputs.** A publication pass reads: this environment's declared
+data sources (`environments/<env>/data-sources.yaml`, ADR 0023 part 1); its
+recorded placements (`environments/<env>/placements.yaml`, part 2); the
+runtime catalogue, derived fresh from the product catalogue's newest
+published releases on every pass (part 3); and what the publication target
+currently holds (`RuntimePublication::current`). `compose`
+(`fabric-platform-management`'s `publication::snapshot`) turns the first
+three into a complete `RuntimeSnapshot`, offered at the fourth's own
+revisions — pure, and unit-tested without a port in scope.
 
-**What it is consumed by.** Nothing in production yet. The consumer side —
-`fabric_tenant_runtime::ResourceSource` / `JsonFileSource` reading
-`tenants.json` and `data-sources.json`, and `fabric_data_api`'s startup path
-reading `catalog.json` into a `ResourceCatalog` — already exists and is
-unchanged; ADR 0018 states it as frozen. Only the composed test above and a
-developer running the filesystem adapter by hand exercise that seam today.
+**The controller.** `RuntimePublisher` (`fabric-platform-management`,
+`publication::publisher`) is the one thing in that crate that touches a
+port: it composes a snapshot and offers it through whatever implements
+`RuntimePublication` — `FilesystemRuntimePublication` in tests,
+`KubernetesRuntimePublication` in production. `fabric-control-plane`
+supplies the fourth input this crate cannot reach itself:
+`DesiredStateCatalogueSource` (`service/runtime_catalogue_source.rs`)
+implements `RuntimeCatalogueSource` over the client desired-state binding,
+without giving `fabric-platform-management` an edge to
+`fabric-client-model`. `build_control_plane` constructs the publisher only
+when both a platform and a publication target
+(`ControlPlaneDeps.publication`) are configured, and stores it on
+`PlatformBinding::publisher`.
+
+Offering follows one rule (ADR 0023 part 4, D3): offer every document at the
+revision the target currently holds, and advance a document's revision only
+when the target reports its bytes diverge from what it holds at that
+revision (`DivergentPayload`) — up to three retries, one per document. A
+publication that changes nothing writes nothing, not even a manifest. An
+empty derived catalogue is never published — `Waiting`, not an empty write
+— which is what supersedes ADR 0018's "create empty documents at startup"
+(see that ADR's own amendment).
+
+**The schedule.** `fabric-control-plane-api`'s `startup/platform/publishing.rs`
+starts `RuntimePublisher::publish_once` on an interval
+(`[platform_management.publication].interval_seconds`, default 60), the same
+shape `start_sweeping` already has: absent or zero starts nothing, the first
+tick is immediate, a failed pass never stops the loop. Publication writes
+with the controller's own credential, so — unlike Keycloak reconciliation
+(ADR 0012) — nothing is borrowed and a poll is both safe and correct.
+
+**The trigger.** `POST /api/platform/publication` runs one pass now, as an
+operator, and answers with the same row `GET /api/platform` shows once the
+pass finishes. `PublicationNotConfigured` (`503`) when this deployment
+publishes no runtime state; `PublicationRunning` (`409`) when a pass —
+scheduled or triggered — is already in flight.
+
+**The panel row, and what it does and does not say.** `GET /api/platform`'s
+`publication` row names the target (`describe()`, never a credential), the
+revision currently held for each document, and the last pass's outcome —
+`published`, `unchanged`, `waiting`, `refused` or `failed`, with a sanitised
+detail for the last three. It is `null` when no publication target is
+configured. **It reports what the target holds and what the last pass did.
+It does not observe the runtime.** There is no port from this crate to the
+runtime plane (§6), so a publication pass completing says nothing about
+whether the runtime has reloaded, is mounting the ConfigMap the kubelet
+propagated, or is even running at all — that is the staleness budget ADR
+0018's Kubernetes-adapter notes already name (controller interval + kubelet
+sync + the runtime's own refresh interval), not something this row narrows.
 
 **What is still not built:**
 
-- **The Kubernetes adapter.** The one this crate's filesystem adapter stands
-  in for in production — three ConfigMaps in `platform-system`, written by a
-  least-privileged controller, mounted as whole volumes (never `subPath`) into
-  the runtime's existing `tenants_path` / `data_sources_path` / `catalog_path`.
-  Specified in ADR 0018, "The Kubernetes adapter", not built here. The shape
-  it would take is no longer hypothetical: `fabric-deployment-kubernetes`
-  (ADR 0022) already reaches the Kubernetes API — GETs and LISTs, not writes —
-  over plain HTTPS with `reqwest` and a projected service-account token, with
-  no `kube` or `k8s-openapi` crate in the graph, so a publication adapter's
-  writes could reach the API server the same way.
-- **A scheduled caller.** Something that reads `current()`, decides a
-  revision, and calls `publish()` on an interval. Publication writes with the
-  controller's own ServiceAccount, so — unlike Keycloak reconciliation
-  (ADR 0012) — nothing is borrowed and a poll is both safe and correct; there
-  is simply nothing polling yet.
-- **The provisioner input.** A published `DataSource` needs a connector, a
-  connection selector, residency and pool settings; a published tenant
-  binding needs a DataSource id and, on a shared DataSource, a discriminator
-  column and *this tenant's actual value in it*. None of that is derivable
-  from a client's desired-state document (`spec.data.primary: {class,
-  provider, region}` is intent, not placement), and inventing it would be
-  exactly what [ADR 0007](../decisions/0007-isolation-is-checked-against-an-observed-fact-not-a-label.md)
-  forbids — a tenant boundary that looks configured and is not. ADR 0018 names
-  the missing input (`ProvisionedPlacement`) without designing it.
-
-**Where the future caller lives.** Concretely, when a caller is built:
-
-- it does **not** belong in `fabric-reconciliation` or an unnamed sibling, as
-  an earlier draft of this section said — ADR 0018 supersedes that sentence.
-  The caller lives in a **control-plane crate**, which may depend on
-  `fabric-runtime-publication` (an `expected` entry `scripts/check_architecture.py`
-  adds when that crate exists, the same way `fabric-reconciliation` already
-  depends on `fabric-client-model`);
-- it publishes complete replacements of the three documents, every time —
-  there is no incremental path;
-- it does **not** give `fabric-control-plane` a dependency on
-  `fabric-tenant-runtime`, and the architecture check refuses one already —
-  `check_runtime_plane_cannot_reach_the_publisher` additionally refuses the
-  runtime plane a dependency on `fabric-runtime-publication` itself, dev
-  tables included, so the runtime can never link a writer of the files it
-  reads.
+- **Raising the runtime.** ADR 0023 part 5: the runtime Deployment stays at
+  zero replicas until publication is complete *and* the environment's
+  connector configuration names the connectors its data sources reference
+  *and* the issuer-to-tenant registry covers every placed tenant. Nothing
+  here reads either of the other two conditions or moves a replica count;
+  raising it is a one-line platform change, made by a human once all three
+  are true.
+- **The connector list.** A data source names a connector id; that the
+  runtime's `[[connectors]]` lists it, and that an `ndc-postgres` process
+  exists on the environment configured with the named connection, is
+  platform composition this decision does not generate. The publisher can
+  report a data source whose connector the runtime does not list; it cannot
+  deploy one.
+- **The issuer-to-tenant registry** (ADR 0019 §G4a). `[identity].trusted_issuers`
+  is still configuration, not one of the three published documents, and a
+  placed tenant whose issuer the runtime does not list is refused at the
+  edge regardless of what this row says.
+- **Deprovisioning, and emptying.** Removing a placement, and what an empty
+  tenants document means for a tenant's rows, is the deprovisioning question
+  ADR 0021 already owes an answer to. `compose` never sets emptying intent —
+  an environment that has genuinely lost every data source or placement is
+  exactly what a scheduled pass cannot tell apart from a read that came back
+  empty by accident (ADR 0018 part 6).
 
 ## Auditability
 
@@ -1182,12 +1202,20 @@ time.
 | a product save | `control_plane.audit.product_updated` |
 | a catalogue command | `control_plane.audit.catalogue_changed` |
 | a secret operation | `control_plane.audit.client_secret` |
+| an operator's runtime-publication trigger | `control_plane.audit.publication_triggered` |
 
 The catalogue event names no client, because the catalogue has none: it carries
 `resource = "catalogue"` and the entry the command changed, and takes its
 operation from the activity entry the command appended, so the audit record and
-what `GET /api/activity` shows cannot disagree. That activity is a view kept in
-desired state
+what `GET /api/activity` shows cannot disagree. The publication event is the
+same shape, `resource = "runtime-publication"`, for the same reason —
+publication is environment-wide, not any one client's document. It carries
+`outcome` (`published` | `unchanged` | `waiting` | `refused` | `failed`)
+rather than a revision: a pass may advance any of three documents by a
+different amount, or none, and `GET /api/platform` is where the actual
+numbers live. Only the operator trigger is recorded; the scheduled pass has
+no operator to attribute and is not the human decision this trail exists
+for. That activity is a view kept in desired state
 ([ADR 0021](../decisions/0021-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md) §6),
 not a replacement for these events.
 

@@ -13,6 +13,10 @@ fabric-core.workspace = true
 # deployment without it mounts the route and answers that it is not connected.
 fabric-platform-management.workspace = true
 fabric-reconciliation.workspace = true
+# The publisher's wire contract (`CatalogDocument`) and its `RuntimePublication`
+# port -- this crate implements `RuntimeCatalogueSource` and constructs the
+# `RuntimePublisher` (ADR 0023 part 4); it does not implement the port itself.
+fabric-runtime-publication.workspace = true
 
 async-trait.workspace = true
 axum.workspace = true

@@ -615,6 +615,13 @@ runtime plane at all.
   `resourceNames` restricted to exactly those three, in `platform-system` only.
   **No `delete`.** Deleting a ConfigMap the runtime mounts is an outage;
   deprovisioning is expressed as an empty set *inside* a document.
+
+  > **Amendment (ADR 0023 §4, as built).** The shipped adapter's RBAC is
+  > narrower: `get`, `create`, `update` only. It `GET`s to read the current
+  > object, `POST`s to create one that does not exist, and `PUT`s to replace
+  > one that does — it never lists, watches or patches a ConfigMap, so the
+  > platform repository's Role should grant exactly those three verbs and no
+  > more.
 - **The controller may run on a schedule.** This is a deliberate asymmetry with
   identity reconciliation, which cannot: [ADR 0012](0012-the-platform-acts-on-keycloak-as-the-operator.md)
   removed the scheduled sweep because Keycloak is acted on with a borrowed
@@ -681,6 +688,15 @@ runtime plane at all.
 3. Atomicity is free: the kubelet swaps the mounted symlink atomically. The
    adapter still writes payload before manifest, for the crash-ordering reason
    in part 5.
+
+   > **Amendment (ADR 0023 §4, as built).** Payload and manifest do not land
+   > as two separate writes the way the filesystem adapter's two files do.
+   > One document's ConfigMap already carries both `<name>.json` and
+   > `<name>.manifest.json` as its two `data` keys (see the table above),
+   > and the shipped adapter builds and writes that whole object in one
+   > `PUT`/`POST` — there is no ordering to get right *within* one document,
+   > only *across* the three, which `publish` still writes data sources,
+   > then catalogue, then tenants, exactly as part 3 requires.
 4. Divergence detection is a string comparison of `ConfigMap.data["<name>.json"]`
    — no digest, no annotation.
 5. Refuse a document that would take the object past 1 MiB. Do not split.

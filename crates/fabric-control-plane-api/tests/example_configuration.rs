@@ -10,7 +10,9 @@ use std::path::PathBuf;
 
 use fabric_client_model::{ClientDocument, DataIntent, API_VERSION, API_VERSION_V2};
 use fabric_control_plane::OperatorConfig;
-use fabric_control_plane_api::config::{ControlPlaneAppConfig, DesiredStateConfig, IdentityProviderConfig};
+use fabric_control_plane_api::config::{
+    ControlPlaneAppConfig, DesiredStateConfig, IdentityProviderConfig, PlatformManagementConfig,
+};
 use fabric_core::LogicalDataSourceName;
 use fabric_platform_management::PlacementClassDocument;
 
@@ -176,4 +178,41 @@ fn the_managed_desired_state_mode_needs_nothing_else_stated() {
     .expect("the managed mode must load with nothing else stated");
 
     assert!(matches!(config, DesiredStateConfig::Managed));
+}
+
+#[test]
+fn a_platform_management_section_with_a_publication_block_parses() {
+    // The example ships this section commented out (no cluster to publish
+    // to), so this is the one place the shape is proved against the real
+    // `PlatformManagementConfig`, the way `the_managed_desired_state_mode_needs_nothing_else_stated`
+    // proves `DesiredStateConfig`'s managed mode without a shipped example
+    // of it either.
+    let config: PlatformManagementConfig = serde_json::from_value(serde_json::json!({
+        "environment": "lucentroot",
+        "publication": {
+            "namespace": "platform-system",
+            "interval_seconds": 30,
+        },
+    }))
+    .expect("a stated publication section must parse");
+
+    let publication = config
+        .publication
+        .expect("the section was stated, so it must be Some");
+    assert_eq!(publication.namespace, "platform-system");
+    assert_eq!(publication.interval_seconds, 30);
+}
+
+#[test]
+fn an_unknown_key_inside_the_publication_section_is_refused_rather_than_ignored() {
+    let error = serde_json::from_value::<PlatformManagementConfig>(serde_json::json!({
+        "environment": "lucentroot",
+        "publication": {
+            "namespace": "platform-system",
+            "typo_field": true,
+        },
+    }))
+    .expect_err("a field the publisher does not model must not be silently dropped");
+
+    assert!(error.to_string().contains("typo_field"), "{error}");
 }

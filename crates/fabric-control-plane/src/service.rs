@@ -17,11 +17,14 @@ mod reconciliation_view;
 #[cfg(test)]
 mod reconciliation_view_tests;
 mod reserved;
+mod runtime_catalogue_source;
 #[cfg(test)]
 mod service_tests;
 mod set_identity;
 mod set_product;
 mod state_access;
+
+pub(crate) use runtime_catalogue_source::DesiredStateCatalogueSource;
 
 use std::collections::BTreeSet;
 use std::sync::Arc;

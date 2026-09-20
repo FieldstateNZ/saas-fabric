@@ -1,6 +1,9 @@
 //! The shape the console reads.
 
+mod publication;
 mod render;
+
+pub(crate) use publication::{pass_outcome_word, PublicationRow};
 
 /// An environment's composition, as the console shows it.
 #[derive(Debug, serde::Serialize)]
@@ -19,6 +22,15 @@ pub struct PlatformBody {
     /// operator wondering why a published version has not appeared needs to
     /// know which.
     pub last_check: Option<LastCheckRow>,
+
+    /// This environment's runtime publication, or `null` when this
+    /// deployment publishes no runtime state at all (ADR 0023 part 4).
+    ///
+    /// Reports what the publication target holds and what the last pass
+    /// did -- it does not observe the runtime the way `last_check` observes
+    /// a component's deployment evidence. There is no port from this crate
+    /// to the runtime plane to observe with (§6).
+    pub publication: Option<PublicationRow>,
 }
 
 /// One component.

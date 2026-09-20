@@ -11,8 +11,13 @@ use fabric_platform_management::{
 use fabric_registry::{HelmCharts, OciRegistry};
 
 mod budget;
+mod established;
+mod publication;
+mod publishing;
 mod sweeping;
 
+pub use established::Established;
+pub(super) use publishing::start_publishing;
 pub(super) use sweeping::start_sweeping;
 
 use crate::config::PlatformManagementConfig;
@@ -68,12 +73,18 @@ pub fn establish(
     http_timeout_seconds: u64,
     request_timeout_seconds: u64,
     clock: &Arc<dyn Clock>,
-) -> Result<Option<PlatformBinding>, String> {
+) -> Result<Established, String> {
     let Some(config) = config else {
-        return Ok(None);
+        return Ok(Established {
+            platform: None,
+            publication: None,
+        });
     };
 
     budget::validate(config, http_timeout_seconds, request_timeout_seconds)?;
+
+    // Beside the budget check, for the same "fail loudly at startup" reason.
+    let publication = publication::build_sink(config.publication.as_ref())?;
 
     let registry = OciRegistry::new(
         &config.registry.base_url,
@@ -119,13 +130,20 @@ pub fn establish(
         Arc::clone(clock),
     ));
 
-    Ok(Some(PlatformBinding {
-        service: Arc::new(service),
-        repository,
-        data_sources,
-        placements,
-        environment: config.environment.clone(),
-    }))
+    Ok(Established {
+        platform: Some(PlatformBinding {
+            service: Arc::new(service),
+            repository,
+            data_sources,
+            placements,
+            environment: config.environment.clone(),
+            // `build_control_plane` builds the publisher, not this
+            // function -- see `PlatformBinding::publisher`'s own rustdoc.
+            publisher: None,
+            publication: Arc::new(fabric_platform_management::PublicationState::new()),
+        }),
+        publication,
+    })
 }
 
 #[cfg(test)]
@@ -140,6 +158,7 @@ mod tests {
             observation: std::collections::BTreeMap::new(),
             reconciliation_interval_seconds: 60,
             operation_timeout_seconds,
+            publication: None,
         }
     }
 
@@ -205,8 +224,9 @@ mod tests {
         // Absent is deliberately unconfigured, not misconfigured. Validating a
         // section nobody wrote would turn "we do no platform management" into a
         // startup failure.
-        assert!(establish(None, 10, 1, &clock())
-            .expect("absent is fine")
-            .is_none());
+        let established = establish(None, 10, 1, &clock()).expect("absent is fine");
+
+        assert!(established.platform.is_none());
+        assert!(established.publication.is_none());
     }
 }

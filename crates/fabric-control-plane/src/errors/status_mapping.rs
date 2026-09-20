@@ -111,17 +111,18 @@ impl ControlPlaneError {
                 StatusCode::UNPROCESSABLE_ENTITY
             }
 
-            // 503 and retryable: Git being briefly unreachable is the ordinary
-            // transient failure of this API.
-            // Three failures, one status, and they are not the same thing.
-            // Two are transient and carry a `Retry-After`; the third is a
-            // platform waiting for an operator and deliberately does not —
-            // retrying will not connect it. That distinction lives on the
-            // error rather than the status (see `response.rs`), and the
-            // machine code below is how the console tells them apart.
-            Self::RepositoryUnavailable | Self::SignInUnavailable | Self::IntegrationNotConfigured => {
-                StatusCode::SERVICE_UNAVAILABLE
-            }
+            // Four failures, one 503, not all for the same reason: two are
+            // transient (`Retry-After`), a platform waiting for an operator
+            // is not, and `PublicationNotConfigured` joins them
+            // structurally (its own rustdoc) -- the code below tells them apart.
+            Self::RepositoryUnavailable
+            | Self::SignInUnavailable
+            | Self::IntegrationNotConfigured
+            | Self::PublicationNotConfigured => StatusCode::SERVICE_UNAVAILABLE,
+
+            // A pass already holds the publication guard; try again once it
+            // releases -- not a wait-out-an-outage 503.
+            Self::PublicationRunning => StatusCode::CONFLICT,
 
             // Five failures, four statuses, and the console branches on the
             // machine code below rather than on any of them. A stale write and

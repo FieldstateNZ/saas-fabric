@@ -588,6 +588,11 @@ def check_dependency_direction(graph: Graph) -> list[Failure]:
             "fabric-client-model",
             "fabric-reconciliation",
             "fabric-platform-management",
+            # The publisher's wire contract and its `RuntimePublication`
+            # port (ADR 0023 part 4): this crate implements
+            # `RuntimeCatalogueSource` and constructs the `RuntimePublisher`,
+            # never the port itself.
+            "fabric-runtime-publication",
         },
         # The two adapters depend *inward* on the ports they implement, which
         # is why the arrows point this way and not the other. Nothing in the
@@ -676,6 +681,14 @@ def check_dependency_direction(graph: Graph) -> list[Failure]:
             "fabric-client-git",
             "fabric-git-host",
             "fabric-openbao",
+            # Validates a configured publication namespace and names the
+            # `RuntimePublication` trait object its `PublicationSink` is
+            # built as (ADR 0023 part 4).
+            "fabric-runtime-publication",
+            # The only crate that builds the production publication target,
+            # the same "only the composition root binds an adapter" rule
+            # `fabric-deployment-kubernetes` already follows.
+            "fabric-publication-kubernetes",
         },
     }
 

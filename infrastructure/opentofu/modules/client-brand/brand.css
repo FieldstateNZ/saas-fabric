@@ -1,0 +1,7 @@
+:root { --fabric-primary: PRIMARY; --fabric-background: BACKGROUND; --fabric-foreground: FOREGROUND; }
+.login-pf body { background: var(--fabric-background); color: var(--fabric-foreground); }
+#kc-header-wrapper { color: var(--fabric-foreground); text-transform: none; font-weight: 700; }
+#kc-header-wrapper::before { content: ''; display: block; width: 72px; height: 72px; margin: 0 auto 20px; background: url('../img/logo.png') center / contain no-repeat; }
+.card-pf { border-top: 5px solid var(--fabric-primary); border-radius: 12px; box-shadow: 0 12px 36px #0002; }
+.pf-c-button.pf-m-primary { background-color: var(--fabric-primary); border-radius: 6px; }
+a { color: var(--fabric-primary); }

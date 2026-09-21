@@ -52,6 +52,13 @@ The two planes share exactly one crate, and
 if either depends on the other. They face different networks, fail
 independently, and authenticate different things.
 
+## Local Aspire hosting demo
+
+[`hosting/README.md`](hosting/README.md) describes the reusable SaaS Fabric
+application builder and demo AppHost. Client YAML drives local Keycloak and
+OpenBao provisioning through OpenTofu. The demo runs independently of the Rust
+services and the React application.
+
 ## The contract
 
 An application asks for a logical resource:

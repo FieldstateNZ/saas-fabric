@@ -201,3 +201,14 @@ mapped to nuget.org. Then replace the project reference with:
 
 This package remains a local development harness. Production uses the independent
 OpenTofu module and production infrastructure, not Aspire's demo bootstrap.
+
+## TypeScript AppHosts
+
+From the TypeScript-compatible preview onward, an existing AppHost can add this
+integration without replacing its application builder. Use Aspire 13.5.4, add
+`SaaSFabric.Aspire.Hosting` with `aspire add`, and regenerate with `aspire restore`.
+The generated `builder.addSaaSFabric("config/clients", { audience: "workspec" })`
+returns the Envoy container resource. It provisions the same services as the C#
+builder and waits for the client applies before the gateway becomes healthy.
+This installs local infrastructure; application authentication must be integrated
+separately. Existing application login handlers are not replaced automatically.

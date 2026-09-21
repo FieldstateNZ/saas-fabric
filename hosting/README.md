@@ -212,3 +212,8 @@ returns the Envoy container resource. It provisions the same services as the C#
 builder and waits for the client applies before the gateway becomes healthy.
 This installs local infrastructure; application authentication must be integrated
 separately. Existing application login handlers are not replaced automatically.
+
+Applications can supply a platform-owned `templatePolicy` path in the TypeScript
+options (or C# argument). It contains a JSON array of approved digest-pinned OCI
+template references. This replaces the demo allowlist for that AppHost; never let
+untrusted client YAML control this policy. OpenTofu still owns installation.

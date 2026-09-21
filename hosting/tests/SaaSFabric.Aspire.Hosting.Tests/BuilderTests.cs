@@ -12,8 +12,10 @@ public sealed class BuilderTests : IDisposable
     public void StandardBuilderSupportsTheExportedIntegration()
     {
         File.WriteAllText(Path.Combine(directory, "client.yaml"), "id: client\nname: Client\nrealm: client\napplications: [{ id: shell, redirectUris: ['http://localhost:6002/callback'] }]\n");
-        var builder = DistributedApplication.CreateBuilder(["--appHostDirectory", directory]);
-        var gateway = builder.AddSaaSFabric(directory);
+        var builder = DistributedApplication.CreateBuilder([]);
+        File.WriteAllText(Path.Combine(directory, "policy.json"), "[]");
+        var gateway = builder.AddSaaSFabric(directory, templatePolicy: Path.Combine(directory, "policy.json"));
+        Assert.Equal("[]", File.ReadAllText(Path.Combine(builder.AppHostDirectory, ".fabric/templates/template-policy.json")));
         Assert.Equal("fabric-envoy", gateway.Resource.Name);
         Assert.Contains(builder.Resources, resource => resource.Name == "fabric-tofu-client");
         Assert.Throws<InvalidOperationException>(() => builder.AddSaaSFabric(directory));

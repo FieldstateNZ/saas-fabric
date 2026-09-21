@@ -11,15 +11,25 @@ public static class SaaSFabricHostingExtensions
     /// <param name="builder">The existing application builder.</param>
     /// <param name="clientDirectory">AppHost-relative directory containing client YAML.</param>
     /// <param name="audience">Audience for the clients' access tokens.</param>
+    /// <param name="templatePolicy">Optional AppHost-relative platform-owned JSON template allowlist.</param>
     [AspireExport]
     public static IResourceBuilder<ContainerResource> AddSaaSFabric(
-        this IDistributedApplicationBuilder builder, string clientDirectory, string audience = "saas-fabric")
+        this IDistributedApplicationBuilder builder, string clientDirectory, string audience = "saas-fabric", string? templatePolicy = null)
     {
         if (builder.ExecutionContext.IsPublishMode) throw new InvalidOperationException("This hosting integration is a local development demo only.");
         if (builder.Resources.Any(resource => resource.Name == "fabric-keycloak")) throw new InvalidOperationException("SaaS Fabric has already been added.");
         if (string.IsNullOrWhiteSpace(audience)) throw new ArgumentException("An audience is required.", nameof(audience));
         var clients = ClientDirectory.Load(Path.GetFullPath(clientDirectory, builder.AppHostDirectory));
         var templates = FabricTemplates.Stage(builder.AppHostDirectory);
+        if (templatePolicy is not null)
+        {
+            var policy = File.ReadAllText(Path.GetFullPath(templatePolicy, builder.AppHostDirectory));
+            var references = System.Text.Json.JsonSerializer.Deserialize<string[]>(policy)
+                ?? throw new ArgumentException("Template policy must be a JSON array.", nameof(templatePolicy));
+            if (references.Any(reference => reference is null || !System.Text.RegularExpressions.Regex.IsMatch(reference, @"^[^\s]+@sha256:[a-f0-9]{64}$")))
+                throw new ArgumentException("Template policy must contain digest-pinned OCI references.", nameof(templatePolicy));
+            File.WriteAllText(Path.Combine(templates, "template-policy.json"), policy);
+        }
         // Stable within this worktree; distinct from primary checkout and other AppHosts.
         var suffix = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(builder.AppHostDirectory)))[..12].ToLowerInvariant();
         var prefix = $"saas-fabric-{suffix}";

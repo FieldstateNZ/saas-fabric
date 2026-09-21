@@ -17,9 +17,9 @@ public sealed class SaaSFabricApplicationBuilder(string[] args) : DistributedApp
     public IReadOnlyList<IResourceBuilder<ContainerResource>> ClientApplies { get; private set; } = [];
 
     /// <summary>Adds the local services and automatic applies from AppHost-relative YAML files.</summary>
-    public SaaSFabricApplicationBuilder AddSaaSFabric(string clientDirectory, string audience = "saas-fabric")
+    public SaaSFabricApplicationBuilder AddSaaSFabric(string clientDirectory, string audience = "saas-fabric", string? templatePolicy = null)
     {
-        Envoy = SaaSFabricHostingExtensions.AddSaaSFabric(this, clientDirectory, audience);
+        Envoy = SaaSFabricHostingExtensions.AddSaaSFabric(this, clientDirectory, audience, templatePolicy);
         Keycloak = this.CreateResourceBuilder(Resources.OfType<KeycloakResource>().Single(r => r.Name == "fabric-keycloak"));
         OpenBao = this.CreateResourceBuilder(Resources.OfType<ContainerResource>().Single(r => r.Name == "fabric-openbao"));
         ClientApplies = Resources.OfType<ContainerResource>().Where(r => r.Name.StartsWith("fabric-tofu-", StringComparison.Ordinal))

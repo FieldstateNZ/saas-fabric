@@ -1,6 +1,6 @@
 # ADR 0024 — An instance is a realm, signed in at the gateway, and product surfaces are federated modules
 
-- **Status:** Proposed
+- **Status:** Accepted (2026-09-22, product owner)
 - **Date:** 2026-09-22
 - **Applies to:** `apps/app-shell`, `apps/control-plane-ui`,
   `fabric-control-plane` (the operator posture, `/api/session`,

@@ -1,0 +1,11 @@
+# Local example; the existing React preview remains independently managed.
+id: demo
+name: Fabric demo
+realm: fabric-demo
+roles: [Editor]
+applications:
+  - id: app-shell
+    redirectUris: ['http://127.0.0.1:5186/callback']
+brand:
+  artifact: fabric-brand-registry:5000/brands/demo@sha256:7878020ad9ff86d354dca83364adfc6ee1674b39b1ed6b26e07fbb71713b279d
+  plainHttp: true

@@ -1,0 +1,16 @@
+@layer theme, base, antd, components, utilities;
+@import 'tailwindcss';
+
+@layer base {
+  body { margin: 0; font-family: system-ui, sans-serif; color: #1c201d; }
+}
+
+@layer components {
+  .skip-link { position: fixed; left: 16px; top: -100px; z-index: 100; background: white; padding: 12px; }
+  .skip-link:focus { top: 12px; }
+  @media (max-width: 767px) {
+    .ant-layout-has-sider { flex-direction: column; }
+    .mobile-sidebar { width: 100% !important; max-width: 100% !important; min-width: 0 !important; flex: none !important; }
+    .mobile-sidebar.ant-layout-sider-collapsed { display: none; }
+  }
+}

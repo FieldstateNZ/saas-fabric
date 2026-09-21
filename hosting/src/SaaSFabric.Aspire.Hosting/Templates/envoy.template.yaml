@@ -1,0 +1,69 @@
+admin:
+  address:
+    socket_address: { address: 127.0.0.1, port_value: 9901 }
+  allow_paths:
+    - exact: /ready
+static_resources:
+  listeners:
+    - name: fabric_http
+      address:
+        socket_address: { address: 0.0.0.0, port_value: 10000 }
+      filter_chains:
+        - filters:
+            - name: envoy.filters.network.http_connection_manager
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                stat_prefix: fabric_edge
+                normalize_path: true
+                merge_slashes: true
+                path_with_escaped_slashes_action: REJECT_REQUEST
+                route_config:
+                  name: fabric_identity
+                  virtual_hosts:
+                    - name: local_identity
+                      domains: ["*"]
+                      routes:
+# CLIENT_ROUTES
+                        - match: { prefix: "/brands/" }
+                          route: { cluster: brand_assets, prefix_rewrite: "/", timeout: 10s }
+                        - match: { prefix: "/resources/" }
+                          route: { cluster: keycloak, timeout: 30s }
+                        - match: { path: "/healthz" }
+                          route: { cluster: envoy_readiness, prefix_rewrite: "/ready" }
+                        - match: { prefix: "/" }
+                          direct_response: { status: 404 }
+                http_filters:
+                  - name: envoy.filters.http.router
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+  clusters:
+    - name: brand_assets
+      type: STRICT_DNS
+      connect_timeout: 5s
+      load_assignment:
+        cluster_name: brand_assets
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address: { address: fabric-brand-assets, port_value: 80 }
+    - name: keycloak
+      type: STRICT_DNS
+      connect_timeout: 5s
+      load_assignment:
+        cluster_name: keycloak
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address: { address: fabric-keycloak-upstream, port_value: 8080 }
+    - name: envoy_readiness
+      type: STATIC
+      connect_timeout: 1s
+      load_assignment:
+        cluster_name: envoy_readiness
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address: { address: 127.0.0.1, port_value: 9901 }

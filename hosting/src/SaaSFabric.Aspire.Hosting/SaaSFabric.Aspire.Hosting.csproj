@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>Aspire.Hosting</RootNamespace>
+    <IsPackable>true</IsPackable>
+    <Version>0.0.0-local</Version>
+    <Authors>Fieldstate NZ</Authors>
+    <Description>Local Aspire hosting for SaaS Fabric identity, secrets, and OpenTofu-managed client branding.</Description>
+    <RepositoryUrl>https://github.com/FieldstateNZ/saas-fabric</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageProjectUrl>https://github.com/FieldstateNZ/saas-fabric/tree/main/hosting</PackageProjectUrl>
+    <PackageTags>aspire;saas;keycloak;opentofu</PackageTags>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Aspire.Hosting" Version="13.5.4" />
+    <PackageReference Include="Aspire.Hosting.Keycloak" Version="13.5.4-preview.1.26464.4" />
+    <PackageReference Include="YamlDotNet" Version="18.1.0" />
+    <EmbeddedResource Include="Templates/**/*" />
+    <EmbeddedResource Include="../../../infrastructure/opentofu/demo-template-policy.json"
+                      LogicalName="Aspire.Hosting.Templates.template-policy.json" />
+    <EmbeddedResource Include="../../../infrastructure/opentofu/modules/client-brand/*.tf;../../../infrastructure/opentofu/modules/client-brand/*.py;../../../infrastructure/opentofu/modules/client-brand/*.css"
+                      LogicalName="Aspire.Hosting.Templates.brand-module/%(Filename)%(Extension)" />
+    <None Include="../../README.md" Pack="true" PackagePath="/README.md" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "name": "welcome-panel",
+  "keycloakVersion": "26.6",
+  "parent": "keycloak",
+  "files": {
+    "login/footer.ftl": "text/plain",
+    "login/resources/css/template.css": "text/css",
+    "login/messages/messages_en.properties": "text/plain"
+  }
+}

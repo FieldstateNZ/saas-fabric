@@ -1,0 +1,12 @@
+id: contrast
+name: Fabric Copper
+realm: fabric-contrast
+applications:
+  - id: app-shell
+    redirectUris: ['http://127.0.0.1:5186/callback']
+brand:
+  artifact: fabric-brand-registry:5000/brands/contrast@sha256:767ae0e0036ac4555f37b46d5c7756009784ea757cf9aca4d09fe20eb9c84b32
+  plainHttp: true
+loginTemplate:
+  artifact: fabric-brand-registry:5000/login-templates/welcome-panel@sha256:85bd467cfed5894b8a02a36f4ff6380d442f8df3ec1b926ac2d1c0f9da596206
+  plainHttp: true

@@ -1,0 +1,28 @@
+# Edit this file to change the prototype. Vite reloads it during development.
+branding:
+  name: SaaS Fabric
+  subtitle: Application workspace
+  mark: f
+  footer: SaaS Fabric · Local prototype
+
+theme:
+  primary: '#4a5c42'
+  background: '#f4f0e8'
+  borderRadius: 10
+
+navigation:
+  - id: overview
+    label: Overview
+    content: welcome
+  - id: workspace
+    label: Workspace
+    content: notes
+
+layout:
+  header: [brand]
+  sidebar:
+    width: 232
+    collapsible: true
+    regions: [navigation]
+  content: [page, configuration]
+  footer: [footer]

@@ -1,0 +1,23 @@
+.login-pf-page .card-pf {
+  max-width: 920px; width: calc(100% - 40px); padding: 40px;
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  column-gap: 48px; grid-template-rows: auto 1fr; align-items: start;
+}
+.card-pf > .login-pf-header { grid-column: 1; grid-row: 1; text-align: left; margin-bottom: 28px; }
+.card-pf > #kc-content { grid-column: 1; grid-row: 2; }
+.card-pf > .fabric-welcome-panel {
+  grid-column: 2; grid-row: 1 / 3; align-self: stretch;
+  background: var(--fabric-background); color: var(--fabric-foreground);
+  border-radius: 8px; padding: 30px;
+}
+.fabric-welcome-label { font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.fabric-welcome-panel h2 { font-size: 32px; line-height: 1.15; margin: 18px 0; font-weight: 600; }
+.fabric-welcome-panel p { font-size: 14px; line-height: 1.55; margin: 8px 0 0; }
+.fabric-welcome-detail { display: flex; gap: 14px; margin-top: 26px; }
+.fabric-welcome-number { color: var(--fabric-primary); font-size: 12px; font-weight: 700; padding-top: 2px; }
+.fabric-welcome-detail strong { font-size: 14px; }
+@media (max-width: 700px) {
+  .login-pf-page .card-pf { display: block; padding: 24px; width: calc(100% - 24px); }
+  .card-pf > .fabric-welcome-panel { margin-top: 28px; padding: 24px; }
+  .fabric-welcome-panel h2 { font-size: 26px; }
+}

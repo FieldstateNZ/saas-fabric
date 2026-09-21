@@ -7,12 +7,18 @@
 //! appear in front of every one of them. That decision has to be paid for
 //! somewhere, and this is where: a task re-reads the key set on an interval
 //! and swaps it in.
+//!
+//! The task itself is [`refresh`], kept in its own file: this one only
+//! establishes the posture, which is a different concept from keeping it
+//! current.
 
 use std::sync::Arc;
 use std::time::Duration;
 
-use fabric_control_plane::{KeyHolder, OperatorConfig, SignInSurface, VerificationKeys};
+use fabric_control_plane::{KeyHolder, OperatorConfig, SignInSurface};
 use fabric_keycloak::RealmSignIn;
+
+mod refresh;
 
 /// How long to wait for the provider's key document.
 const FETCH_TIMEOUT: Duration = Duration::from_secs(10);
@@ -69,48 +75,12 @@ pub(super) fn establish(
         redirect_uri: redirect_uri.clone(),
     });
 
-    spawn_refresh(
-        Arc::clone(&realm),
+    refresh::spawn(
+        Arc::clone(&realm) as Arc<dyn refresh::SigningKeySource>,
         Arc::clone(&keys),
         Duration::from_secs(*jwks_refresh_seconds),
+        issuer.clone(),
     );
 
     Ok((keys, Some(surface)))
-}
-
-/// Re-reads the key set for as long as the process runs.
-///
-/// The first read happens immediately, before the first sleep, so a healthy
-/// deployment is serving operators within a moment of starting rather than
-/// after one whole interval.
-fn spawn_refresh(realm: Arc<RealmSignIn>, keys: Arc<KeyHolder>, interval: Duration) {
-    tokio::spawn(async move {
-        loop {
-            match realm
-                .signing_keys()
-                .await
-                .and_then(|document| VerificationKeys::parse(&document))
-            {
-                Ok(read) => {
-                    tracing::info!(
-                        event = "control_plane.operator_keys_refreshed",
-                        keys = read.len(),
-                        "read the identity provider's signing keys"
-                    );
-                    keys.replace(read);
-                }
-
-                // Warn and keep the keys already held. A provider that is
-                // briefly unreachable should not sign every operator out; the
-                // keys in hand stay valid until they rotate.
-                Err(error) => tracing::warn!(
-                    event = "control_plane.operator_keys_unavailable",
-                    error = %error,
-                    "could not read the identity provider's signing keys; keeping the set in hand"
-                ),
-            }
-
-            tokio::time::sleep(interval).await;
-        }
-    });
 }

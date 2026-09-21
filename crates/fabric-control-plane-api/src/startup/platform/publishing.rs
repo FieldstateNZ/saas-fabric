@@ -71,17 +71,18 @@ pub fn start_publishing(
             let publisher = Arc::clone(&publisher);
             let state = Arc::clone(&state);
             // `survive_panic`'s panic event is emitted in this loop task,
-            // not in the task it spawns for `work` -- so the span has to
-            // wrap `survive_panic(...)` itself, below, not the `async move`
-            // block passed to it.
+            // not in the task it spawns for `work` -- so the span wraps
+            // `survive_panic(...)` itself, below, as well as the block
+            // passed to it.
             let span = tracing::info_span!("runtime_publication", environment = %environment);
-            tick::survive_panic("runtime publication", async move {
-                publish_once(&publisher, &state).await;
-            })
-            // Must wrap `survive_panic(...)`, not the `async move` block
-            // above -- moving `.instrument(span)` inside would attach the
-            // span to the spawned task instead, leaving the panic line
-            // without an environment, and every test here would still pass.
+            tick::survive_panic(
+                "runtime publication",
+                async move { publish_once(&publisher, &state).await }.instrument(span.clone()),
+            )
+            // Both halves: the outer covers the panic line, emitted in this
+            // loop task; the inner covers `publish_once`'s own warn line,
+            // which runs in the spawned task and would otherwise carry no
+            // `environment`. Every test here would pass without either.
             .instrument(span)
             .await;
             ticker.tick().await;

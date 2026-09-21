@@ -70,10 +70,26 @@ testable.
   parses every document in `examples/clients/`, so a renamed field fails the
   build rather than the example silently rotting.
 - `startup::tick::survive_panic` -- not on the public surface above;
-  `pub(in crate::startup)`, since `operator_keys.rs` is expected to need it
-  too. Runs one scheduled tick in its own `tokio::spawn`ed task, so a panic
-  unwinding out of an adapter is caught as a `JoinError` rather than ending
-  the loop that scheduled it; logs a fixed sentence, never the panic
-  payload. Both `start_sweeping` and `start_publishing` route their tick
-  through it today. `operator_keys.rs`'s `spawn_refresh` has the same
-  unguarded-loop shape and does not yet -- a known gap, not an oversight.
+  `pub(in crate::startup)` because `operator_keys::refresh` needs it too, not
+  only `startup::platform`. Runs one scheduled tick in its own
+  `tokio::spawn`ed task, so a panic unwinding out of an adapter is caught as a
+  `JoinError` rather than ending the loop that scheduled it; logs a fixed
+  sentence, never the panic payload. `start_sweeping`, `start_publishing`, and
+  now `operator_keys::refresh::spawn` all route their tick through it, so no
+  loop in this crate can be killed for the life of the process by one bad
+  response from an adapter it was not written to trust.
+- `startup::operator_keys` is now three files: `operator_keys.rs` builds the
+  posture (`establish`); `operator_keys/refresh.rs` keeps its key set
+  current; `operator_keys/refresh/source.rs` holds the seam the refresh loop
+  reads keys through. `RealmSignIn::signing_keys` is a concrete method with
+  no trait behind it -- `RealmSignIn::new` is `pub`, so a stub HTTP server
+  could already stand in for the realm in a test, but nothing could make the
+  adapter *panic* on command, which is the property the refresh loop's test
+  needs. `SigningKeySource` (named `read_signing_keys` to keep it from
+  shadowing the inherent method it delegates to -- a rename upstream must
+  fail this file to compile, not recurse at runtime) exists for that; it is
+  `pub(in crate::startup::operator_keys)`, not `pub(super)`, because
+  `establish` in `operator_keys.rs` needs to name it two levels down. It is
+  implemented for `RealmSignIn` in production and for fakes under
+  `#[cfg(test)]` only; no public API was added to `fabric-control-plane` to
+  support it.

@@ -16,15 +16,16 @@
 //! # Why this lives beside `platform`, not inside it
 //!
 //! `startup::platform::sweeping::start_sweeping` and
-//! `startup::platform::publishing::start_publishing` are its callers today,
-//! but `startup::operator_keys`'s `spawn_refresh` -- the operator
-//! signing-key refresh loop -- has the identical shape and the identical
-//! flaw: one loop task awaits its pass directly, so a panic there ends key
-//! refresh for good, the same way a panic used to end a sweep or a
-//! publication pass. It is expected to move onto this helper next, which is
-//! why `survive_panic` is `pub(in crate::startup)` rather than `pub(super)`
-//! and this file sits in `startup`, not `startup::platform`. That move is
-//! not part of this change.
+//! `startup::platform::publishing::start_publishing` are two of its callers;
+//! `startup::operator_keys::refresh::spawn` -- the operator signing-key
+//! refresh loop -- is the third. It had the identical shape and the
+//! identical flaw: one loop task awaited its pass directly, so a panic there
+//! ended key refresh for good, the same way a panic used to end a sweep or a
+//! publication pass, until it was moved onto this helper too. That third
+//! caller living in `startup::operator_keys` rather than
+//! `startup::platform` is why `survive_panic` is `pub(in crate::startup)`
+//! rather than `pub(super)` and this file sits in `startup`, not
+//! `startup::platform`.
 
 use std::future::Future;
 

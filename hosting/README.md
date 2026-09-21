@@ -178,7 +178,7 @@ Envoy references: [official release](https://github.com/envoyproxy/envoy/release
 ## GitHub package releases
 
 The `Hosting package` workflow tests and packs on pull requests. A
-`hosting-v0.1.0-preview.1`-style tag on a commit already merged into `main`
+`hosting-v0.1.0-preview.2`-style tag on a commit already merged into `main`
 publishes the exact tested NuGet artifact to the FieldstateNZ GitHub Packages
 feed. Manual workflow runs validate packaging without publishing. Hosting tags
 are separate from the Rust/container `v*` releases. Use preview versions while
@@ -196,7 +196,7 @@ NuGet source and map only `SaaSFabric.Aspire.Hosting` to it; leave other package
 mapped to nuget.org. Then replace the project reference with:
 
 ```xml
-<PackageReference Include="SaaSFabric.Aspire.Hosting" Version="0.1.0-preview.1" />
+<PackageReference Include="SaaSFabric.Aspire.Hosting" Version="0.1.0-preview.2" />
 ```
 
 This package remains a local development harness. Production uses the independent

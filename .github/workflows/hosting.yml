@@ -28,11 +28,12 @@ jobs:
           node-version: '22'
           cache: npm
           cache-dependency-path: apps/app-shell/package-lock.json
-      - run: dotnet restore hosting/tests/SaaSFabric.Aspire.Hosting.Tests --locked-mode
+      - run: dotnet restore hosting/tests/SaaSFabric.Aspire.Hosting.Tests --locked-mode --configfile hosting/nuget.config
       - run: dotnet test hosting/tests/SaaSFabric.Aspire.Hosting.Tests --no-restore -c Release
       # AppHost runtime packages depend on the runner OS; its macOS lock cannot
       # be reused on Linux. Library and test dependencies remain locked above.
-      - run: dotnet build hosting/samples/SaaSFabric.Demo.AppHost -c Release
+      - run: dotnet restore hosting/samples/SaaSFabric.Demo.AppHost --configfile hosting/nuget.config
+      - run: dotnet build hosting/samples/SaaSFabric.Demo.AppHost -c Release --no-restore
       - run: python3 -m unittest discover -s infrastructure/opentofu/tests -v
       - run: npm ci && npm test && npm run build
         working-directory: apps/app-shell

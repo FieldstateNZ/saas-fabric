@@ -184,9 +184,9 @@ feed. Manual workflow runs validate packaging without publishing. Hosting tags
 are separate from the Rust/container `v*` releases. Use preview versions while
 the Keycloak dependency is a preview. Never move an existing release tag.
 
-After the first publication, a package administrator must set package visibility
-to **Public** in GitHub's package settings; public repository visibility alone
-does not do this. GitHub's NuGet registry still requires consumer authentication
+After the first publication, verify **Public** visibility in GitHub's package
+settings and change it if needed. The first published preview was verified public
+with inherited repository access; visibility should still be checked explicitly. GitHub's NuGet registry still requires consumer authentication
 with a classic token granting `read:packages`, even for public packages. Keep
 credentials in a local credential provider or CI secrets, never source control.
 See [GitHub's NuGet registry documentation](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-nuget-registry).

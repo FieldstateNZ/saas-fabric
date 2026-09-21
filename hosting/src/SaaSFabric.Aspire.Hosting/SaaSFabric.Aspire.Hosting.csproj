@@ -2,6 +2,7 @@
   <PropertyGroup>
     <RootNamespace>Aspire.Hosting</RootNamespace>
     <IsPackable>true</IsPackable>
+    <EnableAspireIntegrationAnalyzers>true</EnableAspireIntegrationAnalyzers>
     <Version>0.0.0-local</Version>
     <Authors>Fieldstate NZ</Authors>
     <Description>Local Aspire hosting for SaaS Fabric identity, secrets, and OpenTofu-managed client branding.</Description>

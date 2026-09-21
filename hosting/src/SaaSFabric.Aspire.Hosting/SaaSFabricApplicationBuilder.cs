@@ -1,5 +1,3 @@
-using System.Security.Cryptography;
-using System.Text;
 using Aspire.Hosting.ApplicationModel;
 
 namespace Aspire.Hosting;
@@ -21,33 +19,11 @@ public sealed class SaaSFabricApplicationBuilder(string[] args) : DistributedApp
     /// <summary>Adds the local services and automatic applies from AppHost-relative YAML files.</summary>
     public SaaSFabricApplicationBuilder AddSaaSFabric(string clientDirectory, string audience = "saas-fabric")
     {
-        if (ExecutionContext.IsPublishMode) throw new InvalidOperationException("This hosting integration is a local development demo only.");
-        if (Keycloak is not null) throw new InvalidOperationException("SaaS Fabric has already been added.");
-        if (string.IsNullOrWhiteSpace(audience)) throw new ArgumentException("An audience is required.", nameof(audience));
-        var clients = ClientDirectory.Load(Path.GetFullPath(clientDirectory, AppHostDirectory));
-        var templates = FabricTemplates.Stage(AppHostDirectory);
-        // Stable within this worktree; distinct from primary checkout and other AppHosts.
-        var suffix = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(AppHostDirectory)))[..12].ToLowerInvariant();
-        var prefix = $"saas-fabric-{suffix}";
-        var username = this.AddParameter("fabric-admin", "admin");
-        Keycloak = this.AddKeycloak("fabric-keycloak", adminUsername: username)
-            .WithDataVolume($"{prefix}-keycloak")
-            .WithVolume($"{prefix}-brands", "/opt/keycloak/themes", isReadOnly: true);
-        var password = this.CreateResourceBuilder(Keycloak.Resource.AdminPasswordParameter
-            ?? throw new InvalidOperationException("Keycloak requires a generated admin password."));
-        var bao = OpenBaoHosting.Add(this, templates, prefix);
-        OpenBao = bao.Server;
-        ClientApplies = OpenTofuHosting.Add(this, clients, templates, prefix, audience,
-            Keycloak, username, password, bao.Server, bao.Initializer);
-        Envoy = EnvoyHosting.Add(this, templates, clients, Keycloak, ClientApplies);
-        var assets = this.AddContainer("fabric-brand-assets", "nginx", "1.29.6-alpine")
-            .WithVolume($"{prefix}-brands", "/brands", isReadOnly: true)
-            .WithBindMount(Path.Combine(templates, "brand-nginx.conf"), "/etc/nginx/conf.d/default.conf", isReadOnly: true)
-            .WithContainerNetworkAlias("fabric-brand-assets")
-            .WithHttpEndpoint(targetPort: 80, name: "http")
-            .WithHttpHealthCheck("/healthz", 200, "http");
-        foreach (var apply in ClientApplies) assets.WaitForCompletion(apply);
-        Envoy.WaitFor(assets);
+        Envoy = SaaSFabricHostingExtensions.AddSaaSFabric(this, clientDirectory, audience);
+        Keycloak = this.CreateResourceBuilder(Resources.OfType<KeycloakResource>().Single(r => r.Name == "fabric-keycloak"));
+        OpenBao = this.CreateResourceBuilder(Resources.OfType<ContainerResource>().Single(r => r.Name == "fabric-openbao"));
+        ClientApplies = Resources.OfType<ContainerResource>().Where(r => r.Name.StartsWith("fabric-tofu-", StringComparison.Ordinal))
+            .Select(this.CreateResourceBuilder).ToArray();
         return this;
     }
 }

@@ -59,8 +59,9 @@ operator the environment declares, the `fabric-operator` role and master-realm
 `admin`. It does so with the bootstrap administrator credential the platform
 generated, through OpenTofu and the Keycloak provider — the same mechanism
 Karo uses and the same templates the local `hosting/` harness already
-carries — run as an Argo CD sync hook whose apply is idempotent and whose
-drift check is the proof.
+carries — run as a Job whose health Argo CD gates the next wave on (a sync
+hook would not: Argo excludes hooks from an Application's health), whose
+apply is idempotent and whose drift check is the proof.
 
 ### 2. The gateway's secret is generated in-cluster and set on the client
 
@@ -112,9 +113,12 @@ in a person creating something in Keycloak fails the platform's own check.
   a Job. It already generated it; the Job's ServiceAccount is scoped to that
   one Secret and its own state, and the Job runs only what the repository
   declares.
-- OpenTofu state for the master instance lives in the cluster. Losing it means
-  a re-import on the next apply, not a re-creation: the resources carry
-  `prevent_destroy`.
+- OpenTofu state for the master instance lives in the cluster. Losing it
+  does not lose the resources, but the next apply would try to create what
+  already exists and be refused; recovery is an adoption — the same
+  `adopt_existing` declaration LucentRoot uses for the two objects that
+  predate the convergence — not a re-creation. `prevent_destroy` guards
+  against a config typo deleting a client; it says nothing about state.
 - Two more Applications and the repository's first `Job`. The pattern is the
   price of the rule.
 

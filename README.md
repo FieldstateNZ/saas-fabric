@@ -301,6 +301,7 @@ The reasoning, the licence audit, and the consequences are recorded in
 | [0022](docs/decisions/0022-running-versions-come-from-deployment-evidence.md) | Running versions come from deployment evidence |
 | [0023](docs/decisions/0023-data-sources-are-environment-desired-state-and-placement-is-recorded.md) | Data sources are environment desired state, and placement is recorded rather than inferred |
 | [0024](docs/decisions/0024-an-instance-is-a-realm-signed-in-at-the-gateway-and-surfaces-are-federated-modules.md) | An instance is a realm, signed in at the gateway, and product surfaces are federated modules |
+| [0025](docs/decisions/0025-realm-bootstrap-is-platform-composition.md) | Realm bootstrap is platform composition, done with the credential the platform generates |
 
 ## Running it
 

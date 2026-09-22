@@ -93,3 +93,12 @@ Keycloak is reached with a human's authority.
 be doing. `fabric-keycloak` borrows a person's, because Keycloak is *changed*,
 and changing an organisation's identity provider is an act that ought to trace
 to somebody who chose it.
+
+**Scoped by [ADR 0025](0025-realm-bootstrap-is-platform-composition.md)
+(2026-09-22).** This decision governs the product: the control plane holds no
+Keycloak credential and changes client realms as the operator who asked.
+The master realm's *instance resources* — the roles and clients that have to
+exist before any operator can sign in — are realm bootstrap, which is
+platform composition: `saas-fabric-platform` provisions them with the
+bootstrap administrator it generates, not a person. Nothing here about the
+product's authority changes.

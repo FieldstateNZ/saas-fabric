@@ -873,14 +873,18 @@ authorised or converged; what it does allow is working on the catalogue and
 client workflows without a Keycloak. Whether to keep it is owed to the product
 owner.
 
-**The realm needs two things before the OIDC posture works**, and neither is
-created by this application yet:
+**The realm needs these before the OIDC posture works**, and none of them is
+created by this application — they are realm bootstrap, which
+[ADR 0025](../decisions/0025-realm-bootstrap-is-platform-composition.md)
+makes the platform's: `saas-fabric-platform`'s `master-instance` convergence
+provisions them with the administrator it generated, on every sync:
 
 | What | Why |
 |---|---|
 | A **public** client `saas-fabric-console`, PKCE required, redirect URI set to the console's origin | the console holds no secret, so PKCE is what replaces one |
 | A realm role `fabric-operator`, granted to each operator | this is what the control plane checks to let them in |
 | Each operator holding master-realm **`admin`** | this is what *Keycloak* checks when the platform creates a realm as them |
+| A **confidential** client `saas-fabric-gateway`, redirect `<origin>/oauth2/callback`, its secret generated in-cluster | the gateway redeems the code with it (ADR 0024); the control plane pins `azp` to it |
 
 The last row is easy to get wrong and expensive to discover. `create-realm`
 alone is not enough: creating a realm grants the creator that realm's
@@ -889,9 +893,11 @@ cannot be re-minted — so an operator with only `create-realm` creates a realm
 and is then refused on the first role inside it. See
 [ADR 0012](../decisions/0012-the-platform-acts-on-keycloak-as-the-operator.md).
 
-Automating both in the reconciler is the obvious next step. It is deliberately
-not in this change: it needs a broader grant on the master realm than the
-platform's service account holds, and that grant deserves a decision of its own.
+The reconciler does not automate them, and under ADR 0025 it never will: they
+are provisioned by the platform, with the bootstrap administrator it generated,
+rather than by the product with a broader grant. Which people hold
+`fabric-operator` and master-realm `admin` is a list in the environment's
+configuration, not a click.
 
 ### How the console signs in
 

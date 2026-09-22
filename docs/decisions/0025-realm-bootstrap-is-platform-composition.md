@@ -112,9 +112,12 @@ in a person creating something in Keycloak fails the platform's own check.
   a Job. It already generated it; the Job's ServiceAccount is scoped to that
   one Secret and its own state, and the Job runs only what the repository
   declares.
-- OpenTofu state for the master instance lives in the cluster. Losing it means
-  a re-import on the next apply, not a re-creation: the resources carry
-  `prevent_destroy`.
+- OpenTofu state for the master instance lives in the cluster. Losing it
+  does not lose the resources, but the next apply would try to create what
+  already exists and be refused; recovery is an adoption — the same
+  `adopt_existing` declaration LucentRoot uses for the two objects that
+  predate the convergence — not a re-creation. `prevent_destroy` guards
+  against a config typo deleting a client; it says nothing about state.
 - Two more Applications and the repository's first `Job`. The pattern is the
   price of the rule.
 

@@ -59,8 +59,9 @@ operator the environment declares, the `fabric-operator` role and master-realm
 `admin`. It does so with the bootstrap administrator credential the platform
 generated, through OpenTofu and the Keycloak provider — the same mechanism
 Karo uses and the same templates the local `hosting/` harness already
-carries — run as an Argo CD sync hook whose apply is idempotent and whose
-drift check is the proof.
+carries — run as a Job whose health Argo CD gates the next wave on (a sync
+hook would not: Argo excludes hooks from an Application's health), whose
+apply is idempotent and whose drift check is the proof.
 
 ### 2. The gateway's secret is generated in-cluster and set on the client
 

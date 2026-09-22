@@ -59,9 +59,14 @@ operator the environment declares, the `fabric-operator` role and master-realm
 `admin`. It does so with the bootstrap administrator credential the platform
 generated, through OpenTofu and the Keycloak provider — the same mechanism
 Karo uses and the same templates the local `hosting/` harness already
-carries — run as a Job whose health Argo CD gates the next wave on (a sync
-hook would not: Argo excludes hooks from an Application's health), whose
-apply is idempotent and whose drift check is the proof.
+carries — run as a Job whose health is the Application's, which is what
+Argo CD's wave order waits on when it first brings an environment up (a
+sync hook would not count: Argo excludes hooks from an Application's
+health; and on an environment that already exists each Application syncs
+itself, so the gate holds at creation, not on every update — the
+platform's `master-instance` README says which, and platform #44 tracks
+ordering updates too), whose apply is idempotent and whose drift check is
+the proof.
 
 ### 2. The gateway's secret is generated in-cluster and set on the client
 
@@ -138,3 +143,15 @@ platform the same way is the next question, and Karo's answer — every
 directory alike — is the expected one. Local parity in `hosting/` (the
 harness provisioning its own master instance and running the OAuth2 filter)
 is ADR 0024 slice 1b.
+
+Nor does it decide how an operator's *account* comes to exist in the master
+realm. The convergence grants roles to accounts and creates none; on
+LucentRoot the only account is the bootstrap administrator Keycloak made
+from the platform's generated credential, and a roster that named an
+account which did not exist failed the convergence at its first sync
+(2026-09-22), so the bootstrap administrator is the declared operator until
+this is decided. Karo's answer is brokering, not creating: its master realm
+trusts an upstream identity provider, and a mapper turns an upstream role
+into realm authority at each sign-in, with "the bootstrap admin remains the
+way in" as its own fallback. Which upstream SaaS Fabric's master realm
+brokers to is the product owner's decision.

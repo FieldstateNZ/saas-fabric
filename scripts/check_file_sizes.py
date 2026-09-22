@@ -61,6 +61,13 @@ EXEMPTIONS: dict[str, str] = {
         "adding a variant has to guess which -- while the exhaustive match "
         "in errors/status_mapping.rs already forces every one to be "
         "considered.",
+    "crates/fabric-control-plane/src/errors/status_mapping.rs":
+        "one exhaustive match over that same enum, deciding the status code "
+        "every variant answers with. Rust's own exhaustiveness check is what "
+        "catches a variant nobody has assigned one to; splitting the match "
+        "across files would either duplicate the variant list to keep the "
+        "arms straight or let a variant go unmapped in whichever half it did "
+        "not land in.",
     # "crates/fabric-connector-ndc/src/wire/query_request.rs":
     #     "one cohesive NDC wire-format type plus its (de)serialisation impls; "
     #     "splitting fragments a single wire shape across files",

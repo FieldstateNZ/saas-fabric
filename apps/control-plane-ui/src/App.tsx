@@ -17,7 +17,7 @@ export function App() {
   }
 
   if (session.state.status === 'signed-out') {
-    return <SignIn error={session.state.error} onSignIn={session.signIn} />
+    return <SignIn error={session.state.error} canRetry={session.state.canRetry} onSignIn={session.signIn} />
   }
 
   return <Console />

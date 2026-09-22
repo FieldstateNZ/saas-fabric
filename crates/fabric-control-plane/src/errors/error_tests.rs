@@ -32,6 +32,7 @@ fn data_source() -> DataSourceId {
 fn every_failure_has_its_own_machine_code() {
     let errors = [
         ControlPlaneError::Unauthenticated(OperatorAuthError::Missing),
+        ControlPlaneError::OperatorRefused,
         ControlPlaneError::UnknownClient(client()),
         ControlPlaneError::InvalidRequest(DesiredStateError::MissingField { field: "spec" }),
         ControlPlaneError::InvalidDesiredState {
@@ -69,6 +70,23 @@ fn every_failure_has_its_own_machine_code() {
         total,
         "two failures share a code, so a client cannot tell them apart"
     );
+}
+
+#[test]
+fn a_refused_bearer_is_distinct_from_having_none_and_says_nothing_about_why() {
+    // Both are 401 -- the operator holds no usable identity either way -- but
+    // a console (ADR 0024's gateway probe) needs to tell them apart from the
+    // machine code, and the message must not become a place the token or the
+    // verification failure leaks back to the browser.
+    let missing = ControlPlaneError::Unauthenticated(OperatorAuthError::Missing);
+    let refused = ControlPlaneError::OperatorRefused;
+
+    assert_eq!(missing.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(refused.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(missing.code(), "unauthenticated");
+    assert_eq!(refused.code(), "operator_refused");
+    assert_ne!(missing.code(), refused.code());
+    assert_eq!(refused.public_message(), "A bearer was presented and refused.");
 }
 
 #[test]

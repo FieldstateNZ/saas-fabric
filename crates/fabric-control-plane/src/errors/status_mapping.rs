@@ -29,8 +29,13 @@ impl ControlPlaneError {
         match self {
             // A refused redemption joins an unauthenticated request at 401,
             // and for the same reason: in both cases the operator holds no
-            // usable identity and their next step is to sign in.
-            Self::Unauthenticated(_) | Self::SignInRefused => StatusCode::UNAUTHORIZED,
+            // usable identity and their next step is to sign in. A refused
+            // *bearer* joins them at the status but not the remedy -- that
+            // is exactly what `canRetry: false` exists for -- so `code()`,
+            // not this match, is what tells a console which case it has.
+            Self::Unauthenticated(_) | Self::OperatorRefused | Self::SignInRefused => {
+                StatusCode::UNAUTHORIZED
+            }
             // 404: for this deployment, none of these exists -- a client,
             // the connection surface, or the publication target. Not a 403
             // (no grant would fix an absence) and not a 503 (no wait would

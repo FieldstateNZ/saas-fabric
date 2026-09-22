@@ -3,6 +3,7 @@
 /** The machine-readable codes the API documents. */
 export type ErrorCode =
   | 'unauthenticated'
+  | 'operator_refused'
   | 'unknown_client'
   | 'invalid_request'
   | 'desired_state_invalid'

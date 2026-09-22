@@ -10,10 +10,18 @@ import { Brand } from '../console/Brand'
  */
 interface SignInProps {
   readonly error: string | null
+  /** Whether the button belongs on screen at all.
+   *
+   *  `false` for the one state where offering it would be dishonest: the
+   *  gateway already signed this operator in and the control plane refused
+   *  that sign-in, so the console's own sign-in flow is not the flow that
+   *  ended and clicking it could not fix anything -- the message already
+   *  says what will (ask an operator to check the client or the role). */
+  readonly canRetry: boolean
   readonly onSignIn: () => void
 }
 
-export function SignIn({ error, onSignIn }: SignInProps) {
+export function SignIn({ error, canRetry, onSignIn }: SignInProps) {
   return (
     <div className="signin">
       <p className="signin__title"><Brand /></p>
@@ -24,9 +32,11 @@ export function SignIn({ error, onSignIn }: SignInProps) {
 
       {error !== null && <p className="error">{error}</p>}
 
-      <button type="button" className="signin__button" onClick={onSignIn}>
-        Sign in
-      </button>
+      {canRetry && (
+        <button type="button" className="signin__button" onClick={onSignIn}>
+          Sign in
+        </button>
+      )}
     </div>
   )
 }

@@ -895,9 +895,30 @@ platform's service account holds, and that grant deserves a decision of its own.
 
 ### How the console signs in
 
-The console never talks to the identity provider. It cannot — its policy is
-`default-src 'self'`, so it may *navigate* to another origin but not `fetch`
-one.
+Behind the gateway ([ADR 0024](../decisions/0024-an-instance-is-a-realm-signed-in-at-the-gateway-and-surfaces-are-federated-modules.md)),
+sign-in is not the console's job. Envoy Gateway's OIDC `SecurityPolicy` has
+already run it, holds the session in cookies, and forwards the access token
+upstream as a bearer — so the console starts nothing of its own. It probes
+`GET /api/operator` — after redeeming a code its own PKCE flow may be
+returning with, and before ever attempting a silent sign-in of its own — and
+a `200` is the whole answer: an upstream already authenticates this browser
+(the gateway, in production), so the operator is signed in. A `401` on any
+later `fetch` means that cookie session has ended, and since a `fetch` cannot
+follow a redirect to an identity provider the way a top-level navigation can,
+the console navigates to `/`, where the gateway runs its sign-in again.
+That navigation is counted, and a third page load in a row that signs in
+and is then refused is reported as looping rather than repeated — the
+guard against an upstream that answers `200` without verifying; see
+`gateway.ts`'s own account of the bound and its limits.
+
+What follows is the standalone flow: what the console falls back to when no
+such upstream sits in front of it (the Vite dev proxy at `npm run dev`), and
+it retires once slice 2 gives the shell config-served identity of its own.
+The local workbench (`npm run preview:ui`) is neither case — it renders the
+console directly, with no sign-in gate at all; see the README's "Development
+identity". The console never talks to the identity provider in the standalone
+flow either. It cannot — its policy is `default-src 'self'`, so it may
+*navigate* to another origin but not `fetch` one.
 
 ```text
 console  → GET /api/session          where do I sign in?
@@ -923,10 +944,18 @@ console reads on load.
 ### Errors
 
 Distinct codes, because an operator needs to tell the cases apart (§23); among them:
-`unauthenticated`, `unknown_client`, `invalid_request`, `desired_state_invalid`,
-`revision_required`, `revision_conflict`, `client_exists`, `realm_unavailable`,
-`document_too_large`, `realm_immutable`, `repository_unavailable`,
-`repository_denied`, `repository_rejected`.
+`unauthenticated`, `operator_refused`, `unknown_client`, `invalid_request`,
+`desired_state_invalid`, `revision_required`, `revision_conflict`,
+`client_exists`, `realm_unavailable`, `document_too_large`, `realm_immutable`,
+`repository_unavailable`, `repository_denied`, `repository_rejected`.
+
+`401 unauthenticated` and `401 operator_refused` share a status but not a
+remedy: no bearer was presented at all, against a bearer that was presented
+and refused. Both mean "this browser holds no usable identity", but a bearer
+the platform refused is one a document navigation must start over — a gateway
+session ADR 0024's probe cannot otherwise tell apart from a session that was
+never established. `operator_refused` carries nothing from the token or from
+why verification failed; the platform's own log says why.
 
 The catalogue and client creation add three codes:
 

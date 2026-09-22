@@ -10,6 +10,7 @@
  * That is not a convention. `scripts/check_architecture.py` fails the build if
  * anything under `src/` names another platform service's API.
  */
+import { clearRedirectCount, isBehindGateway, redirectToGatewaySignIn } from '../session/gateway'
 import { currentToken, forgetToken } from '../session/session'
 import { ControlPlaneError } from './errors'
 import type {
@@ -175,12 +176,33 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
   const response = await fetch(path, { ...init, headers })
 
+  // A `200` from `/api/operator` cannot prove a session works -- a lying
+  // proxy can produce it forever (gateway.ts's "A lying upstream") -- so
+  // this is the real evidence instead: any status but `401` here.
+  if (response.status !== 401) {
+    clearRedirectCount()
+  }
+
   if (!response.ok) {
     // An expired or rejected token is not a failure of the request the
-    // operator made. Forgetting it is what lets the shell notice and offer to
-    // sign in again, rather than showing an error on every panel at once.
+    // operator made, and the two ways this console gets a token call for two
+    // different recoveries.
     if (response.status === 401) {
-      forgetToken(token)
+      if (isBehindGateway()) {
+        // Behind the gateway (ADR 0024) this console never held a token to
+        // forget -- the cookie session the gateway held has simply ended.
+        // Only a document navigation can start the gateway's sign-in again: a
+        // `fetch` cannot follow a redirect to an OIDC provider the way a
+        // top-level navigation can. `redirectToGatewaySignIn` is the one that
+        // knows how to do that at most once, however many panels are asking
+        // at the same moment.
+        redirectToGatewaySignIn()
+      } else {
+        // Standalone: forgetting the token is what lets the shell notice and
+        // offer to sign in again, rather than showing an error on every panel
+        // at once.
+        forgetToken(token)
+      }
     }
 
     throw await refusal(response)

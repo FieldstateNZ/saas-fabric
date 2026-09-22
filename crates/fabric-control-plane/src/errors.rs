@@ -43,9 +43,25 @@ use crate::operator::OperatorAuthError;
 /// happened yet would make the normal path look broken.
 #[derive(Debug, thiserror::Error)]
 pub enum ControlPlaneError {
-    /// No operator identity could be established.
+    /// No operator identity could be established: no bearer was presented.
     #[error(transparent)]
     Unauthenticated(#[from] OperatorAuthError),
+
+    /// A bearer was presented, and the platform refused it.
+    ///
+    /// [`Self::Unauthenticated`]'s sibling, not a synonym: the two mean
+    /// different things to whoever holds the bearer. No bearer at all asks
+    /// "how do I sign in"; a refused one asks "why was I signed out", and
+    /// ADR 0024's gateway probe (`apps/control-plane-ui/src/session/gateway.ts`)
+    /// depends on being able to tell the two apart on the very first page
+    /// load, before it has seen anything else. Carries nothing from the
+    /// token or from why verification failed — no issuer, no `azp`, no role
+    /// name — because this reaches a browser and the structured log already
+    /// says why (`logging::operator_refused`); echoing any of it back would
+    /// hand an attacker probing this route a free oracle for which part of a
+    /// forged token was wrong.
+    #[error("A bearer was presented and refused.")]
+    OperatorRefused,
 
     /// A secret operation failed. Carried rather than flattened: a stale
     /// write, an outage and a client with no boundary differ to an operator.

@@ -16,7 +16,9 @@ use fabric_control_plane::ClientRepository as _;
 use fabric_reconciliation::testing::FakeIdentityProvider;
 use fabric_reconciliation::IdentityProvider as _;
 use http::{header, StatusCode};
-use support::{as_operator, control_plane, control_plane_with_identity_provider, entity_tag, json, send};
+use support::{
+    as_operator, control_plane, control_plane_with_identity_provider, entity_tag, json, send, OPERATOR,
+};
 
 /// The identity an operator would submit after adding a role.
 fn identity_with_extra_role() -> Body {
@@ -381,6 +383,44 @@ async fn a_request_carrying_no_operator_identity_is_refused() {
 
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     assert_eq!(json(response).await["error"]["code"], "unauthenticated");
+}
+
+#[tokio::test]
+async fn the_operator_route_answers_only_for_a_verified_operator() {
+    // The console's gateway probe (ADR 0024) is built on exactly this: `200`
+    // from this one route means an operator is signed in, and it needs no
+    // body to say so. `401` means the operator is not signed in, and the
+    // probe now reads *that* body for one thing only -- whether `code` is
+    // `operator_refused` -- to tell "nobody is signed in" apart from "a
+    // bearer was presented and refused". See the rustdoc on `get_operator`
+    // for the contract this pins.
+    //
+    // The refused case itself is not exercised here: `AcceptingOperator`, the
+    // authenticator every test in this crate drives, can only tell a present
+    // `X-Test-Operator` header from an absent one, so it has no way to
+    // present a bearer that was presented and refused. That mapping is
+    // tested at the unit level instead, in `operator::extractor`'s own tests.
+    let plane = control_plane();
+
+    let anonymous = send(
+        &plane.router,
+        http::Request::builder()
+            .method("GET")
+            .uri("/api/operator")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(anonymous.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(json(anonymous).await["error"]["code"], "unauthenticated");
+
+    let signed_in = send(
+        &plane.router,
+        as_operator("GET", "/api/operator").body(Body::empty()).unwrap(),
+    )
+    .await;
+    assert_eq!(signed_in.status(), StatusCode::OK);
+    assert_eq!(json(signed_in).await["subject"], OPERATOR);
 }
 
 /// A client body carrying one redirect strategy and one callback, otherwise

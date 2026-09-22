@@ -20,6 +20,11 @@ impl ControlPlaneError {
     pub const fn code(&self) -> &'static str {
         match self {
             Self::Unauthenticated(_) => "unauthenticated",
+            // Its own code beside `unauthenticated`: a console (ADR 0024's
+            // gateway probe, first) needs to tell "nobody is signed in" apart
+            // from "somebody was, and the bearer was refused" on the very
+            // first response it ever sees.
+            Self::OperatorRefused => "operator_refused",
             Self::UnknownClient(_) => "unknown_client",
             Self::InvalidRequest(_) => "invalid_request",
             // The catalogue shares this code with a client's document

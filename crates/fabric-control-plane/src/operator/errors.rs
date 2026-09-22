@@ -6,7 +6,7 @@
 /// default operator, and no configuration that turns this off — a control
 /// plane that can be reached without an identity has no audit trail worth the
 /// name (§24).
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum OperatorAuthError {
     /// The request carried no operator identity at all.
     ///

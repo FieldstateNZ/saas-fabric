@@ -164,12 +164,16 @@ reads stay mounted while navigating; per-client editors retain their own hooks.
 ## Development identity
 
 The production console uses OIDC bearer authentication. `npm run dev` proxies
-API calls to `VITE_CONTROL_PLANE` (default `http://localhost:8081`).
+API calls to `VITE_CONTROL_PLANE` (default `http://localhost:8081`), with no
+gateway in front of it, so it still drives the console's own sign-in flow
+("How the console signs in" in `docs/architecture/control-plane.md`) rather
+than the gateway session ADR 0024 adds.
 
 For a standalone local workbench with persistent storage, see [PHASE_ONE.md](PHASE_ONE.md).
-That explicit loopback-only example uses a test operator and has no external
-providers, so nothing it accepts can be authorised or converged. It is excluded
-from the production entry and from every image. It is also proposed rather than
-settled: the control-plane architecture says local development needs a Keycloak,
-and [ADR 0021](../../docs/decisions/0021-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md) records the contradiction and leaves keeping the workbench
+That explicit loopback-only example renders the console directly, with no
+sign-in gate at all — its proxy asserts a fixed test operator on every
+request instead — so nothing it accepts can be authorised or converged. It is
+excluded from the production entry and from every image. It is also proposed
+rather than settled: the control-plane architecture says local development
+needs a Keycloak, and [ADR 0021](../../docs/decisions/0021-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md) records the contradiction and leaves keeping the workbench
 to the product owner.

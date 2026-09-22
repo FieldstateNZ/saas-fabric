@@ -27,7 +27,6 @@ use std::sync::Arc;
 use http::HeaderMap;
 use jsonwebtoken::Algorithm;
 
-use crate::logging;
 use crate::operator::{Operator, OperatorAuthError, OperatorAuthenticator};
 
 use bearer::bearer;
@@ -111,7 +110,6 @@ impl OperatorAuthenticator for OidcOperators {
         let claims = self.verify(token)?;
 
         if claims.azp.as_deref() != Some(self.client_id.as_str()) || !claims.holds(&self.required_role) {
-            logging::operator_refused("bearer token");
             return Err(OperatorAuthError::NotAnOperator);
         }
 

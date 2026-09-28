@@ -204,3 +204,11 @@ In this order, each mergeable on its own:
 Deriving a client instance's shell configuration from the catalogue; module
 publication as OCI artifacts alongside login brands; organisations within a
 realm; visual unification of the console with the shell.
+
+**Partly answered by [ADR 0026](0026-a-component-describes-itself-in-an-artifact-attached-to-its-image.md) (2026-09-29).** A component publishes a
+component descriptor as an OCI artifact attached to its primary image. Its first
+version declares no modules; declaring them is a later version, written once
+this decision's shell fixes a module entry's shape. That constrains the open
+item above: a client instance's configuration derived from the catalogue may
+place only modules an operator placed, never one because a component
+descriptor declares it.

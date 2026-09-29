@@ -604,10 +604,12 @@ platform that provides them. The release workflow's matrix gives each image its
   with `saas-fabric-platform`.
 - **On a tag**, the version is computed once, by a leading job every other job
   uses; each build job records the digest it pushed, and refuses to move a
-  version tag that already exists — reusing a version is not supported, so a
-  build job that pushed cannot be re-run, and a new preview is the fix; and a
-  final job, which fails rather than skips when the tagged commit is not on
-  `main`, and runs only when every earlier job succeeded:
+  version tag that already exists, failing closed when it cannot tell —
+  reusing a version is not supported, so a build job that pushed its version
+  cannot be re-run, and the next version is the fix (another preview, or for a
+  stable release a workspace version bump); and a final job, which fails rather
+  than skips when the tagged commit is not on `main`, and runs only when every
+  earlier job succeeded and the run was not cancelled:
   1. checks each tag still resolves to the digest its build recorded;
   2. renders the component descriptor from those digests with the renderer this
      repository builds;

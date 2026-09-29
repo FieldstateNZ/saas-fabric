@@ -61,16 +61,20 @@ fabric_platform_management::{Channel, Hold, UpdatePolicy}` — only `Hold` and
   `PlatformGitRepository`, all delegate to `write_desired`/direct writes.
 - `Manifest { schema_version: u32, environment: String, managed_roots:
   Vec<String>, components: BTreeMap<String, Component> }`.
-  `SCHEMA_VERSION: u32 = 2`. `#[serde(rename_all = "camelCase")]` throughout
-  this module.
+  `SCHEMA_VERSIONS: &[u32] = &[2, 3]`, `DESCRIBED_SCHEMA_VERSION = 3`; a
+  file is written back at the version it was read at. `#[serde(rename_all =
+  "camelCase")]` throughout this module.
 - `Component { artifact: Artifact, channel: Channel, update: UpdatePolicy,
   desired: Desired, pinned_in: Vec<Pin>, hold: Option<Hold> }`.
 - `Artifact` — `Oci { source_revision: String, images: BTreeMap<String,
-  ImagePin> }` | `Helm { repository: String, chart: String }` (`tag =
-  "type"`, `deny_unknown_fields`, closed set). `.describe() -> &'static
-  str`. `.parse_version(text) -> Option<Version>` — dispatches to
-  `Version::parse` (OCI, refuses build metadata) or `Version::parse_chart`
-  (Helm, keeps it).
+  ImagePin> }` | `Helm { repository: String, chart: String }` |
+  `Described { primary: String, source_revision: String, images:
+  BTreeMap<String, ImagePin> }` (`type: described`, schema 3 only, `primary`
+  one of `images`; ADR 0026 section 9) (`tag = "type"`,
+  `deny_unknown_fields`, closed set). `.describe() -> &'static str`.
+  `.parse_version(text) -> Option<Version>` — dispatches to
+  `Version::parse` (OCI and described, refuses build metadata) or
+  `Version::parse_chart` (Helm, keeps it).
 - `ImagePin { repository: String, digest: String }`.
 - `Desired { version: String }` — once per component, not per image.
 - `Pin` — `KustomizeImage { path, image }` |
@@ -78,10 +82,12 @@ fabric_platform_management::{Channel, Hold, UpdatePolicy}` — only `Hold` and
   `rename_all = "kebab-case"`, `deny_unknown_fields`). `.path() -> &str`,
   `.describe() -> &'static str`.
 - `ComponentVersion`, `ImageDigest`, `WantedVersion` (from `desired/inputs.rs`)
-  — the caller-facing "what to write" shapes; `WantedVersion` wraps either an
-  OCI `ComponentVersion` (with images by role) or a `Chart { repository,
-  chart, version }`, and is what `port/wanted.rs::wanted_from(&Release)`
-  produces from the domain's `Release`.
+  — the caller-facing "what to write" shapes; `WantedVersion` wraps an OCI
+  `ComponentVersion` (with images by role), a `Chart { repository, chart,
+  version }`, or a `Described { version: ComponentVersion, primary }`, and is
+  what `port/wanted.rs::wanted_from(&Release)` produces from the domain's
+  `Release` (a described release's component descriptor digest is not
+  carried: it is never written to desired state).
 - `PlatformGitError` — `Conflict { path }`, `Contended`, `NotFound { what }`,
   `NotPermitted`, `Unavailable { detail }`, `Rejected { detail }`. `From<TokenError>`
   maps `fabric_git_host::TokenError` 1:1 (`NotPermitted`→`NotPermitted`,
@@ -103,13 +109,16 @@ fabric_platform_management::{Channel, Hold, UpdatePolicy}` — only `Hold` and
 
 - `atomic.rs` — `update_files_atomically`, `refuse_if_a_written_path_moved`,
   `ATTEMPTS = 4`.
-- `components.rs` + `components/{artifact,document,model,overlay,pin,pinning}.rs`
+- `components.rs` + `components/{artifact,artifact/grammar,document,document/header,model,overlay,pin,pinning,schema}.rs`
   + `components/argo/` — the manifest schema and its YAML document handling.
+  `artifact/grammar.rs`: `Artifact::describe`/`parse_version`.
   `document.rs`: `Document::{parse,render}` (serde_norway round-trip;
   `parse` first deserialises a permissive `Versioned { schema_version }`
   shape to check the version *before* the full `Manifest` parse, so a
   version mismatch is reported as that, not as an unrelated missing-field
-  error). `overlay.rs`: `repin` — rewrites a Kustomize `images:` entry by
+  error; `document/header.rs` is `header_of`). `schema.rs`: `check`, run on
+  every `Document::parse` — a `described` artifact needs schema 3, and its
+  `primary` must be one of its images; each refused by naming the component. `overlay.rs`: `repin` — rewrites a Kustomize `images:` entry by
   locating its `- name: {repository}` line and replacing its indented
   `newTag`/`digest` keys in place; refuses unless exactly one entry matches.
   `pinning.rs`: `check_writable` (four rules: repository-relative, no `..`
@@ -123,17 +132,26 @@ fabric_platform_management::{Channel, Hold, UpdatePolicy}` — only `Hold` and
   guesses) on zero or multiple matching sources, a source with no
   `targetRevision`, or a shape it cannot structurally parse.
 - `config.rs` — `PlatformRepositoryConfig` and its validation.
-- `desired.rs` + `desired/{identity,inputs,plan,render,write}.rs` — the
-  higher-level write operations. `identity.rs::check_release` refuses a
+- `desired.rs` + `desired/{apply,identity,identity/rules,inputs,plan,render,render/images,write}.rs`
+  — the higher-level write operations. `identity.rs::check_release` refuses a
   `WantedVersion` that does not match what the component's `Artifact`
-  publishes, via an exhaustive match over all four `(Artifact, WantedVersion)`
-  combinations (no wildcard arm, so a third `Artifact` variant fails to
-  compile rather than silently refusing every release). `plan.rs::rewrite_pins`
-  computes the `FileChange`s for every declared `Pin` (grouping by path, since
-  two roles can share one overlay file); `plan::apply` updates the in-memory
-  `Component`'s `desired.version` and, for OCI, `source_revision` and each
-  image's `digest` — a chart has nothing else to update. `render.rs::render`
-  matches `(Pin, Artifact, WantedVersion)` and dispatches to `repin`/`retarget`;
+  publishes, via an exhaustive match over all nine `(Artifact, WantedVersion)`
+  combinations (no wildcard arm, so another `Artifact` variant fails to
+  compile rather than silently refusing every release); a described release
+  is checked as images are (`identity/rules.rs`), plus the primary it was
+  found through. `plan.rs::rewrite_pins` computes the `FileChange`s for every
+  declared `Pin` (grouping by path, since two roles can share one overlay
+  file). `apply.rs::apply` is the one place the in-memory `Component` is
+  changed: an exhaustive match over every `(Artifact, WantedVersion)` pair
+  that writes `desired.version` and, for OCI and described, `source_revision`
+  and each image's `digest` — a chart has nothing else to update — and
+  refuses a mismatched pair *before* writing anything. (It used to
+  destructure the one images pair and return early for anything else after
+  the version was already written, so a new kind would have written a
+  version with no commit and no digests.) `render.rs::render` matches
+  `(Artifact, WantedVersion)` and then the `Pin`, with no wildcard, and
+  dispatches to `repin` (`render/images.rs`, shared by both image kinds) or
+  `retarget`;
   returns `Ok(None)` when a pin has nothing to write for this release (an
   image the release does not carry). `write.rs::write_desired` is the shared
   body both `advance`-shaped and `roll_back`-shaped writes call, via
@@ -258,7 +276,8 @@ fabric_platform_management::{Channel, Hold, UpdatePolicy}` — only `Hold` and
    beside a renderer name. A new renderer is a new variant with exactly the
    fields it needs.
 7. **`Artifact::parse_version` dispatch is per-artifact-kind, never global.**
-   An OCI version must not carry build metadata; a chart version may.
+   An OCI or described version must not carry build metadata; a chart
+   version may.
 8. **`write_desired`'s conflict check compares the manifest file's own
    revision against the caller's `at`**, not a fresh read of the adapter's
    own state against itself — the latter only proves nothing changed during
@@ -280,6 +299,17 @@ fabric_platform_management::{Channel, Hold, UpdatePolicy}` — only `Hold` and
     could interleave and leave a placement naming a source nothing
     declares. `port/environment.rs` must not be "simplified" back into two
     calls to `write_data_sources_file`/`write_placements_file`.
+12. **A manifest is written back at the schema version it was read at, and
+    `type: described` requires schema 3.** A build that predates schema 3
+    refuses such a file by naming its version, which only holds while no
+    schema 2 file carries a described component (`components/schema.rs`).
+    Never upgrade a file's `schemaVersion` as a side effect of a write.
+13. **A release shaped for another kind is refused before anything is
+    changed, in `identity.rs` and again in `apply.rs`.** Both are exhaustive
+    over every `(Artifact, WantedVersion)` pair with no wildcard arm; a new
+    kind is a compile error in both, not a release that writes a version
+    and nothing else. The component descriptor's digest is never written:
+    `WantedVersion::Described` does not carry it (ADR 0026 section 9).
 
 ## Notes
 

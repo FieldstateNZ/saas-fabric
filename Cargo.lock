@@ -546,6 +546,7 @@ name = "fabric-platform-management"
 version = "0.3.0"
 dependencies = [
  "async-trait",
+ "fabric-component",
  "fabric-core",
  "fabric-runtime-publication",
  "serde",
@@ -588,8 +589,10 @@ name = "fabric-registry"
 version = "0.3.0"
 dependencies = [
  "async-trait",
+ "fabric-component",
  "fabric-platform-management",
  "reqwest",
+ "ring",
  "serde",
  "serde_json",
  "serde_norway",

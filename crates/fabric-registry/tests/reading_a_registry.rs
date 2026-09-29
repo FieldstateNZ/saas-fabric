@@ -20,8 +20,10 @@ const RUNTIME: &str = "ghcr.io/fieldstatenz/saas-fabric";
 const CONTROL_PLANE: &str = "ghcr.io/fieldstatenz/saas-fabric-control-plane";
 const CONSOLE: &str = "ghcr.io/fieldstatenz/saas-fabric-control-plane-ui";
 
+/// A client for the fake: plain HTTP to its loopback socket, the only
+/// place a registry client accepts it.
 fn registry(fake: &FakeRegistry) -> OciRegistry {
-    OciRegistry::new(&fake.base_url, HOST, 5).unwrap()
+    OciRegistry::plain_http_to_loopback(&fake.base_url, HOST, 5).unwrap()
 }
 
 #[tokio::test]

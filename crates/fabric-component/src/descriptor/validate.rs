@@ -71,9 +71,9 @@ fn images(spec: &ComponentSpec) -> Result<(), ContractError> {
     let mut hosts = spec.images.values().map(|image| image.repository.host());
     let first = hosts.next().unwrap_or_default();
     if let Some(other) = hosts.find(|host| *host != first) {
-        return Err(invalid(format!(
-            "Every image of a component is on one registry: {first} and {other} are two"
-        )));
+        return Err(ContractError::OtherRegistry {
+            detail: format!("Every image of a component is on one registry: {first} and {other} are two"),
+        });
     }
     Ok(())
 }

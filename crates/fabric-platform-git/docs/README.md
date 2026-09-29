@@ -71,8 +71,14 @@ and it deliberately does not stop there — see "Concurrency" below.
   a failure, to tidy something nobody can see.
 - **The manifest schema (`components.rs`)** — `Manifest { schema_version,
   environment, managed_roots, components: BTreeMap<String, Component> }`.
-  `SCHEMA_VERSION = 2`; a manifest declaring a different version is refused
-  rather than half-understood. `Component.pinned_in: Vec<Pin>` is the
+  `SCHEMA_VERSIONS = [2, 3]`; a manifest declaring any other version is
+  refused rather than half-understood, and one is written back at the
+  version it was read at. Schema 3 adds the `described` artifact (ADR 0026
+  section 9) — `primary`, `sourceRevision` and images by role, but never the
+  component descriptor's digest, which only a commit message names. It is
+  refused in a schema 2 file by naming both versions, and a `primary` that
+  is not one of its images is refused too (`components/schema.rs`, on every
+  parse). `Component.pinned_in: Vec<Pin>` is the
   component's own statement of every place its version is written — this
   crate never guesses a file layout. `Pin`'s *renderer* is the enum tag
   itself (`KustomizeImage { path, image }` |
@@ -156,8 +162,10 @@ fabric-platform-management::DesiredState   the port this crate implements
         |
    port.rs                                  within_budget() wraps every method
         |
-   desired.rs / hold.rs                     read-manifest, check identity, plan
-        |                                   pin rewrites, render, write-atomically
+   desired.rs / hold.rs                     read-manifest, check identity, apply
+        |                                   (a mismatched kind refused before any
+        |                                   change), plan pin rewrites, render,
+        |                                   write-atomically
    atomic.rs                                update_files_atomically: blobs -> tree
         |                                   -> commit -> ref, with the 409 retry
    host.rs (+ host/*)                       the Git Data API client
@@ -252,8 +260,8 @@ to the state it was taken against").
   bounded by `port/budget/bearer.rs::bearer_allowance`), because a token
   exchange writes nothing to the repository if abandoned.
 - `Artifact::parse_version` dispatches on the artifact kind, not on the text
-  being parsed: an OCI component's version is refused if it carries build
-  metadata (illegal in an OCI tag); a Helm component's is not. Fixing this to
+  being parsed: an OCI or described component's version is refused if it
+  carries build metadata (illegal in an OCI tag); a Helm component's is not. Fixing this to
   "one global parser" would make a chart version written *with* build
   metadata (which chart repositories publish routinely) unreadable on its
   next read.

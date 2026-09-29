@@ -2,6 +2,7 @@ import type { Platform, PlatformComponent, PlatformLastCheck } from '../api/type
 import { ComponentBrake } from './ComponentBrake'
 
 import { DeploymentEvidence } from './DeploymentEvidence'
+import { PlatformDiagnostics } from './PlatformDiagnostics'
 
 /** Desired state and independently observed deployment evidence. */
 export function PlatformPanel({ platform }: { platform: Platform }) {
@@ -75,16 +76,7 @@ function ComponentRows({ component }: { component: PlatformComponent }) {
       <DeploymentEvidence observation={component.observation} />
       <ComponentBrake component={component} />
 
-      {component.diagnostics.length > 0 && (
-        <ul className="platform__diagnostics">
-          {component.diagnostics.map((diagnostic) => (
-            <li key={diagnostic.version}>
-              {diagnostic.version} —{' '}
-              {diagnostic.state === 'publishing' ? 'still publishing' : 'built more than once'}
-            </li>
-          ))}
-        </ul>
-      )}
+      <PlatformDiagnostics diagnostics={component.diagnostics} />
     </article>
   )
 }

@@ -125,7 +125,7 @@ mod tests {
 
     use fabric_core::Clock;
     use fabric_platform_management::{
-        ChartIndex, ComponentDesired, DataSourceState, DataSources, DesiredRevision, DesiredState,
+        Attached, ChartIndex, ComponentDesired, DataSourceState, DataSources, DesiredRevision, DesiredState,
         DesiredStateError, Hold, Placements, PlatformDesiredState, PlatformRepository, PublicationState,
         Registry, RegistryError, Release, Resolved, Version,
     };
@@ -215,6 +215,10 @@ mod tests {
         }
 
         async fn resolve(&self, _: &str, _: &str) -> Result<Option<Resolved>, RegistryError> {
+            unreachable!("a sweep never reaches the registry in this test")
+        }
+
+        async fn component_descriptor(&self, _: &str, _: &str) -> Result<Attached, RegistryError> {
             unreachable!("a sweep never reaches the registry in this test")
         }
     }

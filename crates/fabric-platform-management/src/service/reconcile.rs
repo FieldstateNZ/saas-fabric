@@ -1,6 +1,6 @@
 //! Acting on what a component's situation turns out to be.
 
-use crate::Release;
+use crate::service::messages;
 use crate::{
     decide, ComponentStatus, Decision, DesiredStateStatus, PlatformError, PlatformManagement, Reconciliation,
 };
@@ -40,17 +40,7 @@ impl PlatformManagement {
             });
         };
 
-        // A chart has no commit to name, so the message does not pretend to
-        // one. What a release says about itself is the release's to say.
-        let message = match &release {
-            Release::Unit(unit) => format!(
-                "Advance {environment} to {component} {}\n\nBuilt from {}.",
-                unit.version, unit.source_revision
-            ),
-            Release::Chart { version, .. } => {
-                format!("Advance {environment} to {component} chart {version}")
-            }
-        };
+        let message = messages::advance(environment, component, &release);
 
         self.desired_state
             .advance(environment, component, &release, &desired.revision, &message)

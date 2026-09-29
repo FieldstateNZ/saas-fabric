@@ -116,6 +116,30 @@ describe('the platform panel', () => {
     expect(screen.getByText(/built more than once/)).toBeInTheDocument()
   })
 
+  it("shows a described component's undescribed and invalid versions, the invalid one with why", () => {
+    render(
+      <PlatformPanel
+        platform={platform({
+          components: [
+            component({
+              diagnostics: [
+                { version: '0.3.0-preview.4', state: 'undescribed' },
+                { version: '0.3.0-preview.3', state: 'invalid', reason: 'notPinned' },
+              ],
+            }),
+          ],
+        })}
+      />,
+    )
+
+    expect(screen.getByText('0.3.0-preview.4 — no component descriptor attached')).toBeInTheDocument()
+    expect(
+      screen.getByText(
+        '0.3.0-preview.3 — component descriptor cannot be used: it names roles, repositories or a primary image other than the ones this environment pins',
+      ),
+    ).toBeInTheDocument()
+  })
+
   it('shows a dash rather than a version when nothing newer exists', () => {
     render(
       <PlatformPanel

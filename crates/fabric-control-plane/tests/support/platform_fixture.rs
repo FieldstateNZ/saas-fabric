@@ -1,6 +1,7 @@
 //! A `PlatformRepository` fake, connected through the real
 //! `PlatformDesiredState` binding, for tests that drive
-//! `/api/platform/data-sources` through the real router.
+//! `/api/platform/data-sources` through the real router -- and, given
+//! components and a registry, `GET /api/platform` and the rollback listing.
 //!
 //! Built the same way `fabric-control-plane-api`'s `startup::platform::establish`
 //! builds the shipping composition: one `PlatformDesiredState`, connected once,
@@ -13,10 +14,10 @@ use std::sync::{Arc, Mutex};
 use fabric_control_plane::PlatformBinding;
 use fabric_core::Clock;
 use fabric_platform_management::{
-    ChartIndex, ComponentDesired, DataSourceDeclaration, DataSourceState, DataSources, DataSourcesRead,
-    DesiredRevision, DesiredState, DesiredStateError, EnvironmentWrite, Hold, PlacementRecord,
-    PlacementState, Placements, PlacementsRead, PlatformDesiredState, PlatformManagement, PlatformRepository,
-    Registry, RegistryError, Release, Resolved, Version,
+    Attached, ChartIndex, ComponentDesired, DataSourceDeclaration, DataSourceState, DataSources,
+    DataSourcesRead, DesiredRevision, DesiredState, DesiredStateError, EnvironmentWrite, Hold,
+    PlacementRecord, PlacementState, Placements, PlacementsRead, PlatformDesiredState, PlatformManagement,
+    PlatformRepository, Registry, RegistryError, Release, Resolved, Version,
 };
 
 use super::FixedClock;
@@ -26,14 +27,19 @@ pub const ENVIRONMENT: &str = "lucentroot";
 
 /// A `PlatformRepository`: `DataSourceState` backed by an in-memory store
 /// with the same compare-and-swap contract the real adapter gives, and
-/// `DesiredState` answered trivially -- nothing under test here reads or
-/// moves a component, only data sources.
+/// `DesiredState` answered from the components it was built with, which it
+/// never moves.
 pub struct FakeRepository {
     inner: Mutex<Held>,
 }
 
 /// What is currently declared, and how many times a write actually landed.
 struct Held {
+    /// The environment's components, as desired state reads them. Nothing
+    /// here writes one: a test that reads a component's status needs it
+    /// read, and none needs it moved.
+    components: Vec<(String, ComponentDesired)>,
+
     revision: Option<DesiredRevision>,
     declarations: Vec<DataSourceDeclaration>,
     writes: u32,
@@ -49,10 +55,11 @@ struct Held {
 }
 
 impl FakeRepository {
-    /// Starts with nothing declared and nothing placed.
-    fn new() -> Arc<Self> {
+    /// Starts with `components` desired, nothing declared and nothing placed.
+    fn new(components: Vec<(String, ComponentDesired)>) -> Arc<Self> {
         Arc::new(Self {
             inner: Mutex::new(Held {
+                components,
                 revision: None,
                 declarations: Vec::new(),
                 writes: 0,
@@ -217,14 +224,17 @@ impl PlatformRepository for FakeRepository {
     }
 }
 
-/// `DesiredState` no test built over this fixture calls -- nothing here
-/// drives GET /api/platform or anything that reads or moves a component.
-/// Answered trivially so `FakeRepository` satisfies `PlatformRepository`,
-/// the one thing `PlatformDesiredState::connect` accepts.
+/// `DesiredState` read from the components the fixture was built with, and
+/// never written: nothing here advances, rolls back or pauses a component.
+/// Implemented so `FakeRepository` satisfies `PlatformRepository`, the one
+/// thing `PlatformDesiredState::connect` accepts, and so `GET /api/platform`
+/// has something to read when a test gives it components.
 #[async_trait::async_trait]
 impl DesiredState for FakeRepository {
     async fn components(&self, _environment: &str) -> Result<Vec<String>, DesiredStateError> {
-        Ok(Vec::new())
+        let held = self.inner.lock().expect("the fixture lock is never poisoned");
+
+        Ok(held.components.iter().map(|(name, _)| name.clone()).collect())
     }
 
     async fn component(
@@ -232,9 +242,15 @@ impl DesiredState for FakeRepository {
         _environment: &str,
         component: &str,
     ) -> Result<ComponentDesired, DesiredStateError> {
-        Err(DesiredStateError::NotFound {
-            what: component.to_owned(),
-        })
+        let held = self.inner.lock().expect("the fixture lock is never poisoned");
+
+        held.components
+            .iter()
+            .find(|(name, _)| name == component)
+            .map(|(_, desired)| desired.clone())
+            .ok_or_else(|| DesiredStateError::NotFound {
+                what: component.to_owned(),
+            })
     }
 
     async fn advance(
@@ -282,8 +298,8 @@ impl DesiredState for FakeRepository {
     }
 }
 
-/// A registry no test built over this fixture asks -- nothing here drives
-/// GET /api/platform or anything that discovers a version.
+/// The registry [`platform_binding`] reads: never asked, because the
+/// environment it builds has no components to discover versions of.
 struct UnusedRegistry;
 
 #[async_trait::async_trait]
@@ -294,6 +310,10 @@ impl Registry for UnusedRegistry {
 
     async fn resolve(&self, _repository: &str, _tag: &str) -> Result<Option<Resolved>, RegistryError> {
         Ok(None)
+    }
+
+    async fn component_descriptor(&self, _: &str, _: &str) -> Result<Attached, RegistryError> {
+        Ok(Attached::Nothing)
     }
 }
 
@@ -311,15 +331,28 @@ impl ChartIndex for UnusedChartIndex {
 /// shipping one -- one `PlatformDesiredState`, connected to the in-memory
 /// fake, with `PlatformManagement` and `DataSources` both built over it --
 /// and hands back the fake itself so a test can read what it recorded.
+///
+/// Its environment has no components, so no registry is ever asked.
 pub async fn platform_binding() -> (PlatformBinding, Arc<FakeRepository>) {
-    let fake = FakeRepository::new();
+    platform_binding_over(Arc::new(UnusedRegistry), Vec::new()).await
+}
+
+/// [`platform_binding`], with `components` as the environment's desired
+/// state and `registry` as where their versions are read -- for a test that
+/// drives `GET /api/platform` or the rollback listing through the real
+/// router and the real discovery.
+pub async fn platform_binding_over(
+    registry: Arc<dyn Registry>,
+    components: Vec<(String, ComponentDesired)>,
+) -> (PlatformBinding, Arc<FakeRepository>) {
+    let fake = FakeRepository::new(components);
     let repository = PlatformDesiredState::unconnected();
     repository
         .connect(Arc::clone(&fake) as Arc<dyn PlatformRepository>)
         .await;
 
     let service = PlatformManagement::new(
-        Arc::new(UnusedRegistry) as Arc<dyn Registry>,
+        registry,
         Arc::new(UnusedChartIndex) as Arc<dyn ChartIndex>,
         Arc::clone(&repository) as Arc<dyn DesiredState>,
         Arc::new(FixedClock) as Arc<dyn Clock>,

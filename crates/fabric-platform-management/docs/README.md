@@ -54,7 +54,10 @@ read-only identity three separate integrations is a large part of the point
   can be rolled back; they differ in *how much* of the old release comes
   back, and that difference is stated to the operator (`ComponentStatus`
   carries the `ArtifactKind`, not a `rollable: bool`), never enforced by
-  refusing one kind.
+  refusing one kind. A third source, `Described { primary, repositories }`,
+  is images found through a component descriptor (below), and reports the
+  `Oci` kind: its rollback restores the same exact bytes, and how its
+  versions are found is not the console's concern.
 - **`Version`** — `SemVer` precedence, not string order (`preview.9` sorts
   before `preview.10`; a string comparison has that backwards). Equality is
   precedence, not spelling: two versions differing only in build metadata
@@ -79,8 +82,23 @@ read-only identity three separate integrations is a large part of the point
   backwards), and every rejected candidate below the one selected is still
   reported (`not_yet` — still publishing, expected to resolve itself;
   `incoherent` — images that disagree about their source commit, which no
-  amount of waiting fixes) so an environment that jumps `preview.2` to
+  amount of waiting fixes; and for a described component `undescribed` and
+  `invalid` with its reason) so an environment that jumps `preview.2` to
   `preview.4` can say what happened to `preview.3`.
+- **A described component** (ADR 0026 sections 3 and 9) — its versions are
+  the primary repository's tags, and each is a release unit only by
+  `evaluate`, the one rule the catalogue shares: exactly one component
+  descriptor attached to the tag's digest, valid, of a version this build
+  reads, naming that version and the primary image, with the environment's
+  roles and repositories; every other image existing at its digest, still
+  tagged with the version, and every image and the component descriptor
+  naming one commit. Nothing about an answer is remembered, and a registry
+  that cannot be asked is an error, never an answer. Advancing and rolling
+  back apply the rule again at the moment of the write, and the commit
+  message names the component descriptor's digest (`service/messages.rs`),
+  which desired state never records. `InvalidReason::code()` is the stable
+  spelling `GET /api/platform` sends, and the console words each code for
+  itself.
 - **Rollback restores an older *published* version, not a history.** Nothing
   here remembers what an environment ever ran; `rollback_candidates` and
   `roll_back` search *backwards* from the desired version, within the same
@@ -449,7 +467,8 @@ let statuses = service.statuses("production").await?;
   `PlatformManagement::pause`/`resume`/`roll_back` directly; these are
   operator-triggered writes with their own authorization (upstream of this
   crate), never reachable through the selector's `advance` path.
-- **Adding a new artifact kind** — extend `ArtifactSource`/`ArtifactKind`
+- **Adding a new artifact kind** — extend `ArtifactSource` (and
+  `ArtifactKind` only if a rollback of it restores something different)
   deliberately (a closed set on purpose — see `artifact.rs`'s module docs)
   and provide both a `Registry`- and `ChartIndex`-shaped discovery path, or
   a third port if genuinely neither fits.

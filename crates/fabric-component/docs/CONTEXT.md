@@ -8,11 +8,16 @@ resource and capability shapes it shares with the catalogue. In neither plane
 `scripts/check_architecture.py` (no HTTP crate). Internal edges exactly
 `fabric-core` and `fabric-runtime-publication`; external deps `serde`,
 `serde_json`, `serde_norway`, `thiserror`. Depended on by
-`fabric-client-model`; `fabric-platform-management` gains its edge in slice 2.
+`fabric-client-model`, `fabric-platform-management` (which reads a component
+descriptor through it) and `fabric-registry` (which takes only the family's
+name and the document's size bound).
 
 ## Public surface (all re-exported from `lib.rs`)
 
-- `ContractError` — `Invalid { detail }` (`Display` is the detail alone) and
+- `ContractError` — `Invalid { detail }` (`Display` is the detail alone),
+  `OtherRegistry { detail }` (images on more than one registry, typed so a
+  reader can answer ADR 0026 section 3's *an image on another registry*
+  without parsing a message; `Display` is the detail alone) and
   `UnsupportedVersion { found }` ("a component descriptor of version {found}
   is not one this build reads; this build reads v1"), `found` always spelled
   `v<N>` (`v2`), whether an `apiVersion` or an `artifactType` named it.

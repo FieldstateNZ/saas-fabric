@@ -9,7 +9,7 @@ use fabric_component::ContractError;
 impl From<ContractError> for DesiredStateError {
     fn from(error: ContractError) -> Self {
         let detail = match error {
-            ContractError::Invalid { detail } => detail,
+            ContractError::Invalid { detail } | ContractError::OtherRegistry { detail } => detail,
             unsupported @ ContractError::UnsupportedVersion { .. } => unsupported.to_string(),
         };
         Self::InvalidField {

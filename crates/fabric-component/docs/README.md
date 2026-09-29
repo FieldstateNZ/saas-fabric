@@ -42,7 +42,7 @@ copy that could drift.
 | Authored source | `ComponentSource` | `component.yaml`: the same document without `version` and without digests. |
 | Image | `ImageReference` | A `Repository` and a `Digest`, keyed by `Role`. |
 | Capability | `PlatformCapability` | ADR 0021's closed list of seven, as a type. |
-| Refusal | `ContractError` | `Invalid { detail }`, or `UnsupportedVersion { found }` for a version this build does not read. |
+| Refusal | `ContractError` | `Invalid { detail }`; `OtherRegistry { detail }` for images on more than one registry; or `UnsupportedVersion { found }` for a version this build does not read. |
 
 The validated strings — `ComponentName` (a DNS label), `Role` (an
 identifier), `ComponentVersion` (SemVer without build metadata or a `v`),

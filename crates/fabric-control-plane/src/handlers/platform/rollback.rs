@@ -1,47 +1,16 @@
 //! Putting an environment back on an older published version.
 
+mod candidates;
+
+pub(crate) use candidates::rollback_candidates;
+
 use axum::extract::{Path, State};
 use axum::Json;
-use fabric_platform_management::Release;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 use crate::handlers::platform::body::ComponentRow;
 use crate::state::ControlPlaneState;
 use crate::{ControlPlaneError, Operator};
-
-/// One version an operator could go back to.
-///
-/// The version and what it was built from, and nothing else. Not the digests:
-/// an operator does not choose those and the API must not invite anything to
-/// send them back — what gets written is resolved by the platform at the
-/// moment of the write.
-#[derive(Serialize)]
-pub(crate) struct CandidateRow {
-    /// The version, as it is tagged.
-    version: String,
-
-    /// The commit every one of its images was built from.
-    ///
-    /// **Absent for a chart, rather than empty.** A chart repository's index
-    /// lists versions and no provenance, so there is no commit to name —
-    /// and `""` or `null` would invite the console to render "built from"
-    /// about something nothing observed.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    source_revision: Option<String>,
-}
-
-/// What an operator is offered.
-#[derive(Serialize)]
-pub(crate) struct CandidatesBody {
-    /// Complete, coherent versions below the desired one, newest first.
-    versions: Vec<CandidateRow>,
-
-    /// Whether older versions exist that were not examined.
-    ///
-    /// Reported rather than hidden. A list that quietly stopped would read as
-    /// "this is everything there is".
-    more: bool,
-}
 
 /// Which version, and why.
 ///
@@ -71,46 +40,6 @@ pub(crate) struct Rollback {
     /// Free text, shown beside the hold and never branched on.
     #[serde(default)]
     note: Option<String>,
-}
-
-/// `GET /api/platform/components/{component}/versions`.
-///
-/// # Errors
-///
-/// [`ControlPlaneError`] if this deployment manages no platform, the manifest
-/// does not name this component, or a registry could not be asked.
-pub(crate) async fn rollback_candidates(
-    State(state): State<ControlPlaneState>,
-    _operator: Operator,
-    Path(component): Path<String>,
-) -> Result<Json<CandidatesBody>, ControlPlaneError> {
-    let platform = state.platform()?;
-
-    let found = platform
-        .service
-        .rollback_candidates(&platform.environment, &component)
-        .await?;
-
-    Ok(Json(CandidatesBody {
-        versions: found.releases.iter().map(CandidateRow::of).collect(),
-        more: found.more,
-    }))
-}
-
-impl CandidateRow {
-    /// Renders one candidate, saying only what its kind can support.
-    fn of(release: &Release) -> Self {
-        match release {
-            Release::Unit(unit) => Self {
-                version: unit.version.as_str().to_owned(),
-                source_revision: Some(unit.source_revision.clone()),
-            },
-            Release::Chart { version, .. } => Self {
-                version: version.as_str().to_owned(),
-                source_revision: None,
-            },
-        }
-    }
 }
 
 /// `POST /api/platform/components/{component}/rollback`.

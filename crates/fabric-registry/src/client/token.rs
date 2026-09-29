@@ -1,68 +1,20 @@
-//! Obtaining an anonymous pull token, and sending requests with it.
-
-use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, USER_AGENT};
-use reqwest::{Response, StatusCode};
+//! Obtaining an anonymous pull token.
 
 use fabric_platform_management::RegistryError;
 
 use crate::client::wire::PullToken;
-use crate::client::OciRegistry;
-use crate::errors::{status_failure, transport_failure};
+use crate::client::{bounds, OciRegistry};
+use crate::errors::{send_failure, status_failure, unreadable};
+use crate::transport::bounded_body;
 
 impl OciRegistry {
-    /// Sends a request with a pull token, minting one if needed.
-    ///
-    /// Retries once on `401` with a fresh token. A cached token has no expiry
-    /// recorded against it, so ageing out is noticed here rather than
-    /// predicted — which is the same path a token revoked early would take, so
-    /// there is one mechanism instead of two.
-    pub(super) async fn get(
+    /// A pull token for one repository, from the cache unless `fresh`.
+    pub(super) async fn token(
         &self,
         operation: &str,
         repository: &str,
-        url: &str,
-        accept: &str,
-    ) -> Result<Response, RegistryError> {
-        let token = self.token(operation, repository, false).await?;
-        let response = self.attempt(operation, url, accept, &token).await?;
-
-        if response.status() != StatusCode::UNAUTHORIZED {
-            return Ok(response);
-        }
-
-        let token = self.token(operation, repository, true).await?;
-
-        self.attempt(operation, url, accept, &token).await
-    }
-
-    /// Sends one request.
-    async fn attempt(
-        &self,
-        operation: &str,
-        url: &str,
-        accept: &str,
-        token: &str,
-    ) -> Result<Response, RegistryError> {
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            ACCEPT,
-            HeaderValue::from_str(accept).map_err(|_| RegistryError::Refused {
-                detail: format!("{operation}: the Accept header is not sendable"),
-            })?,
-        );
-        headers.insert(USER_AGENT, HeaderValue::from_static("saas-fabric-control-plane"));
-
-        self.http
-            .get(url)
-            .headers(headers)
-            .bearer_auth(token)
-            .send()
-            .await
-            .map_err(|error| transport_failure(operation, &error))
-    }
-
-    /// A pull token for one repository, from the cache unless `fresh`.
-    async fn token(&self, operation: &str, repository: &str, fresh: bool) -> Result<String, RegistryError> {
+        fresh: bool,
+    ) -> Result<String, RegistryError> {
         let path = self.path(repository).to_owned();
 
         if !fresh {
@@ -78,27 +30,27 @@ impl OciRegistry {
         );
 
         let response = self
-            .http
+            .api
             .get(&url)
-            .header(USER_AGENT, "saas-fabric-control-plane")
             .send()
             .await
-            .map_err(|error| transport_failure(operation, &error))?;
+            .map_err(|error| send_failure(operation, &error))?;
 
         if !response.status().is_success() {
             return Err(status_failure(operation, response.status(), response.headers()));
         }
 
-        let minted: PullToken = response
-            .json()
-            .await
-            .map_err(|error| transport_failure(operation, &error))?;
+        let body = bounded_body(response, bounds::TOKEN, operation).await?;
+        let minted: PullToken = serde_json::from_slice(&body).map_err(|_| unreadable(operation))?;
+        let Some(token) = minted.bearer() else {
+            return Err(unreadable(operation));
+        };
 
         if let Ok(mut tokens) = self.tokens.lock() {
-            tokens.insert(path, minted.token.clone());
+            tokens.insert(path, token.clone());
         }
 
-        Ok(minted.token)
+        Ok(token)
     }
 
     /// The cached token for a repository path, if there is one.

@@ -27,6 +27,7 @@ use fabric_reconciliation::{IdentityProvider, ReconciliationStatusStore};
 use http::{header, Request, Response};
 use tower::ServiceExt as _;
 
+pub mod described_registry;
 pub mod platform_fixture;
 
 /// The operator every test authenticates as.

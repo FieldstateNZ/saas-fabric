@@ -1,8 +1,14 @@
 //! What an environment could be rolled back to.
+//!
+//! Over the 120-line advisory threshold. The reason is that the latency
+//! bound, the listing it bounds and the validation a rollback request gets
+//! instead are one rule — "the picker is navigation, rollback is
+//! validation" — and read wrongly apart.
 
 use std::collections::BTreeMap;
 
-use crate::discovery::unit::{self, Direction};
+use crate::discovery::candidates::{candidates, every_role, Direction};
+use crate::discovery::unit;
 use crate::{Channel, Registry, RegistryError, Release, Version};
 
 /// How many versions below the desired one are resolved.
@@ -70,7 +76,8 @@ pub async fn history(
     series: Option<&Version>,
     floor: &Version,
 ) -> Result<History, RegistryError> {
-    let candidates = unit::candidates(registry, roles, channel, series, floor, Direction::Below).await?;
+    let repositories = every_role(roles);
+    let candidates = candidates(registry, &repositories, channel, series, floor, Direction::Below).await?;
 
     let more = candidates.len() > EXAMINED;
     let mut releases = Vec::new();

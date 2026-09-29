@@ -564,8 +564,8 @@ def check_dependency_direction(graph: Graph) -> list[Failure]:
         # declared resource's names follow; `fabric-runtime-publication` for
         # a declared resource's collection and field names and the wire
         # definition `ApplicationResource::into_definition` produces.
-        # `fabric-platform-management` gains its edge to this crate when it
-        # reads a component descriptor (slice 2), not before.
+        # `fabric-platform-management` depends on it to read a component
+        # descriptor when it decides whether a version is a release unit.
         "fabric-component": {"fabric-core", "fabric-runtime-publication"},
         "fabric-identity": {"fabric-core"},
         "fabric-connector": {"fabric-core"},
@@ -649,12 +649,24 @@ def check_dependency_direction(graph: Graph) -> list[Failure]:
         # handed an implementation. Which registry, and how it authenticates,
         # is a separate integration from the platform repository's credential
         # and must stay separable.
-        "fabric-platform-management": {"fabric-core", "fabric-runtime-publication"},
+        #
+        # Its edge to `fabric-component` (ADR 0026 sections 3 and 9) is for
+        # the one reader of a component descriptor: discovery decides whether
+        # a version is a release unit from what the component says it is, and
+        # a second reader here would be a second place for that contract to
+        # drift. Both crates are in neither plane and have no transport.
+        "fabric-platform-management": {"fabric-core", "fabric-runtime-publication", "fabric-component"},
         # The registry adapter. It implements the port the rules define, and
         # holds no credential at all: the packages are public, and the App that
         # writes platform desired state must never become the registry's
         # credential.
-        "fabric-registry": {"fabric-core", "fabric-platform-management"},
+        #
+        # Its edge to `fabric-component` (ADR 0026 section 4) is for the
+        # component descriptor's artifact type family and its size bound,
+        # which decide which referrers it fetches and how much of one it
+        # reads. It never parses a component descriptor: that is the
+        # domain's, through the same crate.
+        "fabric-registry": {"fabric-core", "fabric-platform-management", "fabric-component"},
         "fabric-deployment-kubernetes": {"fabric-core", "fabric-platform-management"},
         # The publisher's Kubernetes adapter (ADR 0018, ADR 0023 part 4). It
         # implements the port the publication crate defines and decides

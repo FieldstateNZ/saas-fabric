@@ -25,12 +25,48 @@ pub(crate) fn transport_failure(operation: &str, error: &reqwest::Error) -> Regi
     }
 }
 
+/// Classifies a failure from `.send()` on a client whose redirect policy may
+/// refuse a hop.
+///
+/// A policy refusal is not an outage: the far end was reachable and this
+/// crate's own transport policy said no to where it was sent next. Grouping
+/// it with `Unavailable` would tell an operator to retry a request that will
+/// refuse again. `reqwest` keeps the reason the policy raised as the error's
+/// `source()`, worded by the reader that refused, so that is what is shown.
+pub(crate) fn send_failure(operation: &str, error: &reqwest::Error) -> RegistryError {
+    if !error.is_redirect() {
+        return transport_failure(operation, error);
+    }
+
+    let detail = std::error::Error::source(error).map_or_else(
+        || format!("{operation} was redirected off the allowed transport"),
+        ToString::to_string,
+    );
+
+    RegistryError::Refused { detail }
+}
+
+/// A body that arrived whole, within its bound, and is not the document it
+/// should have been.
+///
+/// `Unavailable`, as a body `reqwest` could not decode always was here: a
+/// listing or token response is not content-addressed, and the next pass
+/// asks again. Content that *is* addressed by a digest, and hashed, is
+/// judged where it is read instead.
+pub(crate) fn unreadable(operation: &str) -> RegistryError {
+    RegistryError::Unavailable {
+        detail: format!("{operation} returned a response that could not be read"),
+    }
+}
+
 /// Classifies a status the registry returned.
 ///
-/// `404` never reaches here: a tag that is not published is an *answer*, and
-/// the one the whole design rests on — a version missing from one repository
-/// is a publishing window, not a failure. It is handled where the request is
-/// made.
+/// A `404` that is an *answer* never reaches here: a tag that is not
+/// published is one, and the one the whole design rests on — a version
+/// missing from one repository is a publishing window, not a failure. It is
+/// handled where the request is made. A `404` that is not an answer — a
+/// later page of a listing, or the token endpoint — does reach here, and is
+/// refused like any other status.
 ///
 /// A `429` or a `403` with no quota left is a rate limit, which is transient
 /// and leaves availability stale rather than wrong.

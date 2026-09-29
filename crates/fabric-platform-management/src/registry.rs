@@ -1,4 +1,10 @@
-//! The port through which available versions are discovered.
+//! The port through which published artifacts are read.
+
+mod attached;
+mod resolved;
+
+pub use attached::{Attached, AttachedDescriptor, Unusable};
+pub use resolved::{Provenance, Resolved};
 
 /// What went wrong asking a registry.
 ///
@@ -22,54 +28,20 @@ pub enum RegistryError {
     },
 }
 
-/// What an artifact says about where it came from.
-///
-/// # Why absence and disagreement are not the same answer
-///
-/// An artifact carrying no revision may simply still be publishing — a push
-/// in flight looks identical to a label that was never set, and waiting is the
-/// cheaper mistake. An artifact whose parts *disagree* about their source
-/// commit is one version built twice, and no amount of waiting resolves it.
-///
-/// Collapsing them would either retry a broken build forever or refuse a
-/// perfectly ordinary publishing window.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Provenance {
-    /// Everything inspected agrees it came from this commit.
-    Agreed(String),
-
-    /// Something inspected carries no revision at all.
-    Absent,
-
-    /// The parts inspected name different commits.
-    Disagreed,
-}
-
-/// What a registry knows about one tag of one repository.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Resolved {
-    /// The manifest digest, which is what a deployment pins.
-    ///
-    /// For a multi-architecture image this is the **index**, so a node still
-    /// selects its own architecture. Pinning one platform's manifest would
-    /// hand every node the same one.
-    pub digest: String,
-
-    /// Where it says it came from.
-    ///
-    /// An adapter reporting this for an index must satisfy itself that *every*
-    /// manifest it inspected agrees. Reading one platform's label proves that
-    /// platform's provenance and not the artifact's, and "the architecture we
-    /// happen to run today" is not a fact about the image.
-    pub provenance: Provenance,
-}
-
 /// Somewhere published artifacts can be looked up.
 ///
 /// Implemented by an adapter that speaks a registry's protocol. Nothing here
 /// says which registry, or how it is authenticated to: the registry is its own
 /// integration, and treating the platform repository's credential as the
 /// registry's would conflate two things that must stay separable.
+///
+/// # Every digest is one the adapter computed
+///
+/// A digest this port hands back — [`Resolved::digest`],
+/// [`AttachedDescriptor::digest`] — is the SHA-256 of bytes the adapter read
+/// and hashed itself (ADR 0026 section 3). A registry's `Docker-Content-Digest`
+/// header is a pointer an adapter checks, never a fact it reports: what gets
+/// pinned into desired state is what was proven, not what was claimed.
 #[async_trait::async_trait]
 pub trait Registry: Send + Sync {
     /// Every tag published for a repository.
@@ -79,7 +51,14 @@ pub trait Registry: Send + Sync {
     /// [`RegistryError`] if the registry could not be asked.
     async fn tags(&self, repository: &str) -> Result<Vec<String>, RegistryError>;
 
-    /// What one tag resolves to, or `None` if there is no such tag.
+    /// What one reference resolves to, or `None` if there is no such thing.
+    ///
+    /// `reference` is a tag, or a digest written `sha256:<64 hex>`: the same
+    /// question either way — *which bytes, and where do they say they came
+    /// from* — and asking it of a digest is how a caller proves an image a
+    /// component descriptor names exists. Only `sha256` is accepted; a digest
+    /// in any other algorithm is [`Refused`](RegistryError::Refused), because
+    /// a digest nobody here can compute is one nobody here can check.
     ///
     /// Absence is an answer rather than an error, and that is load-bearing.
     /// A component's images are published by parallel jobs, so a version
@@ -88,6 +67,25 @@ pub trait Registry: Send + Sync {
     ///
     /// # Errors
     ///
-    /// [`RegistryError`] if the registry could not be asked.
-    async fn resolve(&self, repository: &str, tag: &str) -> Result<Option<Resolved>, RegistryError>;
+    /// [`RegistryError`] if the registry could not be asked, or if what it
+    /// served does not hash to the digest it was asked for or claimed.
+    async fn resolve(&self, repository: &str, reference: &str) -> Result<Option<Resolved>, RegistryError>;
+
+    /// The component descriptor attached to `subject`, a `sha256:<64 hex>`
+    /// digest in `repository` — read by the rules [`Attached`] documents
+    /// (ADR 0026 section 4).
+    ///
+    /// The document comes back as bytes, unparsed. Whether they are a
+    /// component descriptor Fabric reads is a question for the domain, which
+    /// owns the contract; an adapter that parsed them would be a second
+    /// reader of a contract that must have one.
+    ///
+    /// # Errors
+    ///
+    /// [`RegistryError`] if the registry could not be asked — a timeout, a
+    /// `429` or `5xx`, or a `401`/`403` after a token was issued, none of
+    /// which may read as *nothing attached* — if the repository does not
+    /// exist, if a subject not written as a `sha256` digest was asked
+    /// about, or if bytes did not hash to their digest.
+    async fn component_descriptor(&self, repository: &str, subject: &str) -> Result<Attached, RegistryError>;
 }

@@ -5,9 +5,9 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use super::{PlatformError, PlatformManagement};
 use crate::{
-    ArtifactKind, ArtifactSource, Channel, ChartIndex, ComponentDesired, DesiredRevision, DesiredState,
-    DesiredStateError, DesiredStateStatus, Hold, Provenance, Registry, RegistryError, Release, Resolved,
-    UpdatePolicy, Version,
+    ArtifactKind, ArtifactSource, Attached, Channel, ChartIndex, ComponentDesired, DesiredRevision,
+    DesiredState, DesiredStateError, DesiredStateStatus, Hold, Provenance, Registry, RegistryError, Release,
+    Resolved, UpdatePolicy, Version,
 };
 
 const RUNTIME: &str = "ghcr.io/fieldstatenz/saas-fabric";
@@ -89,6 +89,10 @@ impl Registry for Registries {
             .unwrap_or_else(PoisonError::into_inner)
             .get(&(repository.to_owned(), tag.to_owned()))
             .cloned())
+    }
+
+    async fn component_descriptor(&self, _: &str, _: &str) -> Result<Attached, RegistryError> {
+        Ok(Attached::Nothing)
     }
 }
 

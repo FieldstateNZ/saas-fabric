@@ -18,7 +18,7 @@ use crate::PlatformGitError;
 /// The schema this crate is written against.
 ///
 /// A document declaring anything else is refused rather than half
-/// understood, the same rule `components::SCHEMA_VERSION` enforces.
+/// understood, the same rule `components::SCHEMA_VERSIONS` enforces.
 const SCHEMA_VERSION: u32 = 1;
 
 /// A data-sources document, and the header it was found under.

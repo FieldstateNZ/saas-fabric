@@ -27,6 +27,13 @@ pub(super) fn wanted_from(release: &Release) -> WantedVersion {
             chart: chart.clone(),
             version: version.as_str().to_owned(),
         },
+        // The component descriptor's digest stays behind: desired state
+        // records the images and the commit, and the caller's commit message
+        // names the digest (ADR 0026 section 9).
+        Release::Described { unit, primary, .. } => WantedVersion::Described {
+            version: unit_from(unit),
+            primary: primary.clone(),
+        },
     }
 }
 

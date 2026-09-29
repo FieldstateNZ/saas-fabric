@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::components::{HELM_WORDS, IMAGES_WORDS};
+use crate::components::{DESCRIBED_WORDS, HELM_WORDS, IMAGES_WORDS};
 
 /// One image's new identity, as the caller resolved it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -36,9 +36,10 @@ pub struct ComponentVersion {
 
 /// What a caller asks a component to move to.
 ///
-/// Two shapes, because the two artifact kinds carry different things and
-/// neither is a degenerate case of the other. A chart version has no digests
-/// to travel with it and no source commit to check.
+/// One shape per artifact kind, because they carry different things and
+/// none is a degenerate case of another. A chart version has no digests to
+/// travel with it and no source commit to check; a described release carries
+/// the role it was found through.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WantedVersion {
     /// Several images, moving together.
@@ -59,6 +60,23 @@ pub enum WantedVersion {
         /// The chart version, as it is published.
         version: String,
     },
+
+    /// Several images moving together, as the component descriptor attached
+    /// to the primary one describes them.
+    ///
+    /// The primary travels with the version for the reason the chart's
+    /// identity does: the write refuses a release found through a different
+    /// role's image than the manifest names. The component descriptor's
+    /// digest does not travel — it is never written to desired state, only
+    /// named in the commit message the caller composes.
+    Described {
+        /// The version, the commit and every image, as for
+        /// [`Images`](Self::Images).
+        version: ComponentVersion,
+
+        /// The role whose image the component descriptor is attached to.
+        primary: String,
+    },
 }
 
 impl WantedVersion {
@@ -66,7 +84,7 @@ impl WantedVersion {
     #[must_use]
     pub fn version(&self) -> &str {
         match self {
-            Self::Images(unit) => &unit.version,
+            Self::Images(unit) | Self::Described { version: unit, .. } => &unit.version,
             Self::Chart { version, .. } => version,
         }
     }
@@ -85,6 +103,7 @@ impl WantedVersion {
         match self {
             Self::Images(_) => IMAGES_WORDS,
             Self::Chart { .. } => HELM_WORDS,
+            Self::Described { .. } => DESCRIBED_WORDS,
         }
     }
 }

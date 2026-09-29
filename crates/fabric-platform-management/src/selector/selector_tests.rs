@@ -39,7 +39,7 @@ fn nothing_usable() -> Discovery {
     Discovery {
         newer: None,
         not_yet: vec![version("0.3.0-preview.3")],
-        incoherent: Vec::new(),
+        ..Discovery::default()
     }
 }
 

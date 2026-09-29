@@ -1,115 +1,133 @@
 # fabric-registry — LLM context
 
-Reads published artifacts (OCI images, Helm chart versions) anonymously, for
-`fabric-platform-management`. In neither plane (see
-`docs/architecture/crate-dependencies.md`). Depends on
+Reads published artifacts (OCI images, component descriptors attached to
+them, Helm chart versions) anonymously, for `fabric-platform-management`. In
+neither plane (see `docs/architecture/crate-dependencies.md`). Depends on
 `fabric-platform-management` (implements its `Registry` and `ChartIndex`
-ports and returns its `RegistryError`/`Resolved`/`Provenance`/`Version`
-types), plus `async-trait`, `reqwest`, `serde`, `serde_json`, `serde_norway`
-(YAML), `tracing`. Does not itself declare `fabric-core` as a dependency,
-though `scripts/check_architecture.py`'s `expected` table permits it (the
-check is a subset check).
+ports and returns its `RegistryError`/`Resolved`/`Provenance`/`Attached`/
+`AttachedDescriptor`/`Unusable`/`Version` types), `fabric-component` (only
+`ARTIFACT_TYPE_FAMILY_PREFIX` via `family_version`, and `MAX_DOCUMENT_BYTES`;
+never parses a document), plus `async-trait`, `reqwest`, `ring` (only
+`ring::digest`, SHA-256), `serde`, `serde_json`, `serde_norway` (YAML),
+`tracing`. Does not itself declare `fabric-core`, though
+`scripts/check_architecture.py`'s `expected` table permits it (the check is a
+subset check).
 
 ## Public surface (all re-exported from `lib.rs`)
 
 - `OciRegistry` — implements `fabric_platform_management::Registry`.
-  `new(base_url: impl Into<String>, registry_host: impl Into<String>,
-  timeout_seconds: u64) -> Result<Self, String>`. `async fn tags(repository)
-  -> Vec<String>`. `async fn resolve(repository, tag) -> Option<Resolved>`
-  (`None` on a `404` tag; never an error for a missing tag).
+  `new(base_url, registry_host, timeout_seconds) -> Result<Self, String>`
+  (HTTPS only; refuses userinfo, query, fragment, an empty host, a zero
+  timeout; the message names the field, never the value).
+  `#[doc(hidden)] plain_http_to_loopback(same args)` (tests only; plain HTTP
+  to loopback, never after an HTTPS hop). `tags(repository) -> Vec<String>`.
+  `resolve(repository, reference) -> Option<Resolved>` — `reference` is a tag
+  or `sha256:<64 hex>`; `None` on a `404`. `component_descriptor(repository,
+  subject) -> Attached` (`Nothing | One(AttachedDescriptor) | Several {
+  digests } | Unusable { reason: NotAnIndex | OtherSubject | Malformed }`).
 - `HelmCharts` — implements `fabric_platform_management::ChartIndex`.
-  `new(http_timeout_seconds: u64) -> Result<Self, String>` (HTTPS-only, the
-  only production constructor). `#[doc(hidden)] fn
-  plain_http_to_loopback(http_timeout_seconds: u64) -> Result<Self, String>`
-  (test-only; permits plain HTTP strictly to a loopback host, and never after
-  an HTTPS hop has already occurred in the same redirect chain). `async fn
-  versions(repository, chart) -> Vec<Version>`.
+  `new(http_timeout_seconds)` (HTTPS-only, the only production constructor).
+  `#[doc(hidden)] plain_http_to_loopback(http_timeout_seconds)`. `versions(
+  repository, chart) -> Vec<Version>`.
+
+- `examples/release_unit.rs` + `examples/release_unit/arguments.rs` — not
+  public surface: the release-unit evaluator a release job runs (`evaluate`
+  with `Expectation::Registered` accepting everything); exit `0` only on
+  `complete`, `2` on arguments that are not UTF-8, a repository or version
+  `fabric-component` refuses, or a `--host` the repository is not on.
 
 ## Internal modules
 
-- `client.rs` + `client/{provenance,resolve,tags,token,wire}.rs` —
-  `OciRegistry`'s implementation.
-  - `token.rs`: `get` (mint-if-needed + retry-once-on-401), `token`
-    (per-repository cache, `Mutex<BTreeMap<String, String>>`, **no expiry
-    tracked**).
-  - `resolve.rs`: `resolve_tag` — reads the manifest, reads the
-    `docker-content-digest` response header (the digest that gets pinned;
-    for a multi-arch image this is the **index's** digest, not one
-    platform's), calls `provenance_of`. A missing `docker-content-digest`
-    header on an otherwise-successful response is `RegistryError::Refused`,
-    not silently accepted. `MANIFEST_TYPES` accepts both OCI and legacy
-    Docker manifest/index media types.
-  - `provenance.rs`: `provenance_of` — one label
-    (`org.opencontainers.image.revision`) per manifest, or per **deployable**
-    child of an index (skips children with no `platform`, or
-    `os == "unknown" || architecture == "unknown"` — the shape Buildx
-    attestation manifests take). Zero deployable children → `Absent`, not
-    `Agreed`. A child the index names that the registry then refuses to
-    serve makes the whole index `Absent` (`configs_of` returns an empty
-    list, which `provenance_of` folds to `Absent`), not an error.
-  - `tags.rs`: `list_tags` — follows `Link: <...>; rel="next"` pagination
-    (`PAGE_SIZE = 100` tags requested per page, `MAX_PAGES = 50`), resolving
-    a relative next-page target against `self.base_url` and refusing to
-    follow an absolute one (a registry naming its own next URL as anything
-    but a path is never followed). Paging past `MAX_PAGES` is
-    `RegistryError::Unavailable`, not a truncated `Ok(Vec<String>)`. A `404`
-    listing tags is `Ok(vec![])` — a repository never published is a state
-    discovery can describe, not a fault.
-  - `wire.rs`: `TagList`, `PullToken`, `Manifest`, `Descriptor`,
-    `PlatformManifest`, `Platform`, `Config`, `Labels` wire shapes.
-- `charts.rs` — `HelmCharts`, its two constructors, the `ChartIndex` impl
-  (builds `{repository}/index.yaml`, validates the URL, does one bounded
-  streamed GET, hands the body to `index::versions_of`).
-- `charts/read.rs` — `bounded_get(http, url) -> Result<String, RegistryError>`.
-  `MOST = 8 * 1024 * 1024` bytes, enforced as the body streams (`response.chunk()`
-  in a loop), not after full buffering. A `reqwest` redirect-policy refusal
-  surfaces via `error.is_redirect()` and `std::error::Error::source()` (the
-  underlying `transport::RedirectRefused`), not as a generic transport
-  failure.
-- `charts/index.rs` + `charts/index/seed.rs` + `charts/index/seed/entries.rs`
-  — `versions_of(body, chart) -> Result<Vec<Version>, RegistryError>`.
-  `seed::entries_of` is a hand-written `serde::de::DeserializeSeed` walk
-  (not `serde_norway::Value`) that deserialises **only** the requested
-  chart's raw entries out of `entries:`, consuming every other chart's value
-  with `IgnoredAny` — an aliased YAML node under an unrelated chart is one
-  parse event whether skipped once or 200,000 times, so an unrelated chart's
-  shape costs time proportional to bytes read and no meaningful memory,
-  regardless of alias expansion. A document with no top-level `entries` key
-  at all yields an empty `Vec` (a repository with nothing published), not an
-  error; a duplicated top-level `entries` key, or a duplicated key for the
-  requested chart under it, is refused. `versions_of` itself refuses (never
-  skips) an unparseable version string and refuses (never silently keeps one
-  of) two entries of equal `SemVer` precedence, via `BTreeSet::insert` on
-  `Version`'s `Ord`.
-- `charts/transport.rs` + `charts/transport/{index_url,redirect,shown}.rs` —
-  the HTTPS-everywhere policy.
-  - `Transport::{Https, LoopbackToo}`, `MAX_REDIRECTS = 10`, `decide(transport,
-    previous_hops, next) -> Result<(), String>` — pure, unit-tested without
-    any HTTP connection. Under `LoopbackToo`, plain HTTP to a loopback host
-    is permitted only while *no earlier hop in the chain* — including the
-    very first request — has already used HTTPS; once HTTPS has been used
-    once, falling back to HTTP is refused even to loopback.
-  - `index_url.rs`: `validated_index_url` — refuses a URL that fails to
-    parse, `cannot_be_a_base()` (e.g. `oci:user:secret@host/charts`,
-    `mailto:...`), carries userinfo, or carries a query/fragment (which
-    would absorb the string-concatenated `/index.yaml` suffix instead of the
-    path gaining it) — all *before* the first request is sent.
-  - `redirect.rs`: `policy(Transport) -> reqwest::redirect::Policy` — wires
-    `decide` into `reqwest`'s own redirect callback via a `RedirectRefused`
-    error type carrying the refusal reason, recoverable through
-    `reqwest::Error::is_redirect()` / `source()`.
-  - `shown.rs`: `shown(&Url) -> String` — the *only* way a URL should be
-    rendered into any message this crate raises. Strips userinfo, query and
-    fragment; caps the path at 200 chars; renders a cannot-be-a-base URL as
-    `"{scheme}:[opaque]"` only. Exists because `RegistryError::Refused`'s
-    `detail` reaches both the console (verbatim) and the log, and a
-    credential embedded in a configured or redirected-to URL must never
-    reach either.
-- `errors.rs` — `transport_failure(operation, &reqwest::Error) ->
-  RegistryError::Unavailable`, `status_failure(operation, StatusCode,
-  &HeaderMap) -> RegistryError` (a `404` is handled by the caller and never
-  reaches this function; `429` or a quota-exhausted `403` → `Unavailable`;
-  everything else → `Refused`).
+- `transport.rs` + `transport/{bounded,origin,redirect,shown}.rs` — shared by
+  both readers. `Transport::{Https, LoopbackToo}`, `MAX_REDIRECTS = 10`,
+  `permits(transport, previous, next) -> Result<(), Refusal>` (pure;
+  `Refusal::{TooManyRedirects, NotHttps}` — each reader words it),
+  `same_origin`, `is_loopback`, `policy(decide)` (wires a reader's decision
+  into `reqwest` through `RedirectRefused`, recoverable via `is_redirect()` /
+  `source()`), `shown(&Url)`, `bounded_body(response, most, operation)` (a
+  declared `Content-Length` past the bound is refused before reading; then
+  streamed via `chunk()`).
+- `client.rs` — `OciRegistry { api, blobs, base_url, origin, registry_host,
+  tokens, verified }`, `url`, `path`, the `Registry` impl.
+  - `build.rs` (constructors, base-URL checks) and `http.rs` (two clients,
+    both `referer(false)`, `no_proxy()`, a user agent and the timeout; the API
+    client's redirect policy is `permits` **and** same origin as the first
+    request; the blob client follows **no** redirect itself; refusals never
+    name the target).
+  - `send.rs`: `Via::{Api, Blob}`, `get`, `send` (mint-if-needed, retry once
+    on `401`), `attempt` (`bearer_auth` on the first request). `reqwest`
+    alone would not keep a token off a CDN: `tower-http` rebuilds each hop
+    from the first request's headers and `reqwest` strips `Authorization`
+    only when a hop changes host or port *from the hop before*, so a second
+    hop on the same CDN would get it back. `token.rs`: `token`
+    (per-repository cache, **no expiry tracked**; response bounded at 16 KiB;
+    `token` or `access_token`).
+  - `digest.rs`: `Content { digest, bytes: Arc<[u8]> }`, only made by
+    `Content::hashed` (SHA-256 via `ring`); `sha256(text, what)` (the only
+    accepted form, `sha256:` + 64 lower-case hex); `matching(content,
+    expected, what)` (mismatch is `Refused`). `reference.rs`: `Reference::{Tag,
+    Digest}` (tag grammar checked, since it becomes a URL path; `:` means a
+    digest, which must be `sha256`).
+  - `verified.rs`: `Verified`, the cache of **verified bytes** by digest —
+    at most 256 entries and 8 MiB, oldest evicted first; takes `Content`
+    only. Used only after something fresh named the digest (`Held::Use`).
+  - `by_tag.rs`: `manifest_by_tag` — `HEAD` (a `404` is `None`); a digest
+    header → held bytes or `manifest_by_digest`; `405` or no header → `GET`
+    the tag, hash, and a digest header present must equal the hash (else
+    `Refused` naming the tag). `fetch.rs`: `manifest_by_digest(repository,
+    digest, Held)` (4 MiB, hashed, `404` is `None`). `blob.rs`: `blob`
+    (declared size and body bounded, hashed; `Found::{Missing, OtherSize,
+    Bytes}` — a size other than the declared one is the caller's to judge:
+    a config refuses it, a component descriptor's layer is `Malformed`);
+    `blob/follow.rs`: `follow_blob` follows at most ten redirects **by
+    hand**, each hop held to `permits` against the whole chain, the bearer
+    attached only to a hop on the registry's own origin.
+  - `resolve.rs`: `resolve_reference` — a tag via `manifest_by_tag`, a digest
+    via `manifest_by_digest(Held::Ask)`; the digest returned is the one
+    computed. `provenance.rs` + `revisions.rs`: revisions are config labels
+    plus manifest annotations; an index adds its own annotations to every
+    deployable child (not `unknown`, not platform-less); `verdict` is
+    order-independent (any disagreement → `Disagreed`, else any image
+    without → `Absent`, else `Agreed`; no images → `Absent`). A child or
+    config the registry does not serve (`404`) → `Absent`; any other failure
+    is an error.
+  - `tags.rs` + `link.rs`: `list_tags` (1 MiB per page, `MAX_PAGES = 50`,
+    past it `Unavailable`; a `404` is an empty list on the first page only,
+    and an error on a later one); `next_page` resolves a `Link` target against the
+    answering URL and refuses (`Refused`) another origin or userinfo — never
+    a silent end of the list.
+  - `attached.rs` + `attached/{listing,tag_schema,candidate,shape}.rs`:
+    `component_descriptor` — referrers API (1 MiB per page, 10 pages,
+    same-origin `Link`; `200` not an index or `404` not `NAME_UNKNOWN` → not
+    served; `404 NAME_UNKNOWN` → `Refused` naming the repository) **and**
+    always the tag schema `manifests/sha256-<hex>`, asked for with every
+    manifest type so a strictly negotiating registry cannot answer `404` for
+    what it holds (`404` nothing; not an OCI index → `NotAnIndex`); merged by
+    digest; kept by `family_version`; more than 16 candidates → `Several`
+    unfetched, with **no** digests (none was computed); each candidate fetched by
+    digest (`Held::Ask`), `404` not attached, `shape::check` (OCI manifest,
+    family `artifactType`, empty config, one layer `artifactType+json` ≤ 16
+    KiB, `sha256` layer, subject equal → else `OtherSubject` / `Malformed`);
+    the revision annotation read by `revisions_in`, the rule every image's is
+    read by (trimmed, blank is none); one attached → its layer via
+    `attached/document.rs` (a `404` layer, or one not its declared size, is
+    `Malformed`; a hash mismatch is still `Refused`).
+  - `wire.rs` + `wire/responses.rs`: third-party shapes, never
+    `deny_unknown_fields`.
+- `charts.rs` — `HelmCharts`; `charts/transport.rs` words `permits` for a
+  chart index and keeps `index_url.rs` (`validated_index_url`);
+  `charts/read.rs` — `bounded_get` over `bounded_body`, `MOST = 8 MiB`;
+  `charts/index.rs` + `charts/index/seed.rs` + `charts/index/seed/entries.rs`
+  — `versions_of(body, chart)`, the `IgnoredAny` walk, duplicate precedence
+  refused.
+- `errors.rs` — `transport_failure`, `send_failure` (a redirect-policy
+  refusal is `Refused` with the policy's own wording), `unreadable` (a body
+  within bounds that is not the document expected: `Unavailable`),
+  `status_failure` (a `404` that is an answer is handled where the request
+  is made and never reaches it — a `404` that is not an answer, such as a
+  later referrers or tag page or the token endpoint, does, and is
+  `Refused`; `429`, a quota-exhausted `403`
+  and `5xx` → `Unavailable`; everything else → `Refused`).
 
 ## Hard invariants — do not break
 
@@ -117,36 +135,58 @@ check is a subset check).
    pull token per repository; `HelmCharts` sends none at all. Neither is
    ever handed the platform repository's GitHub App credential, and no
    change here should introduce a path for one to arrive.
-2. **A missing tag/version is `None`/absent, never an error**, and nothing
-   is cached between calls about what was or was not found — a partial
-   publish across parallel CI jobs must read as "not yet", indefinitely,
-   never as a remembered "no".
-3. **Every URL this crate might render in a message goes through `shown()`**,
-   never a `Url`'s own `Display` — including a redirect target, which can
-   reach a message without ever passing back through
-   `validated_index_url`.
-4. **`HelmCharts` enforces HTTPS on every hop, not only the first request.**
-   `Transport::LoopbackToo` exists only for this crate's own tests and is
-   `#[doc(hidden)]`; `HelmCharts::new` never constructs it.
-5. **The chart index reader never materialises an unrelated chart's entries
-   as a `Value`.** `seed::entries_of`'s `IgnoredAny` walk is what keeps a
-   hostile or merely large unrelated chart from becoming an unbounded
-   in-memory allocation despite the byte-bounded stream.
-6. **Two chart-index entries of equal `SemVer` precedence are refused, not
-   resolved by picking one.**
-7. **Provenance for an index requires *every deployable child* to agree**;
-   a non-deployable child (no `platform`, or `unknown/unknown`) never
-   participates, and zero deployable children is `Absent`.
-8. **A tag listing that pages past `MAX_PAGES` is an error, never a silently
-   truncated result.** A truncated list is indistinguishable from "nothing
-   newer exists", which would make discovery quietly stop advancing.
+2. **A missing tag/version/digest is `None`/absent, never an error**, and
+   nothing is cached about what was found — a `404`, a tag's current digest,
+   a referrers list are asked again every time. A partial publish across
+   parallel CI jobs must read as "not yet", indefinitely, never as a
+   remembered "no".
+3. **Every digest reported is one this crate computed.** Every manifest and
+   blob is hashed with SHA-256 and compared with the digest asked for or
+   named; a `Docker-Content-Digest` header is a pointer that is checked,
+   never recorded. Only `sha256` is accepted anywhere.
+4. **The verified-bytes cache holds content, not answers.** Keyed by the
+   digest its bytes hash to (only `Content::hashed` makes an entry), bounded
+   (256 entries, 8 MiB, oldest first), and consulted only once something
+   fresh in the same call has named the digest (`Held::Use`). Resolving a
+   digest, or checking a listed referrer, always asks the registry.
+5. **HTTPS on every hop, for both readers.** `Transport::LoopbackToo` exists
+   only for this crate's own tests and is reached only through the
+   `#[doc(hidden)]` constructors. Manifests, tags, referrers and tokens never
+   follow a redirect off their origin, and a `Link` is followed only on the
+   registry's own; a blob follows one to any HTTPS origin, hop by hop, and
+   the pull token goes only to a hop on the registry's own origin — never
+   judged against the hop before (tested with two loopback servers, over one
+   CDN hop and two). No `Referer`, no ambient proxy.
+6. **Every body is bounded before it is parsed**: manifest or index 4 MiB,
+   referrers page 1 MiB, token 16 KiB, tag page 1 MiB, config 1 MiB,
+   component descriptor layer `fabric_component::MAX_DOCUMENT_BYTES` (and its
+   declared size must match), chart index 8 MiB. No `.json()` on a response.
+   Tests exercise both a declared length past the bound and a chunked body
+   with none, which is only caught as it arrives.
+7. **A component descriptor is found here and never parsed here.** Both the
+   referrers API and the tag schema are read and merged; a registry's filter
+   is never trusted; every candidate is fetched by digest and shape-checked;
+   a registry that cannot be asked is an error, never `Attached::Nothing`.
+8. **Every URL this crate might render in a message goes through `shown()`**,
+   and a registry's redirect target is never rendered at all.
+9. **The chart index reader never materialises an unrelated chart's entries
+   as a `Value`**, and two entries of equal `SemVer` precedence are refused.
+10. **Provenance needs every deployable child to agree**, over labels and
+    annotations; zero deployable children is `Absent`; disagreement wins
+    over absence.
+11. **A listing is never silently truncated**: past `MAX_PAGES` (tags) or ten
+    pages (referrers) is an error, so is a later page that answers `404`,
+    and a `Link` to another origin is
+    `Refused`.
 
 ## Notes
 
-- `tests/reading_a_registry.rs` and `tests/reading_a_chart_repository.rs`
-  drive fake HTTP servers (`tests/support/fake_registry.rs`,
-  `tests/support/http_server.rs`) rather than a real GHCR or chart
-  repository.
+- The integration tests drive fake HTTP servers on loopback
+  (`tests/support/fake_registry.rs` + `fake_registry/`, and
+  `tests/support/http_server.rs`), never a real registry: the fake's digests
+  are real SHA-256 digests, it answers `HEAD`, serves or refuses the
+  referrers API (`404 MANIFEST_UNKNOWN`, as GHCR does), keeps tag-schema
+  indexes, and can redirect blobs to a second server standing in for a CDN.
 - `OciRegistry::path(repository)` strips a leading `{registry_host}/` if
   present, so a manifest can name a repository as
   `ghcr.io/fieldstatenz/saas-fabric` while a test points `base_url` at a

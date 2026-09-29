@@ -109,8 +109,9 @@ specific version in `Cargo.lock`, not the ecosystem it came from.
 |---|---|---|---|
 | `serde_norway` | `0.9.42` | MIT OR Apache-2.0 | ✅ Acceptable — Apache-2.0 is taken (rule 2) |
 | `unsafe-libyaml-norway` | `0.2.15` | MIT | ✅ Acceptable |
+| `ring` | `0.17.14` | Apache-2.0 AND ISC | ✅ Acceptable — both are on the allow list |
 
-Both arrived with the control plane, which reads and writes client desired
+The first two arrived with the control plane, which reads and writes client desired
 state as YAML because the repository holding it is edited by humans. The
 obvious choice was `serde_yaml`, whose author has archived it; `serde_norway` is
 the maintained fork. The dependency is confined to `fabric-client-model` —
@@ -121,7 +122,16 @@ nothing in the runtime plane parses YAML.
 "forbid"` in `[workspace.lints.rust]` applies to this workspace's own crates,
 and every non-trivial parser in the Rust ecosystem depends on something like
 it. The relevant question this policy asks is about the *licence*, and both
-crates answer it.
+YAML crates answer it.
+
+`ring` was already in the resolved graph, through the TLS stack and
+`jsonwebtoken`; ADR 0026 made it a direct dependency of `fabric-registry`,
+which hashes every manifest and blob it reads so that every digest Fabric
+records is one it computed. Checked again at the version in `Cargo.lock`
+rather than taken on the strength of being there already. Only `ring::digest`
+is used, with no default features, and the direct edge adds no package: what
+it avoids is a second SHA-256 implementation beside the one the TLS stack
+already trusts.
 
 ## How this is enforced
 

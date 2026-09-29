@@ -28,21 +28,6 @@ impl PlatformBody {
 impl ComponentRow {
     /// Renders one component.
     pub(crate) fn of(status: &ComponentStatus) -> Self {
-        let mut diagnostics: Vec<DiagnosticRow> = status
-            .diagnostics
-            .not_yet
-            .iter()
-            .map(|version| DiagnosticRow {
-                version: version.as_str().to_owned(),
-                state: "publishing",
-            })
-            .collect();
-
-        diagnostics.extend(status.diagnostics.incoherent.iter().map(|version| DiagnosticRow {
-            version: version.as_str().to_owned(),
-            state: "incoherent",
-        }));
-
         Self {
             component: status.component.clone(),
             desired: status.desired.as_str().to_owned(),
@@ -71,7 +56,7 @@ impl ComponentRow {
                 since: hold.since.clone(),
                 note: hold.note.clone(),
             }),
-            diagnostics,
+            diagnostics: DiagnosticRow::every(&status.diagnostics),
         }
     }
 }

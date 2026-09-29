@@ -136,7 +136,7 @@ Kubernetes, or opens a connection (§6).
 | [`fabric-control-plane`](crates/fabric-control-plane) | The operator-facing API, the desired-state port, and the operator identity seam. |
 | [`fabric-keycloak`](crates/fabric-keycloak) | The Keycloak adapter. The only crate that knows Keycloak exists. |
 | [`fabric-client-git`](crates/fabric-client-git) | The client desired-state repository, over the Git host's contents API. One of three crates that know a Git host exists; `fabric-git-host` and `fabric-platform-git` are the others. |
-| [`fabric-openbao`](crates/fabric-openbao) | Where a Fabric instance's secrets and integration record live. The only crate that knows OpenBao exists. |
+| [`fabric-openbao`](crates/fabric-openbao) | Where a Fabric instance's secrets, integration records and image registry records live. The only crate that knows OpenBao exists. |
 | [`fabric-deployment-kubernetes`](crates/fabric-deployment-kubernetes) | Read-only deployment evidence — observed running versions, over plain HTTPS, no `kube` crate (ADR 0022). |
 | [`fabric-publication-kubernetes`](crates/fabric-publication-kubernetes) | Publishes the runtime's three documents as ConfigMaps, over plain HTTPS; decides nothing — the plan is `fabric-runtime-publication`'s (ADR 0018, ADR 0023). |
 | [`fabric-control-plane-api`](crates/fabric-control-plane-api) | The control plane's composition root. |
@@ -150,7 +150,7 @@ Kubernetes, or opens a connection (§6).
 | [`fabric-git-host`](crates/fabric-git-host) | Authenticating to a Git host as a GitHub App — mints, caches and expires an installation token, shared by both Git integrations. |
 | [`fabric-platform-git`](crates/fabric-platform-git) | Atomic desired-state mutation in the platform repository — one tree, one commit, one ref update. |
 | [`fabric-platform-management`](crates/fabric-platform-management) | Deciding which version of a component an environment should run. Defines the `Registry` and `DeploymentObserver` ports; no transport of its own. |
-| [`fabric-registry`](crates/fabric-registry) | Reading published artifacts, anonymously: images from an OCI registry, hashed to the digest Fabric records, the component descriptors attached to them (ADR 0026), and chart versions from a chart repository. |
+| [`fabric-registry`](crates/fabric-registry) | Reading published artifacts: images from OCI registries routed by host, each authenticated as its kind says, with an operator's credential only for the repositories it was registered for and public addresses only for an operator's registry; hashed to the digest Fabric records, the component descriptors attached to them (ADR 0026), and chart versions from a chart repository. |
 | [`fabric-ndc-acceptance`](crates/fabric-ndc-acceptance) | Test-only. Composes the real publisher, runtime, Data API and NDC adapter against a running connector; no production code. |
 
 **Applications**
@@ -420,6 +420,19 @@ back — desired-state writes to the platform repository — and now shows what 
 actually *running*, read directly from the cluster's deployment evidence
 rather than inferred from a commit (pull request #72,
 [ADR 0022](docs/decisions/0022-running-versions-come-from-deployment-evidence.md)).
+
+**Image registries** are integrations an operator registers on the console's
+Integrations page
+([ADR 0026](docs/decisions/0026-a-component-describes-itself-in-an-artifact-attached-to-its-image.md)
+§5): GHCR, Docker Hub, or any registry serving the distribution API at an HTTPS
+origin. Each is proven before it is recorded, and so is each repository, which
+is registered in full rather than browsed and proven by its tag listing. A
+credential is optional. When one is given, the control plane keeps it in its
+secret partition, presents it only for the repositories registered under its
+registry, and never returns it. Platform Management picks the registry for an
+image by its repository's host: the deployment's own, or one an operator
+registered. Selecting a component from them, ADR 0026's picker, is the next
+slice.
 
 **Client secrets** are managed through OpenBao: the console's Secrets tab
 reads, writes and deletes a client's partition, and reveals a value only on an

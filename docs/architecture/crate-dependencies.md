@@ -66,6 +66,8 @@ fabric-control-plane   → fabric-core
                        → fabric-runtime-publication (CatalogDocument and the
                                                      RuntimePublication port;
                                                      ADR 0023 part 4)
+                       → fabric-component           (a registry's repositories
+                                                     and version tags; ADR 0026)
 
 fabric-keycloak        → fabric-core
                        → fabric-client-model
@@ -96,7 +98,8 @@ fabric-client-git      → fabric-core
 
 fabric-openbao         → fabric-core
                        → fabric-control-plane       (implements SecretStore,
-                                                     IntegrationStore)
+                                                     IntegrationStore,
+                                                     RegistryStore)
 
 fabric-control-plane-api → all of the above (composition root)
                        → fabric-runtime-publication (validates a configured
@@ -186,10 +189,12 @@ its own `PublicationSink` is built as) and `fabric-publication-kubernetes`
 composition root binds an adapter" rule `fabric-deployment-kubernetes`
 already follows).
 
-`fabric-registry` implements that port and holds no credential at all: the
-packages are public, so it exchanges an anonymous pull token and reads. A
-credential that does not exist cannot be conflated with the GitHub App that
-writes desired state, which is the boundary that matters here. Its edge to
+`fabric-registry` implements that port. Reading needs no credential — the
+packages are public — and a registry an operator registers may carry one of
+its own (ADR 0026 section 5): presented only for the repositories registered
+under it, only to the realm its kind allows, never across origins, and never
+the GitHub App that writes desired state, which is the boundary that matters
+here. Its edge to
 `fabric-component` is for two facts of the component descriptor's contract —
 the artifact type family it keeps referrers of, and the size bound it reads
 up to — and never for parsing one: the bytes go back through the port
@@ -327,6 +332,12 @@ neither plane and anything outside the runtime plane may depend on it. Its
 edge to `fabric-runtime-publication` puts it behind ADR 0018's publisher fence:
 no runtime-plane crate may reach it, as no runtime-plane crate may reach the
 publisher.
+
+`fabric-control-plane` depends on it too, for the registries operators
+register (ADR 0026 section 5): a registered repository is a `Repository`, a
+registry's host is held to that type's host rule, and the picker offers the
+tags that are a `ComponentVersion`. One rule for what an image reference may
+be, wherever one is accepted.
 
 **One declaration of each shape.** `ConfigurationField`, `FieldKind` and
 `ApplicationResource` — with the catalogue's validators for them, messages

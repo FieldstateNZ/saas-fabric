@@ -14,6 +14,8 @@ interface FieldProps {
   readonly ref?: Ref<HTMLInputElement>
   /** Shows the value without allowing it to change, such as an id once the row it names already exists. */
   readonly readOnly?: boolean
+  /** The input's `autocomplete`, for a field the browser must not fill from, or save to, what it knows of this site -- such as a registry account beside its token. Left to the browser when unset. */
+  readonly autoComplete?: string
 }
 
 /**
@@ -41,6 +43,7 @@ export function Field({
   error,
   ref,
   readOnly = false,
+  autoComplete,
 }: FieldProps) {
   return (
     <label className="form-field">
@@ -54,6 +57,7 @@ export function Field({
         value={value}
         required={required}
         readOnly={readOnly}
+        autoComplete={autoComplete}
         maxLength={4096}
         aria-invalid={error ? true : undefined}
         onChange={(event) => {

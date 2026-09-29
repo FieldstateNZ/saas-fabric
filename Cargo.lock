@@ -324,6 +324,7 @@ dependencies = [
  "axum",
  "base64",
  "fabric-client-model",
+ "fabric-component",
  "fabric-core",
  "fabric-platform-management",
  "fabric-reconciliation",
@@ -337,6 +338,7 @@ dependencies = [
  "tokio",
  "tower",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -588,6 +590,7 @@ dependencies = [
 name = "fabric-registry"
 version = "0.3.0"
 dependencies = [
+ "arc-swap",
  "async-trait",
  "fabric-component",
  "fabric-platform-management",

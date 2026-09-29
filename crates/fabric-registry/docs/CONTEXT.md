@@ -1,30 +1,69 @@
 # fabric-registry — LLM context
 
 Reads published artifacts (OCI images, component descriptors attached to
-them, Helm chart versions) anonymously, for `fabric-platform-management`. In
+them, Helm chart versions) for `fabric-platform-management`, each registry
+by its kind's rules (ADR 0026 sections 4 and 5), with a credential only for
+the repositories it was registered for. In
 neither plane (see `docs/architecture/crate-dependencies.md`). Depends on
 `fabric-platform-management` (implements its `Registry` and `ChartIndex`
 ports and returns its `RegistryError`/`Resolved`/`Provenance`/`Attached`/
 `AttachedDescriptor`/`Unusable`/`Version` types), `fabric-component` (only
 `ARTIFACT_TYPE_FAMILY_PREFIX` via `family_version`, and `MAX_DOCUMENT_BYTES`;
-never parses a document), plus `async-trait`, `reqwest`, `ring` (only
-`ring::digest`, SHA-256), `serde`, `serde_json`, `serde_norway` (YAML),
-`tracing`. Does not itself declare `fabric-core`, though
+never parses a document), plus `arc-swap` (the `Registries` map, swapped
+whole), `async-trait`, `reqwest`, `ring` (only `ring::digest`, SHA-256),
+`serde`, `serde_json`, `serde_norway` (YAML), `tokio` (only
+`net::lookup_host`, for the public-address resolver), `tracing`. Does not itself declare `fabric-core`, though
 `scripts/check_architecture.py`'s `expected` table permits it (the check is a
 subset check).
 
 ## Public surface (all re-exported from `lib.rs`)
 
+- `RegistrySettings` — one registry, built by kind: `ghcr()`,
+  `docker_hub()` (served from `registry-1.docker.io`, naming `docker.io`,
+  realm `https://auth.docker.io/token` service `registry.docker.io`),
+  `distribution(endpoint, RealmRule)` (an HTTPS origin, no IP literal, no
+  path/userinfo/query/fragment; naming host is `host[:port]`; `Fixed` is
+  refused; answers `Basic`), `deployment(base_url, naming_host)`
+  (`FollowChallenge`, `AddressPolicy::Any`, the old base-URL checks), then
+  `with_credential(Credential)` and, for an operator's registration of the
+  deployment's host, `at_deployment(base_url)` (the deployment's endpoint and
+  `Any`, every other rule the kind's). `realm()` and `address()` read back
+  what was built. `#[doc(hidden)] serve_from(loopback)` and
+  `treat_loopback_as_public()` exist for tests alone (the latter honoured only
+  after `serve_from`). `Debug` never shows the secret.
+- `RealmRule::{Fixed { realm, service }, Recorded { origin: Option },
+  FollowChallenge}`; `AddressPolicy::{PublicOnly, Any}`.
+- `Credential::new(username, RegistrySecret, repositories)` (username
+  non-empty with no `:`; secret non-empty; messages never carry either);
+  `sharing_refusal(Arc<AtomicBool>)` hands it the refusal mark every client
+  built from the same stored credential shares.
+  `RegistrySecret` has no `Display`, prints `RegistrySecret(redacted)`, and
+  its value is reachable only through the crate-private `expose()`.
 - `OciRegistry` — implements `fabric_platform_management::Registry`.
-  `new(base_url, registry_host, timeout_seconds) -> Result<Self, String>`
-  (HTTPS only; refuses userinfo, query, fragment, an empty host, a zero
+  `with_settings(RegistrySettings, timeout_seconds)`; `new(base_url,
+  registry_host, timeout_seconds) -> Result<Self, String>` (the deployment's:
+  HTTPS only; refuses userinfo, query, fragment, an empty host, a zero
   timeout; the message names the field, never the value).
   `#[doc(hidden)] plain_http_to_loopback(same args)` (tests only; plain HTTP
-  to loopback, never after an HTTPS hop). `tags(repository) -> Vec<String>`.
+  to loopback, never after an HTTPS hop). `prove() -> Proof` (`GET /v2/`;
+  with no credential a `Bearer` challenge naming an allowed realm *is* the
+  proof and the realm is not asked; with one, through the challenge with it;
+  `Proof::realm_origin()` is the realm origin a `Bearer` challenge named,
+  `None` for `Basic` or none). `prove_repository(repository) ->
+  Readability<()>` and `version_tags(repository) -> Readability<Vec<String>>`
+  (`Readability::{Readable(T), NotReadable}`: a `401`/`403`/`404` is the
+  answer *not readable through this registry*; a realm change, an address
+  refusal or `Denied` stays an error). `credential_refused()`. `naming_host()`. `tags(repository) ->
+  Vec<String>`.
   `resolve(repository, reference) -> Option<Resolved>` — `reference` is a tag
   or `sha256:<64 hex>`; `None` on a `404`. `component_descriptor(repository,
   subject) -> Attached` (`Nothing | One(AttachedDescriptor) | Several {
   digests } | Unusable { reason: NotAnIndex | OtherSubject | Malformed }`).
+- `Registries` — implements `Registry` by the repository's host (the text
+  before the first `/`, port included): `new(map)`, `replace(map)` (an
+  `ArcSwap`, swapped whole), `get(host) -> Option<Arc<OciRegistry>>`. A host
+  with no registry, or a name with no host, is `Refused` naming the host —
+  never a fall-through to a default.
 - `HelmCharts` — implements `fabric_platform_management::ChartIndex`.
   `new(http_timeout_seconds)` (HTTPS-only, the only production constructor).
   `#[doc(hidden)] plain_http_to_loopback(http_timeout_seconds)`. `versions(
@@ -42,26 +81,73 @@ subset check).
   both readers. `Transport::{Https, LoopbackToo}`, `MAX_REDIRECTS = 10`,
   `permits(transport, previous, next) -> Result<(), Refusal>` (pure;
   `Refusal::{TooManyRedirects, NotHttps}` — each reader words it),
-  `same_origin`, `is_loopback`, `policy(decide)` (wires a reader's decision
+  `same_origin`, `is_loopback`, `is_ip_literal`, `policy(decide)` (wires a reader's decision
   into `reqwest` through `RedirectRefused`, recoverable via `is_redirect()` /
   `source()`), `shown(&Url)`, `bounded_body(response, most, operation)` (a
   declared `Content-Length` past the bound is refused before reading; then
   streamed via `chunk()`).
-- `client.rs` — `OciRegistry { api, blobs, base_url, origin, registry_host,
-  tokens, verified }`, `url`, `path`, the `Registry` impl.
-  - `build.rs` (constructors, base-URL checks) and `http.rs` (two clients,
-    both `referer(false)`, `no_proxy()`, a user agent and the timeout; the API
-    client's redirect policy is `permits` **and** same origin as the first
-    request; the blob client follows **no** redirect itself; refusals never
-    name the target).
-  - `send.rs`: `Via::{Api, Blob}`, `get`, `send` (mint-if-needed, retry once
-    on `401`), `attempt` (`bearer_auth` on the first request). `reqwest`
+- `settings.rs` + `settings/{kinds,applied,endpoint,credential}.rs` — the public
+  settings types above; `endpoint.rs` holds the origin, base-URL and loopback
+  checks and `naming_host`.
+- `address.rs` + `address/{ranges,resolver}.rs` — `Address { policy,
+  loopback_is_public }` (`refuses_literal`, `check`, `resolver`),
+  `NOT_PUBLIC` (the whole text of every address refusal), `NotPublic` and
+  `refused_in` (finds it in a send's error chain, looking inside an
+  `io::Error`). `ranges::is_public` refuses loopback, unspecified,
+  link-local, private, shared `100.64/10`, unique-local, site-local,
+  multicast, reserved, documentation, benchmarking and discard-only ranges,
+  after normalising IPv4-mapped, -compatible, NAT64 and 6to4 forms, and
+  refuses local-use NAT64 (`64:ff9b:1::/48`) and Teredo outright.
+  `PublicResolver` implements `reqwest::dns::Resolve` over
+  `tokio::net::lookup_host`, handing back only permitted addresses and
+  failing with `NotPublic` when none remain; `answering(addresses)` is its
+  test lookup.
+- `registries.rs` — `Registries`.
+- `client.rs` — `OciRegistry { api, blobs, transport, address, base_url,
+  origin, registry_host, realm, honours_basic, credential, tokens, verified
+  }`; `naming.rs` (`url`, `path`, `naming_host`), `port.rs` (the `Registry`
+  impl).
+  - `build.rs` (`new`, `plain_http_to_loopback`, `with_settings`: transport
+    and address checks on the endpoint, the zero timeout) and `http.rs` (two
+    clients, both `referer(false)`, `no_proxy()`, a user agent, the timeout
+    and — under `PublicOnly` — the `PublicResolver`; the API client's
+    redirect policy is `permits`, no IP literal under `PublicOnly`, **and**
+    same origin as the first request; the blob client follows **no**
+    redirect itself; refusals never name the target).
+  - `challenge.rs` + `challenge/cursor.rs`: `WWW-Authenticate` parsed as
+    RFC 9110 writes it — several challenges per header, quoted strings with
+    escapes, case-insensitive names; a value that does not parse offers
+    nothing. `realm.rs`: `Realm::{Fixed, Recorded, Follow}` and `allow`, which
+    refuses a realm on another origin naming both origins (never a path or
+    query) before anything is sent to it. `answer.rs`: `bearer_realm`
+    (address, then transport, then the rule — so `Follow` never records a
+    realm it could not ask), then a token, held; `Basic` only when
+    `honours_basic`, the request presents the credential, and toward the
+    registry's own origin. `token.rs`: `token_url` (the realm's own `scope`
+    and `service` pairs dropped, then `service`,
+    `scope=repository:<path>:pull` or none when proving), HTTP `Basic` to the
+    realm when presenting; a `401` to a credential, or a non-quota `403` to a
+    credentialed proof of `/v2/`, marks it refused (`Denied`); a `403` to one
+    repository's scope, or any refusal of an anonymous request, is
+    `Minted::Declined` — no token, and the registry's own `401` stands;
+    bounded at 16 KiB, `token` or `access_token`. `presented.rs`: `Presented`
+    (repository paths, the shared `Arc<AtomicBool>` refusal), `presents(scope)`,
+    `not_refused`, `refuse`, `credential_refused`. `scope.rs`: `Scope::{Registry, Repository}`,
+    `Held::{Bearer, Basic}`, holdings keyed by `(path, credentialed)`,
+    `authorize`. `prove.rs`: `Proof`, `prove`. `readable.rs`: `Readability`,
+    `prove_repository`, `version_tags`. `tags.rs`: `list_tags` over
+    `listing`, which tells a first page's `404` (`Absent`) and `401`/`403`
+    (`Closed`) apart from every other failure.
+  - `call.rs` + `send.rs`: `Via::{Api, Blob}`, `Call`, `Exchange`, `get`,
+    `send`, `exchange` (`Denied` without contact when presenting a refused
+    credential; first attempt with whatever is held — nothing, the first
+    time; on a `401`, answer the challenge once and retry; a `401` to `Basic`
+    marks the credential refused), `attempt`. `reqwest`
     alone would not keep a token off a CDN: `tower-http` rebuilds each hop
     from the first request's headers and `reqwest` strips `Authorization`
     only when a hop changes host or port *from the hop before*, so a second
-    hop on the same CDN would get it back. `token.rs`: `token`
-    (per-repository cache, **no expiry tracked**; response bounded at 16 KiB;
-    `token` or `access_token`).
+    hop on the same CDN would get it back. Held tokens carry **no expiry**:
+    one that aged out comes back as a fresh challenge.
   - `digest.rs`: `Content { digest, bytes: Arc<[u8]> }`, only made by
     `Content::hashed` (SHA-256 via `ring`); `sha256(text, what)` (the only
     accepted form, `sha256:` + 64 lower-case hex); `matching(content,
@@ -120,8 +206,9 @@ subset check).
   `charts/index.rs` + `charts/index/seed.rs` + `charts/index/seed/entries.rs`
   — `versions_of(body, chart)`, the `IgnoredAny` walk, duplicate precedence
   refused.
-- `errors.rs` — `transport_failure`, `send_failure` (a redirect-policy
-  refusal is `Refused` with the policy's own wording), `unreadable` (a body
+- `errors.rs` — `transport_failure`, `send_failure` (an address refusal
+  anywhere in the chain is `Refused` with `NOT_PUBLIC`; a redirect-policy
+  refusal is `Refused` with the policy's own wording), `rate_limited`, `unreadable` (a body
   within bounds that is not the document expected: `Unavailable`),
   `status_failure` (a `404` that is an answer is handled where the request
   is made and never reaches it — a `404` that is not an answer, such as a
@@ -131,10 +218,20 @@ subset check).
 
 ## Hard invariants — do not break
 
-1. **This crate holds no credential.** `OciRegistry` exchanges an anonymous
-   pull token per repository; `HelmCharts` sends none at all. Neither is
-   ever handed the platform repository's GitHub App credential, and no
-   change here should introduce a path for one to arrive.
+1. **A registry credential is presented only where it was registered, and
+   nowhere else.** An `OciRegistry` holds at most one — an operator's
+   registry credential, never the platform repository's GitHub App
+   credential — and presents it only for the repositories it was registered
+   for (every other repository is read anonymously), only to the realm its
+   kind's rule allows (a challenge naming another is refused before anything
+   is sent), and never across origins (`Basic` only to a `distribution`
+   registry's own origin; a blob hop off the registry's origin carries
+   nothing). Nothing is presented before a challenge asks for it. It never
+   reaches `Display`, `Debug`, a log, an error detail or a response. A
+   credential its realm refuses is marked, and not presented again by any
+   client sharing its mark; replacing it is building a new client with a
+   fresh mark, so no token or refusal outlives it. `HelmCharts` sends no
+   credential at all.
 2. **A missing tag/version/digest is `None`/absent, never an error**, and
    nothing is cached about what was found — a `404`, a tag's current digest,
    a referrers list are asked again every time. A partial publish across
@@ -157,6 +254,13 @@ subset check).
    the pull token goes only to a hop on the registry's own origin — never
    judged against the hop before (tested with two loopback servers, over one
    CDN hop and two). No `Referer`, no ambient proxy.
+5a. **A registry an operator registered is read at public addresses only.**
+   Under `AddressPolicy::PublicOnly` every name is resolved through
+   `PublicResolver`, on every connection, and dialled only at public
+   addresses; a URL naming an IP literal — endpoint, realm, API redirect,
+   blob hop — is refused before its request. Every such refusal reads
+   `NOT_PUBLIC`, wherever it happened. Loopback counts as public only
+   through the test switch, only over the test transport.
 6. **Every body is bounded before it is parsed**: manifest or index 4 MiB,
    referrers page 1 MiB, token 16 KiB, tag page 1 MiB, config 1 MiB,
    component descriptor layer `fabric_component::MAX_DOCUMENT_BYTES` (and its
@@ -187,6 +291,15 @@ subset check).
   are real SHA-256 digests, it answers `HEAD`, serves or refuses the
   referrers API (`404 MANIFEST_UNKNOWN`, as GHCR does), keeps tag-schema
   indexes, and can redirect blobs to a second server standing in for a CDN.
+  It challenges by default as GHCR does (`Bearer`, a realm on its own
+  origin), or with `Basic`, or not at all; `start_with_realm()` runs the
+  realm on a server of its own; `expect_credential` has the realm (and a
+  `Basic` registry) accept only one credential; `realm_refuses()` answers
+  every credential `401`; `realm_declines_scopes()` and
+  `realm_declines_anonymous_unscoped()` answer `403 DENIED` as GHCR's realm
+  does; `cdn_by_name()` names the CDN `localhost` for a registry held to
+  public addresses. A registry held to public addresses is served
+  under the name `localhost` with the loopback switch on.
 - `OciRegistry::path(repository)` strips a leading `{registry_host}/` if
   present, so a manifest can name a repository as
   `ghcr.io/fieldstatenz/saas-fabric` while a test points `base_url` at a

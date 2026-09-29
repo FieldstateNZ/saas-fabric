@@ -165,9 +165,16 @@ async fn a_token_named_access_token_is_presented_like_any_other() {
     let resolved = registry(&fake).resolve(RUNTIME, "0.3.0").await.unwrap();
 
     assert!(resolved.is_some());
-    assert!(fake
+    // The first read goes with nothing, and is challenged; every one after
+    // it presents the token the realm named `access_token`.
+    let presented: Vec<_> = fake
         .requests()
-        .iter()
+        .into_iter()
         .filter(|request| request.path.starts_with("/v2/"))
+        .skip(1)
+        .collect();
+    assert!(!presented.is_empty());
+    assert!(presented
+        .iter()
         .all(|request| request.authorization.as_deref() == Some("Bearer token-1")));
 }

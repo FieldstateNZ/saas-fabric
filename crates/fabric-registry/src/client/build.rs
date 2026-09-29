@@ -1,21 +1,22 @@
-//! Building a registry client: its two constructors, and the checks both
-//! make before anything is sent.
+//! Building a registry client: from its settings, or by the deployment's two
+//! constructors, and the checks every one makes before anything is sent.
 
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 use std::time::Duration;
 
+use crate::address::Address;
+use crate::client::presented::Presented;
+use crate::client::realm::Realm;
 use crate::client::verified::Verified;
 use crate::client::{http, OciRegistry};
+use crate::settings::RegistrySettings;
 use crate::transport::{permits, Transport};
 
 impl OciRegistry {
-    /// Builds a client that only ever speaks HTTPS, e.g.
-    /// `new("https://ghcr.io", "ghcr.io", 30)`.
-    ///
-    /// This is the only constructor the composition root calls. The one
-    /// exception, which exists for tests alone, is hidden from this crate's
-    /// published docs.
+    /// Builds the deployment's registry client, which only ever speaks HTTPS,
+    /// e.g. `new("https://ghcr.io", "ghcr.io", 30)`: anonymous, following its
+    /// own challenge, on any network — [`RegistrySettings::deployment`].
     ///
     /// # Errors
     ///
@@ -28,21 +29,19 @@ impl OciRegistry {
         registry_host: impl Into<String>,
         timeout_seconds: u64,
     ) -> Result<Self, String> {
-        build(
-            &base_url.into(),
-            registry_host.into(),
+        Self::with_settings(
+            RegistrySettings::deployment(&base_url.into(), registry_host)?,
             timeout_seconds,
-            Transport::Https,
         )
     }
 
     /// Builds a client for a test serving a registry from a loopback socket,
     /// which has no certificate to offer.
     ///
-    /// The only way an [`OciRegistry`] accepts plain HTTP, and only to a
-    /// loopback host; a redirect off loopback on plain HTTP, or back to HTTP
-    /// after an HTTPS hop, is still refused. `#[doc(hidden)]` because nothing
-    /// in production calls it: it is this crate's test suite's alone.
+    /// The only way the deployment's client accepts plain HTTP, and only to
+    /// a loopback host; a redirect off loopback on plain HTTP, or back to
+    /// HTTP after an HTTPS hop, is still refused. `#[doc(hidden)]` because
+    /// nothing in production calls it: it is this crate's test suite's alone.
     ///
     /// # Errors
     ///
@@ -53,68 +52,69 @@ impl OciRegistry {
         registry_host: impl Into<String>,
         timeout_seconds: u64,
     ) -> Result<Self, String> {
-        build(
-            &base_url.into(),
-            registry_host.into(),
+        let base_url = base_url.into();
+        Self::with_settings(
+            RegistrySettings::deployment(&base_url, registry_host)?.serve_from(&base_url)?,
             timeout_seconds,
-            Transport::LoopbackToo,
         )
     }
-}
 
-/// Validates the addresses and builds both clients.
-///
-/// # Why the base URL is checked here, once
-///
-/// Every request is built by appending to it, so a credential, query or
-/// fragment on it would ride along on every one. And HTTPS begins with it:
-/// [`permits`] judges it as the first hop, as it judges every redirect.
-fn build(
-    base_url: &str,
-    registry_host: String,
-    timeout_seconds: u64,
-    transport: Transport,
-) -> Result<OciRegistry, String> {
-    if registry_host.trim().is_empty() {
-        return Err("registry: registry_host is empty".to_owned());
+    /// Builds a client for one registry, as its settings describe it.
+    ///
+    /// # Errors
+    ///
+    /// Returns a message, naming the field and never its value, if the
+    /// endpoint is not HTTPS, is an IP address a registry held to public
+    /// addresses may not be, if a realm is not a URL, if the timeout is
+    /// zero, or if an HTTP client cannot be built.
+    pub fn with_settings(settings: RegistrySettings, timeout_seconds: u64) -> Result<Self, String> {
+        let field = settings.field;
+        let origin =
+            reqwest::Url::parse(&settings.endpoint).map_err(|_| format!("registry: {field} is not a URL"))?;
+        let transport = settings.transport;
+
+        if permits(transport, &[], &origin).is_err() {
+            return Err(match transport {
+                Transport::Https => format!("registry: {field} is not an HTTPS URL"),
+                Transport::LoopbackToo => {
+                    format!("registry: {field} is neither HTTPS nor plain HTTP to a loopback host")
+                }
+            });
+        }
+
+        // Only ever set through `serve_from`, and honoured only there: a
+        // client that speaks HTTPS never counts loopback as public.
+        let loopback_is_public = settings.loopback_is_public && transport == Transport::LoopbackToo;
+        let address = Address::new(settings.address, loopback_is_public);
+        if address.refuses_literal(&origin) {
+            return Err(format!(
+                "registry: {field} is an IP address, and this registry is read only at public addresses by name"
+            ));
+        }
+
+        if timeout_seconds == 0 {
+            // reqwest reads zero as "no timeout", which is the difference
+            // between a bounded discovery pass and one that hangs.
+            return Err("registry: timeout_seconds is zero".to_owned());
+        }
+
+        let (api, blobs) = http::clients(Duration::from_secs(timeout_seconds), transport, address)?;
+
+        Ok(Self {
+            api,
+            blobs,
+            transport,
+            address,
+            base_url: origin.as_str().trim_end_matches('/').to_owned(),
+            origin,
+            realm: Realm::from_rule(&settings.realm)?,
+            honours_basic: settings.honours_basic,
+            credential: settings
+                .credential
+                .map(|credential| Presented::new(credential, &settings.naming_host)),
+            registry_host: settings.naming_host,
+            tokens: Mutex::new(BTreeMap::new()),
+            verified: Verified::default(),
+        })
     }
-
-    let origin = reqwest::Url::parse(base_url).map_err(|_| "registry: base_url is not a URL".to_owned())?;
-
-    if origin.cannot_be_a_base()
-        || !origin.username().is_empty()
-        || origin.password().is_some()
-        || origin.query().is_some()
-        || origin.fragment().is_some()
-    {
-        return Err("registry: base_url carries a credential, a query or a fragment".to_owned());
-    }
-
-    if permits(transport, &[], &origin).is_err() {
-        return Err(match transport {
-            Transport::Https => "registry: base_url is not an HTTPS URL".to_owned(),
-            Transport::LoopbackToo => {
-                "registry: base_url is neither HTTPS nor plain HTTP to a loopback host".to_owned()
-            }
-        });
-    }
-
-    if timeout_seconds == 0 {
-        // reqwest reads zero as "no timeout", which is the difference
-        // between a bounded discovery pass and one that hangs.
-        return Err("registry: timeout_seconds is zero".to_owned());
-    }
-
-    let (api, blobs) = http::clients(Duration::from_secs(timeout_seconds), transport)?;
-
-    Ok(OciRegistry {
-        api,
-        blobs,
-        transport,
-        base_url: origin.as_str().trim_end_matches('/').to_owned(),
-        origin,
-        registry_host,
-        tokens: Mutex::new(BTreeMap::new()),
-        verified: Verified::default(),
-    })
 }

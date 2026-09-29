@@ -614,6 +614,10 @@ def check_dependency_direction(graph: Graph) -> list[Failure]:
             # `RuntimeCatalogueSource` and constructs the `RuntimePublisher`,
             # never the port itself.
             "fabric-runtime-publication",
+            # A registry's repositories are `Repository` values and its host
+            # is held to the same rule (ADR 0026 section 5); a version tag is
+            # a `ComponentVersion`. The contract crate has no transport.
+            "fabric-component",
         },
         # The two adapters depend *inward* on the ports they implement, which
         # is why the arrows point this way and not the other. Nothing in the
@@ -656,10 +660,12 @@ def check_dependency_direction(graph: Graph) -> list[Failure]:
         # a second reader here would be a second place for that contract to
         # drift. Both crates are in neither plane and have no transport.
         "fabric-platform-management": {"fabric-core", "fabric-runtime-publication", "fabric-component"},
-        # The registry adapter. It implements the port the rules define, and
-        # holds no credential at all: the packages are public, and the App that
-        # writes platform desired state must never become the registry's
-        # credential.
+        # The registry adapter. It implements the port the rules define. It
+        # reads anonymously unless an operator registered a credential for a
+        # registry, which it presents only for that registry's repositories,
+        # only to the realm its kind allows and never across origins (ADR 0026
+        # section 5) -- and the App that writes platform desired state must
+        # never become the registry's credential.
         #
         # Its edge to `fabric-component` (ADR 0026 section 4) is for the
         # component descriptor's artifact type family and its size bound,

@@ -5,6 +5,7 @@ use http::StatusCode;
 mod codes;
 mod messages;
 mod platform;
+mod registry;
 
 use crate::ControlPlaneError;
 
@@ -59,6 +60,10 @@ impl ControlPlaneError {
             // and each with its own reason. They live next door rather than
             // swamping this match.
             Self::Platform(platform) => platform::status(platform),
+
+            // An image registry's own failures, each with its own status and
+            // reason, next door for the same reason the platform's are.
+            Self::Registry(registry) => registry.status(),
 
             // 428, not 400. The request is well-formed; what is missing is the
             // precondition that makes it safe to apply, and 428 is the status

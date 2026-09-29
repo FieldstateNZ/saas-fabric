@@ -29,7 +29,7 @@ mod shown;
 mod transport_tests;
 
 pub(crate) use bounded::bounded_body;
-pub(crate) use origin::{is_loopback, same_origin};
+pub(crate) use origin::{is_ip_literal, is_loopback, same_origin};
 pub(crate) use redirect::policy;
 pub(crate) use shown::shown;
 

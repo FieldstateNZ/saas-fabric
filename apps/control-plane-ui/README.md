@@ -149,7 +149,8 @@ the same 150-line limit with the same exemption for tests.
 ```text
 src/
   api/          the only thing that touches the network
-  components/   identity, secrets, integration and platform panels
+  components/   identity, secrets, integration and platform panels; registries/ is the
+                Integrations page's Image registries section (ADR 0026)
   console/      the shell: navigation, dashboard, client directory, reconciliation
   hooks/        loading and saving for those panels
   product/      the catalogue, application definitions and client workflows

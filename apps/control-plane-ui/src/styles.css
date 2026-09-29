@@ -726,6 +726,93 @@ button:disabled {
   opacity: 0.6;
 }
 
+/* Image registries -------------------------------------------------------
+   A section of its own beneath the two Git cards, not a third card among
+   them: registries are a separate product concept (ADR 0026 section 5).
+   Each registry reuses the card's look, and adds its credential and its
+   repositories as parts of the card. */
+
+.registries {
+  margin-top: 2rem;
+}
+
+.registries__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.registries__heading {
+  font-size: 1.1rem;
+  font-weight: 600;
+  margin: 0;
+}
+
+.registries__intro,
+.registry-form__note {
+  font-size: 0.875rem;
+  color: var(--muted);
+  margin: 0.5rem 0 1rem;
+}
+
+.registry__part {
+  border-top: 1px solid var(--line);
+  margin-top: 1rem;
+  padding-top: 0.75rem;
+}
+
+.registry__part-heading {
+  font-size: 0.875rem;
+  font-weight: 600;
+  margin: 0 0 0.5rem;
+}
+
+.registry__repositories {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 0.75rem;
+}
+
+.registry__repositories li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem 1rem;
+  padding: 0.4rem 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.registry__proven {
+  font-size: 0.8rem;
+  color: var(--muted);
+  flex: 1;
+}
+
+.registry-form {
+  margin: 0.75rem 0 1rem;
+}
+
+.registry-form--inline fieldset {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 0 0.75rem;
+}
+
+.registry-form--inline .form-field {
+  flex: 1 1 18rem;
+}
+
+.registry-form--inline button {
+  margin-top: 1.55rem;
+}
+
+.registry__confirm p {
+  font-size: 0.875rem;
+  margin: 1rem 0 0.5rem;
+}
+
 .sidebar__settings {
   font: inherit;
   font-size: 0.875rem;

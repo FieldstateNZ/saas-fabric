@@ -2,8 +2,10 @@
 
 Reads published artifacts — container images from an OCI registry, the
 component descriptors attached to them (ADR 0026), chart versions from a
-classic Helm chart repository — for `fabric-platform-management`. Anonymous,
-read-only, HTTPS end to end, and nowhere near the platform's Git credential.
+classic Helm chart repository — for `fabric-platform-management`. Read-only,
+HTTPS end to end, each registry by its kind's rules, a credential presented
+only for the repositories it was registered for, and nowhere near the
+platform's Git credential.
 
 Sits in neither plane (see
 [`docs/architecture/crate-dependencies.md`](../../../docs/architecture/crate-dependencies.md)).
@@ -20,29 +22,72 @@ check is a subset check, not an exact one).
 the two that read published artifacts — `Registry` (image discovery) and
 `ChartIndex` (chart discovery). The rules crate is handed
 implementations, deliberately, so the registry integration and the platform
-repository's GitHub App credential can never be conflated. **The SaaS Fabric
-packages are public**, so this crate holds no credential of its own at all:
-it exchanges an anonymous pull token per repository and reads. One fewer
-secret on the path between a published preview and a running environment,
-and a boundary that is clean by construction rather than by discipline — the
-GitHub App that writes platform desired state is not, and must never become,
-the registry credential (see
+repository's GitHub App credential can never be conflated — the GitHub App
+that writes platform desired state is not, and must never become, the
+registry credential (see
 [`docs/architecture/crate-dependencies.md`](../../../docs/architecture/crate-dependencies.md)).
-When a package eventually needs authenticating to, that is a new registry
-integration with its own configuration, never a wider scope on the existing
-App.
+
+Reading needs no credential: **the SaaS Fabric packages are public**, and
+every repository nobody registered a credential for is read anonymously.
+When one is given (ADR 0026 section 5), it is a registry integration of its
+own — a username and a long-lived token an operator typed, held in memory
+as a `RegistrySecret` nothing can print — and it is presented only for the
+repositories registered under its registry, only to the realm that
+registry's kind allows, and never across origins. It is never logged and
+never in an error. A realm that refuses it marks it refused, and it is not
+presented again by that client; replacing it builds a new client, so no
+token outlives it.
 
 ## Key concepts
 
 - **`OciRegistry`** — implements `Registry`. Talks the standard OCI
   Distribution API (`/v2/<name>/tags/list`, `/v2/<name>/manifests/<ref>`,
-  `/v2/<name>/blobs/<digest>`, `/v2/<name>/referrers/<digest>`) plus the
-  anonymous token endpoint
-  (`/token?service=...&scope=repository:<name>:pull`). Holds one pull token
-  per repository, cached with **no expiry tracking** — an aged-out token
-  simply comes back as `401`, which the client (`client/token.rs`) retries
-  once with a fresh token. Cheaper to notice than to predict, and it is the
-  same path a token revoked early would take anyway.
+  `/v2/<name>/blobs/<digest>`, `/v2/<name>/referrers/<digest>`, and `/v2/`
+  to prove a registry). Built from **`RegistrySettings`**, one constructor
+  per kind — `ghcr`, `dockerHub` (served from `registry-1.docker.io`, named
+  `docker.io`), `distribution` (an operator's HTTPS origin), and the
+  deployment's own (`OciRegistry::new`).
+- **Nothing is sent before a challenge asks for it.** A request goes with
+  whatever its repository already holds — nothing, the first time — and a
+  `401` is answered once from its `WWW-Authenticate` header (parsed as RFC
+  9110 writes it, several challenges and quoted strings included). A
+  `Bearer` challenge is answered with a token from the realm the kind's
+  **`RealmRule`** allows: GHCR's and Docker Hub's are fixed, a
+  `distribution` registry's origin was recorded when it was registered, and
+  the deployment's anonymous client's is the first one it names whose
+  address and transport it could ask; an operator's registration of the
+  deployment's host keeps its kind's rule (`at_deployment`). A challenge
+  naming any other origin is refused, naming both, and nothing is sent to it.
+  A token request carries only this crate's `service` and `scope`, whatever
+  the realm's URL carried. A realm's `401` to a credential, or `403` to a
+  credentialed proof of `/v2/`, refuses it; a `403` to one repository's
+  scope — GHCR's answer for a repository it will not grant — is that
+  repository not readable, and marks nothing. A `Basic`
+  challenge is answered only by a `distribution` registry, toward its own
+  origin. Tokens are held per repository and per whether they were
+  credentialed, with **no expiry tracking** — an aged-out one comes back as a
+  fresh challenge, which is cheaper to notice than to predict.
+- **Public addresses only, for a registry an operator registered.** Under
+  **`AddressPolicy::PublicOnly`** every name is resolved through a resolver
+  that hands back only public addresses, on every connection, and no URL
+  naming an IP literal is followed — endpoint, realm, redirect or CDN hop.
+  Loopback, link-local (the cloud metadata endpoints), private, shared,
+  unique-local, multicast, reserved, documentation and benchmarking ranges
+  are refused, IPv4-mapped, -compatible, NAT64 and 6to4 forms normalised
+  first, local-use NAT64 and Teredo refused outright, and every refusal
+  reads the same. The deployment's registry is `AddressPolicy::Any`.
+- **`Registries`** — implements `Registry` by the repository's host, and a
+  host with no registry is refused naming it, never sent to a default. The
+  map is swapped whole when a registry is registered, replaced or removed.
+- **Proving, before anything is recorded.** `prove()` answers the realm
+  origin a registry's challenge named; with no credential the challenge
+  itself is the proof, and the realm is not asked for a token nobody will
+  present (GHCR's refuses one). `prove_repository()` and `version_tags()`
+  answer `Readability::NotReadable` for a `401`, `403` or `404` — *not
+  readable through this registry* — and keep every other refusal an error:
+  a realm that changed names both origins, an address refusal reads as
+  every one does, and a credential its realm refused is
+  `RegistryError::Denied`.
 - **Listing tags follows pagination, bounded.** `client/tags.rs::list_tags`
   follows the registry's `Link: <...>; rel="next"` header (100 tags
   requested per page) for up to 50 pages, resolving a relative `Link` target
@@ -75,8 +120,9 @@ App.
   redirect only to the same origin, and a `Link` only on the registry's own
   origin (another origin is `Refused`, never a short list); blobs follow up
   to ten redirects to any HTTPS origin, because hosted registries serve them
-  from a CDN. Blob redirects are followed by hand, and the pull token is
-  attached only to a hop on the registry's own origin: `reqwest` on its own
+  from a CDN. Blob redirects are followed by hand, and the pull token — or a
+  `distribution` registry's `Basic` credential — is attached only to a hop on
+  the registry's own origin: `reqwest` on its own
   rebuilds every hop from the first request's headers and strips
   `Authorization` only when a hop changes host or port from the hop before,
   so a second hop on the same CDN would carry it. Neither sends a `Referer` or uses an ambient proxy. Every body is
@@ -132,21 +178,32 @@ App.
 ```text
 fabric-platform-management::Registry / ChartIndex     the ports
         |                                    |
-   OciRegistry                          HelmCharts
+   Registries (by host)                 HelmCharts
         |                                    |
-   /v2/.../tags/list, manifests,         GET {repository}/index.yaml
-   blobs, referrers                      anonymous, HTTPS end to end
-   anonymous pull token per repository
-   HTTPS; every digest computed
+   OciRegistry per registry             GET {repository}/index.yaml
+        |                               anonymous, HTTPS end to end
+   /v2/.../tags/list, manifests,
+   blobs, referrers
+   a token per repository, from the realm the kind allows,
+   credentialed only where registered; public addresses only
+   for an operator's registry; every digest computed
 ```
 
 ## Getting started
 
 ```rust,ignore
-use fabric_registry::{OciRegistry, HelmCharts};
+use fabric_registry::{Credential, HelmCharts, OciRegistry, Registries, RegistrySecret, RegistrySettings};
 
 let images = OciRegistry::new("https://ghcr.io", "ghcr.io", 30)?;
 let charts = HelmCharts::new(30)?;
+
+// an operator's registries, routed by host:
+let hub = RegistrySettings::docker_hub().with_credential(Credential::new(
+    "someone", RegistrySecret::new(token), ["docker.io/team/app"],
+)?);
+let registries = Registries::new(BTreeMap::from([
+    ("docker.io".to_owned(), Arc::new(OciRegistry::with_settings(hub, 30)?)),
+]));
 
 // both implement the ports fabric-platform-management consumes:
 let service = fabric_platform_management::PlatformManagement::new(
@@ -176,11 +233,12 @@ against either spelling.
   read as an answer about the release. It is what a
   release job runs after pushing a component descriptor.
 
-- **Pointing at a self-hosted or Enterprise registry** — `OciRegistry::new`
-  takes an arbitrary `https://` `base_url`; nothing here is GHCR-specific
-  beyond the default host most deployments use and the token path
-  (`{base}/token`), which a registry whose challenge names another realm
-  (Docker Hub) does not serve.
+- **Pointing at a self-hosted or Enterprise registry** — as the deployment's,
+  `OciRegistry::new` takes an arbitrary `https://` `base_url` and follows
+  whatever realm its first challenge names; as an operator's,
+  `RegistrySettings::distribution(endpoint, RealmRule::FollowChallenge)` to
+  prove it, then `RealmRule::Recorded { origin }` with the origin `prove()`
+  answered.
 - **Debugging a chart repository read** — check `HelmCharts`'s transport
   refusal messages first (`charts/transport/index_url.rs`,
   `charts/transport.rs`): a repository URL carrying userinfo, a
@@ -217,6 +275,15 @@ against either spelling.
 - The registry's pull token is cached with **no expiry field at all** — this
   is deliberate, not an oversight: predicting expiry would be more code for
   the same outcome a `401`-triggers-retry already gives for free.
+- `RegistryError::Denied` is not retried and not re-asked: once a realm has
+  refused a credential, every request that would present it fails without
+  contacting anything — through every client built with the same refusal
+  mark (`Credential::sharing_refusal`) — until one is built with a new
+  credential and a fresh mark. Anonymous reads through the same client go
+  on.
+- `RegistrySettings::serve_from` and `treat_loopback_as_public` are
+  `#[doc(hidden)]` test switches, as `plain_http_to_loopback` is; loopback
+  counts as public only once a registry is served from loopback.
 - `HelmCharts::plain_http_to_loopback` and `OciRegistry::plain_http_to_loopback`
   are `#[doc(hidden)]` — neither is a
   capability offered to any caller but this crate's own test suite, and

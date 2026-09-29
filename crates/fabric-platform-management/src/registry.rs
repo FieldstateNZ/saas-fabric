@@ -26,6 +26,26 @@ pub enum RegistryError {
         /// What was observed, with no upstream body and no credential in it.
         detail: String,
     },
+
+    /// The registry's realm refused the credential an operator gave for it.
+    ///
+    /// # Why its own variant, and not `Refused`
+    ///
+    /// It is not retryable, and not the request's fault either: asking again
+    /// presents the same credential to the same realm, and a sweep that did
+    /// that every minute would walk an account into a lockout. So the adapter
+    /// marks the credential refused and fails every request that would
+    /// present it with this, without contacting anything, until an operator
+    /// replaces it (ADR 0026 section 5). The control plane's registry routes
+    /// answer it `502` — an upstream that said no to what it was given —
+    /// rather than a `503` that invites a retry; Platform Management's own
+    /// routes treat it as any registry that could not answer.
+    #[error("the registry refused its credential: {detail}")]
+    Denied {
+        /// What was refused, and by which step — never the username, the
+        /// secret or the realm's response.
+        detail: String,
+    },
 }
 
 /// Somewhere published artifacts can be looked up.

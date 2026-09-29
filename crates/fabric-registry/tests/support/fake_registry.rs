@@ -2,6 +2,7 @@
 //! by real SHA-256 digests.
 
 mod artifacts;
+mod auth;
 mod modes;
 mod publish;
 mod respond;
@@ -12,6 +13,7 @@ use std::sync::{Arc, Mutex};
 use crate::support::http_server::{self, RecordedRequest};
 
 pub use artifacts::Listed;
+pub use auth::{basic, Challenge};
 
 /// The name repositories are published under, whatever socket answers.
 pub const HOST: &str = "ghcr.io";
@@ -90,6 +92,25 @@ struct State {
     modes: Modes,
     /// Replies fixed by a test.
     fixed: Vec<Fixed>,
+    /// What the registry asks a request with nothing acceptable to present.
+    challenge: Challenge,
+    /// The username and secret the realm, or a `Basic` registry, accepts.
+    credential: Option<(String, String)>,
+    /// How the realm refuses.
+    realm: RealmModes,
+}
+
+/// How the realm refuses, beyond the credential it expects.
+#[derive(Default)]
+struct RealmModes {
+    /// Whether it refuses every credential it is sent.
+    refuses: bool,
+    /// Whether it answers `403 DENIED` to every repository scope, as GHCR's
+    /// does to one it will not grant.
+    declines_scopes: bool,
+    /// Whether it answers `403 DENIED` to an anonymous request for no scope,
+    /// as GHCR's does.
+    declines_anonymous_unscoped: bool,
 }
 
 /// A registry answering over a socket, and optionally a CDN beside it.
@@ -102,6 +123,8 @@ pub struct FakeRegistry {
     requests: Arc<Mutex<Vec<RecordedRequest>>>,
     /// Every request its CDN received.
     cdn_requests: Arc<Mutex<Vec<RecordedRequest>>>,
+    /// Every request its separate realm received.
+    realm_requests: Arc<Mutex<Vec<RecordedRequest>>>,
 }
 
 impl FakeRegistry {
@@ -117,11 +140,19 @@ impl FakeRegistry {
         )
         .await;
 
+        // As GHCR does: a `Bearer` challenge naming a realm on its own
+        // origin, which every read that holds no token is answered with.
+        state.lock().unwrap().challenge = Challenge::Bearer {
+            realm: format!("{base_url}/token"),
+            service: HOST.to_owned(),
+        };
+
         Self {
             base_url,
             state,
             requests,
             cdn_requests: Arc::new(Mutex::new(Vec::new())),
+            realm_requests: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -154,11 +185,15 @@ impl FakeRegistry {
         self.requests().into_iter().map(|request| request.path).collect()
     }
 
-    /// How many `method` requests had a path containing `fragment`.
+    /// How many `method` requests had a path containing `fragment` and were
+    /// answered: a request sent with nothing to present, to a registry that
+    /// challenges, was only asked to authenticate.
     pub fn count(&self, method: &str, fragment: &str) -> usize {
+        let challenges = !matches!(self.locked().challenge, Challenge::None);
         self.requests()
             .iter()
             .filter(|request| request.method == method && request.path.contains(fragment))
+            .filter(|request| !(challenges && request.authorization.is_none()))
             .count()
     }
 

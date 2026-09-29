@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 
 import { IntegrationsPanel } from '../components/IntegrationsPanel'
+import { ImageRegistries } from '../components/registries/ImageRegistries'
 import type { Catalogue, ProductApplication } from '../api/catalogue-types'
 import type { Client, Integration, PlatformIntegration } from '../api/types'
 import type { Loadable } from '../hooks/useClients'
@@ -49,7 +50,9 @@ interface ConsoleRouteProps {
  * file itself starts nothing: every prop below is state `Console` already
  * loaded. The pages it renders are a different matter — `ClientWorkspace`
  * reads a client's product on mount, `ProductActivityFeed` reads activity,
- * and more than one of these is its own request the moment it mounts.
+ * `ImageRegistries` reads the registries — which `Console` does not hold,
+ * because no other page needs them — and more than one of these is its own
+ * request the moment it mounts.
  *
  * This file sits in file-size-policy.md's 121-150 line band, and stays a
  * `switch` rather than a further-split lookup table on purpose: a route is
@@ -141,7 +144,7 @@ export function ConsoleRoute({
         <>
           <PageHeader
             title="Integrations"
-            description="Connections that keep your platform and client configuration in sync."
+            description="Where client configuration and this platform's composition are kept, and the image registries its components are read from."
           />
           <IntegrationsPanel
             clients={integration.value}
@@ -158,6 +161,7 @@ export function ConsoleRoute({
               {platformApplication.error}
             </p>
           )}
+          <ImageRegistries />
         </>
       )
 

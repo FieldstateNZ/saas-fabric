@@ -24,6 +24,12 @@ in `src/`). Dev-dependency: `tokio` (`macros`, `rt-multi-thread`).
   `IntegrationKind`). `new(client: Arc<OpenBao>) -> Self`. Serialises
   `GitIntegration` to a JSON string under the field `DOCUMENT = "record"`
   (private).
+- `OpenBaoRegistryStore` — implements `fabric_control_plane::RegistryStore`
+  (`load`/`save` of the whole set). One entry, `integrations/registries`,
+  field `record` holding the set as a JSON string; absent is an empty set,
+  unparseable is `Malformed`. Each registry's token is a separate
+  `OpenBaoSecretStore` entry, `integrations/registries/<id>/credential`,
+  named by the control plane. `tests/registry_records.rs` pins both paths.
 - `OpenBaoClientSecrets` — implements `fabric_control_plane::ClientSecrets`
   (`list`/`metadata`/`reveal`/`write`/`delete`, all keyed by
   `&SecretNamespace` + `&SecretPath`). `new(store: Arc<OpenBao>) -> Self` (`const`).

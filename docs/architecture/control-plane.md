@@ -113,6 +113,14 @@ GET    /api/integrations/platform/installed  host callback      (no operator)
 GET    /api/integrations/platform/repositories  what the install reaches
 PUT    /api/integrations/platform/repository    choose one
 DELETE /api/integrations/platform        forget the integration
+GET    /api/integrations/registries      image registries, and the deployment's own
+POST   /api/integrations/registries      register one, once it is proven   (201)
+DELETE /api/integrations/registries/{host}                       remove one
+PUT    /api/integrations/registries/{host}/credential            set or replace its credential, once it proves
+DELETE /api/integrations/registries/{host}/credential            remove it
+PUT    /api/integrations/registries/{host}/repositories/entry/{path}  register {host}/{path}, once readable
+DELETE /api/integrations/registries/{host}/repositories/entry/{path}  remove it
+GET    /api/integrations/registries/{host}/versions/{path}       its version tags, newest first
 GET    /api/platform                     what this environment runs
 PUT    /api/platform/components/{component}/hold       stop it advancing
 DELETE /api/platform/components/{component}/hold       let it advance again
@@ -148,7 +156,15 @@ Three things it does not do, each of them a rule rather than a gap:
 
 1. **It does not call a platform service.** There is no code path from a handler
    to Keycloak. Router state holds the domain service and the operator
-   authenticator, and the absence of anything else is the design.
+   authenticator, and the absence of anything else is the design. Image
+   registries are the stated exception (ADR 0026 section 5): registering a
+   registry, setting its credential or adding a repository is proven by asking
+   the registry, and the versions route lists a repository's tags through it. A
+   registry is an integration an operator registered, not a platform service
+   Fabric manages, and a handler reaches it only through the client its record
+   built: at the endpoint its kind fixes or, for a `distribution`
+   registration, the checked public HTTPS origin the operator gave — never a
+   URL built from a path parameter.
 2. **It does not expose repository internals.** No path, no branch, no file, no
    YAML (§8). An operator is told "the client changed since you read it", never
    "the blob sha of `clients/acme/client.yaml` moved".
@@ -311,20 +327,169 @@ that store reading its own writes.
 
 ### Where the platform keeps its own state
 
-Two ports, one backing service, and the separation is in the types rather than
-the location:
+Three ports, one backing service, and the separation is in the types rather
+than the location:
 
 | Port | Holds | May be shown to an operator |
 |---|---|---|
-| `SecretStore` | the application's private key | never |
+| `SecretStore` | the application's private key; each image registry's token | never |
 | `IntegrationStore` | application id, slug, installation, repository | yes |
+| `RegistryStore` | image registries: host, kind, endpoint, realm origin, username, who set what when, repositories and when each was proven | yes |
 
-`fabric-openbao` implements both — and a third port, `ClientSecrets`, for a
-client's own secrets rather than the platform's, behind the client secret
+`fabric-openbao` implements all three — and a fourth port, `ClientSecrets`, for
+a client's own secrets rather than the platform's, behind the client secret
 routes — and is the only crate that knows OpenBao exists. It authenticates with the pod's own Kubernetes identity, so there is
 still no credential for a human to create or transport — which is the whole
 point, since secrets projected *into* a pod are a one-way path and the platform
 now generates credential material of its own.
+
+### Image registries
+
+Registries are a third integration, and not a third Git one (ADR 0026 section
+5). Their kind is a closed set, and it decides where a registry is served, which
+realm issues its tokens and how its repositories are named:
+
+| Kind | Endpoint | Token realm | Names repositories as |
+|---|---|---|---|
+| `ghcr` | `https://ghcr.io` | `https://ghcr.io/token`, service `ghcr.io` | `ghcr.io/…` |
+| `dockerHub` | `https://registry-1.docker.io` | `https://auth.docker.io/token`, service `registry.docker.io` | `docker.io/…` |
+| `distribution` | an HTTPS origin the operator gives | the origin its challenge named when it was registered, recorded | its host, with the port if it has one |
+
+A registry is named by its host — a key into records this platform holds, never
+a location a request builds — and there is at most one per host. `ghcr.io` may
+be registered only as `ghcr` and `docker.io` only as `dockerHub`. Kind, host and
+endpoint are fixed when a registry is registered: changing one is removing it and
+registering another, so a stored credential never moves to a different
+endpoint. A `distribution` endpoint is an origin — no path, user information,
+query, fragment or IP literal.
+
+**What is proven.** Every change is proven before it is recorded: the registry's
+`/v2/` endpoint through its challenge, with the credential when one is given; a
+new credential against every registered repository too; a repository by its tag
+listing. A repository's `401`, `403` or `404` is one refusal, *not readable
+through this registry*, because Fabric adds no distinction the registry did not
+make; any other refusal — a realm that changed, an address the policy refuses
+— is shown as it was worded, never folded into that message. A Docker Hub
+repository of one segment is refused by its grammar, naming
+`docker.io/library/<name>`. A registry proven with no credential is proven by
+its challenge: a `Bearer` challenge naming a realm its kind allows is the
+proof, and the realm is not asked for a token nobody will present — GHCR's
+refuses one outright. Removing a credential is not proven, so one can always be
+withdrawn. A token is written before the record that names it, under a name
+built from an id the server minted, and a replacement is written beside the old
+one, which is deleted once the record names the new. Removal runs the other
+way: it stops reading through the registry first, then saves the record, then
+deletes the credential, so a record never names a credential that is gone; a
+deletion that fails leaves an unreferenced token, logged. Changes take one
+process-local turn, in a task of their own, so a request cut off by its timeout
+still finishes what it began; each is audited, refusals included — those an
+extractor makes of a host, a repository or a body as well as the service's.
+
+**Addresses.** Every connection Fabric makes for a registry an operator
+registered goes to a public address — its endpoint, its token realm, a blob
+redirect target, a pagination link — checked on every connection after name
+resolution, and for a URL naming an IP literal before its request is sent.
+Loopback, link-local (which covers cloud metadata endpoints), private, shared,
+unique-local, multicast and unspecified addresses are refused, after
+IPv4-carrying IPv6 forms (mapped, compatible, NAT64, 6to4) are normalised,
+the local-use NAT64 prefix and Teredo are refused outright, and every such
+refusal reads the same. Its
+client speaks only HTTPS, uses no ambient proxy and sends no `Referer`. The
+deployment's own registry keeps the rules its configuration chose:
+`[platform_management.registry]` may name a mirror on a network of the
+deployment's choosing.
+
+**Realms.** A `ghcr` or `dockerHub` registry asks only its kind's realm, and a
+challenge naming any other is an error. A `distribution` registry's realm
+origin is read from its challenge when it is registered and held to: a later
+challenge naming another origin is an error that names both, and nothing is
+sent to the new one. `Basic` is honoured only by a `distribution` registry, and
+only toward its own origin. An operator's registration for the deployment's
+host keeps its kind's rule — `ghcr`'s fixed realm, or the realm a
+`distribution` registration recorded — while being served where the deployment
+reads it; the deployment's own anonymous client follows its first challenge
+whose realm it could ask, and holds that origin for the life of the process. A
+token request asks for no scope when a credential proves `/v2/`, and otherwise
+only for `repository:<path>:pull`, whatever the challenge or the realm's own
+query offered.
+
+**Credentials.** Optional: reading needs none. When one is given it is a
+username and a long-lived token; short-lived exchanges (ECR's authorization
+token, Artifact Registry's access token) are not supported. It is presented
+only for the repositories registered under its registry — every other
+repository on that host is read anonymously — and never across origins.
+Setting, replacing or removing one builds a new client, so no token obtained
+with the previous credential outlives the change. A credential its realm refuses
+— `401`, or `403` to a credentialed proof of `/v2/` — is marked refused, in
+memory, and not presented again until it is replaced or set again; a `403` to
+one repository's scope is that repository not readable, and marks nothing. The
+mark belongs to the stored credential, not to a client: adding or removing a
+repository rebuilds the client and keeps it, and a refusal while a repository
+is proven marks the client Platform Management reads through. It answers
+`502 registry_refused`, not a retryable `503`, so a sweep does not retry it into
+a locked account. A restart presents it once more.
+
+**At startup.** Every recorded registry is rebuilt, never fatally. A credential
+the secret store did not answer for is read anonymously, flagged, and asked for
+again in the background, with a wait that doubles to five minutes, until the
+store answers. One the store answered is not there is flagged and not retried:
+changes to its registry answer `409 registry_credential_unreadable` until the
+credential is set again or removed. A registration for the deployment's host
+whose endpoint is no longer the deployment's is not read through at all, and
+every change to it but withdrawing its credential or removing it answers
+`registry_endpoint_differs`.
+
+**Where it is kept.** The record set is one entry, `integrations/registries`, in
+the instance's secret partition beside the Git integrations' records, behind
+`RegistryStore`. Each token is its own secret,
+`integrations/registries/<id>/credential`, behind `SecretStore`, under an id
+the server minted and re-validates whenever a record is read, so an edited
+record cannot point at another secret. That is the exception to ADR 0008 that
+ADR 0011 made for the Git integrations and ADR 0026 states: a credential cannot
+live in desired state, and a registry that depended on the client-configuration
+repository could not be registered before it. The catalogue and
+`components.yaml` hold full repository names and never a registry record, so a
+registry may be removed while a catalogue holds components resolved from it.
+The token stays in the control plane (ADR 0026 section 6): no route, log,
+audit event or diagnostic carries it, there is no reveal, and the control plane
+writes no pull secret. ADR 0026 section 6 also requires `saas-fabric-platform`
+to deny its External Secrets policy, `platform-secrets`, the instance prefix
+before any environment stores a registry credential; nothing in this
+repository can enforce that.
+
+**What the console shows.** The Integrations page has an *Image registries*
+section beneath the two Git cards and apart from them, loaded by its own
+request. It lists the deployment's registry as the deployment's —
+configuration, read anonymously, with nothing to change or remove — and each
+registered registry with its kind, host, endpoint, the realm origin it
+recorded, and who registered it when; its credential by username, who set it
+and when, and whether its realm refused it or it could not be read at the last
+start; and its repositories, each with when it was proven. A registry the last
+start could not rebuild says nothing is read through it. The section never says
+"connected": nothing on it has been observed since it was proven, and each
+thing says when that was; nor may a registry nothing is read through be
+changed but by withdrawing its credential or removing it. A token is typed into
+a password field marked `new-password` beside a username marked `off`, so the
+browser fills neither from a login it saved for the console, and is sent once
+and emptied whatever the answer. A change the control plane did not answer in
+time is shown as possibly still finishing, and the list is read again shortly
+after; a quiet re-read a later change overtook is dropped. A repository is typed in full, and one not under
+the registry's host is refused before anything is sent. Every refusal is shown
+in the control plane's own words, followed by what its code adds — for a proof
+that failed, that nothing was recorded. The browser reaches no registry itself:
+every proof and every tag listing is the control plane's. The section does not
+yet say which registry each managed component is read through, as ADR 0026
+section 5 asks, because `GET /api/platform` does not report a component's
+repository; ADR 0026 moves it to slice 4, where the platform view first
+carries each component's repositories.
+
+`fabric-registry`'s `Registries` router is what Platform Management reads
+through: the deployment's own registry from `[platform_management.registry]`,
+anonymously unless an operator registers that host at that endpoint with a
+credential, and every other registry an operator registered, at public
+addresses only. A host with no registry is refused by name. Registries exist whether or
+not Platform Management is configured; `[registries] http_timeout_seconds` is
+their one setting.
 
 ### Two integrations, two applications
 
@@ -1078,6 +1243,23 @@ The catalogue and client creation add three codes:
 | `409 realm_unavailable` | creation's realm is reserved, or another client document already declares it. The message names the realm and which of the two, since `GET /api/clients` already shows every client's realm | picks another id |
 | `422 document_too_large` | the document the write would produce is past its limit: 900 KiB for a write that grows one — a creation, a product save, a catalogue command — and 960 KiB for an identity edit, so remediation stays possible on a document growth has already filled. `422` and not `413`: the request body is not what is too large | trims the document in Git |
 
+Image registries answer codes of their own, never the platform's
+(`errors/status_mapping/registry.rs`):
+
+| Answer | Means |
+|---|---|
+| `404 registry_not_found` | no registry for the host, or the repository is not registered under it |
+| `409 registry_exists` | one is already registered for the host |
+| `400 registry_invalid` | a request the rules refuse; the message names the rule and never echoes a token |
+| `409 registry_endpoint_differs` | the deployment's host, at an endpoint that is not the deployment's |
+| `409 registry_credential_unreadable` | the recorded credential is not in the secret store; set it again or remove it — no retry brings it back |
+| `422 registry_not_proven` | the registry's `/v2/` endpoint did not prove |
+| `422 repository_not_readable` | "not readable through this registry": a `401`, `403` or `404`, one message |
+| `502 registry_refused` | the realm refused the credential; it is not presented again until replaced or set again |
+| `503 registry_unavailable` | the registry could not be asked; `Retry-After` |
+| `503 registries_unavailable` | the records or a credential could not be read or written now; `Retry-After` |
+| `500 registries_invalid` | the stored records do not parse; never saved over |
+
 `409 revision_conflict` means "ask again", in two situations. One is an edit
 against a revision that has moved; its message names the catalogue or the client,
 whichever moved — including a catalogue write that loses the race between its own
@@ -1359,6 +1541,7 @@ time.
 | a catalogue command | `control_plane.audit.catalogue_changed` |
 | a secret operation | `control_plane.audit.client_secret` |
 | an operator's runtime-publication trigger | `control_plane.audit.publication_triggered` |
+| an image registry change, refused or not | `control_plane.audit.registry` |
 
 The catalogue event names no client, because the catalogue has none: it carries
 `resource = "catalogue"` and the entry the command changed, and takes its
@@ -1374,6 +1557,12 @@ no operator to attribute and is not the human decision this trail exists
 for. That activity is a view kept in desired state
 ([ADR 0021](../decisions/0021-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md) §6),
 not a replacement for these events.
+
+The registry event carries `operator`, `resource = "registry"`, the `host`
+(empty when the request named none that validated), the `operation` —
+`register`, `remove`, `set_credential`, `remove_credential`, `add_repository`,
+`remove_repository` — and `outcome`, `succeeded` or the refusal's code. Never a
+username, a token, a realm's response or a URL.
 
 Git history is a **second** copy: the commit message carries a `Requested-by:`
 trailer, because every commit is authored by the platform's machine identity and
@@ -1403,3 +1592,10 @@ builds the producer (`fabric-runtime-publication`, its port, its filesystem
 adapter and guards), and this increment still does not build the Kubernetes
 adapter, a scheduled caller, or the provisioner input those three documents
 need — see "Runtime publication boundary" above.
+
+Image registries are registered, proven and read through, and the console lists
+them; selecting a component from them is not built yet. ADR 0026's picker, the
+catalogue's `described` kind and the resolution it records are its next slice,
+and the versions route is there for them. Nothing yet says which registry each
+managed component is read through, and nothing decides how a cluster pulls a
+private component's images (ADR 0026 section 6).

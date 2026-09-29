@@ -2,6 +2,8 @@
 //! real control plane, without a Keycloak, a Git host, or an identity
 //! provider to stand up first.
 //!
+//! Past 120 lines because why it is safe to run is argued beside the code.
+//!
 //! # What is real, and what is not
 //!
 //! The router, the desired-state repository ([`LocalClientRepository`]) and
@@ -20,7 +22,11 @@
 //! 2. **It has no identity provider, no Git integration and no secrets
 //!    store.** `ControlPlaneDeps` for every one of those is `None`, so there
 //!    is nothing behind this process for an accepted request to reach beyond
-//!    the local development repository it also owns.
+//!    the local development repository it also owns — and the image
+//!    registries, which are the real service over in-memory stores and the
+//!    real router: an operator registers public registries here and sees what
+//!    was proven. They read only public addresses, lose everything when this
+//!    process stops, and no credential typed here is written anywhere else.
 //! 3. **It is an `[[example]]`, never a `[[bin]]`.** The `Dockerfile` at the
 //!    repository root builds `cargo build --release --bin ...` for named
 //!    binaries only; an example is not a build target that command touches,
@@ -44,9 +50,10 @@ use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use fabric_control_plane::{
     build_control_plane, testing::AcceptingOperator, ControlPlaneConfig, ControlPlaneDeps,
-    DesiredStateBinding, KeyHolder,
+    DesiredStateBinding, InMemoryRegistryStore, InMemorySecretStore, KeyHolder,
 };
 use fabric_control_plane_api::local_repository::LocalClientRepository;
+use fabric_control_plane_api::startup::{compose_registries, RegistryComposition};
 use fabric_core::SystemClock;
 use std::{path::PathBuf, sync::Arc};
 
@@ -79,6 +86,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "operator": {"mode":"oidc", "issuer":"https://auth.example.test/realms/master",
             "redirect_uri":"http://127.0.0.1:5174/"}
     }))?;
+    // The real registry service and router, over stores that forget. No
+    // deployment registry: the workbench manages no platform.
+    let registries = compose_registries(RegistryComposition {
+        deployment: None,
+        http_timeout_seconds: 10,
+        store: Arc::new(InMemoryRegistryStore::new()),
+        secrets: Arc::new(InMemorySecretStore::new()),
+        clock: SystemClock::shared(),
+    })
+    .await?;
     let services = build_control_plane(
         &config,
         ControlPlaneDeps {
@@ -97,6 +114,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             // protect a name against — an empty set is honest, not a gap.
             reserved_realms: std::collections::BTreeSet::new(),
             reserved_client_ids: std::collections::BTreeSet::new(),
+            registries: registries.service,
         },
     )?;
     let router = services.router.layer(middleware::from_fn(reject_unexpected_host));

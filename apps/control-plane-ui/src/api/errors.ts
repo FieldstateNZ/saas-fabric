@@ -19,6 +19,26 @@ export type ErrorCode =
   | 'data_source_in_use'
   | 'publication_not_configured'
   | 'publication_running'
+  | RegistryErrorCode
+
+/**
+ * The codes an image registry's refusal carries (ADR 0026 section 5) --
+ * never the platform's, because registering a registry is not Platform
+ * Management failing. The registries section leads each message with what
+ * its code means; the message itself is always the control plane's.
+ */
+export type RegistryErrorCode =
+  | 'registry_not_found'
+  | 'registry_exists'
+  | 'registry_invalid'
+  | 'registry_endpoint_differs'
+  | 'registry_credential_unreadable'
+  | 'registry_not_proven'
+  | 'repository_not_readable'
+  | 'registry_refused'
+  | 'registry_unavailable'
+  | 'registries_unavailable'
+  | 'registries_invalid'
 
 /**
  * A refusal from the control plane.

@@ -35,6 +35,19 @@ fn the_example_configuration_loads() {
 
     assert_eq!(config.listen, "0.0.0.0:8081");
     assert_eq!(config.request_timeout_seconds, 30);
+    assert_eq!(config.registries.http_timeout_seconds, 10);
+}
+
+#[test]
+fn an_unknown_key_inside_the_registries_section_is_refused_rather_than_ignored() {
+    // Which registries exist is operator-managed state, so a deployment that
+    // tried to list them here must be told, not silently ignored.
+    let error = serde_json::from_value::<fabric_control_plane_api::config::RegistriesConfig>(
+        serde_json::json!({ "http_timeout_seconds": 10, "ghcr": { "token": "x" } }),
+    )
+    .expect_err("registries are registered in the console, not configured");
+
+    assert!(error.to_string().contains("ghcr"), "{error}");
 }
 
 #[test]

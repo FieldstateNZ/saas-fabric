@@ -1,10 +1,11 @@
 # What SaaS Fabric is, as a component (ADR 0026).
 #
 # The authored form of this repository's component descriptor: the same
-# document a release publishes, without a version and without digests. The
-# release renders it with fabric-component's renderer and attaches the result
-# to the runtime image (ADR 0026 section 10; the attach job is slice 5 and
-# does not exist yet, so nothing is published from this file today).
+# document a release publishes, without a version and without digests. On a
+# pushed tag whose commit is on main, the release renders it with
+# fabric-component's renderer from the digests its image legs pushed, and
+# attaches the result to the runtime image last (ADR 0026 section 10;
+# docs/architecture/packaging.md).
 #
 # It declares no capabilities, fields or resources, and never will: SaaS
 # Fabric is the platform that provides them, not a component that needs them.

@@ -14,7 +14,9 @@ name: Release
 # it discovers one by looking at the registry.
 #
 # `workflow_dispatch` builds the same three images and pushes nothing, so the
-# packaging can be exercised without minting a version. There is deliberately
+# packaging can be exercised without minting a version — even when it is
+# started from a tag: only a *push* of a tag publishes (the version job's
+# `publish` output, which every publishing step and job reads). There is deliberately
 # no path that publishes from a branch: an image nobody can point at a tag is
 # an image nobody can reason about.
 on:
@@ -60,107 +62,20 @@ permissions:
 
 jobs:
   # ---------------------------------------------------------------------------
-  # Nothing is published from a commit that does not pass its own gates
+  # The version, computed once
   # ---------------------------------------------------------------------------
   #
-  # These duplicate `ci.yml`, and the duplication is the point. CI runs on every
-  # push, so a tagged commit has almost certainly been checked — but "almost
-  # certainly" is doing the work in that sentence, and the failure it admits is
-  # an artifact built from a red tree, which is then deployed and behaves in a
-  # way no gate reproduces.
-  #
-  # A release is rare. Paying for the gates twice is the cheaper side of that
-  # trade.
-  verify:
-    name: gates
+  # Every job that publishes something names the same version: the three image
+  # legs, and the component descriptor attached after them (ADR 0026 section
+  # 10). Computed in one place so the rule for what a tag may be is written
+  # once.
+  version:
+    name: version
     runs-on: ubuntu-latest
-    # Only for a release. On a pull request `ci.yml` has already run every one
-    # of these against the same commit, and running them twice in parallel
-    # would double the queue to learn nothing.
-    if: github.ref_type == 'tag'
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.x'
-
-      # See "The toolchain" in ci.yml.
-      - run: rustup toolchain install
-      - run: rustup show active-toolchain
-
-      - run: cargo fmt --all --check
-      - run: cargo clippy --workspace --all-targets -- -D warnings
-      - run: cargo test --workspace
-
-      - run: python3 scripts/check_file_sizes.py
-      - run: python3 scripts/check_architecture.py
-
-      # The one gate that exists for this workflow: the builder image must be
-      # the compiler the workspace is pinned to.
-      - run: python3 scripts/check_toolchain_pin.py
-
-  # ---------------------------------------------------------------------------
-  # Three images from one context
-  # ---------------------------------------------------------------------------
-  build:
-    name: ${{ matrix.image }}
-    runs-on: ubuntu-latest
-    needs: verify
-    # `always()` because `verify` is *skipped* on a pull request, and a skipped
-    # dependency would otherwise skip this job too.
-    #
-    # A job result is one of four values, and the condition has to name the one
-    # it wants rather than exclude the one it fears. `!= 'failure'` reads as
-    # "only when the gates passed" and is not: a `cancelled` gate — a killed
-    # run, a lost runner — is not a failure, and would have published.
-    #
-    #   ref      verify result   builds?  publishes?
-    #   ------------------------------------------------
-    #   tag      success         yes      yes
-    #   tag      failure         no       no
-    #   tag      cancelled       no       no
-    #   tag      skipped         no       no
-    #   branch   skipped         yes      no
-    #
-    # So: a tag requires success outright, and only a non-tag may proceed on a
-    # skip. Nothing is published from a commit whose gates did not pass.
-    if: >-
-      always() &&
-      ( needs.verify.result == 'success' ||
-      (github.ref_type != 'tag' && needs.verify.result == 'skipped') )
-    permissions:
-      contents: read
-      # The only elevated permission here, and it is the job's own token —
-      # there is no long-lived registry credential to store, rotate, or leak.
-      packages: write
-    strategy:
-      # Not `fail-fast`: if one image fails to build, knowing whether the other
-      # two would have is worth the minutes.
-      fail-fast: false
-      matrix:
-        # `role` is each image's role in this repository's component.yaml, and
-        # `primary` marks the image its component descriptor is attached to
-        # (ADR 0026 section 10). Both are inert until the attach job exists;
-        # until then, the pull-request test
-        # crates/fabric-component/tests/this_repositorys_component.rs checks
-        # them against component.yaml.
-        include:
-          # The name the platform already expects for the runtime plane.
-          - image: saas-fabric
-            dockerfile: Dockerfile
-            target: runtime-api
-            role: runtime
-            primary: true
-          - image: saas-fabric-control-plane
-            dockerfile: Dockerfile
-            target: control-plane-api
-            role: controlPlane
-            primary: false
-          - image: saas-fabric-control-plane-ui
-            dockerfile: apps/control-plane-ui/Dockerfile
-            target: console
-            role: console
-            primary: false
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      publish: ${{ steps.version.outputs.publish }}
+      owner: ${{ steps.repo.outputs.owner }}
     steps:
       - uses: actions/checkout@v4
 
@@ -184,20 +99,25 @@ jobs:
       #
       # So **you cannot cut a preview of a version the workspace is not on.**
       # That is the guarantee, not a limitation of it.
+      #
+      # The grammar is SemVer's own, minus build metadata: `+` is not a legal
+      # character in an OCI tag, so a version carrying one could never name its
+      # own image. A prerelease's numeric identifiers carry no leading zeros,
+      # and the whole is at most 128 characters — the same rule the component
+      # descriptor's version follows (fabric-component's `ComponentVersion`),
+      # so no tag can publish images whose descriptor would then refuse them.
       - name: Determine the version
         id: version
         run: |
           set -euo pipefail
           workspace=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
 
-          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+          if [ "${GITHUB_EVENT_NAME}" = "push" ] && [ "${GITHUB_REF_TYPE}" = "tag" ]; then
             tagged="${GITHUB_REF_NAME#v}"
+            identifier='(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)'
 
-            # SemVer, minus build metadata: `+` is not a legal character in an
-            # OCI tag, so a version carrying one could never name its own
-            # image. Rejecting it here beats discovering it at `docker push`.
-            if ! printf '%s' "$tagged" \
-              | grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$'; then
+            if [ "${#tagged}" -gt 128 ] || ! printf '%s' "$tagged" \
+              | grep -Eq "^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-${identifier}(\.${identifier})*)?\$"; then
               echo "::error::tag ${GITHUB_REF_NAME} is not a version this repository can publish"
               exit 1
             fi
@@ -220,11 +140,159 @@ jobs:
         id: repo
         run: echo "owner=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
 
+  # ---------------------------------------------------------------------------
+  # Nothing is published from a commit that does not pass its own gates
+  # ---------------------------------------------------------------------------
+  #
+  # These duplicate `ci.yml`, and the duplication is the point. CI runs on every
+  # push, so a tagged commit has almost certainly been checked — but "almost
+  # certainly" is doing the work in that sentence, and the failure it admits is
+  # an artifact built from a red tree, which is then deployed and behaves in a
+  # way no gate reproduces.
+  #
+  # A release is rare. Paying for the gates twice is the cheaper side of that
+  # trade.
+  verify:
+    name: gates
+    runs-on: ubuntu-latest
+    # Only for a release. On a pull request `ci.yml` has already run every one
+    # of these against the same commit, and running them twice in parallel
+    # would double the queue to learn nothing.
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      # See "The toolchain" in ci.yml.
+      - run: rustup toolchain install
+      - run: rustup show active-toolchain
+
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace
+
+      - run: python3 scripts/check_file_sizes.py
+      - run: python3 scripts/check_architecture.py
+
+      # The one gate that exists for this workflow: the builder image must be
+      # the compiler the workspace is pinned to.
+      - run: python3 scripts/check_toolchain_pin.py
+
+      # And the component descriptor this release will attach last must render
+      # from component.yaml before any image is pushed, so a release never
+      # ends with images and no descriptor because the descriptor was refused.
+      - run: cargo run -q -p fabric-component --example descriptor -- check component.yaml
+
+  # ---------------------------------------------------------------------------
+  # Three images from one context
+  # ---------------------------------------------------------------------------
+  build:
+    name: ${{ matrix.image }}
+    runs-on: ubuntu-latest
+    needs: [verify, version]
+    # `!cancelled()` because `verify` is *skipped* when nothing will be
+    # published, and a skipped dependency would otherwise skip this job too.
+    # Not `always()`: cancelling a run re-evaluates every running job's
+    # condition, and one that says `always()` would keep building and pushing
+    # a release somebody just tried to stop.
+    #
+    # A job result is one of four values, and the condition has to name the one
+    # it wants rather than exclude the one it fears. `!= 'failure'` reads as
+    # "only when the gates passed" and is not: a `cancelled` gate — a killed
+    # run, a lost runner — is not a failure, and would have published.
+    #
+    #   publishes?  verify result   builds?  pushes?
+    #   ------------------------------------------------
+    #   yes         success         yes      yes
+    #   yes         failure         no       no
+    #   yes         cancelled       no       no
+    #   yes         skipped         no       no
+    #   no          skipped         yes      no
+    #   (run cancelled)             stops    no
+    #
+    # So: a published run requires success outright, and only a run that
+    # publishes nothing may proceed on a skip. Nothing is published from a
+    # commit whose gates did not pass.
+    if: >-
+      !cancelled() && needs.version.result == 'success' &&
+      ( needs.verify.result == 'success' ||
+      (needs.version.outputs.publish != 'true' && needs.verify.result == 'skipped') )
+    permissions:
+      contents: read
+      # One of two elevated permissions in this workflow, and it is the job's own token —
+      # there is no long-lived registry credential to store, rotate, or leak.
+      packages: write
+    strategy:
+      # Not `fail-fast`: if one image fails to build, knowing whether the other
+      # two would have is worth the minutes.
+      fail-fast: false
+      matrix:
+        # `role` is each image's role in this repository's component.yaml, and
+        # `primary` marks the image its component descriptor is attached to
+        # (ADR 0026 section 10). The `descriptor` job reads the digests the legs
+        # record by role; the pull-request test
+        # crates/fabric-component/tests/this_repositorys_component.rs checks
+        # both keys against component.yaml.
+        include:
+          # The name the platform already expects for the runtime plane.
+          - image: saas-fabric
+            dockerfile: Dockerfile
+            target: runtime-api
+            role: runtime
+            primary: true
+          - image: saas-fabric-control-plane
+            dockerfile: Dockerfile
+            target: control-plane-api
+            role: controlPlane
+            primary: false
+          - image: saas-fabric-control-plane-ui
+            dockerfile: apps/control-plane-ui/Dockerfile
+            target: console
+            role: console
+            primary: false
+    steps:
+      - uses: actions/checkout@v4
+
       - name: Log in to the registry
-        if: steps.version.outputs.publish == 'true'
+        if: needs.version.outputs.publish == 'true'
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ACTOR: ${{ github.actor }}
+        run: printf '%s' "${TOKEN}" | docker login "${REGISTRY}" -u "${ACTOR}" --password-stdin
+
+      # A published version never moves. Its component descriptor names these
+      # images by digest, so a re-run that rebuilt one (builds are not
+      # reproducible) would leave the version tag pointing at bytes the
+      # descriptor does not name — incoherent for ever (ADR 0026 section 3).
+      # Reusing a version is not supported; the fix is the next version.
+      #
+      # It fails closed: only the registry's own `404` for the tag means "not
+      # published". A `200` refuses, and anything else — a `401`, a `429`, a
+      # `5xx`, a network failure (`000`) — fails the leg rather than reading as
+      # absence and pushing over a published version.
+      - name: Refuse to move a published version
+        if: needs.version.outputs.publish == 'true'
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ACTOR: ${{ github.actor }}
+          OWNER: ${{ needs.version.outputs.owner }}
+          IMAGE: ${{ matrix.image }}
+          VERSION: ${{ needs.version.outputs.version }}
         run: |
-          echo "${{ secrets.GITHUB_TOKEN }}" \
-            | docker login "${REGISTRY}" -u "${{ github.actor }}" --password-stdin
+          set -euo pipefail
+          token=$(curl -fsS -u "${ACTOR}:${TOKEN}" \
+            "https://${REGISTRY}/token?service=${REGISTRY}&scope=repository:${OWNER}/${IMAGE}:pull" \
+            | jq -er .token)
+          status=$(curl -sS -o /dev/null -w '%{http_code}' -H "Authorization: Bearer ${token}" \
+            -H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json' \
+            "https://${REGISTRY}/v2/${OWNER}/${IMAGE}/manifests/${VERSION}" || true)
+          case "${status}" in
+            404) ;;
+            200) echo "::error::${OWNER}/${IMAGE}:${VERSION} is already published; cut a new version"; exit 1 ;;
+            *)   echo "::error::could not tell whether ${OWNER}/${IMAGE}:${VERSION} is published (HTTP ${status})"; exit 1 ;;
+          esac
 
       # Two tags, and **never `latest`**. The platform pins an explicit version
       # (specification section 25); a floating tag is how a cluster ends up
@@ -233,16 +301,16 @@ jobs:
       - name: Build
         run: |
           set -euo pipefail
-          name="${REGISTRY}/${{ steps.repo.outputs.owner }}/${{ matrix.image }}"
+          name="${REGISTRY}/${{ needs.version.outputs.owner }}/${{ matrix.image }}"
 
           docker build \
             --file "${{ matrix.dockerfile }}" \
             --target "${{ matrix.target }}" \
-            --tag "${name}:${{ steps.version.outputs.version }}" \
+            --tag "${name}:${{ needs.version.outputs.version }}" \
             --tag "${name}:sha-${GITHUB_SHA}" \
             --label "org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}" \
             --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
-            --label "org.opencontainers.image.version=${{ steps.version.outputs.version }}" \
+            --label "org.opencontainers.image.version=${{ needs.version.outputs.version }}" \
             .
 
       # A smoke test that the entry point is the binary and that it starts far
@@ -253,17 +321,250 @@ jobs:
         if: matrix.target != 'console'
         run: |
           set -euo pipefail
-          name="${REGISTRY}/${{ steps.repo.outputs.owner }}/${{ matrix.image }}"
-          output=$(docker run --rm "${name}:${{ steps.version.outputs.version }}" /nonexistent.toml 2>&1 || true)
+          name="${REGISTRY}/${{ needs.version.outputs.owner }}/${{ matrix.image }}"
+          output=$(docker run --rm "${name}:${{ needs.version.outputs.version }}" /nonexistent.toml 2>&1 || true)
 
           echo "$output"
           echo "$output" | grep -q "could not start" \
             || { echo "::error::the image did not start and refuse a missing configuration"; exit 1; }
 
-      - name: Push
-        if: steps.version.outputs.publish == 'true'
+      # The version tag is pushed last. Everything that can fail after a push
+      # — reading back the digest, keeping it for the descriptor — happens
+      # before the version exists, so a leg that fails there can be re-run;
+      # once the version is pushed, the leg refuses to run again (above).
+      - name: Push the commit tag
+        if: needs.version.outputs.publish == 'true'
+        run: docker push "${REGISTRY}/${{ needs.version.outputs.owner }}/${{ matrix.image }}:sha-${GITHUB_SHA}"
+
+      # The digest this leg pushed, by role, for the `descriptor` job to name.
+      # Read back from what the push recorded rather than resolved later from
+      # the tag, so the descriptor names the bytes this run built. Both tags
+      # name the same image, so the digest is the version's too.
+      - name: Record the pushed digest
+        if: needs.version.outputs.publish == 'true'
         run: |
           set -euo pipefail
-          name="${REGISTRY}/${{ steps.repo.outputs.owner }}/${{ matrix.image }}"
-          docker push "${name}:${{ steps.version.outputs.version }}"
-          docker push "${name}:sha-${GITHUB_SHA}"
+          name="${REGISTRY}/${{ needs.version.outputs.owner }}/${{ matrix.image }}"
+          digest=$(docker inspect --format '{{index .RepoDigests 0}}' "${name}:sha-${GITHUB_SHA}")
+          digest="${digest#*@}"
+          if ! printf '%s' "$digest" | grep -Eq '^sha256:[0-9a-f]{64}$'; then
+            echo "::error::could not read the digest ${name} was pushed as"
+            exit 1
+          fi
+          mkdir -p digests
+          printf '%s' "$digest" > "digests/${{ matrix.role }}"
+
+      # Kept as long as GitHub lets a run be re-run, because re-running the
+      # `descriptor` job is the only way to finish a release whose attach step
+      # failed: the legs that pushed refuse to run again.
+      - name: Keep the pushed digest for the descriptor
+        if: needs.version.outputs.publish == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: digest-${{ matrix.role }}
+          path: digests/${{ matrix.role }}
+          retention-days: 30
+          overwrite: true
+          if-no-files-found: error
+
+      - name: Push the version
+        if: needs.version.outputs.publish == 'true'
+        run: docker push "${REGISTRY}/${{ needs.version.outputs.owner }}/${{ matrix.image }}:${{ needs.version.outputs.version }}"
+
+  # ---------------------------------------------------------------------------
+  # The component descriptor, attached last (ADR 0026 section 10)
+  # ---------------------------------------------------------------------------
+  #
+  # A version is complete only when its component descriptor exists, so this
+  # runs after every image leg succeeded and attaches to the runtime image —
+  # the primary — the descriptor naming all three by the digests those legs
+  # pushed. It runs only for a pushed tag whose commit is on `main`, and it
+  # *fails* rather than skips otherwise: a tag cut from a branch publishes
+  # images that an environment describing `saas-fabric` will report as
+  # undescribed and never advance to, and that is worth a red run, not a quiet
+  # one.
+  #
+  #   publishes?  verify    build     main?   attaches?
+  #   ---------------------------------------------------
+  #   yes         success   success   yes     yes
+  #   yes         success   success   no      no (fails)
+  #   yes         anything else               no
+  #   no                                      no (never runs)
+  #   (run cancelled)                         no
+  #
+  # A re-run is safe: the descriptor's bytes and its creation time are fixed by
+  # the commit, so a second run renders the same document and finds it already
+  # attached. A *different* descriptor already attached is refused, never
+  # joined — two would make the version invalid for ever.
+  descriptor:
+    name: component descriptor
+    runs-on: ubuntu-latest
+    needs: [verify, version, build]
+    if: >-
+      !cancelled() && needs.version.outputs.publish == 'true' &&
+      needs.version.result == 'success' &&
+      needs.verify.result == 'success' &&
+      needs.build.result == 'success'
+    permissions:
+      contents: read
+      # The other elevated permission: attaching an artifact is a push.
+      packages: write
+    env:
+      # ORAS 1.3.4, the version this repository already uses, pinned by digest
+      # because it runs holding a token that can push.
+      ORAS_IMAGE: ghcr.io/oras-project/oras@sha256:f7bc056d54d97baa399414ed5048ecc67c3371b750d4bbce1d871827a5758179
+      VERSION: ${{ needs.version.outputs.version }}
+      OWNER: ${{ needs.version.outputs.owner }}
+    steps:
+      # No credential is left in the checkout: this job compiles third-party
+      # crates below, and nothing they run should find a token that can push.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Require a commit on main
+        run: |
+          set -euo pipefail
+          git fetch --quiet origin +refs/heads/main:refs/remotes/origin/main
+          if ! git merge-base --is-ancestor "${GITHUB_SHA}" origin/main; then
+            echo "::error::${GITHUB_REF_NAME} is not on main, so its images get no component descriptor"
+            exit 1
+          fi
+
+      # See "The toolchain" in ci.yml. The renderer and the reader below are
+      # this repository's own, so the release attaches exactly what Fabric
+      # will later read.
+      - run: rustup toolchain install
+      - run: rustup show active-toolchain
+
+      # Built before the registry login, so no build script or procedural
+      # macro of any dependency runs while a token that can push is on disk.
+      # The `cargo run`s below then only run what is already built.
+      - name: Build the renderer and the reader
+        run: |
+          cargo build -q -p fabric-component --example descriptor
+          cargo build -q -p fabric-registry --example release_unit
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: digest-*
+          path: digests
+          merge-multiple: true
+
+      - name: Log in to the registry
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ACTOR: ${{ github.actor }}
+        run: printf '%s' "${TOKEN}" | docker login "${REGISTRY}" -u "${ACTOR}" --password-stdin
+
+      # Each role's repository comes from component.yaml, and each role's
+      # digest from the leg that pushed it. The version tag must still point at
+      # that digest: if anything moved it since, the descriptor would name bytes
+      # the tag no longer does.
+      - name: Check every image is still what its leg pushed
+        run: |
+          set -euo pipefail
+          oras() {
+            docker run --rm --user "$(id -u):$(id -g)" \
+              -v "${HOME}/.docker/config.json:/auth/config.json:ro" \
+              -v "${PWD}:/work" -w /work --entrypoint /bin/oras "${ORAS_IMAGE}" \
+              "$@" --registry-config /auth/config.json
+          }
+          cargo run -q -p fabric-component --example descriptor -- images component.yaml > roles.txt
+          digest_args=()
+          while read -r role repository; do
+            case "${repository}" in
+              "${REGISTRY}/${OWNER}/"*) ;;
+              *) echo "::error::component.yaml names ${repository}, which this workflow does not publish"; exit 1 ;;
+            esac
+            recorded=$(cat "digests/${role}")
+            current=$(oras resolve "${repository}:${VERSION}")
+            if [ "${current}" != "${recorded}" ]; then
+              echo "::error::${repository}:${VERSION} is ${current}, but its build pushed ${recorded}"
+              exit 1
+            fi
+            digest_args+=(--digest "${role}=${recorded}")
+          done < roles.txt
+          cargo run -q -p fabric-component --example descriptor -- \
+            render component.yaml --version "${VERSION}" "${digest_args[@]}" --out component.json
+          # The primary is the runtime role: the matrix marks it, and the
+          # pull-request test pins that mark to component.yaml's roles. Its
+          # repository is read from component.yaml, not written here twice.
+          primary_repository=$(awk '$1 == "runtime" { print $2 }' roles.txt)
+          echo "PRIMARY_REPOSITORY=${primary_repository}" >> "$GITHUB_ENV"
+          echo "PRIMARY_DIGEST=$(cat digests/runtime)" >> "$GITHUB_ENV"
+
+      # None attached: attach. One attached with the same document: nothing to
+      # do. Anything else: refuse, without pushing.
+      - name: Attach the component descriptor
+        env:
+          SOURCE: ${{ github.server_url }}/${{ github.repository }}
+        run: |
+          set -euo pipefail
+          oras() {
+            docker run --rm --user "$(id -u):$(id -g)" \
+              -v "${HOME}/.docker/config.json:/auth/config.json:ro" \
+              -v "${PWD}:/work" -w /work --entrypoint /bin/oras "${ORAS_IMAGE}" \
+              "$@" --registry-config /auth/config.json
+          }
+          primary="${PRIMARY_REPOSITORY}@${PRIMARY_DIGEST}"
+          family='application/vnd.saas-fabric.component.v'
+          attached=$(oras discover --format json "${primary}" \
+            | jq -r --arg family "${family}" \
+              '[(.referrers // .manifests // [])[] | select((.artifactType // "") | startswith($family)) | .digest] | unique | .[]')
+          ours="sha256:$(sha256sum component.json | cut -d' ' -f1)"
+
+          count=$(printf '%s' "${attached}" | grep -c . || true)
+          if [ "${count}" -gt 1 ]; then
+            echo "::error::${primary} already carries ${count} component descriptors: ${attached}"
+            exit 1
+          fi
+          if [ "${count}" -eq 1 ]; then
+            manifest=$(oras manifest fetch "${PRIMARY_REPOSITORY}@${attached}")
+            if [ "$(printf '%s' "${manifest}" | jq -r '.artifactType')" = "${family}1" ] \
+              && [ "$(printf '%s' "${manifest}" | jq -r '.layers[0].digest')" = "${ours}" ]; then
+              echo "The component descriptor is already attached as ${attached}."
+              exit 0
+            fi
+            echo "::error::${primary} already carries a different component descriptor, ${attached}"
+            exit 1
+          fi
+
+          created=$(date -u -d "$(git log -1 --format=%cI "${GITHUB_SHA}")" +%Y-%m-%dT%H:%M:%SZ)
+          oras attach \
+            --artifact-type "${family}1" \
+            --annotation "org.opencontainers.image.created=${created}" \
+            --annotation "org.opencontainers.image.revision=${GITHUB_SHA}" \
+            --annotation "org.opencontainers.image.version=${VERSION}" \
+            --annotation "org.opencontainers.image.source=${SOURCE}" \
+            "${primary}" \
+            "component.json:${family}1+json"
+
+      # The release is complete only if Fabric's own reader, reading
+      # anonymously as LucentRoot does, says so. Asked up to three times, ten
+      # seconds apart, because the tag-schema index a push has just rewritten
+      # may take a moment to be served; an answer that stays anything but
+      # complete, or an error, fails the release.
+      - name: Read the version back as Fabric will
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            status=0
+            cargo run -q -p fabric-registry --example release_unit -- \
+              "${PRIMARY_REPOSITORY}" "${VERSION}" > evaluation.txt || status=$?
+            cat evaluation.txt
+            if [ "${status}" -eq 0 ]; then break; fi
+            if [ "${status}" -ne 1 ] || [ "${attempt}" -eq 3 ]; then
+              echo "::error::${PRIMARY_REPOSITORY}:${VERSION} did not read back as complete"
+              exit 1
+            fi
+            sleep 10
+          done
+          {
+            echo "### Component descriptor"
+            echo
+            echo '```'
+            cat evaluation.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

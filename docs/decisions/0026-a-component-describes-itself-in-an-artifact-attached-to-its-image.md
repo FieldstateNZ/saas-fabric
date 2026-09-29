@@ -420,7 +420,11 @@ read every path under `secret/data/platform/`, Fabric's instance partition
 included; nothing references it, but nothing prevents it. `saas-fabric-platform`
 denies that policy `platform/saas-fabric/instances/*`, and its `check.py`
 refuses a policy or `ExternalSecret` that reaches the prefix; that lands before
-any environment stores a registry credential. How a cluster will pull a private
+any environment stores a registry credential. An OpenBao initialised before the
+denial keeps its old policy until it is next rebuilt, because the policy is
+applied once, at first start; until then the check is what holds, since nothing
+the platform repository declares can read the partition, and no person runs a
+policy command to close it sooner. How a cluster will pull a private
 component's images is not decided here: GHCR offers only a person's token, and
 the platform cannot generate one the way ADR 0025's credentials are generated.
 

@@ -218,7 +218,7 @@ async fn a_snapshot_with_an_unrecognised_apiversion_names_what_was_found_not_leg
     let path = TempDir::unique("fabric-local-future-catalogue");
     std::fs::write(
         path.join(".fabric-state.json"),
-        r#"{"writes":1,"clients":{},"catalogue":{"revision":"local-1","text":"apiVersion: fabric.fieldstate.nz/v2\nkind: Catalogue\nspec:\n  applications: []\n"}}"#,
+        r#"{"writes":1,"clients":{},"catalogue":{"revision":"local-1","text":"apiVersion: fabric.fieldstate.nz/v3\nkind: Catalogue\nspec:\n  applications: []\n"}}"#,
     )
     .unwrap();
 
@@ -228,5 +228,6 @@ async fn a_snapshot_with_an_unrecognised_apiversion_names_what_was_found_not_leg
     };
 
     assert!(!message.contains("predates the versioned catalogue"), "{message}");
-    assert!(message.contains("fabric.fieldstate.nz/v2/Catalogue"), "{message}");
+    // `v3`: `v2` is a version this build reads (ADR 0026 section 7).
+    assert!(message.contains("fabric.fieldstate.nz/v3/Catalogue"), "{message}");
 }

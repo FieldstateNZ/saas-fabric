@@ -261,6 +261,18 @@ pub enum ControlPlaneError {
     #[error(transparent)]
     Registry(#[from] crate::RegistryFailure),
 
+    /// A component version was not selected (ADR 0026 section 7): its
+    /// repository is not registered, its tag does not resolve, the rule did
+    /// not call it a release unit, the component already records it, or the
+    /// component is a capability.
+    ///
+    /// Its own enum and codes, beside the registry's rather than folded into
+    /// them: a registry that could not be asked stays [`Self::Registry`], and
+    /// an *undescribed* version is not a registry failing. See
+    /// `errors::status_mapping::selection`.
+    #[error(transparent)]
+    Selection(#[from] crate::SelectionRefusal),
+
     /// This deployment converges no identity provider.
     #[error("this platform converges no identity provider")]
     ConvergenceUnavailable,

@@ -48,6 +48,9 @@
 //! - **Raw document editing.** The API exposes realms, roles, application
 //!   clients and product configuration. It never exposes a file path, a line
 //!   number, or YAML.
+//!
+//! In the 121–150 line band: the module list and the public surface are one
+//! declaration, and the reasoning for each re-export stays beside it.
 
 mod audit;
 mod client_secrets;
@@ -70,6 +73,7 @@ mod reconcile;
 mod registration;
 mod registries;
 mod repository;
+mod resolution;
 mod routes;
 mod secrets_service;
 mod service;
@@ -77,13 +81,14 @@ mod sign_in;
 mod state;
 pub mod testing;
 
-// Re-exported so an adapter implementing `ClientSecrets` needs this crate and
-// not also the model crate. The type is the model's, and its meaning is the
-// model's; this is the port's vocabulary made reachable from one place.
+// Re-exported so an adapter implementing `ClientSecrets` or a registry port needs this crate and not
+// also a model crate. Each type is its model's, and so is its meaning; this is the port's vocabulary
+// made reachable from one place.
 pub use client_secrets::{ClientSecrets, SecretMetadata, SecretPath, SecretValues, SecretsError};
 pub use config::{ControlPlaneConfig, OperatorConfig, ReconciliationConfig};
 pub use errors::{ControlPlaneError, RealmUnavailableReason};
 pub use fabric_client_model::SecretNamespace;
+pub use fabric_component::Repository;
 pub use git_integration::{
     AccessibleRepository, AppCreationRequest, ClientConfigurationTarget, CreatedApp, DesiredStateFactory,
     GitAppProvisioning, GitIntegration, GitIntegrationService, InMemoryIntegrationStore, InMemorySecretStore,
@@ -100,8 +105,6 @@ pub use operator::{
 pub use registration::{
     build_control_plane, ControlPlaneDeps, ControlPlaneServices, PlatformBinding, PublicationSink,
 };
-// The registry ports' vocabulary, re-exported as `SecretNamespace` is.
-pub use fabric_component::Repository;
 pub use registries::{
     DeploymentRegistry, InMemoryRegistryStore, Readability, RealmOrigin, RegistryClient, RegistryConnection,
     RegistryConnector, RegistryCredential, RegistryFailure, RegistryHost, RegistryKind, RegistryRecord,
@@ -111,6 +114,7 @@ pub use repository::{
     ChangeContext, ClientRepository, DesiredStateBinding, InMemoryClientRepository, RepositoryError,
     StoredClient,
 };
+pub use resolution::{ResolutionParts, SelectionRefusal, Unusable};
 pub use routes::API_PREFIX;
 pub use secrets_service::SecretsService;
 pub use service::ClientService;

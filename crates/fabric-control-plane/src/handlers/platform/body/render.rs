@@ -36,6 +36,7 @@ impl ComponentRow {
                 ArtifactKind::Oci => "oci",
                 ArtifactKind::Helm => "helm",
             },
+            images: status.images.clone(),
             running: match &status.running {
                 Running::Unknown => "unknown".into(),
                 Running::Observed(version) => version.clone(),

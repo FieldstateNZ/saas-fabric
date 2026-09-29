@@ -2,6 +2,7 @@
 //!
 //! ```text
 //! GET/POST   /api/integrations/registries                         list / register one           (201)
+//! GET        /api/integrations/registries/reads                   how each managed image is read
 //! DELETE     /api/integrations/registries/{host}                  remove one                    (204)
 //! PUT/DELETE /api/integrations/registries/{host}/credential       set or replace / remove its credential
 //! PUT/DELETE /api/integrations/registries/{host}/repositories/entry/{*path}  register / remove {host}/{path}
@@ -26,6 +27,7 @@ pub(super) fn routes() -> Router<ControlPlaneState> {
             "/integrations/registries",
             get(handlers::list_registries).post(handlers::register_registry),
         )
+        .route("/integrations/registries/reads", get(handlers::registry_reads))
         .route(
             "/integrations/registries/{host}",
             axum::routing::delete(handlers::remove_registry),

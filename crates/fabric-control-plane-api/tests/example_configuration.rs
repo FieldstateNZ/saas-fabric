@@ -36,6 +36,31 @@ fn the_example_configuration_loads() {
     assert_eq!(config.listen, "0.0.0.0:8081");
     assert_eq!(config.request_timeout_seconds, 30);
     assert_eq!(config.registries.http_timeout_seconds, 10);
+    assert_eq!(config.registries.resolution_budget_seconds, 8);
+}
+
+#[test]
+fn the_example_resolution_budget_fits_between_two_git_calls() {
+    // A selection reads the catalogue from Git, resolves the version within
+    // the budget, and writes the catalogue back: all three inside one
+    // request, which startup enforces and the example must satisfy.
+    let config = example();
+    let git = config.git_host.http_timeout_seconds;
+
+    assert!(
+        git + config.registries.resolution_budget_seconds + git < config.request_timeout_seconds,
+        "the example's resolution budget must fit in one request"
+    );
+}
+
+#[test]
+fn an_omitted_resolution_budget_is_eight_seconds() {
+    let config = serde_json::from_value::<fabric_control_plane_api::config::RegistriesConfig>(
+        serde_json::json!({ "http_timeout_seconds": 10 }),
+    )
+    .expect("the budget has a default");
+
+    assert_eq!(config.resolution_budget_seconds, 8);
 }
 
 #[test]

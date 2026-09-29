@@ -1,6 +1,8 @@
 import { useState } from 'react'
 
+import { useComponentReads } from '../../hooks/useComponentReads'
 import { useRegistries } from '../../hooks/useRegistries'
+import { observedHosts, UnregisteredReads } from './ComponentReads'
 import { DeploymentRegistryCard } from './DeploymentRegistryCard'
 import { RegisterRegistryForm } from './RegisterRegistryForm'
 import { RegistryCard } from './RegistryCard'
@@ -23,11 +25,18 @@ import { RegistryRefusal } from './RegistryRefusal'
  * and when -- never that anything is "connected". A listing that could not
  * be read is an error, not an empty list: "none registered" and "could not
  * look" send an operator to different places.
+ *
+ * Each card also says which managed components are read through it, and
+ * how each image is read now -- with its credential, anonymously, or not at
+ * all; a host a managed component is read from with no registration is
+ * shown after them, so no read goes unaccounted for. That account is read
+ * from its own route, after the listing and again on every change to it.
  */
 export function ImageRegistries() {
   const registries = useRegistries()
   const [registering, setRegistering] = useState(false)
   const listing = registries.value
+  const reads = useComponentReads(listing)
 
   return (
     <section className="registries" aria-labelledby="registries-heading">
@@ -77,8 +86,19 @@ export function ImageRegistries() {
             <p className="empty">No registries are registered.</p>
           ) : (
             listing.registries.map((registry) => (
-              <RegistryCard key={registry.host} registry={registry} registries={registries} />
+              <RegistryCard
+                key={registry.host}
+                registry={registry}
+                registries={registries}
+                reads={observedHosts(reads.value).find((host) => host.host === registry.host)}
+              />
             ))
+          )}
+          <UnregisteredReads reads={reads.value} />
+          {reads.error !== null && (
+            <p className="integration__diagnostic">
+              Which managed components are read through each registry could not be read: {reads.error}
+            </p>
           )}
         </>
       )}

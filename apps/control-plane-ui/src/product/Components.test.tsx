@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest'
 import type { Catalogue } from '../api/catalogue-types'
 import type { PlatformState } from '../hooks/usePlatform'
 import { Components } from './Components'
+import { definition, described, FIRST, REPOSITORY, resolution } from './component/described.fixture'
 
 const platform: PlatformState = { value: null, loading: false, error: null, unmanaged: true }
 
@@ -57,5 +58,20 @@ describe('Components: an unpinned component says so, and only a capability is pl
 
     expect(screen.getByText('Not pinned')).toBeInTheDocument()
     expect(screen.getByText('Platform capability')).toBeInTheDocument()
+  })
+})
+
+describe('Components: a described component shows the repository and version it was selected at', () => {
+  it('shows its resolution’s repository and version tag', () => {
+    const analytics = {
+      id: 'analytics',
+      draft: definition([described('reports', resolution('1.4.0', FIRST))]),
+      releases: [],
+    }
+    render(<Components catalogue={{ ...catalogue, applications: [analytics] }} platform={platform} />)
+
+    expect(screen.getByText('described')).toBeInTheDocument()
+    expect(screen.getByText(REPOSITORY)).toBeInTheDocument()
+    expect(screen.getByText('1.4.0')).toBeInTheDocument()
   })
 })

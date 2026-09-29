@@ -115,6 +115,7 @@ PUT    /api/integrations/platform/repository    choose one
 DELETE /api/integrations/platform        forget the integration
 GET    /api/integrations/registries      image registries, and the deployment's own
 POST   /api/integrations/registries      register one, once it is proven   (201)
+GET    /api/integrations/registries/reads  which registry reads each managed image, and how
 DELETE /api/integrations/registries/{host}                       remove one
 PUT    /api/integrations/registries/{host}/credential            set or replace its credential, once it proves
 DELETE /api/integrations/registries/{host}/credential            remove it
@@ -131,7 +132,7 @@ PUT    /api/platform/data-sources/{dataSourceId}       declare one, or correct i
 DELETE /api/platform/data-sources/{dataSourceId}       remove one, refused while a tenant is placed on it (If-Match required)
 POST   /api/platform/publication         publish the runtime's three documents now
 GET    /api/catalogue                    the product catalogue, and its revision
-POST   /api/catalogue                    apply one command      (If-Match, or If-None-Match: *)
+POST   /api/catalogue                    apply one command      (If-Match, or If-None-Match: *); a selection is resolved first
 GET    /api/catalogue/runtime            the catalogue the runtime would be given, derived on read
 GET    /api/activity                     recorded operator actions, newest first
 GET    /api/clients                      list clients
@@ -165,6 +166,15 @@ Three things it does not do, each of them a rule rather than a gap:
    built: at the endpoint its kind fixes or, for a `distribution`
    registration, the checked public HTTPS origin the operator gave — never a
    URL built from a path parameter.
+
+   **Selecting a component version is the second, named exception** (ADR 0026
+   section 7), after a platform rollback: a catalogue write that depends on a
+   registry read. `ClientService` still calls no platform service. The
+   resolution service does the reading, and nothing else, through the same
+   registry router Platform Management reads through, and only for
+   repositories an operator registered; the catalogue's pure
+   `select_component` does the writing. See
+   [Selecting a component version](#selecting-a-component-version).
 2. **It does not expose repository internals.** No path, no branch, no file, no
    YAML (§8). An operator is told "the client changed since you read it", never
    "the blob sha of `clients/acme/client.yaml` moved".
@@ -197,6 +207,107 @@ and proposed rather than accepted. In outline:
 - **Activity** is written in the same write as the operator change it
   describes. Reconciliation passes are not recorded: what a pass finds is an
   observation, and observations are not desired state (§6).
+- **Commands.** `POST /api/catalogue` takes one, tagged by `action`, in a body
+  that refuses unknown fields:
+
+  | `action` | Does | Audited as |
+  |---|---|---|
+  | `createApplication` | starts an application draft | `create_application` |
+  | `saveApplication` | replaces a draft, in a request shape of its own that cannot carry what the server resolves | `save_application` |
+  | `selectComponentVersion` | resolves a version against the registries, then records it on the draft (below) | `select_component_version`, and `component_selected` |
+  | `publishApplication` | freezes the draft as the next release, by copying it | `publish_application` |
+  | `saveDefinition` | replaces the shared client contract | `update_client_definition` |
+  | `saveSettings` | replaces display settings and defaults | `update_settings` |
+  | `saveEnvironment` | registers or updates another operator console | `save_environment` |
+
+  Every one but `selectComponentVersion` is applied by the catalogue's pure
+  `apply` over the catalogue at the request's revision, and every write —
+  a command applied or a selection — is saved one way: measured against the
+  document limit, written at the revision read, a lost race answered as the
+  catalogue's `revision_conflict`, and audited.
+
+### Selecting a component version
+
+[ADR 0026](../decisions/0026-a-component-describes-itself-in-an-artifact-attached-to-its-image.md)
+section 7 adds a fourth component kind, `described`: a component selected by
+its primary image's repository and a version tag, and resolved by the server.
+`selectComponentVersion` names an application, a component id, a repository
+and a version — no digest, and nothing the component descriptor says; a body
+carrying anything else is refused.
+
+**The order.** The handler holds it, across two services that never call each
+other:
+
+1. `ClientService` reads the catalogue at the request's revision (a stale one
+   is `409 revision_conflict`, a missing one `428 revision_required`), and the
+   catalogue says whether the application exists (`400 invalid_request`) and
+   whether the component is a capability (`422 capability_not_selectable`).
+   Neither costs a registry read.
+2. The **resolution service** (`resolution.rs`) — handed the registry router
+   the composition root builds, the registry service and a budget — refuses a
+   primary repository that is not registered (`422 repository_not_registered`)
+   before any registry request, and a primary whose registry is recorded and
+   not being read through yet (`503 registry_unavailable`, as the version
+   listing answers it) or is recorded for the deployment's host at another
+   endpoint (`409 registry_endpoint_differs`), then applies
+   [the release-unit rule](#one-rule-decides-whether-a-described-version-is-a-release-unit)
+   with the catalogue's expectation: every repository the component
+   descriptor names must be registered, the first that is not making the
+   version *invalid* with the reason `notRegistered`. So a descriptor can
+   never make Fabric present a registry's credential to a repository an
+   operator did not choose. A complete answer becomes the **resolution**:
+   the repository, the version, the primary image's digest and the component
+   descriptor's — both computed by Fabric — the commit, `resolvedAt` from the
+   clock, and a frozen copy of the whole descriptor.
+3. `ClientService` records it through the catalogue's pure `select_component`
+   and saves it as every catalogue change is saved.
+
+| The component id names | Selecting |
+|---|---|
+| nothing | creates a described component named by the descriptor's `title`, in no plan by default, with a manual policy |
+| a described component | re-resolves it, from any registered repository, keeping its name, whether every plan includes it, and its policy |
+| a `container` or `helm` component | converts it in place under its id, keeping the same three, so the features that name it and the plans that grant them are kept |
+| a `capability` component | is refused, `422 capability_not_selectable` |
+
+A version that resolves to the component descriptor the component already
+records is `409 component_version_already_selected`, and nothing is written, so
+a timestamp never becomes a change. A tag that does not resolve is
+`422 component_version_not_found`. Anything else the rule does not call complete
+is `422 component_version_unusable`, whose body carries `answer` —
+`undescribed`, `incoherent` or `invalid` — and, for `invalid`, the `reason`
+code from the same closed list the platform panel uses.
+
+**Bounded, and safe to cut off.** A resolution runs under
+`[registries] resolution_budget_seconds` (default 8). The rule reads the images
+other than the primary concurrently — every read started before any answer is
+looked at, the answers then read in the rule's order, and the reads still out
+dropped the moment the answers in so far decide, so a read that hangs cannot
+turn an image found missing into a deadline reached — on the request's own
+task, so reaching the deadline drops the evaluation and with it every read
+still in flight. The budget covers the registry store's read of which
+repositories are registered too, so it bounds everything between the
+catalogue's read and its write. Reads are safe to abandon; nothing is written
+until the resolution is whole. A deadline reached is `503 registry_unavailable`
+with `Retry-After`, as a registry that could not be asked is; a read or a
+credential a registry refused is `502 registry_refused`. Neither is ever an
+answer. Startup refuses a zero budget, and one where
+`git_host.http_timeout_seconds` plus the budget plus
+`git_host.http_timeout_seconds` — the catalogue read, the resolution and the
+catalogue write — is not below `request_timeout_seconds`. The write goes to
+the repository the catalogue was read from, even if the binding moved while
+the version was resolved.
+
+**A save cannot carry a resolution.** `saveApplication` takes its own shape,
+tagged by `kind`: a `container`, `helm` or `capability` component is what it
+always was; a `described` one is its id, name, whether every plan includes it,
+and its policy, and a body that also carries its `reference`, `version`,
+resolution, a digest or declared content is refused, not ignored. The stored
+resolution is kept for each described component the save names; a component
+the save omits is dropped; a described component with no stored resolution,
+and any change of kind in either direction, is refused. **Publishing freezes
+by copying**, resolution included, and calls no registry. A client assigned
+the release copies it in turn, and `GET /api/clients/{id}/product` reports each
+granted component with its resolution, from the client's own document.
 
 ### Desired state is late-bound
 
@@ -477,19 +588,40 @@ after; a quiet re-read a later change overtook is dropped. A repository is typed
 the registry's host is refused before anything is sent. Every refusal is shown
 in the control plane's own words, followed by what its code adds — for a proof
 that failed, that nothing was recorded. The browser reaches no registry itself:
-every proof and every tag listing is the control plane's. The section does not
-yet say which registry each managed component is read through, as ADR 0026
-section 5 asks, because `GET /api/platform` does not report a component's
-repository; ADR 0026 moves it to slice 4, where the platform view first
-carries each component's repositories.
+every proof and every tag listing is the control plane's.
+
+**Which registry reads each managed component.** ADR 0026 section 5 asks the
+registries section to say it. `GET /api/platform` reports each component's image
+repositories by role (`images`, `null` for a chart), and
+`GET /api/integrations/registries/reads` answers, on a route of its own so
+the version picker's registry listing never waits on the platform repository:
+`{"state": "notManaged"}` for a deployment managing no platform,
+`{"state": "unavailable", "code": …}` when the environment's desired state could
+not be read now — never shown as "no components" — or
+`{"state": "observed", "hosts": […]}`. Each host says whether an operator
+registered a registry for it, whether that registry is being read through now
+(`installed`), and whether it is the deployment's, and lists every image read
+through it — component, role, repository — with whether the repository is
+registered under that registry and how it is read now, one closed `read`:
+`credential` (registered under a registry being read through whose credential
+is held, was readable at the last start and has not been refused),
+`anonymous`, `credentialRefused` (the realm refused the credential, which is
+not presented again, so the image is not read) or `notRead` (the host's
+registry is not being read through, or nothing reads the host, and it is not
+the deployment's). It is computed from desired state — the components read
+concurrently — and the registry records, asking no registry: nothing in it
+claims a read succeeded. The console's Image registries section shows it on
+each registry's card, and lists a host with no registration after them.
 
 `fabric-registry`'s `Registries` router is what Platform Management reads
 through: the deployment's own registry from `[platform_management.registry]`,
 anonymously unless an operator registers that host at that endpoint with a
 credential, and every other registry an operator registered, at public
-addresses only. A host with no registry is refused by name. Registries exist whether or
-not Platform Management is configured; `[registries] http_timeout_seconds` is
-their one setting.
+addresses only. A host with no registry is refused by name. A selection in the
+catalogue is resolved through the same router. Registries exist whether or not
+Platform Management is configured; `[registries]` holds their two settings,
+`http_timeout_seconds` for one call and `resolution_budget_seconds` for one
+selection.
 
 ### Two integrations, two applications
 
@@ -612,9 +744,10 @@ advancing needs no artifact guarantee at all.
 A described component's versions are its primary repository's version tags,
 and each is decided by the rule
 [ADR 0026](../decisions/0026-a-component-describes-itself-in-an-artifact-attached-to-its-image.md)
-section 3 states once, for Platform Management's discovery and, later, the
-catalogue's selection alike. It lives in `fabric-platform-management` as `evaluate`, and the two
-callers differ only in what they already know about the component. In order,
+section 3 states once, for Platform Management's discovery and the catalogue's
+selection alike. It lives in `fabric-platform-management` as `evaluate`, and the two
+callers differ only in what they already know about the component: the
+environment's pins, or that every repository must be registered. In order,
 the first failure deciding the answer:
 
 1. the primary repository's tag for the version resolves to a digest;
@@ -635,7 +768,15 @@ first, then another image's version tag that is missing or moved
 (*incoherent*), then an image with no single revision, and only then are
 commits compared. A missing image is the more basic fact, and one version
 built twice is the answer whatever the images it names say about their
-commits.
+commits. The reads behind steps 4 and 5 — every other image by digest and by
+the version tag — are made concurrently on the caller's task, and their answers
+read in that order, the reads still out dropped as soon as the answers in so far
+decide, so the answer is the one a sequential rule would give, a read that hangs
+cannot delay one already decided, and dropping an evaluation abandons every read
+in flight. A revision is held to the rule the catalogue records it by —
+non-blank, at most 256 bytes, no control characters — or it is no single
+revision, so the rule never calls complete a version the catalogue would refuse
+to record.
 
 The answer is one of four, and none is worded as another:
 
@@ -1024,6 +1165,11 @@ makes automatic selection unable to move an environment backwards.
 accepted: one answers "what would Fabric advance to", the other "does desired
 state need advancing".
 
+Each component row also carries `images`: the registry repository each image is
+read from, by role, as desired state pins them — an `oci` or `described`
+component's — and `null` for a chart, which has none. It is what
+`GET /api/integrations/registries/reads` is computed from.
+
 **Versions that exist and were not selected** are listed under their component,
 each with its own wording, and none falls through to another's
 ([ADR 0026](../decisions/0026-a-component-describes-itself-in-an-artifact-attached-to-its-image.md)
@@ -1259,6 +1405,19 @@ Image registries answer codes of their own, never the platform's
 | `503 registry_unavailable` | the registry could not be asked; `Retry-After` |
 | `503 registries_unavailable` | the records or a credential could not be read or written now; `Retry-After` |
 | `500 registries_invalid` | the stored records do not parse; never saved over |
+
+Selecting a component version answers codes of its own
+(`errors/status_mapping/selection.rs`); a registry that could not be asked
+stays the registry's `503 registry_unavailable` — the resolution budget
+reached included — and a refused read or credential its `502 registry_refused`:
+
+| Answer | Means |
+|---|---|
+| `422 repository_not_registered` | the primary repository is not registered under any registry; no registry was asked |
+| `422 component_version_not_found` | the repository has no such tag |
+| `422 component_version_unusable` | the rule answered `undescribed`, `incoherent` or `invalid`; the body's `error` carries `answer`, and `reason` for `invalid` |
+| `409 component_version_already_selected` | the component already records that component descriptor; nothing was written |
+| `422 capability_not_selectable` | the component is a platform capability, operator-authored |
 
 `409 revision_conflict` means "ask again", in two situations. One is an edit
 against a revision that has moved; its message names the catalogue or the client,
@@ -1542,6 +1701,7 @@ time.
 | a secret operation | `control_plane.audit.client_secret` |
 | an operator's runtime-publication trigger | `control_plane.audit.publication_triggered` |
 | an image registry change, refused or not | `control_plane.audit.registry` |
+| a component version selected, refused or not | `control_plane.audit.component_selected` |
 
 The catalogue event names no client, because the catalogue has none: it carries
 `resource = "catalogue"` and the entry the command changed, and takes its
@@ -1563,6 +1723,14 @@ The registry event carries `operator`, `resource = "registry"`, the `host`
 `register`, `remove`, `set_credential`, `remove_credential`, `add_repository`,
 `remove_repository` — and `outcome`, `succeeded` or the refusal's code. Never a
 username, a token, a realm's response or a URL.
+
+The selection event carries `requested_by`, `resource = "catalogue"`, the
+`entry` (`<application>/<component>`), the `repository` and `version` asked
+for, and `outcome`: `selected`, with the `primary_digest` and
+`descriptor_digest` Fabric computed, or the refusal's code, with the rule's
+`answer` and `reason` when it answered and no digest it did not prove. A
+selection that is written is a catalogue change too, recorded as
+`catalogue_changed` with the revision it made.
 
 Git history is a **second** copy: the commit message carries a `Requested-by:`
 trailer, because every commit is authored by the platform's machine identity and
@@ -1594,8 +1762,12 @@ adapter, a scheduled caller, or the provisioner input those three documents
 need — see "Runtime publication boundary" above.
 
 Image registries are registered, proven and read through, and the console lists
-them; selecting a component from them is not built yet. ADR 0026's picker, the
-catalogue's `described` kind and the resolution it records are its next slice,
-and the versions route is there for them. Nothing yet says which registry each
-managed component is read through, and nothing decides how a cluster pulls a
-private component's images (ADR 0026 section 6).
+them. The catalogue selects a described component from them and records its
+resolution, and the console selects one through a picker over what is
+registered — a registry, a registered repository, a version tag — disabled
+while the draft has unsaved changes. It shows each resolution and what its
+component descriptor declares read-only, beside the authored fields and
+resources, and computes the fields in effect with one helper for a client's
+configuration form. The registries listing says which registry reads each
+managed component, and the console shows it per registry. Nothing decides how
+a cluster pulls a private component's images (ADR 0026 section 6).

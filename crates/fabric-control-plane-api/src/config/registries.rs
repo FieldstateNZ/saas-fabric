@@ -1,4 +1,5 @@
-//! The image registries operators register: how long a call to one may take.
+//! The image registries operators register: how long a call to one may
+//! take, and how long resolving a selected version may.
 
 /// `[registries]`: a deployment's settings for the registries operators
 /// register (ADR 0026 section 5).
@@ -21,14 +22,34 @@ pub struct RegistriesConfig {
     /// operator's change open for ever.
     #[serde(default = "default_timeout")]
     pub http_timeout_seconds: u64,
+
+    /// How long resolving one selected component version may take, every
+    /// registry read included (ADR 0026 section 7). At the deadline the reads
+    /// still in flight are abandoned — reads are safe to abandon — and the
+    /// operator is told the registry could not be asked.
+    ///
+    /// Zero is refused at startup, and so is a budget that does not fit in
+    /// one request between a Git read and a Git write:
+    /// `git_host.http_timeout_seconds` plus this plus
+    /// `git_host.http_timeout_seconds` must be below
+    /// `request_timeout_seconds`.
+    #[serde(default = "default_resolution_budget")]
+    pub resolution_budget_seconds: u64,
 }
 
 impl Default for RegistriesConfig {
     fn default() -> Self {
         Self {
             http_timeout_seconds: default_timeout(),
+            resolution_budget_seconds: default_resolution_budget(),
         }
     }
+}
+
+/// Eight seconds: with the Git host's default ten on either side, a
+/// selection fits the default thirty-second request with two to spare.
+const fn default_resolution_budget() -> u64 {
+    8
 }
 
 /// Ten seconds, matching the other platform clients.

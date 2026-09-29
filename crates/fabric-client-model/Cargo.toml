@@ -29,5 +29,10 @@ serde.workspace = true
 serde_norway.workspace = true
 thiserror.workspace = true
 
+[dev-dependencies]
+# The HTTP bodies a command arrives in are JSON: tests read them as the
+# control plane does, from `json!` bodies, rather than through YAML.
+serde_json.workspace = true
+
 [lints]
 workspace = true

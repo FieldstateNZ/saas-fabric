@@ -56,3 +56,27 @@ pub fn unique<'a>(values: impl Iterator<Item = &'a str>, label: &str) -> Result<
     }
     Ok(())
 }
+
+/// The most bytes a source revision may take.
+pub const MAX_REVISION_BYTES: usize = 256;
+
+/// Checks a source revision -- the commit a release unit's images and
+/// component descriptor name -- is text a catalogue can record.
+///
+/// # Why one rule, here, for two readers
+///
+/// The release-unit rule reads a revision from registry labels and
+/// annotations, which nothing bounds, and the catalogue records the one it
+/// agreed on. Were the rule to accept a revision the catalogue refuses, a
+/// version would be called complete and then fail to be recorded, the
+/// operator told their request was invalid for what a registry said. So the
+/// rule calls a revision that fails this no single revision, and the
+/// catalogue refuses a frozen one that fails it: both ask the same thing.
+///
+/// # Errors
+///
+/// Returns [`ContractError::Invalid`] for blank text, more than
+/// [`MAX_REVISION_BYTES`] bytes, or a control character.
+pub fn check_revision(value: &str) -> Result<(), ContractError> {
+    text(value, "Component revision", true, MAX_REVISION_BYTES)
+}

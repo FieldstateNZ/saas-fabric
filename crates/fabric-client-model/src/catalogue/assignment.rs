@@ -80,7 +80,9 @@ impl Catalogue {
             {
                 return Err(invalid("The plan is not part of this published definition"));
             }
-            let configuration = values(&release.definition.fields, &assignment.configuration)?;
+            // The fields in effect, declared ones included: a declared field
+            // applies to every client of the application (ADR 0026 section 8).
+            let configuration = values(&release.definition.effective_fields(), &assignment.configuration)?;
             assignments.push(ApplicationAssignment {
                 application_id: assignment.application_id.clone(),
                 release,

@@ -125,7 +125,15 @@ own data-source sub-types rather than re-declared, so a hand-editable
   an image by role, or of the component descriptor), `notRegistered`,
   `notPinned`. Steps 4 and 5 run in the ADR's order: missing image, then a
   missing or moved version tag (`Incoherent`), then no single revision,
-  then one commit.
+  then one commit. Their reads — every other image by digest and by tag —
+  run concurrently on the caller's task (`described/together.rs`, polled
+  together, never spawned, so dropping the evaluation abandons them) and
+  are read in that order (`described/standing.rs`), the reads still out
+  dropped once the answers in so far decide, so the answer is the
+  sequential one and a hanging read cannot delay a decided one. A revision
+  must also pass `fabric_component::check_revision` (non-blank, at most
+  256 bytes, no control characters) — the rule the catalogue records it
+  by — or it is no single revision.
 - `ReleaseUnit { version, source_revision, images: BTreeMap<String,
   ResolvedImage> }`; `ResolvedImage { repository, digest }`.
 - `History` (from `discovery::history`) — the rollback-candidates listing
@@ -139,7 +147,11 @@ own data-source sub-types rather than re-declared, so a hand-editable
   ChartIndex>, desired_state: Arc<dyn DesiredState>, clock: Arc<dyn Clock>)
   -> Self`. `#[must_use] fn with_observer(mut self, observer: Arc<dyn
   DeploymentObserver>) -> Self` — builder-style; the observer field starts
-  `None` and is only ever set this way. `async fn status/statuses`
+  `None` and is only ever set this way. `async fn image_repositories(environment)
+  -> BTreeMap<component, BTreeMap<role, repository>>` (desired state only,
+  image components only, no registry read, components read concurrently
+  through `together`, the first failure settling it; `service/images.rs`).
+  `async fn status/statuses`
   (read-only; when an observer is attached, also calls it and fills in
   `running`/`observation`). `async fn reconcile(environment, component) ->
   Reconciliation` (writes on `Decision::Advance`; never consults the
@@ -162,7 +174,9 @@ own data-source sub-types rather than re-declared, so a hand-editable
   because a placement still names it).
 - `ComponentStatus { component, desired: Version, newer: Option<Version>,
   running: Running, observation: Option<DeploymentObservation>, policy,
-  artifact: ArtifactKind, hold, desired_state: DesiredStateStatus,
+  artifact: ArtifactKind, images: Option<BTreeMap<String, String>> (role →
+  repository from `ArtifactSource::image_repositories()`, `None` for Helm),
+  hold, desired_state: DesiredStateStatus,
   diagnostics: Diagnostics }`. `.is_paused() -> bool` (`policy == Automatic
   && hold.is_some()`, rendered as `Automatic — Paused`).
   `ComponentStatus::assemble` (crate-internal) always sets `running:

@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest'
 
 import type { AssignmentRequest, ProductApplication } from '../api/catalogue-types'
 import { Assignments } from './Assignments'
+import { definition, described, FIRST, resolution } from './component/described.fixture'
 
 function release(version: number, planIds: readonly string[], fieldKeys: readonly string[]) {
   return {
@@ -113,5 +114,25 @@ describe('Assignments: a locked application cannot be unassigned', () => {
 
     expect(screen.getByRole('checkbox', { name: 'Portal v2' })).toBeDisabled()
     expect(screen.getByText('This application is assigned. Removal requires deprovisioning.')).toBeInTheDocument()
+  })
+})
+
+describe('Assignments: the configuration form asks for every field in effect', () => {
+  it('asks for a field a described component declares, beside the authored ones', () => {
+    const declaring = definition([described('reports', resolution('1.4.0', FIRST))])
+    const analytics: ProductApplication = {
+      id: 'analytics',
+      draft: declaring,
+      releases: [{ version: 1, note: '', publishedAt: 0, definition: declaring }],
+    }
+    render(
+      <Assignments
+        apps={[analytics]}
+        value={[{ applicationId: 'analytics', version: 1, planId: 'standard', configuration: {} }]}
+        onChange={() => undefined}
+      />,
+    )
+
+    expect(screen.getByRole('textbox', { name: 'Team *' })).toBeRequired()
   })
 })

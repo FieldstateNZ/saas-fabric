@@ -81,6 +81,11 @@ pub struct ComponentRow {
     /// replaces had nowhere to say from.
     pub artifact: &'static str,
 
+    /// The registry repository each image is read from, by role, as desired
+    /// state pins them; `null` for a chart, which has no images. What the
+    /// registries section's reads are computed from (ADR 0026 section 5).
+    pub images: Option<std::collections::BTreeMap<String, String>>,
+
     /// Whether an operator has paused an otherwise automatic component.
     ///
     /// A separate field rather than a third policy value, because the operator

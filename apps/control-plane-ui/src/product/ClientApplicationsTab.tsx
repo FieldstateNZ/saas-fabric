@@ -1,6 +1,7 @@
 import type { ClientProductResponse } from '../api/catalogue-types'
 import { Panel } from '../console/Panel'
 import { Status } from '../console/Status'
+import { effectiveFields } from './effective'
 
 /**
  * The Applications tab of `ClientWorkspace`: every application this client
@@ -39,7 +40,8 @@ export function ClientApplicationsTab({ data }: { data: ClientProductResponse })
               {Object.entries(assignment.configuration).map(([key, value]) => (
                 <div className="fact-pair" key={key}>
                   <dt>
-                    {assignment.release.definition.fields.find((f) => f.key === key)?.label ?? key}
+                    {effectiveFields(assignment.release.definition).find((f) => f.key === key)
+                      ?.label ?? key}
                   </dt>
                   <dd>{value}</dd>
                 </div>

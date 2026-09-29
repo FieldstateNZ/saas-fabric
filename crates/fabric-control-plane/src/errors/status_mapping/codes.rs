@@ -106,6 +106,7 @@ impl ControlPlaneError {
             Self::Platform(_) => "platform_unavailable",
             // Never the platform's codes: see `ControlPlaneError::Registry`.
             Self::Registry(registry) => registry.code(),
+            Self::Selection(selection) => selection.code(),
             Self::GitHostRefused => "git_host_refused",
             Self::IntegrationRefused(_) => "integration_refused",
             // Its own code beside `revision_conflict` and `platform_state_moved`,

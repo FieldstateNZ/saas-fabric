@@ -64,7 +64,7 @@ image.
 | Overview | API-derived inventory, application counts and identity observations. |
 | Clients | Search/filter/sort; three-step creation; edit core and custom configuration; assign published applications and change plans/versions. |
 | Client details | Assigned release snapshots, components and configuration; identity and secret controls; editable declared domains; activity; a Data tab showing each declared logical data source's placement or refusal, and a Place control to request it (ADR 0023 part 2); plan-filtered shell preview. |
-| Applications | Create drafts; edit definitions, container/Helm/capability components, the logical resources exposed through the Data API (ADR 0023 part 3), feature dependencies, plans/limits, typed client fields, navigation and hostname templates. |
+| Applications | Create drafts; edit definitions, components — described ones selected from a registered repository's version tags (ADR 0026), and container/Helm/capability ones authored as text — with each described component's resolution and declared fields and resources shown read-only, the logical resources exposed through the Data API (ADR 0023 part 3), feature dependencies, plans/limits, typed client fields, navigation and hostname templates. |
 | Releases | Validate and publish immutable numbered snapshots. Existing assignments retain their exact version until explicitly changed. |
 | Components | Application component inventory plus existing platform hold/resume/rollback operations. |
 | Client definition | Edit typed custom fields, defaults and required values; increment shared definition version. |

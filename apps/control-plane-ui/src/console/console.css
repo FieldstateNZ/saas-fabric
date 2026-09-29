@@ -163,6 +163,13 @@ textarea { font: inherit; color: var(--ink); background: var(--surface); border:
 .collection-item, .assignment { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 20px; margin: 12px 0; }
 .collection-item summary { cursor: pointer; font-weight: 500; }
 .collection-item[open] summary { margin-bottom: 20px; }
+/* A described component's resolution and its picker span the item's grid: they are read as a whole, not as one field beside another. */
+.form-grid > .declared, .form-grid > .picker, .form-grid > .support-note { grid-column: 1 / -1; margin: 0; }
+.declared h3 { font-size: 14px; font-weight: 500; margin: 20px 0 8px; }
+.declared__images { margin: 0; padding-left: 18px; }
+.picker { display: grid; gap: 14px; border-top: 1px solid var(--line); padding-top: 16px; }
+.picker__refusal { border-left: 3px solid var(--failed); padding: 4px 12px; }
+.picker__refusal p { margin: 4px 0; }
 .danger-link { color: var(--failed); margin-top: 12px; }
 .choice-set { padding: 12px 0; }
 .choice-set legend { font-weight: 500; font-size: 13px; }

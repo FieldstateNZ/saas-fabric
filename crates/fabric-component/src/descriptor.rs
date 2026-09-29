@@ -10,6 +10,9 @@ mod descriptor_tests;
 mod digest;
 mod envelope;
 mod format_characters;
+mod frozen;
+#[cfg(test)]
+mod frozen_tests;
 #[cfg(test)]
 mod newtypes_tests;
 mod read;
@@ -41,8 +44,10 @@ use crate::ContractError;
 /// One exists only once its `spec` has passed [`validate`](Self::validate):
 /// through [`from_json`](Self::from_json) or
 /// [`from_artifact`](Self::from_artifact) when reading one, through
-/// [`ComponentSource::render`] when publishing one, or through
-/// [`new`](Self::new).
+/// [`ComponentSource::render`] when publishing one, through
+/// [`new`](Self::new), or by deserializing a frozen copy -- it serializes as
+/// its whole envelope, and deserializing checks that envelope as `from_json`
+/// does (`descriptor/frozen.rs`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ComponentDescriptor {
     /// What the component is.

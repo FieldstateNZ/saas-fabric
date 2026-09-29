@@ -11,6 +11,7 @@ mod listed;
 mod live;
 mod marks;
 mod register;
+mod registered;
 mod remove;
 mod repositories;
 mod resolve;

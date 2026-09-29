@@ -273,6 +273,7 @@ dependencies = [
  "fabric-core",
  "fabric-runtime-publication",
  "serde",
+ "serde_json",
  "serde_norway",
  "thiserror",
 ]

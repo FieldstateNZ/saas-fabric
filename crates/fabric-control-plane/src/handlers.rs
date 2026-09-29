@@ -33,6 +33,7 @@ mod put_product;
 mod registries;
 mod secrets;
 mod secrets_path;
+mod select_component;
 mod session;
 
 pub(crate) use change_catalogue::change_catalogue;
@@ -58,8 +59,8 @@ pub(crate) use platform::{
 pub(crate) use put_identity::put_identity;
 pub(crate) use put_product::put_product;
 pub(crate) use registries::{
-    add_registry_repository, list_registries, register_registry, registry_versions, remove_registry,
-    remove_registry_credential, remove_registry_repository, set_registry_credential,
+    add_registry_repository, list_registries, register_registry, registry_reads, registry_versions,
+    remove_registry, remove_registry_credential, remove_registry_repository, set_registry_credential,
 };
 pub(crate) use secrets::{delete_secret, list_secrets, reveal_secret, secret_metadata, write_secret};
 pub(crate) use session::{redeem_session, session_config};

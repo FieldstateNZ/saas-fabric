@@ -62,6 +62,10 @@ pub struct ComponentStatus {
     /// it from.
     pub artifact: ArtifactKind,
 
+    /// The registry repository each of its images is read from, by role, as
+    /// desired state pins them; `None` for a chart, which has no images.
+    pub images: Option<std::collections::BTreeMap<String, String>>,
+
     /// Present while an operator has paused advancement.
     pub hold: Option<Hold>,
 
@@ -91,6 +95,7 @@ impl ComponentStatus {
             component: component.to_owned(),
             desired: desired.version.clone(),
             artifact: desired.source.kind(),
+            images: desired.source.image_repositories().cloned(),
             // Discovery only considers versions above the desired one, so
             // anything it found at all is an upgrade.
             desired_state: if newer.is_some() {

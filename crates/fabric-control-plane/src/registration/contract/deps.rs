@@ -1,4 +1,7 @@
 //! What the host hands in to build the control plane.
+//!
+//! Past 120 lines because each dependency's reason for being here, or for
+//! being optional, is stated beside it; that is the file's whole purpose.
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -117,4 +120,8 @@ pub struct ControlPlaneDeps {
     /// exist whether or not Platform Management is configured. The host
     /// restores it before handing it in.
     pub registries: Arc<crate::RegistryService>,
+
+    /// What a selected component version is resolved through: the registry
+    /// port and the budget that bounds one resolution (ADR 0026 section 7).
+    pub resolution: crate::ResolutionParts,
 }

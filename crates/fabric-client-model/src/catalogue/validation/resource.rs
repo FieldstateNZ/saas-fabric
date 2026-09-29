@@ -25,6 +25,13 @@ impl ApplicationDefinition {
 /// name a *different* application has already **published**, in any of its
 /// releases.
 ///
+/// Both sides are resources in effect (ADR 0026 section 8): the caller
+/// passes the publishing draft's
+/// [`effective_resources`](ApplicationDefinition::effective_resources), and
+/// every other release is read the same way, so a resource a described
+/// component declares takes a name exactly as an authored one does, and is
+/// refused exactly as one would be, naming both applications.
+///
 /// Publication is what takes a name. A draft never does: a draft is
 /// unpublished, may itself be unpublishable, and counting it would let one
 /// operator's half-written application block the rightful owner's next
@@ -52,7 +59,7 @@ pub(in crate::catalogue) fn check_cross_application_conflicts(
             let published_by_other = other.releases.iter().any(|release| {
                 release
                     .definition
-                    .resources
+                    .effective_resources()
                     .iter()
                     .any(|r| r.name == resource.name)
             });

@@ -118,8 +118,8 @@ pub async fn build(config: &ControlPlaneAppConfig) -> Result<Application, String
             platform: established.platform.clone(),
             platform_integration: integrations.platform,
             publication: established.publication,
+            resolution: registries.resolution(),
             registries: registries.service,
-
             // Always the configured posture. The override exists for tests.
             operators: None,
 

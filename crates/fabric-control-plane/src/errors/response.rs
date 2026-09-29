@@ -28,12 +28,26 @@ impl IntoResponse for ControlPlaneError {
             logging::request_failed(self.code(), &self.to_string());
         }
 
-        let body = serde_json::json!({
+        let mut body = serde_json::json!({
             "error": {
                 "code": self.code(),
                 "message": self.public_message(),
             }
         });
+        // A refused selection says what the rule answered, beside the code,
+        // so the console words it without parsing the message.
+        let detail = match &self {
+            Self::Selection(selection) => selection.answer(),
+            _ => None,
+        };
+        if let (Some((answer, reason)), Some(error)) =
+            (detail, body.get_mut("error").and_then(|e| e.as_object_mut()))
+        {
+            error.insert("answer".to_owned(), answer.into());
+            if let Some(reason) = reason {
+                error.insert("reason".to_owned(), reason.into());
+            }
+        }
 
         let retryable = !matches!(self, ControlPlaneError::IntegrationNotConfigured);
         let mut response = (status, Json(body)).into_response();

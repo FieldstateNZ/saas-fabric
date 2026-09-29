@@ -11,7 +11,14 @@ import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import type { Registry, RegistryCredential, RegistryListing } from '../../api/registry-types'
+import type {
+  ComponentReads,
+  ImageRead,
+  ReadBy,
+  Registry,
+  RegistryCredential,
+  RegistryListing,
+} from '../../api/registry-types'
 import { ImageRegistries } from './ImageRegistries'
 import { when } from './registry-words'
 
@@ -90,7 +97,7 @@ interface Call {
  * holds when it is asked, and every other call with `change`.
  */
 function serve(
-  state: { listing: RegistryListing },
+  state: { listing: RegistryListing; reads?: ComponentReads | Response },
   change: (call: Call) => Response = () => refusal(500, 'unexpected', 'not in this test'),
 ): Call[] {
   const calls: Call[] = []
@@ -107,6 +114,10 @@ function serve(
 
       if (call.method === 'GET' && url === '/api/integrations/registries') {
         return Promise.resolve(jsonResponse(200, state.listing))
+      }
+      if (call.method === 'GET' && url === '/api/integrations/registries/reads') {
+        const reads = state.reads ?? { state: 'observed', hosts: [] }
+        return Promise.resolve(reads instanceof Response ? reads : jsonResponse(200, reads))
       }
 
       return Promise.resolve(change(call))
@@ -497,7 +508,7 @@ describe('the image registries section: the credential', () => {
     expect(alert).toHaveTextContent('proving: the realm refused this registry’s credential')
     expect(alert).toHaveTextContent('Nothing was recorded.')
     await waitFor(() => {
-      expect(calls.filter((call) => call.method === 'GET')).toHaveLength(2)
+      expect(calls.filter((call) => call.method === 'GET' && call.url === '/api/integrations/registries')).toHaveLength(2)
     })
     expect(ghcr.queryByText(/Refused by its realm/)).not.toBeInTheDocument()
     expect(ghcr.getByLabelText(/^token/i)).toHaveValue('')
@@ -637,5 +648,167 @@ describe('the image registries section: removing a registry', () => {
     expect(alert).toHaveTextContent('the registry store is unavailable')
     expect(alert).toHaveTextContent('Try again shortly.')
     expect(screen.getByRole('region', { name: 'ghcr.io' })).toBeInTheDocument()
+  })
+})
+
+describe('the image registries section: the managed components each registry reads', () => {
+  it('says, per registry, which components are read through it and whether with its credential or anonymously', async () => {
+    serve({
+      listing: listingOf(GHCR, DOCKER_HUB),
+      reads: {
+        state: 'observed',
+        hosts: [
+          {
+            host: 'docker.io',
+            registered: true,
+            installed: true,
+            deployment: false,
+            images: [
+              {
+                component: 'reports',
+                role: 'api',
+                repository: 'docker.io/acme/reports',
+                registered: false,
+                read: 'anonymous',
+              },
+            ],
+          },
+          {
+            host: 'ghcr.io',
+            registered: true,
+            installed: true,
+            deployment: true,
+            images: [
+              {
+                component: 'saas-fabric',
+                role: 'controlPlane',
+                repository: 'ghcr.io/fieldstatenz/saas-fabric',
+                registered: true,
+                read: 'credential',
+              },
+              {
+                component: 'saas-fabric',
+                role: 'console',
+                repository: 'ghcr.io/fieldstatenz/saas-fabric-console',
+                registered: false,
+                read: 'anonymous',
+              },
+            ],
+          },
+          {
+            host: 'quay.io',
+            registered: false,
+            installed: false,
+            deployment: false,
+            images: [
+              {
+                component: 'audit',
+                role: 'api',
+                repository: 'quay.io/acme/audit',
+                registered: false,
+                read: 'notRead',
+              },
+            ],
+          },
+        ],
+      },
+    })
+    render(<ImageRegistries />)
+
+    /** The one read listed on `region` for `role`. */
+    const read = (region: Awaited<ReturnType<typeof card>>, role: string) =>
+      region.getAllByRole('listitem').find((item) => item.textContent.includes(`(${role})`))
+
+    const ghcr = await card('ghcr.io')
+    expect(await ghcr.findByText('Managed components read through it')).toBeInTheDocument()
+    expect(read(ghcr, 'controlPlane')).toHaveTextContent(
+      'ghcr.io/fieldstatenz/saas-fabric — read with this registry’s credential',
+    )
+    expect(read(ghcr, 'console')).toHaveTextContent(
+      'read anonymously: the repository is not registered here, so no credential is presented',
+    )
+
+    const dockerHub = await card('docker.io')
+    expect(read(dockerHub, 'api')).toHaveTextContent(
+      'reports (api): docker.io/acme/reports — read anonymously',
+    )
+
+    const quay = await card('Reads from quay.io')
+    expect(quay.getByText(/nothing reads these images/)).toBeInTheDocument()
+    expect(read(quay, 'api')).toHaveTextContent('audit (api): quay.io/acme/audit')
+    expect(read(quay, 'api')).not.toHaveTextContent('read anonymously')
+  })
+
+  it('says a registry nothing managed is read through has nothing to account for', async () => {
+    serve({ listing: listingOf(DOCKER_HUB) })
+    render(<ImageRegistries />)
+
+    const dockerHub = await card('docker.io')
+    expect(dockerHub.queryByText('Managed components read through it')).not.toBeInTheDocument()
+  })
+
+  it('says the reads could not be worked out now, rather than that no component is read', async () => {
+    serve({
+      listing: listingOf(GHCR),
+      reads: { state: 'unavailable', code: 'repository_unavailable' },
+    })
+    render(<ImageRegistries />)
+
+    expect(
+      await screen.findByText(/could not be worked out now \(\s*repository_unavailable\)/),
+    ).toBeInTheDocument()
+  })
+
+  it('reads the account from its own route, and never calls a refused credential presented', async () => {
+    const image = (repository: string, read: ReadBy): ImageRead => ({
+      component: 'saas-fabric',
+      role: repository.endsWith('console') ? 'console' : 'controlPlane',
+      repository,
+      registered: true,
+      read,
+    })
+    const calls = serve({
+      listing: listingOf(GHCR),
+      reads: {
+        state: 'observed',
+        hosts: [
+          {
+            host: 'ghcr.io',
+            registered: true,
+            installed: true,
+            deployment: false,
+            images: [
+              image('ghcr.io/fieldstatenz/saas-fabric', 'credentialRefused'),
+              image('ghcr.io/fieldstatenz/saas-fabric-console', 'notRead'),
+            ],
+          },
+        ],
+      },
+    })
+    render(<ImageRegistries />)
+
+    const ghcr = await card('ghcr.io')
+    await ghcr.findByText('Managed components read through it')
+    const items = ghcr.getAllByRole('listitem')
+    const of = (role: string) => items.find((item) => item.textContent.includes(`(${role})`))
+    expect(of('controlPlane')).toHaveTextContent(
+      'not read: the realm refused this registry’s credential, which is not presented again until it is replaced',
+    )
+    expect(of('controlPlane')).not.toHaveTextContent('read with this registry’s credential')
+    expect(of('console')).toHaveTextContent('not read now: nothing is read through this registry')
+    expect(calls.map((call) => call.url)).toContain('/api/integrations/registries/reads')
+  })
+
+  it('says the account could not be read when its route fails, and still lists the registries', async () => {
+    serve({
+      listing: listingOf(GHCR),
+      reads: refusal(503, 'repository_unavailable', 'The platform repository did not answer.'),
+    })
+    render(<ImageRegistries />)
+
+    expect(await card('ghcr.io')).toBeTruthy()
+    expect(
+      await screen.findByText(/could not be read: The platform repository did not answer./),
+    ).toBeInTheDocument()
   })
 })

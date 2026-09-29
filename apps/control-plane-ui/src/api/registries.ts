@@ -16,6 +16,7 @@
  */
 import { request } from './client'
 import type {
+  ComponentReads,
   Registry,
   RegistryCredentialInput,
   RegistryListing,
@@ -73,6 +74,11 @@ export function underHost(
 /** Every registry operators registered, and the deployment's own. */
 export async function listRegistries(): Promise<RegistryListing> {
   return request<RegistryListing>(REGISTRIES)
+}
+
+/** Which registry each managed component's images are read through, and how. */
+export async function registryReads(): Promise<ComponentReads> {
+  return request<ComponentReads>(`${REGISTRIES}/reads`)
 }
 
 /** Registers a registry, once its `/v2/` endpoint has proven. */

@@ -20,6 +20,7 @@ impl ApplicationDefinition {
         )?;
         validate_fields(&self.fields)?;
         self.validate_resources()?;
+        self.validate_described()?;
         for component in &self.components {
             text(&component.name, "Component name", true, 128)?;
             text(&component.reference, "Component reference", true, 1024)?;

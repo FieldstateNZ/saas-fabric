@@ -20,6 +20,29 @@ export type ErrorCode =
   | 'publication_not_configured'
   | 'publication_running'
   | RegistryErrorCode
+  | SelectionErrorCode
+
+/**
+ * The codes a refused component selection carries (ADR 0026 section 7),
+ * beside the registry's own `registry_unavailable` and `registry_refused`
+ * for a registry that could not be asked or refused the request.
+ */
+export type SelectionErrorCode =
+  | 'repository_not_registered'
+  | 'component_version_not_found'
+  | 'component_version_unusable'
+  | 'component_version_already_selected'
+  | 'capability_not_selectable'
+
+/**
+ * What the rule answered for a version that is not a release unit, carried
+ * beside `component_version_unusable`'s code; `reason` only for `invalid`,
+ * as `InvalidReason::code` spells it.
+ */
+export interface SelectionAnswer {
+  readonly answer: 'undescribed' | 'incoherent' | 'invalid'
+  readonly reason: string | null
+}
 
 /**
  * The codes an image registry's refusal carries (ADR 0026 section 5) --
@@ -52,12 +75,15 @@ export type RegistryErrorCode =
 export class ControlPlaneError extends Error {
   readonly code: string
   readonly status: number
+  /** Present only on a refused selection whose version the rule answered for. */
+  readonly answer: SelectionAnswer | null
 
-  constructor(status: number, code: string, message: string) {
+  constructor(status: number, code: string, message: string, answer: SelectionAnswer | null = null) {
     super(message)
     this.name = 'ControlPlaneError'
     this.code = code
     this.status = status
+    this.answer = answer
   }
 
   /** Whether the client changed between being read and being written. */
@@ -69,4 +95,33 @@ export class ControlPlaneError extends Error {
 /** Whether a value is a refusal from the control plane. */
 export function isControlPlaneError(value: unknown): value is ControlPlaneError {
   return value instanceof ControlPlaneError
+}
+
+/** The answers the selection rule gives for a version it did not call complete. */
+const ANSWERS: readonly SelectionAnswer['answer'][] = ['undescribed', 'incoherent', 'invalid']
+
+/**
+ * The refusal an API error body describes, or `null` when the body is not
+ * one. The body's `answer` and `reason` are kept only when the answer is one
+ * this console words: an answer it has never heard of is not given another's
+ * wording.
+ */
+export function refusalFromBody(status: number, body: unknown): ControlPlaneError | null {
+  if (typeof body !== 'object' || body === null) {
+    return null
+  }
+  const { error } = body as {
+    error?: { code?: string; message?: string; answer?: unknown; reason?: unknown }
+  }
+  if (!error?.code || !error.message) {
+    return null
+  }
+  const answer = ANSWERS.find((known) => known === error.answer)
+  const reason = typeof error.reason === 'string' ? error.reason : null
+  return new ControlPlaneError(
+    status,
+    error.code,
+    error.message,
+    answer === undefined ? null : { answer, reason },
+  )
 }

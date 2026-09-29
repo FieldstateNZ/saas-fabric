@@ -86,6 +86,60 @@ export interface RegistryListing {
 }
 
 /**
+ * `GET /api/integrations/registries/reads`: which registry each managed
+ * component's images are read through, built from the environment's pins
+ * and the registry records -- no registry is asked. Nothing here says a
+ * read succeeded; that is the platform panel's.
+ *
+ * A route of its own, read only by the Image registries section: answering
+ * it reads the platform's desired state, which the version picker's listing
+ * must not wait on.
+ *
+ * `unavailable` means desired state could not be read now, with the code
+ * `GET /api/platform` would answer -- never "no components".
+ */
+export type ComponentReads =
+  | { readonly state: 'notManaged' }
+  | { readonly state: 'unavailable'; readonly code: string }
+  | { readonly state: 'observed'; readonly hosts: readonly HostReads[] }
+
+/**
+ * One registry host and the images read through it. With neither
+ * `registered` nor `deployment`, nothing reads it: the host is refused by
+ * name. `installed` is whether the registry registered for it is being read
+ * through now.
+ */
+export interface HostReads {
+  readonly host: string
+  readonly registered: boolean
+  readonly installed: boolean
+  readonly deployment: boolean
+  readonly images: readonly ImageRead[]
+}
+
+/**
+ * How an image is read now, one closed answer:
+ *
+ * - `credential`: registered under a registry being read through whose
+ *   credential is held, was readable at the last start, and was not refused;
+ * - `anonymous`: read with no credential;
+ * - `credentialRefused`: registered under a registry whose realm refused its
+ *   credential, which is not presented again, so it is not read;
+ * - `notRead`: the host's registry is not being read through, or nothing
+ *   reads the host, and it is not the deployment's.
+ */
+export type ReadBy = 'credential' | 'anonymous' | 'credentialRefused' | 'notRead'
+
+/** One image a managed component pins, and how it is read now. */
+export interface ImageRead {
+  readonly component: string
+  readonly role: string
+  readonly repository: string
+  readonly registered: boolean
+  readonly read: ReadBy
+}
+
+/**
  * What an operator registers.
  *
  * No host: `ghcr` and `dockerHub` are named by their kind, and a

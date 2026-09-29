@@ -4,17 +4,9 @@
 use serde::{Deserialize, Serialize};
 use serde_norway::Value;
 
+use super::api_version::ApiVersion;
 use super::Catalogue;
 use crate::DesiredStateError;
-
-/// The `apiVersion` every catalogue document this model writes carries.
-///
-/// Checked on read, before anything about the catalogue itself is trusted —
-/// see [`check_document_kind`] — the same discipline the client document
-/// applies to its own envelope (`document::schema`), and for the same
-/// reason: the repository holds more than one kind of document, and a reader
-/// that guessed which one it had would eventually guess wrong.
-pub const API_VERSION: &str = "fabric.fieldstate.nz/v1";
 
 /// The `kind` every catalogue document this model writes carries.
 ///
@@ -23,9 +15,10 @@ pub const API_VERSION: &str = "fabric.fieldstate.nz/v1";
 /// overlaps.
 pub const KIND: &str = "Catalogue";
 
-/// The `apiVersion`/[`KIND`] pair as one string, for the message a rejected
-/// document produces.
-const EXPECTED_DOCUMENT: &str = "fabric.fieldstate.nz/v1/Catalogue";
+/// Every `apiVersion`/[`KIND`] pair this model reads, newest first, for the
+/// message a rejected document produces -- the spelling the client
+/// document's own refusal uses.
+const EXPECTED_DOCUMENT: &str = "fabric.fieldstate.nz/v2/Catalogue or fabric.fieldstate.nz/v1/Catalogue";
 
 /// The document exactly as it is written and read: an envelope naming what it
 /// is, wrapped around the catalogue itself.
@@ -52,18 +45,20 @@ pub(super) struct Envelope {
 }
 
 impl Envelope {
-    /// Wraps a catalogue for storage, stamping the current envelope.
+    /// Wraps a catalogue for storage, stamping the lowest `apiVersion` that
+    /// expresses it ([`ApiVersion::lowest_for`]).
     pub(super) fn wrapping(catalogue: Catalogue) -> Self {
         Self {
-            api_version: API_VERSION.to_owned(),
+            api_version: ApiVersion::lowest_for(&catalogue).as_str().to_owned(),
             kind: KIND.to_owned(),
             spec: catalogue,
         }
     }
 }
 
-/// Refuses a document that is not a catalogue document of the version this
-/// model reads, and says which pair it expected.
+/// Refuses a document that is not a catalogue document of a version this
+/// model reads, and says which pairs it expected; answers the version it
+/// found.
 ///
 /// Run *before* the document is deserialised into [`Envelope`], so a document
 /// missing its envelope — or carrying the wrong one — is refused as the wrong
@@ -72,16 +67,16 @@ impl Envelope {
 ///
 /// # Errors
 ///
-/// Returns [`DesiredStateError::UnknownDocumentKind`], naming the pair this
-/// model expects and the pair the document actually carried — or `None` if
+/// Returns [`DesiredStateError::UnknownDocumentKind`], naming the pairs this
+/// model reads and the pair the document actually carried — or `None` if
 /// it carried neither field, which is what a document written before this
 /// envelope concept existed looks like.
-pub(super) fn check_document_kind(raw: &Value) -> Result<(), DesiredStateError> {
+pub(super) fn check_document_kind(raw: &Value) -> Result<ApiVersion, DesiredStateError> {
     let api_version = string_at(raw, "apiVersion");
     let kind = string_at(raw, "kind");
 
-    if api_version == Some(API_VERSION) && kind == Some(KIND) {
-        return Ok(());
+    if let (Some(version), Some(KIND)) = (api_version.and_then(ApiVersion::parse), kind) {
+        return Ok(version);
     }
 
     let found = (api_version.is_some() || kind.is_some()).then(|| {
@@ -108,7 +103,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_spelled_out_pair_matches_the_two_constants() {
-        assert_eq!(EXPECTED_DOCUMENT, format!("{API_VERSION}/{KIND}"));
+    fn the_spelled_out_pairs_match_every_version_this_model_reads() {
+        let [v1, v2] = ApiVersion::ALL.map(ApiVersion::as_str);
+
+        assert_eq!(EXPECTED_DOCUMENT, format!("{v2}/{KIND} or {v1}/{KIND}"));
     }
 }

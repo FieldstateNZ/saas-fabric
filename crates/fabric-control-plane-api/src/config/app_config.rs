@@ -81,6 +81,11 @@ pub struct ControlPlaneAppConfig {
     /// binding to drain, so the maximum drain time is bounded below this with
     /// explicit headroom for the rest of the integration operation — the
     /// deletions after it, and the storing a rebind does before it.
+    ///
+    /// And in a second: `git_host.http_timeout_seconds` plus
+    /// `registries.resolution_budget_seconds` plus `git_host.http_timeout_seconds`
+    /// must be strictly less than this — a component-version selection's
+    /// catalogue read, resolution and catalogue write, which one request holds.
     #[serde(default = "default_request_timeout")]
     pub request_timeout_seconds: u64,
 }

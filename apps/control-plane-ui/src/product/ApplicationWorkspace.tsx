@@ -6,6 +6,8 @@ import { Status } from '../console/Status'
 import { TabNav } from '../console/TabNav'
 import { APPLICATION_TABS, type ApplicationTab } from './applicationWorkspaceTabs'
 import { ApplicationWorkspaceTab } from './ApplicationWorkspaceTab'
+import type { ComponentSelecting } from './ComponentEditor'
+import { keepingPending, sameDefinition, toDraftRequest, unsavedBesidesPending } from './draft-request'
 import { SaveNotice } from './SaveNotice'
 import type { CatalogueState } from './useCatalogue'
 
@@ -20,6 +22,20 @@ import type { CatalogueState } from './useCatalogue'
  * immutable: it copies the current draft into a new numbered
  * {@link ApplicationRelease}, and every client already assigned to an
  * earlier release keeps that exact version.
+ *
+ * # The local draft keeps what the server resolved
+ *
+ * `draft` holds each described component's resolution exactly as the
+ * server stored it, so `dirty` and `published` compare like with like; a
+ * save strips it only when it sends (`toDraftRequest`). Selecting a version
+ * writes the saved draft, so the picker is disabled while anything besides
+ * a component still waiting for its version is unsaved, and the catalogue
+ * it answers with replaces this draft through `app`.
+ *
+ * A component waiting for its version is never sent -- the server can hold
+ * none -- so it is not an unsaved change either: `dirty` leaves it out, and
+ * a new `app` keeps it (`keepingPending`), so saving the other edits frees
+ * the picker without losing it.
  *
  * `published` compares the definition currently being edited — including
  * unsaved local changes — against the newest release, by value rather than a
@@ -41,14 +57,22 @@ export function ApplicationWorkspace({
   const [success, setSuccess] = useState<string | null>(null)
 
   useEffect(() => {
-    setDraft(app.draft)
+    setDraft((local) => keepingPending(app.draft, local))
   }, [app])
 
-  const dirty = JSON.stringify(draft) !== JSON.stringify(app.draft)
-  const published = JSON.stringify(app.releases.at(-1)?.definition) === JSON.stringify(draft)
+  const dirty = unsavedBesidesPending(draft, app.draft)
+  const published = sameDefinition(app.releases.at(-1)?.definition, draft)
+  const selecting: ComponentSelecting = {
+    saved: app.draft.components,
+    local: draft.components,
+    unsaved: dirty,
+    select: (component, repository, version) =>
+      state.select({ action: 'selectComponentVersion', id: app.id, component, repository, version }),
+    reload: state.refresh,
+  }
 
   async function save() {
-    if (await state.save({ action: 'saveApplication', id: app.id, definition: draft })) {
+    if (await state.save({ action: 'saveApplication', id: app.id, definition: toDraftRequest(draft) })) {
       setSuccess('Draft saved. Publish it when it is ready for client assignments.')
     }
   }
@@ -98,6 +122,7 @@ export function ApplicationWorkspace({
             published={published}
             onPublish={publish}
             releases={app.releases}
+            selecting={selecting}
           />
           <div className="form-actions">
             <button className="primary-button" type="submit" disabled={!dirty}>

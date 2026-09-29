@@ -229,7 +229,7 @@ mode = "in_memory"
 # credential or none, and registers the repositories under each. Records live
 # beside the Git integrations' in the secret store, and a token is never
 # returned by any route. They exist whether or not platform_management is
-# configured, so their one setting is a section of its own.
+# configured, so their settings are a section of their own.
 #
 # Every registry an operator registers is read at public addresses only. The
 # deployment's own registry is `[platform_management.registry]` — base_url,
@@ -241,3 +241,16 @@ mode = "in_memory"
 # How long one call to an operator-registered registry may take. Zero is
 # refused at startup.
 http_timeout_seconds = 10
+
+# How long resolving one selected component version may take, the registry
+# store's read of which repositories are registered and every registry read
+# included: the catalogue's version picker (ADR 0026 section 7). At the
+# deadline the reads still in flight are abandoned and the operator is told
+# the registry could not be asked (503, with Retry-After).
+#
+# Zero is refused at startup, and so is a budget that does not fit in one
+# request: a selection reads the catalogue from Git, resolves, and writes the
+# catalogue back, so `git_host.http_timeout_seconds` plus this plus
+# `git_host.http_timeout_seconds` must be strictly less than
+# `request_timeout_seconds` above. The defaults, 10 + 8 + 10 under 30, fit.
+resolution_budget_seconds = 8

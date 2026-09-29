@@ -1,4 +1,9 @@
 //! Structural validation shared by persisted and submitted product definitions.
+//!
+//! The rules for the shapes a component descriptor also declares -- text,
+//! uniqueness, configuration fields, application resources -- live in
+//! `fabric-component` (ADR 0026 section 2) and are called from here, with
+//! their messages unchanged. What only the catalogue can check stays here.
 mod application;
 mod fields;
 mod hostname;
@@ -8,7 +13,6 @@ use crate::DesiredStateError;
 use fields::check_key;
 pub(super) use fields::{is_timezone, validate_fields, values};
 pub(super) use resource::check_cross_application_conflicts;
-use std::collections::BTreeSet;
 
 pub(crate) fn invalid(detail: impl Into<String>) -> DesiredStateError {
     DesiredStateError::InvalidField {
@@ -16,26 +20,16 @@ pub(crate) fn invalid(detail: impl Into<String>) -> DesiredStateError {
         detail: detail.into(),
     }
 }
+/// `fabric_component::text`, the rule itself, as a desired-state error.
 pub(super) fn text(value: &str, label: &str, required: bool, max: usize) -> Result<(), DesiredStateError> {
-    if (required && value.trim().is_empty()) || value.len() > max || value.chars().any(char::is_control) {
-        return Err(invalid(format!(
-            "{label} must be {}text of at most {max} bytes without control characters",
-            if required { "nonempty " } else { "" }
-        )));
-    }
-    Ok(())
+    Ok(fabric_component::text(value, label, required, max)?)
 }
+/// `fabric_component::unique`, the rule itself, as a desired-state error.
 pub(super) fn unique<'a>(
     values: impl Iterator<Item = &'a str>,
     label: &str,
 ) -> Result<(), DesiredStateError> {
-    let mut seen = BTreeSet::new();
-    for value in values {
-        if !seen.insert(value) {
-            return Err(invalid(format!("Duplicate {label}: {value}")));
-        }
-    }
-    Ok(())
+    Ok(fabric_component::unique(values, label)?)
 }
 pub(super) fn settings(settings: &super::ConsoleSettings) -> Result<(), DesiredStateError> {
     text(&settings.platform_name, "Platform name", true, 128)?;

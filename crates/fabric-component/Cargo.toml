@@ -1,0 +1,26 @@
+[package]
+name = "fabric-component"
+description = "What a SaaS Fabric component says it is: the component descriptor, its renderer, and the configuration-field, resource and capability shapes it shares with the catalogue."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+# The shared naming rules: a component name is a DNS label, a role an
+# identifier, and a declared resource's names are fabric-core's own types.
+fabric-core.workspace = true
+# A declared resource's collection and field names, and the wire definition
+# `ApplicationResource::into_definition` produces -- one declaration of each.
+fabric-runtime-publication.workspace = true
+# Derives for every shape a component descriptor carries.
+serde.workspace = true
+# The published form is JSON: parsed strictly, rendered canonically.
+serde_json.workspace = true
+# The authored form, `component.yaml`, is the publisher's own YAML file.
+serde_norway.workspace = true
+# `ContractError`, the one error every refusal in this crate is.
+thiserror.workspace = true
+
+[lints]
+workspace = true

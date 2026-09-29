@@ -161,6 +161,10 @@ DOMAIN_CRATES = frozenset(
         "fabric-tenant-runtime",
         "fabric-client-model",
         "fabric-reconciliation",
+        # What a component says it is (ADR 0026): parsed, validated and
+        # rendered, never fetched. Reading a registry is an adapter's job, and
+        # a release runs this crate's renderer with no network at all.
+        "fabric-component",
     }
 )
 
@@ -552,6 +556,17 @@ def check_dependency_direction(graph: Graph) -> list[Failure]:
             "fabric-identity",
             "fabric-connector",
         },
+        # Also in neither plane, and also on fabric-runtime-publication's
+        # footing: no transport, and anything outside the runtime plane may
+        # depend on it (ADR 0026); its edge to fabric-runtime-publication puts
+        # it behind ADR 0018's publisher fence.
+        # `fabric-core` for the naming rules a component name, a role and a
+        # declared resource's names follow; `fabric-runtime-publication` for
+        # a declared resource's collection and field names and the wire
+        # definition `ApplicationResource::into_definition` produces.
+        # `fabric-platform-management` gains its edge to this crate when it
+        # reads a component descriptor (slice 2), not before.
+        "fabric-component": {"fabric-core", "fabric-runtime-publication"},
         "fabric-identity": {"fabric-core"},
         "fabric-connector": {"fabric-core"},
         "fabric-tenant-runtime": {"fabric-core", "fabric-connector"},
@@ -581,7 +596,13 @@ def check_dependency_direction(graph: Graph) -> list[Failure]:
         # in neither plane, so this stays on the "everyone may depend on
         # `fabric-core`, and now on this" footing `fabric-runtime-publication`
         # already has.
-        "fabric-client-model": {"fabric-core", "fabric-runtime-publication"},
+        #
+        # Its edge to `fabric-component` (ADR 0026 section 2) is the same
+        # argument again: the configuration-field, application-resource and
+        # capability shapes a component descriptor declares are the
+        # catalogue's own, declared once there with their validators and
+        # re-exported here at their old paths.
+        "fabric-client-model": {"fabric-core", "fabric-runtime-publication", "fabric-component"},
         "fabric-reconciliation": {"fabric-core", "fabric-client-model"},
         "fabric-control-plane": {
             "fabric-core",

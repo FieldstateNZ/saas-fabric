@@ -53,6 +53,8 @@ fabric-core            (the only crate both planes share)
 
 fabric-client-model    → fabric-core
                        → fabric-runtime-publication (spec.data's own vocabulary)
+                       → fabric-component           (the field, resource and
+                                                     capability shapes; ADR 0026)
 
 fabric-reconciliation  → fabric-core
                        → fabric-client-model
@@ -294,6 +296,48 @@ own, computed straight from the plane sets rather than from `expected`:
 chain that bridges the planes through a crate in neither one, and
 `check_runtime_plane_cannot_reach_the_publisher` refuses this crate
 specifically to every runtime-plane crate, dev tables included.
+
+## `fabric-component` is in neither plane, so both readers can share it
+
+```
+fabric-component       → fabric-core
+                       → fabric-runtime-publication (a declared resource's
+                                                     collection and field names)
+```
+
+A component descriptor (ADR 0026) is read on two sides of the graph. The
+catalogue in `fabric-client-model` — control plane — will select a described
+component and freeze what it declares; `fabric-platform-management` — in
+neither plane — will read one to decide whether a version is a release unit.
+If either crate owned the shapes, the other would need an edge it cannot
+have: `fabric-platform-management` may not depend on `fabric-client-model`.
+So the shapes live in a crate of their own, on exactly the footing
+`fabric-runtime-publication` has: in neither plane, no transport (it is in
+`DOMAIN_CRATES`, so an HTTP crate fails the check), and internal edges to
+`fabric-core` and `fabric-runtime-publication` only, so its closure reaches
+neither plane and anything outside the runtime plane may depend on it. Its
+edge to `fabric-runtime-publication` puts it behind ADR 0018's publisher fence:
+no runtime-plane crate may reach it, as no runtime-plane crate may reach the
+publisher.
+
+**One declaration of each shape.** `ConfigurationField`, `FieldKind` and
+`ApplicationResource` — with the catalogue's validators for them, messages
+unchanged — moved here from `fabric-client-model`, which re-exports them at
+their old paths byte for byte, including as the type of the catalogue's
+`clientFields`. `PlatformCapability` replaces the catalogue's list of seven
+string literals. A component descriptor declares fields and resources in the
+catalogue's own shape, checked by the catalogue's own rules, rather than in a
+second copy that could drift from the first. The hostname and identifier
+value rules, which the catalogue checked with its own `Host` and `ClientId`,
+are re-declared here over `fabric_core::naming` — as
+`fabric-runtime-publication` re-declares its identifiers — and a test in
+`fabric-client-model` holds the two copies to one answer.
+
+`fabric-platform-management` does not depend on it yet. It will in slice 2 of
+ADR 0026, when discovery reads a component descriptor attached to an image to
+decide what a version is, and that edge is added to the `expected` table in
+`scripts/check_architecture.py` then — never pre-authorised ahead of the code
+that needs it.
 
 ## `fabric-ndc-acceptance` is test-only, and also in neither plane
 

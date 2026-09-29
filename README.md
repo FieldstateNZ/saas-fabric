@@ -146,6 +146,7 @@ Kubernetes, or opens a connection (§6).
 | Crate | Role |
 |---|---|
 | [`fabric-runtime-publication`](crates/fabric-runtime-publication) | The runtime state wire contract: three independently versioned documents. The producer is built, and the publisher controller in `fabric-control-plane`/`fabric-control-plane-api` calls it (ADR 0018, ADR 0023 part 4). |
+| [`fabric-component`](crates/fabric-component) | What a component says it is: the component descriptor, its renderer, and the configuration-field, resource and capability shapes it shares with the catalogue. No transport (ADR 0026). |
 | [`fabric-git-host`](crates/fabric-git-host) | Authenticating to a Git host as a GitHub App — mints, caches and expires an installation token, shared by both Git integrations. |
 | [`fabric-platform-git`](crates/fabric-platform-git) | Atomic desired-state mutation in the platform repository — one tree, one commit, one ref update. |
 | [`fabric-platform-management`](crates/fabric-platform-management) | Deciding which version of a component an environment should run. Defines the `Registry` and `DeploymentObserver` ports; no transport of its own. |

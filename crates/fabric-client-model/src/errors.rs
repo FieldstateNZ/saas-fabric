@@ -8,6 +8,7 @@
 //! with no principled line between them — the next person adding a
 //! variant would have to guess which file, rather than adding one more
 //! arm to the one place they all already are.
+mod contract_error;
 
 /// A desired-state document that cannot be accepted.
 ///

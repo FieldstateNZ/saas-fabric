@@ -1,47 +1,16 @@
 //! Non-secret configuration schemas and values.
+//!
+//! [`ConfigurationField`] and [`FieldKind`] are declared in
+//! `fabric-component`, beside the component descriptor that also declares
+//! them (ADR 0026 section 2), and re-exported here unchanged -- including as
+//! the type of the catalogue's `clientFields`, which is not about components
+//! at all. One declaration of the shape, not two.
+pub use fabric_component::{ConfigurationField, FieldKind};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 /// Scalar values are submitted as text and validated against the field's type.
 pub type ConfigurationValues = BTreeMap<String, String>;
-/// A typed configuration field.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ConfigurationField {
-    /// Stable identifier, also the configuration map key.
-    pub key: String,
-    /// Display label.
-    pub label: String,
-    /// Input and validation rule.
-    pub kind: FieldKind,
-    /// Whether a value is mandatory.
-    pub required: bool,
-    /// Default used when no override is supplied.
-    pub default: Option<String>,
-    /// Allowed values for a choice field.
-    pub options: Vec<String>,
-    /// Help text.
-    pub description: String,
-}
-/// Supported scalar input types.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum FieldKind {
-    /// Free text.
-    Text,
-    /// Finite decimal number.
-    Number,
-    /// True or false.
-    Boolean,
-    /// One of the field's declared options.
-    Choice,
-    /// A hostname.
-    Hostname,
-    /// A stable slug.
-    Identifier,
-    /// A timezone identifier.
-    Timezone,
-}
 /// Console-wide presentation settings and new-client defaults.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

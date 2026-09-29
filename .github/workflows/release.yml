@@ -138,17 +138,29 @@ jobs:
       # two would have is worth the minutes.
       fail-fast: false
       matrix:
+        # `role` is each image's role in this repository's component.yaml, and
+        # `primary` marks the image its component descriptor is attached to
+        # (ADR 0026 section 10). Both are inert until the attach job exists;
+        # until then, the pull-request test
+        # crates/fabric-component/tests/this_repositorys_component.rs checks
+        # them against component.yaml.
         include:
           # The name the platform already expects for the runtime plane.
           - image: saas-fabric
             dockerfile: Dockerfile
             target: runtime-api
+            role: runtime
+            primary: true
           - image: saas-fabric-control-plane
             dockerfile: Dockerfile
             target: control-plane-api
+            role: controlPlane
+            primary: false
           - image: saas-fabric-control-plane-ui
             dockerfile: apps/control-plane-ui/Dockerfile
             target: console
+            role: console
+            primary: false
     steps:
       - uses: actions/checkout@v4
 

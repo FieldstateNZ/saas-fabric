@@ -346,8 +346,12 @@ registered; a later challenge naming another origin is an error that names
 both, and nothing is sent to the new one. A `Basic` challenge is honoured only
 by a `distribution` registry, and only toward its own origin. A registry that
 never challenges is read with no credential. A token request asks for no scope
-when it proves the `/v2/` endpoint, and otherwise only for
-`repository:<path>:pull`, whatever the challenge offered.
+when a credential proves the `/v2/` endpoint, and otherwise only for
+`repository:<path>:pull`, whatever the challenge offered. A proof with no
+credential ends at the challenge: a `Bearer` challenge naming a realm the
+kind's rule allows is the proof, and no token is asked for — GHCR's realm
+refuses an anonymous request for no scope while granting every public
+repository.
 
 **A credential is optional.** Reading needs none. When one is given it is a
 username and a long-lived token. It is stored in the control plane's secret
@@ -673,7 +677,10 @@ attach step lands is the rule, not which release ships what. In this order:
    Ends — once slice 5's first release exists — in an operator registering
    `ghcr.io/fieldstatenz/saas-fabric` and its two sibling repositories and
    selecting a version. Declared fields and resources are proven by tests until a
-   component that declares them is published.
+   component that declares them is published. The registries section's
+   account of which registry each managed component is read through (section
+   5) lands here, where the platform view first carries each component's
+   repositories; slice 3 has nothing to join it against.
 5. **Publishing.** The release workflow's final job in §10, and the packaging
    documentation's fourth artifact.
 

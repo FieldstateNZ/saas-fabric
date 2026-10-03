@@ -9,10 +9,21 @@
 //! set read before the other change saved its own. Held across the whole of
 //! each, the platform ends on whichever ran last, whole.
 //!
-//! The lock is a `tokio` mutex in this process, and that is stated rather
-//! than hidden: a second replica would take its own turn against the same
-//! store, and needs shared coordination designed first, as every
-//! integration's order does.
+//! The lock is a `tokio` mutex in this process, and the record set is read
+//! whole and written back whole beneath it. Both are stated rather than
+//! hidden, because together they bound what the order proves: one process's
+//! changes, against a store that holds the last whole set written. A desired
+//! replica count of one does not extend that across an upgrade. A default
+//! rolling update starts a pod's successor before the pod stops, so for that
+//! interval two processes each take their own turn against the same store,
+//! each can read the set and write back over the other's write, and each
+//! holds its own refusal marks (ADR 0026 section 5). Before registry writes
+//! are enabled across an upgrade, the rollout needs a reviewed way to prevent
+//! that overlap — a single writer by drain and verified termination, or
+//! coordination between writers — with the availability it costs approved.
+//! Neither is chosen here, and neither a replica count nor a drain is on its
+//! own fencing against a pod deleted by hand or a partitioned node. That is
+//! an activation gate still open, not an architecture this module selected.
 //!
 //! # Why in a task of its own
 //!

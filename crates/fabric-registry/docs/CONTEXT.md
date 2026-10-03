@@ -230,8 +230,11 @@ subset check).
    reaches `Display`, `Debug`, a log, an error detail or a response. A
    credential its realm refuses is marked, and not presented again by any
    client sharing its mark; replacing it is building a new client with a
-   fresh mark, so no token or refusal outlives it. `HelmCharts` sends no
-   credential at all.
+   fresh mark, so no token or refusal outlives it. The mark lives in this
+   process's memory only — a restart starts unmarked, and a later read or
+   proof may present the credential again — and the `Denied` detail claims no
+   more than that.
+   `HelmCharts` sends no credential at all.
 2. **A missing tag/version/digest is `None`/absent, never an error**, and
    nothing is cached about what was found — a `404`, a tag's current digest,
    a referrers list are asked again every time. A partial publish across

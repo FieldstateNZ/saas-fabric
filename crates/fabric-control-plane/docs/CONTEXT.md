@@ -71,7 +71,10 @@ this one's ports; only the composition root sees them.
   `401`/`403`/`404`, `credential_refused`). `RegistryCredential` carries its
   stored credential's refusal mark (`marked_by`, `refusal_mark`), one per
   `SecretId`, held in the service (`service/marks.rs`) so every client built
-  from one credential shares it. A token goes through `SecretStore`
+  from one credential shares it. The mark is this process's memory only: a
+  restart, or a successor pod, starts unmarked, so a later read or proof may
+  present the credential again, and the refusal message says so. A token goes
+  through `SecretStore`
   as `integrations/registries/<SecretId>/credential`, the id server-minted
   and re-validated on read. `RegistryHost`, `RegistryKind` (`ghcr`,
   `dockerHub`, `distribution`), `RegistryRecord`, `DeploymentRegistry`,
@@ -144,7 +147,14 @@ this one's ports; only the composition root sees them.
 8. **A registry change is proven before it is recorded, and written
    credential first, record second**; removal runs live client, record,
    credential. Every change takes the one `tokio` mutex in a spawned task and is
-   audited, refusals included. No view carries a token; no error, log or audit
+   audited, refusals included. That mutex is process-local and the record set
+   is read and written whole, so one desired replica does not exclude two
+   writers while a rolling update overlaps old pod and new; each would hold
+   its own refusal marks too. Preventing that overlap — a single writer by
+   drain and verified termination, or coordination between writers, with its
+   availability cost approved — is an activation gate ADR 0026 section 5
+   leaves open, not a design this crate has chosen, and a replica count or a
+   drain alone is not fencing. No view carries a token; no error, log or audit
    line carries a token or a username; and a registry failure never maps to
    the platform's codes. A change never rebuilds a client with a fresh
    refusal mark for a credential it did not replace.

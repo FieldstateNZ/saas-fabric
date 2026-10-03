@@ -1,7 +1,16 @@
 # Packaging and release
 
-- **Status:** Implemented
-- **Applies to:** the three artifacts this repository publishes.
+- **Status:** Implemented in source; **not operationally activated.** The
+  three images and the release workflow are in use. The component descriptor
+  — the fourth artifact below, and the final job that attaches it — exists in
+  this repository's source. Its first publication and activation remain
+  unverified, and are not performed by this change;
+  [ADR 0026](../decisions/0026-a-component-describes-itself-in-an-artifact-attached-to-its-image.md)
+  is still *Proposed*. Merging that source authorises no release and no
+  activation; see "Before the first publication" below.
+- **Applies to:** the three images this repository publishes, and the
+  component descriptor it attaches to them
+  ([ADR 0026](../decisions/0026-a-component-describes-itself-in-an-artifact-attached-to-its-image.md)).
 - **Built by:** [`Dockerfile`](../../Dockerfile),
   [`apps/control-plane-ui/Dockerfile`](../../apps/control-plane-ui/Dockerfile).
 - **Published by:** [`.github/workflows/release.yml`](../../.github/workflows/release.yml).
@@ -31,12 +40,117 @@ two Rust images.
 matrix does not include it, so nothing publishes it today: a release of this
 version of the workspace still ships exactly the three images above.
 
+### And one component descriptor, attached last
+
+A release also attaches one **component descriptor** to the runtime image
+(ADR 0026): a small JSON document, rendered from [`component.yaml`](../../component.yaml),
+naming all three images by role and by the digest each build pushed. It is an
+OCI artifact whose `subject` is the runtime image, so it lives in that image's
+repository, shares its visibility, and needs no package of its own. It is what
+makes a version *complete* to anything that reads it — Platform Management
+among them, once an environment describes `saas-fabric` that way.
+
+| | |
+|---|---|
+| Artifact type | `application/vnd.saas-fabric.component.v1`, one layer `component.json` of `application/vnd.saas-fabric.component.v1+json`, the empty config |
+| Attached to | `ghcr.io/fieldstatenz/saas-fabric@<the runtime digest this release pushed>` |
+| Annotations | `org.opencontainers.image.revision` (the tagged commit), `.version`, `.source`, and `.created` fixed to the commit's time |
+| Found by | the referrers API; on GHCR, which does not serve it, the referrers tag schema — a tag named `sha256-<hex of the runtime digest>` holding an index. That tag is the one tag here that is not a version and not `sha-<commit>` |
+
+The rules it follows are the rules the release job enforces:
+
+- **Last.** The job runs only when every image leg succeeded and the run was
+  not cancelled, and it first checks that each version tag still points at the
+  digest its leg pushed. Each leg pushes its version tag as its own last step,
+  after recording the digest the descriptor will name.
+- **Once, and the same once.** The document is rendered to canonical bytes and
+  its creation time is the commit's, so a re-run renders the same bytes and
+  finds them already attached. A *different* descriptor already attached is
+  refused: two would make the version invalid for ever. The legs' recorded
+  digests are kept for 30 days, GitHub's re-run window, because re-running this
+  job is the only way to finish a release whose attach step failed.
+- **Only for a pushed tag on `main`.** A tag cut elsewhere still publishes its
+  images, and the job fails rather than skipping, because an environment that
+  describes `saas-fabric` will report those images as *undescribed* and never
+  advance to them. A `workflow_dispatch`, even from a tag, publishes nothing.
+- **Never to an older image.** The job attaches only to the runtime digest its
+  own leg just pushed. Nothing stops someone with push access attaching one to
+  an image an earlier release published, and nobody may: that would make a
+  build which cannot read descriptors a rollback target.
+- **No credential near foreign code.** The job builds its renderer and reader
+  before it logs in, and keeps no credential in its checkout, so no build
+  script of any dependency runs beside a token that can push.
+- **Read back.** The job finishes by reading the version the way Fabric does,
+  anonymously, with this repository's own reader, and requires *complete*.
+- **Never cleaned up.** On GHCR the descriptor is an untagged package version.
+  Deleting untagged versions of `saas-fabric` would delete every descriptor and
+  make every release it described *undescribed*; no such clean-up may run.
+- **Anonymously readable, all three.** The read-back is anonymous, and §3 of
+  ADR 0026 resolves every image the descriptor names, not only the primary. A
+  new GHCR package starts private, so a release is proven *complete* only if
+  `saas-fabric`, `saas-fabric-control-plane` and `saas-fabric-control-plane-ui`
+  are all publicly readable packages; one private sibling fails the final job.
+
+### Before the first publication
+
+What is written above is what the source does. The three-image workflow has
+published to GHCR before, and the reader has been exercised against GHCR
+anonymously; what this change's tests do not establish is the descriptor's
+own attach, discover and *complete* read-back against a real registry. The
+order in which that is first rehearsed is set by ADR 0026's rollout
+(["What is built first"](../decisions/0026-a-component-describes-itself-in-an-artifact-attached-to-its-image.md#what-is-built-first),
+steps 1–8), not by this document. The release workflow tags every image
+*before* its final job attaches a descriptor, and at the baseline this
+document was written against LucentRoot read `saas-fabric` as `type: oci`,
+schema 2, `update: automatic`, with no hold — so a first run that stopped
+after its image pushes would leave a version the `oci` path advances to on
+its own. The prerequisites, each recorded before the next, each under its own
+authorisation:
+
+1. **Hold first, before any tag.** An authorised hold on automatic updates for
+   `saas-fabric`, verified in desired state and in what the console reports,
+   is in place *before* the release tag is created or anything is published.
+   Nothing after this may advance automatically.
+2. **A proven rollback candidate.** A candidate is named and proven against
+   what is actually persisted — the catalogue's drafts, its release history,
+   every client's frozen copy, and the persisted registry and integration
+   record sets — each shown readable by the candidate's own reader, not
+   inferred from an image tag, a schema number, or the fact that a version is
+   running. The version LucentRoot runs at that point is the candidate only if
+   that check passes for it.
+3. **The tag**, under the release authorisation. The final job must succeed
+   whole: every image at its recorded digest, exactly one descriptor attached,
+   the anonymous read-back answering *complete*. A run that stops short is a
+   partial publication; the hold stays, nothing is promoted, no version tag is
+   moved, and recovery is the final job's descriptor-only re-run or the next
+   version — never a hand-attached descriptor.
+4. **OCI promotion, separately authorised, under the hold.** An operator
+   advances to exactly the verified version through the `oci` path, the hold
+   still in place. The running reader is then accepted: the promoted digests
+   observed running, the rollback listing's bound measured against this
+   release's descriptor, the diagnostics reading it through both lookup paths.
+5. **Schema 3 activation, in a platform pull request of its own.** `type:
+   described`, `components.yaml` schema 3, verified by discovery answering
+   *complete*. This is a separate boundary from the first catalogue-`v2`
+   write: selecting a described component in any catalogue is its own
+   activation behind its own gate, and is not part of this step or of any
+   step here.
+6. **Observe, then resume explicitly.** Described discovery is watched, the
+   hold still in place, for the interval the activation's reviewer sets.
+   Automatic updates resume only on an explicit authorisation that names what
+   was observed.
+
+A merge of the source that implements any of this authorises none of it. The
+tag, the promotion and the activation each carry their own authorisation, and
+none is given by this document, by the workflow, or by ADR 0026's text.
+
 ## What this repository does not publish
 
 **Anything that says where it runs.** No manifests, no namespaces, no
 hostnames, no replica counts, no secrets. An image says what a process *is*;
 `saas-fabric-platform` says where it runs and what it is given, and pins an
-explicit version to do it.
+explicit version to do it. The component descriptor keeps the same rule: a
+registry's host appears in it only as part of an image's name.
 
 ## Two Rust services, one compile
 
@@ -90,12 +204,41 @@ images and pushes none, so packaging can be exercised without minting a version.
 
 Each image gets two tags: the version, and `sha-<commit>`. **Never `latest`** —
 the platform pins an explicit version (§25), and a floating tag is how a cluster
-ends up running something nobody chose. The commit tag answers "what is actually
-in this image" when the version does not.
+ends up running something nobody chose. The commit tag associates an image
+with the source revision it was built from; it does not identify the bytes.
+
+The two tags do not promise the same thing. A **version tag is immutable**: a
+leg refuses to push one that already exists. A **`sha-<commit>` tag may move**:
+it is pushed by every publishing run of that commit — a second preview cut from
+the same commit, or a leg re-run after it failed before its version push — and
+builds are not reproducible, so the same source can yield different bytes
+under the same commit tag. Only the **image digest identifies the bytes**,
+which is why the component descriptor names images by digest and why each leg
+records the digest it pushed rather than resolving a tag later.
 
 The tag's **version core** must match `workspace.package.version`, and the
 release fails if it does not. A tag that disagrees would publish an image whose
-name says one thing and whose source says another.
+name says one thing and whose source says another. The workspace version is
+itself checked first, on every event: it must be a bare SemVer version core —
+`MAJOR.MINOR.PATCH`, numeric, no leading zeros, no prerelease — because both
+the published version and the `<workspace>-dev` tag a pull request or
+`workflow_dispatch` builds under derive from it.
+
+**A version is SemVer's grammar, and only once.** No build metadata, no leading
+zeros in a prerelease's numeric identifiers, at most 128 characters — the rule
+the component descriptor's version follows, so no tag can publish images their
+own descriptor would then refuse. And a published version never moves: each
+image leg refuses to push a version tag that already exists, because the
+component descriptor names those images by digest, and a rebuilt image under
+the same tag would leave the version pointing at bytes its descriptor does not
+name. Reusing a version is not supported; the fix is the next version —
+another preview costs only a tag, and a stable release costs a workspace
+version bump. A leg that failed before it pushed its version tag can be
+re-run; one that pushed it cannot. The check that refuses fails closed: only
+the registry's own `404` for the tag reads as "not published".
+
+The version is computed once, by the workflow's first job, and every job that
+publishes names it from there.
 
 ## Previews
 

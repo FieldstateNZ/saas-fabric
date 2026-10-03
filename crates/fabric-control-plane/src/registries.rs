@@ -44,8 +44,12 @@
 //! Every change takes its turn behind one lock and runs in a task of its own,
 //! so a request cut off by its timeout still finishes the change it began and
 //! two changes never interleave into a record naming one thing and a live
-//! client presenting another. The lock is this process's alone, as every
-//! integration's order is: replicas would need shared coordination first.
+//! client presenting another. The lock is this process's alone and the
+//! record set is persisted whole, as every integration's order is; one
+//! desired replica does not rule out a second writer while a rolling update
+//! overlaps old pod and new. How that overlap is prevented or coordinated,
+//! and at what availability cost, is an open gate before registry writes
+//! cross an upgrade (ADR 0026 section 5; `service/turn.rs`).
 
 mod connection;
 mod connector;

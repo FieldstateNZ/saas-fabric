@@ -206,18 +206,22 @@ async fn a_credential_in_a_redirect_to_the_registrys_own_origin_is_refused_too()
         .expect_err("a credential in a redirect is refused");
 
     assert!(matches!(failure, RegistryError::Refused { .. }), "{failure:?}");
+    // Exactly the one blob request that was redirected: the redirect target,
+    // though on this same origin, was never contacted.
     assert_eq!(
         fake.count("GET", "/blobs/"),
         1,
         "no hop was sent: {:?}",
         fake.paths()
     );
+    // The first manifest read goes anonymously and is challenged, so only
+    // the blob requests are held to carrying the pull token and nothing else.
     assert!(
         fake.requests()
             .iter()
-            .filter(|request| request.path.starts_with("/v2/"))
+            .filter(|request| request.path.contains("/blobs/"))
             .all(|request| request.authorization.as_deref() == Some("Bearer token-1")),
-        "no request carried anything but the pull token: {:?}",
+        "no blob request carried anything but the pull token: {:?}",
         fake.requests()
     );
 }

@@ -34,9 +34,12 @@ own — a username and a long-lived token an operator typed, held in memory
 as a `RegistrySecret` nothing can print — and it is presented only for the
 repositories registered under its registry, only to the realm that
 registry's kind allows, and never across origins. It is never logged and
-never in an error. A realm that refuses it marks it refused, and it is not
-presented again by that client; replacing it builds a new client, so no
-token outlives it.
+never in an error. A realm that refuses it marks it refused — a mark held in
+this process's memory, shared by every client built from the same stored
+credential — and this process does not present it again until the credential
+is replaced or proven again; a restart, or a successor pod, starts unmarked,
+and a later read or proof through it may present the credential again.
+Replacing it builds a new client, so no token outlives it.
 
 ## Key concepts
 
@@ -279,8 +282,10 @@ against either spelling.
   refused a credential, every request that would present it fails without
   contacting anything — through every client built with the same refusal
   mark (`Credential::sharing_refusal`) — until one is built with a new
-  credential and a fresh mark. Anonymous reads through the same client go
-  on.
+  credential and a fresh mark. The mark is not persisted: a restart starts
+  unmarked, so a later read or proof may present the credential again, and
+  two processes running at once each hold their own. The `Denied` detail says exactly that, and no
+  more. Anonymous reads through the same client go on.
 - `RegistrySettings::serve_from` and `treat_loopback_as_public` are
   `#[doc(hidden)]` test switches, as `plain_http_to_loopback` is; loopback
   counts as public only once a registry is served from loopback.

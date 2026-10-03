@@ -5,13 +5,17 @@
 //! Every answer is from memory. Each component descriptor is built and
 //! rendered by `fabric-component`, the one contract crate, so what the rule
 //! reads is what a publisher's renderer would attach. The registry can also
-//! be told to fail every read, or to hang, and counts the reads it was
-//! asked and the ones abandoned in flight.
+//! be told to fail every read, to hang, or to hold its first read open
+//! until a test lets it go, and counts the reads it was asked and the ones
+//! abandoned in flight.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
+use std::time::Duration;
+
+use tokio::sync::Notify;
 
 use fabric_component::{
     ComponentDescriptor, ComponentName, ComponentSpec, ComponentVersion, ConfigurationField, Digest,
@@ -120,6 +124,9 @@ pub struct SelectionRegistry {
     failure: Mutex<Option<RegistryError>>,
     /// Whether every read hangs until it is abandoned.
     hangs: AtomicBool,
+    /// The hold the next read takes, if a test asked for one: taken by the
+    /// first read, so every read after it answers at once.
+    hold: Mutex<Option<Hold>>,
     /// How many reads were asked.
     reads: AtomicUsize,
     /// How many reads are in flight now.
@@ -169,6 +176,25 @@ impl SelectionRegistry {
         self.hangs.store(true, Ordering::SeqCst);
     }
 
+    /// Holds the next read open, and answers it as asked once released.
+    ///
+    /// A selection's first registry read comes after its catalogue read
+    /// and before its write, so a test holding it has a window another
+    /// request can land in. Only that one read is held: the reads after it
+    /// answer at once, so the resolution completes when it is released.
+    pub fn hold_first_read(&self) -> HeldRead {
+        let hold = Hold {
+            reached: Arc::new(Notify::new()),
+            released: Arc::new(Notify::new()),
+        };
+        let handle = HeldRead {
+            reached: Arc::clone(&hold.reached),
+            released: Arc::clone(&hold.released),
+        };
+        *lock(&self.hold) = Some(hold);
+        handle
+    }
+
     /// How many reads were asked.
     pub fn reads(&self) -> usize {
         self.reads.load(Ordering::SeqCst)
@@ -194,7 +220,55 @@ impl SelectionRegistry {
             let _flight = InFlight::start(&self.in_flight, &self.abandoned);
             std::future::pending::<()>().await;
         }
+        // Taken out of the lock before waiting: nothing is held across the
+        // await, and the second read finds nothing to take.
+        let hold = lock(&self.hold).take();
+        if let Some(hold) = hold {
+            hold.reached.notify_one();
+            hold.released.notified().await;
+        }
         Ok(())
+    }
+}
+
+/// A read held open: the registry's side of [`HeldRead`].
+struct Hold {
+    /// Signalled when the read arrives.
+    reached: Arc<Notify>,
+    /// Waited on until the test releases it.
+    released: Arc<Notify>,
+}
+
+/// A test's hold on the registry's next read.
+///
+/// Each `Notify` keeps one permit, so neither side depends on which of them
+/// arrives first: a read that arrives before the test waits is still seen,
+/// and a release before the read waits still lets it go.
+pub struct HeldRead {
+    reached: Arc<Notify>,
+    released: Arc<Notify>,
+}
+
+impl HeldRead {
+    /// How long a held read may take to arrive before the test fails
+    /// rather than hangs. A bound, not a schedule: nothing waits this long
+    /// unless the read never comes.
+    const ARRIVAL_BOUND: Duration = Duration::from_secs(10);
+
+    /// Waits until the held read has arrived and is waiting to be released.
+    ///
+    /// # Panics
+    ///
+    /// If no read arrives within [`Self::ARRIVAL_BOUND`].
+    pub async fn reached(&self) {
+        tokio::time::timeout(Self::ARRIVAL_BOUND, self.reached.notified())
+            .await
+            .expect("the held registry read must arrive");
+    }
+
+    /// Lets the held read answer.
+    pub fn release(&self) {
+        self.released.notify_one();
     }
 }
 

@@ -8,8 +8,9 @@
 //! path between them: every row of the selection table, each refusal with
 //! its status and code, that a refusal the catalogue or the registry
 //! records can decide costs no registry read, the deadline, that a save
-//! cannot carry what the server resolves, that a publish freezes it, and
-//! what the audit trail records.
+//! cannot carry what the server resolves, that a save landing while a
+//! version resolves wins the revision, that a publish freezes it, and what
+//! the audit trail records.
 
 #![allow(
     clippy::unwrap_used,
@@ -730,6 +731,91 @@ async fn a_save_cannot_carry_what_the_server_resolves_and_keeps_the_stored_resol
     assert_eq!(kept["resolution"], resolution);
     assert_eq!(kept["reference"], PRIMARY);
     assert_eq!(kept["version"], VERSION);
+}
+
+#[tokio::test]
+async fn a_save_landing_while_a_version_resolves_wins_and_the_selection_is_a_lost_race() {
+    // The selection reads the catalogue at its revision, then resolves, then
+    // writes at that same revision. A save that lands between the read and
+    // the write moves the revision, and the write must lose to it: the
+    // resolution, however complete, may not overwrite what the operator
+    // saved in the meantime. The registry's first read is held open so the
+    // save can land in that window, deterministically and without a clock.
+    let harness = Arc::new(harness().await);
+    let held = harness.registry.hold_first_read();
+
+    let racing = {
+        let harness = Arc::clone(&harness);
+        tokio::spawn(async move { select(&harness, &harness.revision, "reports", PRIMARY, VERSION).await })
+    };
+    held.reached().await;
+
+    // The selection has read the catalogue and asked the registry, and has
+    // written nothing yet.
+    assert_eq!(harness.registry.reads(), 1, "the held read is the first");
+    assert_eq!(
+        catalogue(&harness.plane).await["revision"].as_str(),
+        Some(harness.revision.as_str()),
+        "nothing is written before the resolution answers"
+    );
+
+    // Another operator request saves a valid edit at the revision the
+    // selection is editing, and wins it.
+    let mut edited = authored();
+    edited[0]["name"] = json!("Monthly Reports");
+    let saved = command(
+        &harness.plane,
+        Some(&harness.revision),
+        json!({"action": "saveApplication", "id": "analytics", "definition": definition(&edited)}),
+    )
+    .await;
+    let winning = saved["revision"].as_str().unwrap().to_owned();
+    assert_ne!(winning, harness.revision);
+
+    held.release();
+    let (status, body, retry_after) = tokio::time::timeout(Duration::from_secs(10), racing)
+        .await
+        .expect("the released selection must answer")
+        .expect("the selection task must not panic");
+
+    // The resolution completed and the write lost: the catalogue's own
+    // conflict, as every lost catalogue race is answered.
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["error"]["code"], "revision_conflict", "{body}");
+    assert_eq!(
+        body["error"]["message"],
+        "the catalogue changed since it was read; re-read it and apply the change again",
+        "{body}"
+    );
+    assert!(
+        body["error"].get("answer").is_none(),
+        "a lost race is no answer of the rule: {body}"
+    );
+    assert!(!retry_after, "re-reading, not waiting, is the remedy");
+    assert!(
+        harness.registry.reads() > 1,
+        "the resolution resumed past the held read and ran to its answer"
+    );
+    assert_eq!(harness.registry.in_flight(), 0);
+
+    // The winning edit stands, untouched by the selection: the revision is
+    // the save's, the component is still the authored container, and no
+    // resolution or selection record was written over it.
+    let stored = catalogue(&harness.plane).await;
+    assert_eq!(stored["revision"].as_str(), Some(winning.as_str()));
+    let kept = draft_component(&stored, "reports");
+    assert_eq!(kept["kind"], "container");
+    assert_eq!(kept["name"], "Monthly Reports");
+    assert_eq!(kept["reference"], "registry.example.com/reports");
+    assert_eq!(kept["version"], "1.0.0");
+    assert!(kept.get("resolution").is_none(), "{kept}");
+    let activity = stored["catalogue"]["activity"].as_array().unwrap();
+    assert!(
+        activity
+            .iter()
+            .all(|event| event["action"] != "Component version selected"),
+        "{activity:?}"
+    );
 }
 
 #[tokio::test]

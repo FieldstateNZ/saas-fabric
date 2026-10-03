@@ -527,17 +527,19 @@ spec:
   definitionVersion: 0
 ```
 
-**The envelope is checked first, and is storage only.** `apiVersion` and `kind`
-must be exactly `fabric.fieldstate.nz/v1` and `Catalogue`, and are checked
-before `spec` is parsed, for the reason given for `kind: Client` above: a file
+**The envelope is checked first, and is storage only.** `apiVersion` must be
+`fabric.fieldstate.nz/v1` or `fabric.fieldstate.nz/v2` and `kind` exactly
+`Catalogue`, and both are checked before `spec` is parsed, for the reason given for `kind: Client` above: a file
 that is not a catalogue is told so, rather than read as a catalogue missing
 every field. The API never sends or receives the envelope. `GET /api/catalogue`
 answers the body and a revision, and its JSON did not change when the envelope
 was added. Versioning the file is what lets a later change to its shape ship
-beside `v1` rather than reinterpret documents already stored.
+beside `v1` rather than reinterpret documents already stored — which is what
+`v2` is.
 
 **`spec` is owned throughout.** Unknown keys are refused at every level. What
-each section holds, and the commands that change them, are in ADR 0021 §1.
+each section holds, and the commands that change them, are in ADR 0021 §1, and
+the command list is in [the control plane](control-plane.md#the-product-catalogue-and-client-creation).
 
 **An absent file is an empty catalogue with no revision**, and the write that
 creates it must say so with `If-None-Match: *`. The Git adapter tells an absent
@@ -559,6 +561,75 @@ with every release and every activity entry in it, and the formatting costs unde
 anything, so once the catalogue reaches that size every command is refused until
 the file is trimmed by hand — and the only things to trim are activity entries
 and releases.
+
+### `v2`: a described component
+
+[ADR 0026](../decisions/0026-a-component-describes-itself-in-an-artifact-attached-to-its-image.md)
+section 7 adds a fourth component kind, `described`, and `v2` exists only to
+carry it. **A catalogue is written at the lowest `apiVersion` that expresses
+it**, computed on every render: `v1` unless a draft or a release holds a
+described component, then `v2`. Nothing about the version is stored apart from
+the document. This build reads both, re-renders a `v2` catalogue holding no
+described component as `v1`, and refuses a described component under `v1`
+(`desired_state_invalid`, naming the component and both versions) — a hand
+edit, since this model never writes one.
+
+A described component is selected by its primary image's repository and a
+version tag, and the server records what it resolved:
+
+```yaml
+components:
+  - id: reports
+    name: Reports
+    kind: described
+    reference: ghcr.io/acme/reports       # the resolution's repository
+    version: 1.4.0                        # the resolution's version
+    required: false
+    policy: manual
+    resolution:
+      repository: ghcr.io/acme/reports
+      version: 1.4.0
+      primaryDigest: sha256:…             # the digest the tag resolved to, computed by Fabric
+      descriptorDigest: sha256:…          # the component descriptor attached to it, computed by Fabric
+      revision: 5320432…                  # the one commit every image and the descriptor name
+      resolvedAt: 1789000000              # when Fabric observed it, not a claim it is still there
+      descriptor:                         # the whole component descriptor, frozen
+        apiVersion: fabric.fieldstate.nz/v1
+        kind: Component
+        spec: { name: reports, title: Acme Reports, version: 1.4.0, images: {…}, fields: […], … }
+```
+
+**The resolution is the server's, and checked on every read.** Only selecting
+writes one (`selectComponentVersion`; see
+[the control plane](control-plane.md#selecting-a-component-version)); a save
+cannot carry it, and publishing copies it. A described component has one and no
+other kind does; `reference` and `version` must equal its repository and
+version; the frozen descriptor is validated by the rules of the version it
+records, must name that version, and must name the repository at
+`primaryDigest`. A hand edit that breaks any of these makes the whole catalogue
+unreadable — `500 desired_state_invalid` — which is the point: nothing in it
+was typed by an operator. `revision` is non-empty text of at most 256 bytes
+with no control characters, not a 40-character commit, because a repository
+with SHA-256 object names has 64-character ones.
+
+**Declared content is in effect.** The fields and Data API resources a frozen
+descriptor declares apply beside the ones the operator authored, through one
+accessor every reader uses: definition validation, the cross-application
+resource check on both sides, the runtime catalogue, and the check of a
+client's configuration. A field key or resource name in effect twice — declared
+by two components, or by a component and the operator — is refused, naming the
+key and both sources. Declared fields apply to every client of the
+application, whatever its plan grants, as authored ones do. Capabilities a
+descriptor names are needs, never a claim that anything provides them.
+
+**What an older build does.** A build that reads only `v1` refuses a catalogue
+holding a described component by naming the version it found, never by
+misreading it, and reads every other catalogue this build writes. A client
+document is not versioned by this: a client assigned a release holding a
+described component copies it, resolution included, into `spec.product`, and
+an older build refuses that document as a malformed product — an unknown
+component kind and field — rather than by version. Such a build cannot read
+that client until it is upgraded; ADR 0026's Consequences state the reach.
 
 ## Revisions
 

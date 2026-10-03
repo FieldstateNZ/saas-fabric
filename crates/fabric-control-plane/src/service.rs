@@ -16,6 +16,7 @@ mod realm_available;
 mod reconciliation_view;
 #[cfg(test)]
 mod reconciliation_view_tests;
+mod record_selection;
 mod reserved;
 mod runtime_catalogue_source;
 #[cfg(test)]

@@ -5,6 +5,7 @@
 //! `fabric-component` (ADR 0026 section 2) and are called from here, with
 //! their messages unchanged. What only the catalogue can check stays here.
 mod application;
+mod described;
 mod fields;
 mod hostname;
 mod resource;

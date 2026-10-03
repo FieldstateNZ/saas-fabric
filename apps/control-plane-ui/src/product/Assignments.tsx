@@ -3,6 +3,7 @@ import { useState } from 'react'
 import type { ApplicationRelease, AssignmentRequest, ProductApplication } from '../api/catalogue-types'
 import { Check } from './Check'
 import { ConfigurationInputs } from './ConfigurationInputs'
+import { effectiveFields } from './effective'
 import { Select } from './Select'
 
 /**
@@ -25,6 +26,10 @@ import { Select } from './Select'
  * unassigned from here — removal is refused until deprovisioning exists, so
  * the checkbox is disabled rather than merely reverted, and a note explains
  * the constraint instead of the control quietly ignoring the click.
+ *
+ * The configuration form is every field in effect in the release -- the
+ * ones its operator authored and the ones its described components declare
+ * (`effectiveFields`) -- because the server requires each of them.
  *
  * # Switching versions keeps what still applies
  *
@@ -128,7 +133,7 @@ export function Assignments({
                   />
                 </div>
                 <ConfigurationInputs
-                  fields={release.definition.fields}
+                  fields={effectiveFields(release.definition)}
                   values={assignment.configuration}
                   onChange={(configuration) => {
                     change({ ...assignment, configuration })
@@ -176,7 +181,7 @@ function retarget(
   const keptPlan = plans.find((plan) => plan.id === assignment.planId)
   const planId = keptPlan ? keptPlan.id : (plans[0]?.id ?? '')
 
-  const fieldKeys = new Set(release.definition.fields.map((field) => field.key))
+  const fieldKeys = new Set(effectiveFields(release.definition).map((field) => field.key))
   const configuration: Record<string, string> = {}
   let droppedValue = false
   for (const [key, entry] of Object.entries(assignment.configuration)) {

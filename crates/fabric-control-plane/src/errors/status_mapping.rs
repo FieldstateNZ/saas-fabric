@@ -6,6 +6,9 @@ mod codes;
 mod messages;
 mod platform;
 mod registry;
+mod selection;
+#[cfg(test)]
+mod selection_tests;
 
 use crate::ControlPlaneError;
 
@@ -64,6 +67,9 @@ impl ControlPlaneError {
             // An image registry's own failures, each with its own status and
             // reason, next door for the same reason the platform's are.
             Self::Registry(registry) => registry.status(),
+
+            // A selection's own refusals, next door for the same reason.
+            Self::Selection(selection) => selection.status(),
 
             // 428, not 400. The request is well-formed; what is missing is the
             // precondition that makes it safe to apply, and 428 is the status

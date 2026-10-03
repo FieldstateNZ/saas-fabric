@@ -1,15 +1,13 @@
 //! Application building blocks. Published snapshots never refer back to mutable drafts.
 //!
-//! Over the 120-line advisory threshold. The reason is that this is one
-//! cohesive wire-format type: an application's definition, its components,
+//! One cohesive wire-format type: an application's definition, its
 //! features, plans, navigation and published releases are the desired-state
 //! document's shape for "what an application is", validated together in
-//! `catalogue::validation::application`. Each piece is too small to justify a
-//! file of its own and too entangled with the others to split cleanly — a
-//! `ApplicationComponent` moved out of `ApplicationDefinition`, the one place
-//! that lists it, would separate a field from its type for no reader's
-//! benefit.
-use super::{ConfigurationField, ConfigurationValues};
+//! `catalogue::validation::application`. A component is the one piece with a
+//! file of its own, `component.rs`: since ADR 0026 it carries a resolution
+//! and a frozen component descriptor, which is a shape of its own, not a
+//! field of this one.
+use super::{ApplicationComponent, ConfigurationField, ConfigurationValues};
 use crate::ClientId;
 use serde::{Deserialize, Serialize};
 
@@ -40,56 +38,23 @@ pub struct ApplicationDefinition {
     pub features: Vec<ApplicationFeature>,
     /// Plans granting features.
     pub plans: Vec<ApplicationPlan>,
-    /// Per-client, non-secret configuration fields.
+    /// Per-client, non-secret configuration fields the operator authored.
+    /// Every reader of a client's fields reads
+    /// [`effective_fields`](Self::effective_fields) instead, which adds the
+    /// ones each described component declares (ADR 0026 section 8).
     pub fields: Vec<ConfigurationField>,
     /// Client shell navigation, filtered by plan.
     pub navigation: Vec<NavigationItem>,
-    /// Logical resources this application exposes through the Data API
-    /// (ADR 0023 part 3). `#[serde(default)]` lets a release stored before
+    /// Logical resources the operator authored for this application to
+    /// expose through the Data API (ADR 0023 part 3). Every reader reads
+    /// [`effective_resources`](Self::effective_resources) instead, which adds
+    /// the ones each described component declares (ADR 0026 section 8).
+    /// `#[serde(default)]` lets a release stored before
     /// this field existed parse unchanged; `skip_serializing_if` keeps it
     /// that way on the next render, rather than stamping `resources: []`
     /// onto a document this field did not touch.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub resources: Vec<super::ApplicationResource>,
-}
-/// A deployable or platform capability.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ApplicationComponent {
-    /// Stable key within its application.
-    pub id: ClientId,
-    /// Display name.
-    pub name: String,
-    /// Deployment mechanism.
-    pub kind: ComponentKind,
-    /// OCI image, chart reference, or capability name.
-    pub reference: String,
-    /// Pinned artifact version or digest; empty for platform capabilities.
-    pub version: String,
-    /// Included for every plan.
-    pub required: bool,
-    /// Automatic or manual advancement intent.
-    pub policy: UpdatePolicy,
-}
-/// Supported component categories.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum ComponentKind {
-    /// Container image.
-    Container,
-    /// Chart installation.
-    Helm,
-    /// Platform-provided service.
-    Capability,
-}
-/// How a deployable may advance.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum UpdatePolicy {
-    /// Follow the platform's approved releases.
-    Automatic,
-    /// Require an operator's decision.
-    Manual,
 }
 /// A feature implemented by one or more components.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

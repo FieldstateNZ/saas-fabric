@@ -214,6 +214,7 @@ async fn a_zero_registry_timeout_is_refused_at_startup() {
     let composed = super::compose_registries(super::RegistryComposition {
         deployment: None,
         http_timeout_seconds: 0,
+        resolution_budget_seconds: 8,
         store: Arc::new(fabric_control_plane::InMemoryRegistryStore::new()),
         secrets: Arc::new(fabric_control_plane::InMemorySecretStore::new()),
         clock: fabric_core::SystemClock::shared(),

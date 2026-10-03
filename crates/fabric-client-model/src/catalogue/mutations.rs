@@ -3,14 +3,22 @@
 //! In the 121–150 line band. The reason is `apply` itself: one `match` over
 //! every [`CatalogueCommand`] variant, because that match is exactly the
 //! place a new command is wired in, and splitting each arm into its own
-//! function would still leave this file naming all six and stitching their
+//! function would still leave this file naming all seven and stitching their
 //! results into one activity record — the coordination, not the individual
-//! arms, is what makes this one function.
+//! arms, is what makes this one function. Saving turns its request shape
+//! into a definition in `draft.rs`; selecting a component version is
+//! refused here and written by `Catalogue::select_component` in
+//! `selection.rs`, once the server has resolved it (ADR 0026 section 7).
 use super::validation::{check_cross_application_conflicts, invalid, text};
 use super::{
     Application, ApplicationDefinition, ApplicationRelease, Catalogue, CatalogueCommand, ProductActivity,
 };
 use crate::DesiredStateError;
+/// Why [`Catalogue::apply`] refuses `SelectComponentVersion`: a pure
+/// function cannot ask a registry, so the server resolves the version and
+/// writes it through [`Catalogue::select_component`].
+const RESOLVED_FIRST: &str =
+    "A component version is resolved by the server first; use Catalogue::select_component";
 impl Catalogue {
     /// Applies a command to a copy; errors leave the original snapshot unchanged.
     /// # Errors
@@ -65,9 +73,10 @@ impl Catalogue {
                     .iter_mut()
                     .find(|a| a.id == id)
                     .ok_or_else(|| invalid("Application does not exist"))?;
-                app.draft = definition;
+                app.draft = definition.into_definition(&app.draft)?;
                 ("Application draft saved", id.to_string())
             }
+            CatalogueCommand::SelectComponentVersion { .. } => return Err(invalid(RESOLVED_FIRST)),
             CatalogueCommand::PublishApplication { id, note } => {
                 text(&note, "Release note", true, 2048)?;
                 let draft = next
@@ -82,7 +91,7 @@ impl Catalogue {
                 // rule that needs the rest of the catalogue, not just this
                 // application's own draft, so it lives here rather than in
                 // `ApplicationDefinition::validate` (ADR 0023 part 3).
-                check_cross_application_conflicts(&id, &draft.resources, &next.applications)?;
+                check_cross_application_conflicts(&id, &draft.effective_resources(), &next.applications)?;
                 let app = next
                     .applications
                     .iter_mut()

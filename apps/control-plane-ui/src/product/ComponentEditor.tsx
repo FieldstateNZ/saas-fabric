@@ -1,133 +1,85 @@
-import type { ApplicationComponent } from '../api/catalogue-types'
+import type { ApplicationComponent } from '../api/component-types'
 import { Check } from './Check'
 import { Collection } from './Collection'
-import { Field } from './Field'
+import { AuthoredComponent } from './component/AuthoredComponent'
+import { DescribedComponent } from './component/DescribedComponent'
+import type { ComponentSelecting } from './component/selecting'
+import { isPending } from './draft-request'
 import { Select } from './Select'
 
-const kinds: ApplicationComponent['kind'][] = ['container', 'helm', 'capability']
+export type { ComponentSelecting } from './component/selecting'
+
+/** A new component: described, unless the operator chooses another kind (ADR 0026 section 7). */
+function created(): ApplicationComponent {
+  return {
+    id: '',
+    name: '',
+    kind: 'described',
+    reference: '',
+    version: '',
+    required: false,
+    policy: 'manual',
+  }
+}
 
 /**
- * Platform capabilities an application can declare it needs, instead of
- * shipping its own component for it.
- */
-const capabilities = [
-  'Identity',
-  'Database',
-  'Secrets',
-  'Authorization',
-  'Routing',
-  'Object storage',
-  'Messaging',
-]
-
-/**
- * Editing an application's components: containers, Helm charts, and platform
- * capabilities.
+ * Editing an application's components: described components selected from
+ * a registry, containers, Helm charts, and platform capabilities.
  *
- * A capability component has no reference to build or deploy — see
- * {@link ApplicationComponent} — so switching `kind` to `capability` resets
- * `reference` to a picked-list value instead of leaving behind an image
- * reference that no longer means anything for this kind.
+ * Each kind has its own body -- `DescribedComponent` for one selected
+ * through the picker, `AuthoredComponent` for the three authored as free
+ * text -- and what they share is here: the update policy for anything
+ * deployed, and whether every plan includes it. A described component still
+ * waiting for its version has neither yet: selecting creates it with a
+ * manual policy in no plan by default, and a value set before then would
+ * be discarded.
  */
 export function ComponentEditor({
   items,
   onChange,
+  selecting,
 }: {
   items: readonly ApplicationComponent[]
   onChange: (items: ApplicationComponent[]) => void
+  selecting: ComponentSelecting
 }) {
   return (
     <Collection<ApplicationComponent>
       title="Components"
       items={items}
       onChange={onChange}
-      label={(item) => item.name}
-      create={() => ({
-        id: '',
-        name: '',
-        kind: 'container',
-        reference: '',
-        version: '',
-        required: true,
-        policy: 'manual',
-      })}
+      label={(item) => item.name || item.id}
+      create={created}
     >
       {(item, change) => (
         <>
-          <Field
-            label="Component name"
-            required
-            value={item.name}
-            onChange={(name) => {
-              change({ ...item, name })
-            }}
-          />
-          <Field
-            label="Component ID"
-            required
-            value={item.id}
-            onChange={(id) => {
-              change({ ...item, id })
-            }}
-          />
-          <Select
-            label="Kind"
-            value={item.kind}
-            options={kinds.map((kind) => ({ value: kind, label: kind }))}
-            onChange={(value) => {
-              const kind = kinds.find((kind) => kind === value)
-              if (kind) {
-                change({ ...item, kind, reference: kind === 'capability' ? 'Identity' : '' })
-              }
-            }}
-          />
-          {item.kind === 'capability' ? (
+          {item.kind === 'described' ? (
+            <DescribedComponent item={item} change={change} selecting={selecting} />
+          ) : (
+            <AuthoredComponent item={item} change={change} selecting={selecting} />
+          )}
+          {!isPending(item) && item.kind !== 'capability' && (
             <Select
-              label="Capability"
-              value={item.reference}
-              options={capabilities.map((capability) => ({ value: capability, label: capability }))}
-              onChange={(reference) => {
-                change({ ...item, reference })
+              label="Update policy"
+              value={item.policy}
+              options={[
+                { value: 'manual', label: 'Manual' },
+                { value: 'automatic', label: 'Automatic' },
+              ]}
+              onChange={(policy) => {
+                change({ ...item, policy: policy === 'automatic' ? 'automatic' : 'manual' })
               }}
             />
-          ) : (
-            <>
-              <Field
-                label={item.kind === 'helm' ? 'Chart reference' : 'Image reference'}
-                required
-                value={item.reference}
-                onChange={(reference) => {
-                  change({ ...item, reference })
-                }}
-              />
-              <Field
-                label="Version or digest"
-                value={item.version}
-                hint="Required before publishing."
-                onChange={(version) => {
-                  change({ ...item, version })
-                }}
-              />
-              <Select
-                label="Update policy"
-                value={item.policy}
-                options={[
-                  { value: 'manual', label: 'Manual' },
-                  { value: 'automatic', label: 'Automatic' },
-                ]}
-                onChange={(policy) => {
-                  change({ ...item, policy: policy === 'automatic' ? 'automatic' : 'manual' })
-                }}
-              />
-            </>
           )}
-          <Check
-            label="Required for all plans"
-            value={item.required}
-            onChange={(required) => {
-              change({ ...item, required })
-            }}
-          />
+          {!isPending(item) && (
+            <Check
+              label="Required for all plans"
+              value={item.required}
+              onChange={(required) => {
+                change({ ...item, required })
+              }}
+            />
+          )}
         </>
       )}
     </Collection>

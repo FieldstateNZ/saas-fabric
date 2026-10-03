@@ -100,4 +100,18 @@ impl ArtifactSource {
             Self::Helm { .. } => ArtifactKind::Helm,
         }
     }
+
+    /// The registry repository each image is read from, by role: an `oci`
+    /// or `described` component's pins, and `None` for a chart, which is
+    /// read from a chart repository and has no images.
+    ///
+    /// What the console shows beside a component, and what says which
+    /// registry each one is read through (ADR 0026 section 5).
+    #[must_use]
+    pub const fn image_repositories(&self) -> Option<&BTreeMap<String, String>> {
+        match self {
+            Self::Oci { repositories } | Self::Described { repositories, .. } => Some(repositories),
+            Self::Helm { .. } => None,
+        }
+    }
 }

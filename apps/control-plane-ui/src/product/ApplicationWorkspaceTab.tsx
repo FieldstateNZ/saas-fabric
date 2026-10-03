@@ -3,7 +3,8 @@ import { ApplicationDefinitionTab } from './ApplicationDefinitionTab'
 import { ApplicationEntryPointsTab } from './ApplicationEntryPointsTab'
 import { ApplicationReleasesTab } from './ApplicationReleasesTab'
 import type { ApplicationTab } from './applicationWorkspaceTabs'
-import { ComponentEditor } from './ComponentEditor'
+import { DeclaredByComponents } from './component/DeclaredByComponents'
+import { ComponentEditor, type ComponentSelecting } from './ComponentEditor'
 import { FeatureEditor } from './FeatureEditor'
 import { FieldDefinitions } from './FieldDefinitions'
 import { NavigationEditor } from './NavigationEditor'
@@ -22,6 +23,7 @@ interface ApplicationWorkspaceTabProps {
   readonly published: boolean
   readonly onPublish: () => Promise<void>
   readonly releases: readonly ApplicationRelease[]
+  readonly selecting: ComponentSelecting
 }
 
 /**
@@ -31,6 +33,11 @@ interface ApplicationWorkspaceTabProps {
  * Every editor here changes one slice of the same `draft` object — the
  * split exists so each slice has its own focused component, not because the
  * editors disagree about what they are editing.
+ *
+ * In the 121-150 line band: one `switch` over every tab is the point of the
+ * file, and the Fields and Resources tabs each gained the declared entries
+ * beside the authored ones (ADR 0026 section 8) rather than a second
+ * dispatcher.
  *
  * The `switch` has no `default` for its nine real cases, and the one it
  * does have exists only to make a tenth tab a compile error rather than a
@@ -50,6 +57,7 @@ export function ApplicationWorkspaceTab({
   published,
   onPublish,
   releases,
+  selecting,
 }: ApplicationWorkspaceTabProps) {
   switch (tab) {
     case 'Definition':
@@ -59,6 +67,7 @@ export function ApplicationWorkspaceTab({
       return (
         <ComponentEditor
           items={draft.components}
+          selecting={selecting}
           onChange={(components) => {
             onChange({ ...draft, components })
           }}
@@ -67,12 +76,15 @@ export function ApplicationWorkspaceTab({
 
     case 'Resources':
       return (
-        <ResourceEditor
-          items={draft.resources}
-          onChange={(resources) => {
-            onChange({ ...draft, resources })
-          }}
-        />
+        <>
+          <ResourceEditor
+            items={draft.resources ?? []}
+            onChange={(resources) => {
+              onChange({ ...draft, resources })
+            }}
+          />
+          <DeclaredByComponents definition={draft} what="resources" />
+        </>
       )
 
     case 'Features':
@@ -105,6 +117,7 @@ export function ApplicationWorkspaceTab({
               onChange({ ...draft, fields })
             }}
           />
+          <DeclaredByComponents definition={draft} what="fields" />
         </>
       )
 

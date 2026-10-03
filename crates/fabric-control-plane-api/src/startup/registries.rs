@@ -18,6 +18,7 @@
 //! an operator registers its host at its endpoint with a credential.
 //! Registries an operator registers are read at public addresses only.
 
+mod budget;
 mod client;
 mod composition;
 mod connector;
@@ -79,25 +80,36 @@ pub async fn compose_registries(parts: RegistryComposition) -> Result<ComposedRe
         tokio::spawn(Arc::clone(&service).restore_until_complete());
     }
 
-    Ok(ComposedRegistries { service, router })
+    Ok(ComposedRegistries {
+        service,
+        router,
+        resolution_budget: std::time::Duration::from_secs(parts.resolution_budget_seconds),
+    })
 }
 
 /// Composes the registries configuration describes, over this instance's stores.
 ///
 /// # Errors
 ///
-/// As [`compose_registries`].
+/// As [`compose_registries`], and a resolution budget that is zero or does
+/// not fit in one request between two Git calls (`budget::validate`).
 pub(super) async fn establish(
     config: &ControlPlaneAppConfig,
     stores: &InstanceStores,
     clock: &Arc<dyn Clock>,
 ) -> Result<ComposedRegistries, String> {
+    budget::validate(
+        config.registries.resolution_budget_seconds,
+        config.git_host.http_timeout_seconds,
+        config.request_timeout_seconds,
+    )?;
     compose_registries(RegistryComposition {
         deployment: config
             .platform_management
             .as_ref()
             .map(|managed| managed.registry.clone()),
         http_timeout_seconds: config.registries.http_timeout_seconds,
+        resolution_budget_seconds: config.registries.resolution_budget_seconds,
         store: Arc::clone(&stores.registries),
         secrets: Arc::clone(&stores.secrets),
         clock: Arc::clone(clock),

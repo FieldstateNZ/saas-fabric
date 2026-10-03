@@ -18,6 +18,7 @@ pub use contract::{ControlPlaneDeps, ControlPlaneServices};
 pub use platform_binding::PlatformBinding;
 pub use publication_sink::PublicationSink;
 
+use crate::resolution::ResolutionService;
 use crate::routes::control_plane_routes;
 use crate::service::{ClientService, DesiredStateCatalogueSource};
 use crate::state::ControlPlaneState;
@@ -50,6 +51,7 @@ pub fn build_control_plane(
         reserved_realms,
         reserved_client_ids,
         registries,
+        resolution,
     } = deps;
 
     let repository = &repository;
@@ -95,6 +97,11 @@ pub fn build_control_plane(
     });
     let publisher = platform.as_ref().and_then(|binding| binding.publisher.clone());
 
+    let resolution = Arc::new(ResolutionService::new(
+        resolution,
+        Arc::clone(&registries),
+        Arc::clone(&clock),
+    ));
     let service = Arc::new(ClientService::new(
         Arc::clone(repository),
         Arc::clone(&statuses),
@@ -122,6 +129,7 @@ pub fn build_control_plane(
         platform_integration,
         platform_sweeps: Arc::clone(&platform_sweeps),
         registries,
+        resolution,
     });
 
     Ok(ControlPlaneServices {

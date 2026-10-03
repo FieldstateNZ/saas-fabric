@@ -153,7 +153,8 @@ src/
                 Integrations page's Image registries section (ADR 0026)
   console/      the shell: navigation, dashboard, client directory, reconciliation
   hooks/        loading and saving for those panels
-  product/      the catalogue, application definitions and client workflows
+  product/      the catalogue, application definitions and client workflows; component/ is
+                the component editor, its version picker and declared views (ADR 0026)
   session/      sign-in: PKCE, the pending session, silent renewal
 preview/        the loopback workbench entry and proxy; not in the production build
 ```

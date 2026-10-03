@@ -2,7 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { changeCatalogue, getCatalogue } from '../api/catalogue'
 import type { CatalogueCommand, StoredCatalogue } from '../api/catalogue-types'
-import { isControlPlaneError } from '../api/errors'
+import type { SelectComponentVersion } from '../api/component-types'
+import { ControlPlaneError, isControlPlaneError } from '../api/errors'
 import { describe } from '../hooks/useClients'
 
 /** Reading and writing the product catalogue. */
@@ -39,6 +40,16 @@ export interface CatalogueState {
   readonly setCurrentPage: (label: string) => void
   /** Applies one command, conditioned on the last-read revision. Resolves to whether it was applied. */
   readonly save: (command: CatalogueCommand) => Promise<boolean>
+  /**
+   * Selects a component version (ADR 0026 section 7), conditioned on the
+   * last-read revision. Resolves to `null` once the catalogue it wrote is
+   * the one held -- which replaces the application's local draft -- or to
+   * the refusal, which the picker that asked words for itself: its answer
+   * and reason are what the operator acts on, so it is not also shown as a
+   * page-level `saveError`. A refusal that lands after the operator left
+   * the page becomes `navigatedAwayNotice`, as a save's does.
+   */
+  readonly select: (command: SelectComponentVersion) => Promise<ControlPlaneError | null>
 }
 
 /**
@@ -81,6 +92,12 @@ export interface CatalogueState {
  * changed. It does nothing for a validation failure — the same bad request
  * would just be refused again — so only a conflict sets `conflict`, and only
  * a conflict is where a caller should offer to reload.
+ *
+ * `select` shares `save`'s one write path, so a selection is conditioned on
+ * the same revision and lands in the same held catalogue; only who words its
+ * refusal differs. That is why this file sits in the 121-150 line band: the
+ * two are one write, and splitting the path from its callers would leave
+ * `saving` and the navigated-away notice owned by neither.
  *
  * `save` refuses silently — returning `false` rather than throwing — when
  * there is nothing loaded yet or a write is already in flight, so every
@@ -143,11 +160,11 @@ export function useCatalogue(): CatalogueState {
     }
   }, [generation])
 
-  const save = async (command: CatalogueCommand) => {
-    if (!value || saving) {
-      return false
-    }
-
+  /** Writes `command`; `null` once applied, or the refusal and whether the page that asked is still showing. */
+  const write = async (
+    command: CatalogueCommand,
+    revision: string | null,
+  ): Promise<{ error: unknown; here: boolean } | null> => {
     const startedOn = currentPage.current
     setSaving(true)
     setSaveError(null)
@@ -155,21 +172,42 @@ export function useCatalogue(): CatalogueState {
     setNavigatedAwayNotice(null)
 
     try {
-      const next = await changeCatalogue(command, value.revision)
-      setValue(next)
-      return true
+      setValue(await changeCatalogue(command, revision))
+      return null
     } catch (error: unknown) {
-      const message = describe(error)
-      if (currentPage.current === startedOn) {
-        setSaveError(message)
-        setConflict(isControlPlaneError(error) && error.isConflict)
-      } else {
-        setNavigatedAwayNotice(`Your change to ${startedOn} was not saved: ${message}`)
+      const here = currentPage.current === startedOn
+      if (!here) {
+        setNavigatedAwayNotice(`Your change to ${startedOn} was not saved: ${describe(error)}`)
       }
-      return false
+      return { error, here }
     } finally {
       setSaving(false)
     }
+  }
+
+  const save = async (command: CatalogueCommand) => {
+    if (!value || saving) {
+      return false
+    }
+    const refused = await write(command, value.revision)
+    if (refused?.here) {
+      setSaveError(describe(refused.error))
+      setConflict(isControlPlaneError(refused.error) && refused.error.isConflict)
+    }
+    return refused === null
+  }
+
+  const select = async (command: SelectComponentVersion) => {
+    if (!value || saving) {
+      return new ControlPlaneError(0, 'busy', 'Another change is still being saved.')
+    }
+    const refused = await write(command, value.revision)
+    if (refused === null) {
+      return null
+    }
+    return isControlPlaneError(refused.error)
+      ? refused.error
+      : new ControlPlaneError(0, 'unexpected', describe(refused.error))
   }
 
   return {
@@ -187,5 +225,6 @@ export function useCatalogue(): CatalogueState {
     clearSaveError,
     setCurrentPage,
     save,
+    select,
   }
 }

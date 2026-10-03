@@ -29,6 +29,9 @@ name and the document's size bound).
   `validate_resources(&[ApplicationResource])`; and `is_hostname`,
   `is_identifier`, re-declared over `fabric_core::naming::parse_dns_label` to
   match `Host::try_new` and `ClientId::try_new`.
+- `check_revision(value)` / `MAX_REVISION_BYTES` (256): the one rule a
+  source revision keeps, used by the release-unit rule (a revision that
+  fails it is no single revision) and by the catalogue's frozen resolution.
 - `PlatformCapability` — seven variants serialized as `Identity`,
   `Database`, `Secrets`, `Authorization`, `Routing`, `Object storage`,
   `Messaging`; `ALL`, `as_str`, `parse -> Option`.
@@ -46,7 +49,14 @@ name and the document's size bound).
   capabilities, fields, resources }`.
 - `ComponentDescriptor` — `new(spec)`, `from_json(&[u8])`,
   `from_artifact(artifact_type, &[u8])`, `validate()`, `to_json() -> Vec<u8>`,
-  `spec()`, `role_of(&Repository, &Digest) -> Option<&Role>`.
+  `spec()`, `role_of(&Repository, &Digest) -> Option<&Role>`. `Serialize`/
+  `Deserialize` as the whole envelope (`descriptor/frozen.rs`), so a
+  catalogue can freeze a copy in YAML: the envelope is checked first (a later
+  version is `UnsupportedVersion`, named), then the `spec` (buffered as a
+  `serde_norway::Value`, unknown fields refused), then `new`'s rules. A
+  duplicate key is refused by the format itself — `serde_norway` in any
+  mapping, a derived struct for a repeated field — pinned in
+  `descriptor/frozen_tests.rs`.
 - `ComponentSource` (with `ComponentSourceSpec`, `SourceImage`) —
   `from_yaml(&str)`, `spec()`, `images()` yielding `(&Role, &Repository)`,
   `render(version, &BTreeMap<Role, Digest>) -> Result<ComponentDescriptor>`.

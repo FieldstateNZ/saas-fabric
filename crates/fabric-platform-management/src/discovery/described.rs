@@ -11,16 +11,21 @@ mod evaluate;
 mod expectation;
 mod images;
 mod reason;
+mod standing;
+mod together;
 
 #[cfg(test)]
 mod described_tests;
 #[cfg(test)]
 pub(crate) mod fake_registry_tests;
+#[cfg(test)]
+mod together_tests;
 
 use std::collections::BTreeMap;
 
 pub use evaluate::evaluate;
 pub use reason::{InvalidReason, RevisionOf};
+pub(crate) use together::{together, Read};
 
 use crate::ReleaseUnit;
 

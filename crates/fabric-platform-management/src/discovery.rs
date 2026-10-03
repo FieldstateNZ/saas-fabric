@@ -17,6 +17,7 @@ pub use chart_history::chart_history;
 pub use chart_resolve::resolve_chart;
 pub use charts::discover_chart;
 pub use described::{evaluate, DescribedRelease, Evaluation, Expectation, InvalidReason, RevisionOf};
+pub(crate) use described::{together, Read};
 pub use described_history::{described_history, resolve_described};
 pub use described_search::discover_described;
 pub use found::{Discovery, InvalidVersion};

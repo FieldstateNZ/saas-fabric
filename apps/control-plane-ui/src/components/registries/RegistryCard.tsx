@@ -1,5 +1,6 @@
-import type { Registry } from '../../api/registry-types'
+import type { HostReads, Registry } from '../../api/registry-types'
 import type { RegistriesState } from '../../hooks/useRegistries'
+import { ComponentReadsPart } from './ComponentReads'
 import { KIND_NAMES, when } from './registry-words'
 import { RegistryCredentialPart } from './RegistryCredentialPart'
 import { RegistryRepositories } from './RegistryRepositories'
@@ -27,9 +28,12 @@ import { RemoveRegistry } from './RemoveRegistry'
 export function RegistryCard({
   registry,
   registries,
+  reads,
 }: {
   readonly registry: Registry
   readonly registries: RegistriesState
+  /** The managed components' images read through this registry's host, when observed. */
+  readonly reads: HostReads | undefined
 }) {
   const headingId = `registry-${registry.host}`
 
@@ -78,6 +82,7 @@ export function RegistryCard({
         registries={registries}
         changeable={registry.installed}
       />
+      <ComponentReadsPart host={reads} />
       <RemoveRegistry
         host={registry.host}
         held={registry.credential !== null}

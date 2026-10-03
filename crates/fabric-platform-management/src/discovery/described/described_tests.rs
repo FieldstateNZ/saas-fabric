@@ -266,6 +266,9 @@ async fn an_image_with_no_single_revision_is_named() {
         Provenance::Absent,
         Provenance::Disagreed,
         Provenance::Agreed(String::new()),
+        // Text a catalogue could not record is not a revision either.
+        Provenance::Agreed("c".repeat(257)),
+        Provenance::Agreed(format!("{COMMIT}\n")),
     ] {
         let registry = published();
         registry.untagged(
@@ -322,7 +325,12 @@ async fn another_image_whose_version_tag_moved_is_incoherent() {
 
 #[tokio::test]
 async fn a_component_descriptor_with_no_revision_is_named() {
-    for revision in [None, Some(String::new())] {
+    for revision in [
+        None,
+        Some(String::new()),
+        Some("c".repeat(257)),
+        Some(format!("{COMMIT}\n")),
+    ] {
         let registry = published();
         with_attached(&registry, |one| one.revision.clone_from(&revision));
 

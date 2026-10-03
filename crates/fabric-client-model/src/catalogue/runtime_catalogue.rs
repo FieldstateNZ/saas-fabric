@@ -64,9 +64,10 @@ pub struct CatalogueConflict {
 
 impl Catalogue {
     /// Derives the runtime catalogue: for every application, the newest
-    /// published release's resources, superseding an older release's
-    /// definition of the same name (ADR 0023 part 3). A draft never reaches
-    /// the runtime -- only published releases are read.
+    /// published release's resources in effect -- authored and declared by
+    /// its described components alike (ADR 0026 section 8) -- superseding an
+    /// older release's definition of the same name (ADR 0023 part 3). A
+    /// draft never reaches the runtime -- only published releases are read.
     ///
     /// Pure and cheap enough to call on every read: nothing is cached, so a
     /// console showing this panel always sees what publishing again would
@@ -86,7 +87,7 @@ impl Catalogue {
                 continue;
             };
 
-            for resource in release.definition.resources.clone() {
+            for resource in release.definition.effective_resources() {
                 let (name, definition) = resource.into_definition();
 
                 if let Some(existing) = resources.get(&name) {

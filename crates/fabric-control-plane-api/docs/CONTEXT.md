@@ -40,9 +40,13 @@ testable.
   config or a zero interval spawns nothing, the first tick is immediate, a
   failed pass never stops the loop, nor does a panicking one -- see
   "Design notes" for the mechanism.
-- `config::RegistriesConfig { http_timeout_seconds }` (`[registries]`,
-  default 10, zero refused at startup): the one setting for registries an
-  operator registers; which registries exist is operator-managed state.
+- `config::RegistriesConfig { http_timeout_seconds, resolution_budget_seconds }`
+  (`[registries]`, defaults 10 and 8, zero refused at startup): the settings
+  for registries an operator registers; which registries exist is
+  operator-managed state. `startup/registries/budget.rs` refuses a budget
+  where `git_host.http_timeout_seconds` + budget + `git_host.http_timeout_seconds`
+  is not below `request_timeout_seconds` (a selection's Git read, resolution
+  and Git write).
 - `startup::{compose_registries, RegistryComposition, ComposedRegistries}`:
   builds the `fabric_registry::Registries` router (the deployment's registry
   from `[platform_management.registry]`, anonymous, `Any` addresses,
@@ -55,7 +59,9 @@ testable.
   other endpoint. The credential's refusal mark is handed to the adapter
   (`sharing_refusal`). Restores at startup, never fatally, and when a store
   did not answer spawns `restore_until_complete`. The same router is
-  Platform Management's `Registry`. The console workbench composes it over
+  Platform Management's `Registry`, and — through
+  `ComposedRegistries::resolution()` with the budget — the catalogue's
+  selection's (`ControlPlaneDeps.resolution`). The console workbench composes it over
   in-memory stores.
 - `telemetry::init`.
 

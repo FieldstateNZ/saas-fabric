@@ -91,6 +91,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let registries = compose_registries(RegistryComposition {
         deployment: None,
         http_timeout_seconds: 10,
+        resolution_budget_seconds: 8,
         store: Arc::new(InMemoryRegistryStore::new()),
         secrets: Arc::new(InMemorySecretStore::new()),
         clock: SystemClock::shared(),
@@ -114,6 +115,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             // protect a name against — an empty set is honest, not a gap.
             reserved_realms: std::collections::BTreeSet::new(),
             reserved_client_ids: std::collections::BTreeSet::new(),
+            resolution: registries.resolution(),
             registries: registries.service,
         },
     )?;

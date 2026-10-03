@@ -83,6 +83,42 @@ this one's ports; only the composition root sees them.
   Routes in `routes/registries.rs`; change handlers take their extractors as
   `Result` and audit a refusal through `handlers/registries/admitted.rs`;
   audit `control_plane.audit.registry` (S14); restore warnings W6, W7.
+  `RegistryService::registered_for(primary)` (`service/registered.rs`) is
+  every registered repository, read once, for a selection to be held to —
+  `None` for an unregistered primary, and `Unavailable` / `EndpointDiffers`
+  for a primary whose registry is not being read through, as `versions()`.
+  `GET /api/integrations/registries/reads` (`handlers/registries/list.rs`
+  `registry_reads`, view in `reads.rs`, per-image `ReadBy` in `read_by.rs`):
+  `notManaged`, `unavailable { code }`, or `observed { hosts }` — per host,
+  `registered`, `installed`, `deployment`, and each managed image with
+  whether its repository is registered there and `read`: `credential`,
+  `anonymous`, `credentialRefused` or `notRead` — computed from
+  `PlatformManagement::image_repositories` (desired state only, components
+  read concurrently) and the records, asking no registry. The listing
+  itself reads no desired state, so the version picker never waits on it.
+- Selecting a component version (ADR 0026 section 7): `resolution.rs` +
+  `resolution/*`. `ResolutionParts { registry: Arc<dyn Registry>, budget:
+  Duration }` is `ControlPlaneDeps.resolution` (the composition root hands
+  the same `Registries` router Platform Management reads through);
+  `ResolutionService::resolve(repository, version)`, all under
+  `tokio::time::timeout(budget)` — the store read included; the deadline
+  drops every read in flight — refuses an unregistered primary before any
+  read, then runs `evaluate` with `Expectation::Registered`, and answers a
+  `ComponentResolution`
+  stamped by the clock. `POST /api/catalogue` routes `SelectComponentVersion`
+  to `handlers/select_component.rs`: `ClientService::catalogue_at(expected)`
+  (a `CatalogueRead`: the catalogue and the repository handle it came from,
+  which the write goes to),
+  `resolution::selectable` (application exists, not a capability), `resolve`,
+  then `ClientService::record_selection` (the pure `select_component`, saved by
+  `CatalogueRead::save` exactly as `change_catalogue` saves). Refusals are
+  `SelectionRefusal` inside `ControlPlaneError::Selection` (codes in
+  `errors/status_mapping/selection.rs`; `component_version_unusable`'s body
+  adds `answer` and `reason`); registry failures stay `RegistryFailure`
+  (`Refused` 502, `Unavailable` 503, the deadline included). Audit
+  `control_plane.audit.component_selected` (S15), refusals included.
+  `GET /api/platform` component rows carry `images` (role → repository,
+  `null` for a chart).
 
 ## Hard invariants — do not break
 

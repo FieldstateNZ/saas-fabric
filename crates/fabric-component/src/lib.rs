@@ -57,6 +57,6 @@ pub use errors::ContractError;
 pub use fields::{ConfigurationField, FieldKind};
 pub use resource::ApplicationResource;
 pub use validation::{
-    check_key, check_value, is_hostname, is_identifier, is_timezone, text, unique, validate_fields,
-    validate_resources,
+    check_key, check_revision, check_value, is_hostname, is_identifier, is_timezone, text, unique,
+    validate_fields, validate_resources, MAX_REVISION_BYTES,
 };

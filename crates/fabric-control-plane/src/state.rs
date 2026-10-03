@@ -101,6 +101,11 @@ pub(crate) struct ControlPlaneState {
     /// The image registries operators register. Not optional: registries
     /// exist whether or not Platform Management is configured.
     pub(crate) registries: Arc<crate::RegistryService>,
+
+    /// Resolves a selected component version against the registries: the
+    /// one thing here that reads a registry for a catalogue write, kept out
+    /// of [`ClientService`] (ADR 0026 section 7).
+    pub(crate) resolution: Arc<crate::resolution::ResolutionService>,
 }
 
 impl ControlPlaneState {

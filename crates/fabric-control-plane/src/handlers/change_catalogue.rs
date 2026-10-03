@@ -5,6 +5,7 @@ use axum::Json;
 use fabric_client_model::catalogue::{CatalogueCommand, StoredCatalogue};
 use http::HeaderMap;
 
+use super::select_component::{select_component, Selection};
 use crate::extraction::BoundedJson;
 use crate::state::ControlPlaneState;
 use crate::{preconditions, ControlPlaneError, Operator};
@@ -21,6 +22,11 @@ use crate::{preconditions, ControlPlaneError, Operator};
 /// `If-None-Match: *` is accepted here, in addition to `If-Match`, because
 /// the very first write has no prior revision to name — see
 /// [`preconditions::optional_revision`].
+///
+/// Selecting a component version takes a path of its own: the server
+/// resolves it against the registries before the catalogue's pure half
+/// writes it (ADR 0026 section 7). Every other command is applied as it
+/// always was.
 pub(crate) async fn change_catalogue(
     operator: Operator,
     State(state): State<ControlPlaneState>,
@@ -29,10 +35,32 @@ pub(crate) async fn change_catalogue(
 ) -> Result<Json<StoredCatalogue>, ControlPlaneError> {
     let expected = preconditions::optional_revision(&headers)?;
 
-    Ok(Json(
-        state
-            .service
-            .change_catalogue(&operator, command, expected.as_ref())
-            .await?,
-    ))
+    let stored = match command {
+        CatalogueCommand::SelectComponentVersion {
+            id,
+            component,
+            repository,
+            version,
+        } => {
+            let selection = Selection {
+                application: id,
+                component,
+                repository,
+                version,
+            };
+            select_component(&state, &operator, &selection, expected.as_ref()).await?
+        }
+        command @ (CatalogueCommand::CreateApplication { .. }
+        | CatalogueCommand::SaveApplication { .. }
+        | CatalogueCommand::PublishApplication { .. }
+        | CatalogueCommand::SaveDefinition { .. }
+        | CatalogueCommand::SaveSettings { .. }
+        | CatalogueCommand::SaveEnvironment { .. }) => {
+            state
+                .service
+                .change_catalogue(&operator, command, expected.as_ref())
+                .await?
+        }
+    };
+    Ok(Json(stored))
 }

@@ -32,16 +32,32 @@ describe('product editors', () => {
   })
 
   it('keeps a new component open while typing its name', async () => {
+    // A new component is described and opens its picker, which lists the
+    // registries; none are registered here.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({ registries: [], deployment: null }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } },
+          ),
+        ),
+      ),
+    )
+    const selecting = { saved: [], local: [], unsaved: false, select: vi.fn(), reload: vi.fn() }
     function Editor() {
       const [items, setItems] = useState<ApplicationComponent[]>([])
-      return <ComponentEditor items={items} onChange={setItems} />
+      return <ComponentEditor items={items} onChange={setItems} selecting={selecting} />
     }
     render(<Editor />)
 
     await userEvent.click(screen.getByRole('button', { name: '+ Add component' }))
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Kind' }), 'container')
     await userEvent.type(screen.getByRole('textbox', { name: 'Component name *' }), 'Reports')
 
     expect(screen.getByRole('textbox', { name: 'Component ID *' })).toBeVisible()
+    vi.unstubAllGlobals()
   })
 
   it('uses typed configuration controls and required defaults', async () => {

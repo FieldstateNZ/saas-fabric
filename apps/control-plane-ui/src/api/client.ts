@@ -12,7 +12,7 @@
  */
 import { clearRedirectCount, isBehindGateway, redirectToGatewaySignIn } from '../session/gateway'
 import { currentToken, forgetToken } from '../session/session'
-import { ControlPlaneError } from './errors'
+import { ControlPlaneError, refusalFromBody } from './errors'
 import type {
   Candidate,
   Client,
@@ -227,11 +227,10 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
  */
 async function refusal(response: Response): Promise<ControlPlaneError> {
   try {
-    const body: unknown = await response.json()
-    const error = (body as { error?: { code?: string; message?: string } }).error
+    const known = refusalFromBody(response.status, await response.json())
 
-    if (error?.code && error.message) {
-      return new ControlPlaneError(response.status, error.code, error.message)
+    if (known !== null) {
+      return known
     }
   } catch {
     // Falls through to the status-only error below.

@@ -1,23 +1,41 @@
 //! Versioned application definitions and operator-managed product configuration.
+mod api_version;
 mod application;
 mod assignment;
 mod command;
+mod component;
+#[cfg(test)]
+mod described_tests;
+mod draft;
+mod draft_component;
+#[cfg(test)]
+mod draft_tests;
+mod effective;
+#[cfg(test)]
+mod effective_tests;
 mod fields;
 mod mutations;
 mod product;
 mod resource;
 mod runtime_catalogue;
 mod schema;
+mod selection;
+#[cfg(test)]
+mod selection_tests;
 mod validation;
 
 use crate::{ClientRevision, DesiredStateError};
 pub use application::*;
 pub use command::CatalogueCommand;
+pub use component::{ApplicationComponent, ComponentKind, ComponentResolution, UpdatePolicy};
+pub use draft::ApplicationDraft;
+pub use draft_component::{AuthoredComponent, DescribedDraft, DraftComponent};
 pub use fields::*;
 pub use product::*;
 pub use resource::ApplicationResource;
 pub use runtime_catalogue::{CatalogueConflict, DerivedCatalogue, DerivedResource};
 use schema::Envelope;
+pub use selection::ComponentSelectionError;
 use serde::{Deserialize, Serialize};
 
 /// A coherent snapshot, committed as one desired-state document.
@@ -48,7 +66,8 @@ pub struct StoredCatalogue {
 }
 impl Catalogue {
     /// Reads a persisted catalogue: checks its `apiVersion`/`kind` envelope,
-    /// then parses and validates the `spec` it wraps.
+    /// then parses the `spec` it wraps, refuses a described component under
+    /// `fabric.fieldstate.nz/v1` (naming both versions), and validates it.
     ///
     /// The envelope is checked first, and separately from `spec`, for the
     /// same reason the client document checks its own kind before parsing —
@@ -60,13 +79,16 @@ impl Catalogue {
     /// malformed or internally inconsistent definitions.
     pub fn parse(text: &str) -> Result<Self, DesiredStateError> {
         let raw: serde_norway::Value = serde_norway::from_str(text).map_err(|error| malformed(&error))?;
-        schema::check_document_kind(&raw)?;
+        let version = schema::check_document_kind(&raw)?;
         let envelope: Envelope = serde_norway::from_value(raw).map_err(|error| malformed(&error))?;
+        version.check_expresses(&envelope.spec)?;
         envelope.spec.validate()?;
         Ok(envelope.spec)
     }
     /// Serializes a validated snapshot for storage, wrapped in the same
-    /// `apiVersion`/`kind` envelope every desired-state document carries.
+    /// `apiVersion`/`kind` envelope every desired-state document carries, at
+    /// the lowest `apiVersion` that expresses it: `v2` while any draft or
+    /// release holds a described component, `v1` otherwise.
     ///
     /// The envelope is storage-only: the HTTP API's [`StoredCatalogue`]
     /// serialises the catalogue body directly, with nothing about it changed
@@ -107,7 +129,7 @@ mod tests {
         let error = Catalogue::parse(text).unwrap_err();
 
         assert!(
-            matches!(error, DesiredStateError::UnknownDocumentKind { expected, .. } if expected == "fabric.fieldstate.nz/v1/Catalogue"),
+            matches!(error, DesiredStateError::UnknownDocumentKind { expected, .. } if expected.contains("fabric.fieldstate.nz/v1/Catalogue")),
             "{error}"
         );
     }
@@ -119,7 +141,7 @@ mod tests {
         let error = Catalogue::parse(text).unwrap_err();
 
         assert!(
-            matches!(error, DesiredStateError::UnknownDocumentKind { expected, .. } if expected == "fabric.fieldstate.nz/v1/Catalogue"),
+            matches!(error, DesiredStateError::UnknownDocumentKind { expected, .. } if expected.contains("fabric.fieldstate.nz/v1/Catalogue")),
             "{error}"
         );
     }
@@ -140,12 +162,12 @@ mod tests {
 
     #[test]
     fn a_document_with_the_wrong_version_is_refused() {
-        let text = "apiVersion: fabric.fieldstate.nz/v2\nkind: Catalogue\nspec:\n  applications: []\n";
+        let text = "apiVersion: fabric.fieldstate.nz/v3\nkind: Catalogue\nspec:\n  applications: []\n";
 
         let error = Catalogue::parse(text).unwrap_err();
 
         assert!(
-            matches!(error, DesiredStateError::UnknownDocumentKind { expected, .. } if expected == "fabric.fieldstate.nz/v1/Catalogue"),
+            matches!(error, DesiredStateError::UnknownDocumentKind { expected, .. } if expected.contains("fabric.fieldstate.nz/v1/Catalogue")),
             "{error}"
         );
     }

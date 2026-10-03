@@ -32,6 +32,7 @@ function state(overrides: Partial<CatalogueState> = {}): CatalogueState {
     clearSaveError: vi.fn(),
     setCurrentPage: vi.fn(),
     save: vi.fn().mockResolvedValue(true),
+    select: vi.fn().mockResolvedValue(null),
     ...overrides,
   }
 }

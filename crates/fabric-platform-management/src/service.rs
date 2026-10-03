@@ -11,6 +11,7 @@ use fabric_core::Clock;
 mod backwards;
 mod brake;
 mod errors;
+mod images;
 mod look;
 mod messages;
 mod reconcile;

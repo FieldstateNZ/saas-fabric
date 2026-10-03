@@ -21,6 +21,8 @@ mod admitted;
 mod credential;
 mod list;
 mod path;
+mod read_by;
+mod reads;
 mod register;
 mod remove;
 mod repositories;
@@ -28,7 +30,7 @@ mod versions;
 mod view;
 
 pub(crate) use credential::{remove_registry_credential, set_registry_credential};
-pub(crate) use list::list_registries;
+pub(crate) use list::{list_registries, registry_reads};
 pub(crate) use register::register_registry;
 pub(crate) use remove::remove_registry;
 pub(crate) use repositories::{add_registry_repository, remove_registry_repository};

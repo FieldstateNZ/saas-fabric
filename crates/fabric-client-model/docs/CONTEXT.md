@@ -89,6 +89,41 @@ The control plane's desired-state model. Depends on `fabric-core`,
   `Catalogue::runtime_catalogue() -> Result<DerivedCatalogue, CatalogueConflict>`
   (`catalogue/runtime_catalogue.rs`): newest release per application,
   sorted by name, pure; `DerivedCatalogue::into_document() -> CatalogDocument`.
+- **Described components (ADR 0026 sections 7 and 8).** `ComponentKind::Described`
+  (`"described"`); `ApplicationComponent.resolution: Option<ComponentResolution>`
+  (`#[serde(default, skip_serializing_if = "Option::is_none")]`, so every
+  existing document is byte-stable). `ComponentResolution { repository,
+  version, primaryDigest, descriptorDigest, revision, resolvedAt, descriptor }`
+  (camelCase, `deny_unknown_fields`) freezes the whole `ComponentDescriptor`,
+  envelope included; `revision` is non-empty text of at most 256 bytes, not
+  forced to 40-hex. Every read and write checks: a described component has a
+  resolution and no other kind does; `reference`/`version` equal the
+  resolution's repository/version; the frozen descriptor names that version
+  and names the repository at `primaryDigest`. **A hand edit that breaks any
+  of these makes the catalogue unreadable** (`validation/described.rs`).
+- `ApplicationDefinition::{effective_fields, effective_resources}`: authored,
+  then each described component's declared ones in component order. Every
+  reader uses them: definition validation (a key/name in effect twice is
+  refused naming the key and both sources), the cross-application check on
+  both sides, `runtime_catalogue`, and `resolve`'s `values()`.
+- The catalogue is written at the lowest `apiVersion` that expresses it,
+  computed on every render (`catalogue/api_version.rs`): `v1` unless a draft
+  or release holds a described component, then `v2`. Both are read; a `v2`
+  without one re-renders as `v1`; a described component under `v1` is
+  `CatalogueMalformed`, naming both versions.
+- `SaveApplication.definition` is an `ApplicationDraft` (`catalogue/draft.rs`):
+  components are `DraftComponent`, tagged by `kind`; `container`/`helm`/
+  `capability` are today's shape, `described` is `{ id, name, kind, required,
+  policy }` and refuses anything else. `ApplicationDraft::into_definition(&stored)`
+  keeps a named described component's stored resolution, drops omitted
+  components, and refuses a described one with no stored resolution and any
+  change of kind by id.
+- `SelectComponentVersion { id, component, repository, version }` (no digest):
+  `apply` refuses it; the server resolves it and calls the pure
+  `Catalogue::select_component(application, component, resolution, operator, at)
+  -> Result<Catalogue, ComponentSelectionError>` (`catalogue/selection.rs`),
+  which implements section 7's table and answers `AlreadySelected` when the
+  component already records that descriptor digest.
 
 ## Hard invariants — do not break
 

@@ -11,7 +11,11 @@
  * can observe, is not part of this increment (see PHASE_ONE.md).
  */
 
+import type { ApplicationComponent, ApplicationDraft, SelectComponentVersion } from './component-types'
 import type { Client, Reconciliation } from './types'
+
+/** A component's shapes live in `./component-types`; this one is re-exported where it always was. */
+export type { ApplicationComponent } from './component-types'
 
 /** One field a client supplies as part of its own configuration. */
 export interface ConfigurationField {
@@ -26,24 +30,6 @@ export interface ConfigurationField {
 
 /** A set of configuration values, keyed by a field's `key`. */
 export type Values = Readonly<Record<string, string>>
-
-/**
- * One piece of an application definition: a container, a Helm chart, or a
- * capability the platform itself already provides.
- *
- * `kind: 'capability'` is never deployed — its `reference` names a platform
- * capability such as Identity or Secrets, and there is no image or chart
- * behind it for `version` or `policy` to describe.
- */
-export interface ApplicationComponent {
-  readonly id: string
-  readonly name: string
-  readonly kind: 'container' | 'helm' | 'capability'
-  readonly reference: string
-  readonly version: string
-  readonly required: boolean
-  readonly policy: 'automatic' | 'manual'
-}
 
 /** One capability an application definition offers, and what implements it. */
 export interface ApplicationFeature {
@@ -113,7 +99,12 @@ export interface ApplicationDefinition {
   readonly plans: readonly ApplicationPlan[]
   readonly fields: readonly ConfigurationField[]
   readonly navigation: readonly NavigationItem[]
-  readonly resources: readonly ApplicationResource[]
+  /**
+   * The resources the operator authored. The server omits the key when
+   * there are none, so every reader treats it as possibly absent; the ones
+   * in effect, declared ones included, are `effectiveResources`'s.
+   */
+  readonly resources?: readonly ApplicationResource[]
 }
 
 /**
@@ -209,8 +200,9 @@ export type CatalogueCommand =
   | {
       readonly action: 'saveApplication'
       readonly id: string
-      readonly definition: ApplicationDefinition
+      readonly definition: ApplicationDraft
     }
+  | SelectComponentVersion
   | { readonly action: 'publishApplication'; readonly id: string; readonly note: string }
   | { readonly action: 'saveDefinition'; readonly fields: readonly ConfigurationField[] }
   | { readonly action: 'saveSettings'; readonly settings: ConsoleSettings }

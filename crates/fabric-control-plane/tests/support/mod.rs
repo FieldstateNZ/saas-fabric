@@ -21,9 +21,10 @@ use fabric_control_plane::{
     build_control_plane, ControlPlaneConfig, ControlPlaneDeps, DesiredStateBinding, IdentityProviderFactory,
     InMemoryClientRepository, InMemoryRegistryStore, InMemorySecretStore, OperatorToken, PlatformBinding,
     PublicationSink, RegistryClient, RegistryConnection, RegistryConnector, RegistryHost, RegistryService,
-    RegistryServiceParts,
+    RegistryServiceParts, ResolutionParts,
 };
 use fabric_core::Clock;
+use fabric_platform_management::{Attached, Registry, RegistryError, Resolved};
 use fabric_reconciliation::testing::FakeIdentityProvider;
 use fabric_reconciliation::{IdentityProvider, ReconciliationStatusStore};
 use http::{header, Request, Response};
@@ -31,6 +32,7 @@ use tower::ServiceExt as _;
 
 pub mod described_registry;
 pub mod platform_fixture;
+pub mod selection;
 
 /// The operator every test authenticates as.
 pub const OPERATOR: &str = "brett@example.com";
@@ -198,13 +200,61 @@ pub const SECRET_VALUE: &str = "a-value-that-must-not-leak";
 
 /// Builds a control plane holding one client.
 pub fn control_plane() -> TestControlPlane {
-    build(None, None, None, no_registries())
+    build(None, None, None, no_registries(), no_resolution())
 }
 
 /// Builds a control plane holding one client, with `registries` behind the
 /// registry routes.
 pub fn control_plane_with_registries(registries: Arc<RegistryService>) -> TestControlPlane {
-    build(None, None, None, registries)
+    build(None, None, None, registries, no_resolution())
+}
+
+/// Builds a control plane holding one client, resolving selections through
+/// `resolution` and holding them to what `registries` has registered --
+/// and, when `platform` is given, managing it.
+pub fn control_plane_with_resolution(
+    registries: Arc<RegistryService>,
+    resolution: ResolutionParts,
+    platform: Option<PlatformBinding>,
+) -> TestControlPlane {
+    build(None, platform, None, registries, resolution)
+}
+
+/// A registry that reads nothing: every test that selects no version.
+pub fn no_resolution() -> ResolutionParts {
+    ResolutionParts {
+        registry: Arc::new(NoRegistry),
+        budget: std::time::Duration::from_secs(8),
+    }
+}
+
+/// Refuses every read.
+struct NoRegistry;
+
+#[async_trait::async_trait]
+impl Registry for NoRegistry {
+    async fn tags(&self, _repository: &str) -> Result<Vec<String>, RegistryError> {
+        Err(nothing_read())
+    }
+
+    async fn resolve(&self, _repository: &str, _reference: &str) -> Result<Option<Resolved>, RegistryError> {
+        Err(nothing_read())
+    }
+
+    async fn component_descriptor(
+        &self,
+        _repository: &str,
+        _subject: &str,
+    ) -> Result<Attached, RegistryError> {
+        Err(nothing_read())
+    }
+}
+
+/// What [`NoRegistry`] answers.
+fn nothing_read() -> RegistryError {
+    RegistryError::Refused {
+        detail: "this harness reads no registry".to_owned(),
+    }
 }
 
 /// A registry service that can build no client: every test that is not
@@ -245,13 +295,14 @@ pub fn control_plane_with_identity_provider(provider: Arc<FakeIdentityProvider>)
         None,
         None,
         no_registries(),
+        no_resolution(),
     )
 }
 
 /// Builds a control plane with a platform bound, for tests that drive
 /// `/api/platform/*` against something other than "nothing is managed".
 pub fn control_plane_with_platform(platform: PlatformBinding) -> TestControlPlane {
-    build(None, Some(platform), None, no_registries())
+    build(None, Some(platform), None, no_registries(), no_resolution())
 }
 
 /// Builds a control plane with a platform bound *and* somewhere to publish
@@ -259,7 +310,7 @@ pub fn control_plane_with_platform(platform: PlatformBinding) -> TestControlPlan
 /// `publication` row `GET /api/platform` renders (ADR 0023 part 4) against
 /// something other than "nothing is configured".
 pub fn control_plane_with_publication(platform: PlatformBinding, sink: PublicationSink) -> TestControlPlane {
-    build(None, Some(platform), Some(sink), no_registries())
+    build(None, Some(platform), Some(sink), no_registries(), no_resolution())
 }
 
 /// Shared by every constructor above; only what lends the identity
@@ -270,6 +321,7 @@ fn build(
     platform: Option<PlatformBinding>,
     publication: Option<PublicationSink>,
     registries: Arc<RegistryService>,
+    resolution: ResolutionParts,
 ) -> TestControlPlane {
     let repository = Arc::new(InMemoryClientRepository::new());
     let revision = repository
@@ -317,6 +369,7 @@ fn build(
             reserved_realms,
             reserved_client_ids: [RESERVED_APPLICATION_ID.to_owned()].into_iter().collect(),
             registries,
+            resolution,
         },
     )
     .expect("the control plane must build");

@@ -2,11 +2,14 @@
 //! the version, and the images and the component descriptor name one
 //! commit.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
+
+use fabric_component::check_revision;
 
 use super::claimed::{complete, Claimed};
+use super::standing::found;
 use super::{Evaluation, InvalidReason, RevisionOf};
-use crate::{Provenance, Registry, RegistryError, Resolved};
+use crate::{Provenance, Registry, RegistryError};
 
 /// Steps 4 and 5, in four passes, in ADR 0026 section 3's order, the first
 /// failure deciding.
@@ -16,9 +19,11 @@ use crate::{Provenance, Registry, RegistryError, Resolved};
 /// 2. Step 4: every other image's repository still tags the version at that
 ///    digest — else [`Incoherent`](Evaluation::Incoherent).
 /// 3. Step 5: every image, the others in role order and then the primary,
-///    has exactly one revision — else
+///    has exactly one revision, and it is text a catalogue can record
+///    ([`check_revision`]) — else
 ///    [`NoSingleRevision`](InvalidReason::NoSingleRevision).
-/// 4. Step 5: the component descriptor names its revision — else
+/// 4. Step 5: the component descriptor names its revision, held to the
+///    same rule — else
 ///    [`NoSingleRevision`](InvalidReason::NoSingleRevision) of it — and it
 ///    and every image name one commit — else
 ///    [`Incoherent`](Evaluation::Incoherent).
@@ -30,42 +35,21 @@ use crate::{Provenance, Registry, RegistryError, Resolved};
 /// compared. It is the more basic fact, and a missing image beside a
 /// disagreeing commit is first of all a release with a hole in it.
 ///
-/// # One after another, for now
+/// The images other than the primary are asked concurrently, and the
+/// answers read in the rule's order: see [`found`].
 ///
-/// The images other than the primary are asked sequentially, two reads
-/// each. That is the obvious place to add concurrency when the rollback
-/// listing's five-version bound is measured again on this path (ADR 0026
-/// section 9): the reads are independent, and only the order in which
-/// failures are *reported* has to stay the one above.
+/// Dropping the evaluation drops every read still in flight, which is what
+/// lets the catalogue bound a selection by a deadline (ADR 0026 section 7).
 pub(super) async fn check(registry: &dyn Registry, claimed: Claimed) -> Result<Evaluation, RegistryError> {
     let images = &claimed.descriptor.spec().images;
     let others: Vec<_> = images
         .iter()
         .filter(|(role, _)| role.as_str() != claimed.primary)
         .collect();
-
-    let mut found: BTreeMap<String, Resolved> = BTreeMap::new();
-    for (role, image) in &others {
-        let exists = registry
-            .resolve(image.repository.as_str(), image.digest.as_str())
-            .await?
-            .filter(|resolved| resolved.digest == image.digest.as_str());
-        let Some(resolved) = exists else {
-            return Ok(Evaluation::Invalid(InvalidReason::MissingImage {
-                role: role.as_str().to_owned(),
-            }));
-        };
-        found.insert(role.as_str().to_owned(), resolved);
-    }
-
-    for (_, image) in &others {
-        let tagged = registry
-            .resolve(image.repository.as_str(), claimed.version.as_str())
-            .await?;
-        if tagged.is_none_or(|tagged| tagged.digest != image.digest.as_str()) {
-            return Ok(Evaluation::Incoherent);
-        }
-    }
+    let found = match found(registry, &others, claimed.version.as_str()).await? {
+        Ok(found) => found,
+        Err(decided) => return Ok(decided),
+    };
 
     let mut revisions = BTreeSet::new();
     let every = found
@@ -73,7 +57,7 @@ pub(super) async fn check(registry: &dyn Registry, claimed: Claimed) -> Result<E
         .chain(std::iter::once((&claimed.primary, &claimed.primary_image)));
     for (role, resolved) in every {
         match &resolved.provenance {
-            Provenance::Agreed(revision) if !revision.is_empty() => {
+            Provenance::Agreed(revision) if check_revision(revision).is_ok() => {
                 revisions.insert(revision.clone());
             }
             Provenance::Agreed(_) | Provenance::Absent | Provenance::Disagreed => {
@@ -82,7 +66,12 @@ pub(super) async fn check(registry: &dyn Registry, claimed: Claimed) -> Result<E
         }
     }
 
-    let Some(own) = claimed.attached.revision.clone().filter(|own| !own.is_empty()) else {
+    let Some(own) = claimed
+        .attached
+        .revision
+        .clone()
+        .filter(|own| check_revision(own).is_ok())
+    else {
         return Ok(no_single_revision(RevisionOf::ComponentDescriptor));
     };
     revisions.insert(own);

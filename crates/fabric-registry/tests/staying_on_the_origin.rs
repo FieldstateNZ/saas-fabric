@@ -167,14 +167,26 @@ async fn a_blob_redirected_to_a_location_carrying_a_credential_is_refused_before
     let RegistryError::Refused { detail } = failure else {
         panic!("expected Refused, got {failure:?}");
     };
+    // On failure, name the part of the target the detail reflects, never the
+    // value itself nor the detail that carries it.
     let port = elsewhere.base_url.rsplit(':').next().unwrap();
-    for secret in ["cdnuser", "s3cret", "X-Amz", "signedquery", "sha256:0", port] {
-        assert!(!detail.contains(secret), "{detail:?} reflects {secret}");
+    for (part, secret) in [
+        ("user", "cdnuser"),
+        ("password", "s3cret"),
+        ("query key", "X-Amz"),
+        ("query value", "signedquery"),
+        ("path", "sha256:0"),
+        ("port", port),
+    ] {
+        assert!(
+            !detail.contains(secret),
+            "the refusal reflects the redirect target's {part}"
+        );
     }
-    assert!(
-        elsewhere.requests().is_empty(),
-        "the target was never contacted: {:?}",
-        elsewhere.requests()
+    assert_eq!(
+        elsewhere.requests().len(),
+        0,
+        "the target was never contacted, yet it saw requests"
     );
     assert_eq!(
         fake.count("GET", "/blobs/"),

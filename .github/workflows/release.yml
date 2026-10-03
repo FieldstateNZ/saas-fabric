@@ -106,18 +106,32 @@ jobs:
       # and the whole is at most 128 characters — the same rule the component
       # descriptor's version follows (fabric-component's `ComponentVersion`),
       # so no tag can publish images whose descriptor would then refuse them.
+      #
+      # The workspace version is checked first, on every event, because both
+      # branches below derive an image tag from it: the published version's
+      # core must equal it, and a dev build is tagged `<workspace>-dev`. It
+      # must be a bare SemVer version core — three numeric identifiers with no
+      # leading zeros, no prerelease, no build metadata — or a workspace that
+      # drifted (`0.3`, `0.03.0`, `0.3.0-rc1`, an empty match) would reach
+      # `docker build --tag` as a tag no release could ever satisfy.
       - name: Determine the version
         id: version
         run: |
           set -euo pipefail
           workspace=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
+          core='(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)'
+
+          if ! printf '%s' "$workspace" | grep -Eq "^${core}\$"; then
+            echo "::error::workspace.package.version '${workspace}' is not a SemVer version core (MAJOR.MINOR.PATCH, no leading zeros)"
+            exit 1
+          fi
 
           if [ "${GITHUB_EVENT_NAME}" = "push" ] && [ "${GITHUB_REF_TYPE}" = "tag" ]; then
             tagged="${GITHUB_REF_NAME#v}"
             identifier='(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)'
 
             if [ "${#tagged}" -gt 128 ] || ! printf '%s' "$tagged" \
-              | grep -Eq "^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-${identifier}(\.${identifier})*)?\$"; then
+              | grep -Eq "^${core}(-${identifier}(\.${identifier})*)?\$"; then
               echo "::error::tag ${GITHUB_REF_NAME} is not a version this repository can publish"
               exit 1
             fi
@@ -298,19 +312,30 @@ jobs:
       # (specification section 25); a floating tag is how a cluster ends up
       # running something nobody chose. The commit tag is the one that answers
       # "what is actually in this image".
+      #
+      # Job outputs and matrix values reach every shell step through `env`,
+      # never by interpolation into the script, so a value is a string the
+      # shell quotes rather than text the shell parses.
       - name: Build
+        env:
+          OWNER: ${{ needs.version.outputs.owner }}
+          IMAGE: ${{ matrix.image }}
+          DOCKERFILE: ${{ matrix.dockerfile }}
+          TARGET: ${{ matrix.target }}
+          VERSION: ${{ needs.version.outputs.version }}
+          SOURCE: ${{ github.server_url }}/${{ github.repository }}
         run: |
           set -euo pipefail
-          name="${REGISTRY}/${{ needs.version.outputs.owner }}/${{ matrix.image }}"
+          name="${REGISTRY}/${OWNER}/${IMAGE}"
 
           docker build \
-            --file "${{ matrix.dockerfile }}" \
-            --target "${{ matrix.target }}" \
-            --tag "${name}:${{ needs.version.outputs.version }}" \
+            --file "${DOCKERFILE}" \
+            --target "${TARGET}" \
+            --tag "${name}:${VERSION}" \
             --tag "${name}:sha-${GITHUB_SHA}" \
-            --label "org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}" \
+            --label "org.opencontainers.image.source=${SOURCE}" \
             --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
-            --label "org.opencontainers.image.version=${{ needs.version.outputs.version }}" \
+            --label "org.opencontainers.image.version=${VERSION}" \
             .
 
       # A smoke test that the entry point is the binary and that it starts far
@@ -319,10 +344,14 @@ jobs:
       # naming something that is not there.
       - name: Check the image runs
         if: matrix.target != 'console'
+        env:
+          OWNER: ${{ needs.version.outputs.owner }}
+          IMAGE: ${{ matrix.image }}
+          VERSION: ${{ needs.version.outputs.version }}
         run: |
           set -euo pipefail
-          name="${REGISTRY}/${{ needs.version.outputs.owner }}/${{ matrix.image }}"
-          output=$(docker run --rm "${name}:${{ needs.version.outputs.version }}" /nonexistent.toml 2>&1 || true)
+          name="${REGISTRY}/${OWNER}/${IMAGE}"
+          output=$(docker run --rm "${name}:${VERSION}" /nonexistent.toml 2>&1 || true)
 
           echo "$output"
           echo "$output" | grep -q "could not start" \
@@ -334,7 +363,10 @@ jobs:
       # once the version is pushed, the leg refuses to run again (above).
       - name: Push the commit tag
         if: needs.version.outputs.publish == 'true'
-        run: docker push "${REGISTRY}/${{ needs.version.outputs.owner }}/${{ matrix.image }}:sha-${GITHUB_SHA}"
+        env:
+          OWNER: ${{ needs.version.outputs.owner }}
+          IMAGE: ${{ matrix.image }}
+        run: docker push "${REGISTRY}/${OWNER}/${IMAGE}:sha-${GITHUB_SHA}"
 
       # The digest this leg pushed, by role, for the `descriptor` job to name.
       # Read back from what the push recorded rather than resolved later from
@@ -342,9 +374,13 @@ jobs:
       # name the same image, so the digest is the version's too.
       - name: Record the pushed digest
         if: needs.version.outputs.publish == 'true'
+        env:
+          OWNER: ${{ needs.version.outputs.owner }}
+          IMAGE: ${{ matrix.image }}
+          ROLE: ${{ matrix.role }}
         run: |
           set -euo pipefail
-          name="${REGISTRY}/${{ needs.version.outputs.owner }}/${{ matrix.image }}"
+          name="${REGISTRY}/${OWNER}/${IMAGE}"
           digest=$(docker inspect --format '{{index .RepoDigests 0}}' "${name}:sha-${GITHUB_SHA}")
           digest="${digest#*@}"
           if ! printf '%s' "$digest" | grep -Eq '^sha256:[0-9a-f]{64}$'; then
@@ -352,7 +388,7 @@ jobs:
             exit 1
           fi
           mkdir -p digests
-          printf '%s' "$digest" > "digests/${{ matrix.role }}"
+          printf '%s' "$digest" > "digests/${ROLE}"
 
       # Kept as long as GitHub lets a run be re-run, because re-running the
       # `descriptor` job is the only way to finish a release whose attach step
@@ -369,7 +405,11 @@ jobs:
 
       - name: Push the version
         if: needs.version.outputs.publish == 'true'
-        run: docker push "${REGISTRY}/${{ needs.version.outputs.owner }}/${{ matrix.image }}:${{ needs.version.outputs.version }}"
+        env:
+          OWNER: ${{ needs.version.outputs.owner }}
+          IMAGE: ${{ matrix.image }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: docker push "${REGISTRY}/${OWNER}/${IMAGE}:${VERSION}"
 
   # ---------------------------------------------------------------------------
   # The component descriptor, attached last (ADR 0026 section 10)
@@ -423,11 +463,20 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      # The full-depth checkout above already fetched every branch, `main`
+      # included, so nothing is fetched again here: with no credential left in
+      # the checkout a second fetch would be anonymous, which works only while
+      # the repository is public. The ref is required to exist rather than
+      # assumed — a missing `origin/main` must fail as its own error, not read
+      # as "not an ancestor".
       - name: Require a commit on main
         run: |
           set -euo pipefail
-          git fetch --quiet origin +refs/heads/main:refs/remotes/origin/main
-          if ! git merge-base --is-ancestor "${GITHUB_SHA}" origin/main; then
+          if ! git rev-parse --verify --quiet refs/remotes/origin/main >/dev/null; then
+            echo "::error::the checkout has no refs/remotes/origin/main to test ${GITHUB_REF_NAME} against"
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "${GITHUB_SHA}" refs/remotes/origin/main; then
             echo "::error::${GITHUB_REF_NAME} is not on main, so its images get no component descriptor"
             exit 1
           fi

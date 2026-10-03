@@ -8,6 +8,13 @@ Last run: 2026-09-18, on `main` at `f4a39d1` (PR #73), covering both
 planes, on **Rust 1.98.0** — pinned in
 [`rust-toolchain.toml`](../rust-toolchain.toml) — on macOS aarch64.
 
+That headline is the historical recorded baseline for the Gates table; it is
+not a claim about later hosted checks. A newer dated branch record exists
+further down and is not folded into the Gates table:
+["Component descriptors and registries (ADR 0026, PRs #95–#99)"](#component-descriptors-and-registries-adr-0026-prs-9599),
+run 2026-09-29 on each slice's branch rather than on `main`, with its own
+counts and its own statement of what it could not prove.
+
 The version is recorded because it mattered. CI used to install `stable`
 unpinned, and 1.98's `unused_async_trait_impl` failed this increment's pull
 request on `fabric-identity`'s extractor — a file it had not touched. Both
@@ -645,9 +652,8 @@ so the table below is the only gate run these changes have had.
 
 - The evaluator the release runs, `cargo run -p fabric-registry --example
   release_unit -- ghcr.io/fieldstatenz/saas-fabric 0.3.0-preview.15`, answers
-  `undescribed` and exits 1: the image is there, and nothing is attached to it
-  yet — which is exactly the state of every release before the first one this
-  work publishes.
+  `undescribed` and exits 1: the image is there, and nothing was attached to
+  it when observed — the state a descriptor publication would change.
 - Through the console workbench's real routes: `ghcr` registered anonymously,
   its realm recorded as `https://ghcr.io`, `ghcr.io/fieldstatenz/saas-fabric`
   proven, a repository that does not exist refused `422
@@ -658,16 +664,31 @@ so the table below is the only gate run these changes have had.
   an IP refused, and one whose name resolves to loopback refused as not a
   public address.
 
-**What only the first release can show.** No component descriptor has been
-published: no tag has been cut from a commit that carries the attach job. Until
-one is, three things are unproven. ORAS 1.3.4 attaching on GHCR: no test runs
-ORAS, and the fake registry models its output rather than reproducing it byte
-for byte. The adapter and the rule together answering *complete*: each is
-tested alone, the adapter over loopback sockets and the rule against in-memory
-fakes of the registry port. And the rollback listing's five-version bound on
-the described path, which ADR 0026 §9 requires to be measured on the first
-described release, before LucentRoot is switched. The release job's own
-read-back is the first test of the second.
+**What only a real publication can show.** This change publishes no component
+descriptor, and the first descriptor publication remains unverified. Until
+real-registry publication evidence exists, three things are unproven. ORAS
+1.3.4 attaching on GHCR: no test runs ORAS, and the fake registry models its
+output rather than reproducing it byte for byte. The adapter and the rule
+together answering *complete*: each is tested alone, the adapter over loopback
+sockets and the rule against in-memory fakes of the registry port. And the
+rollback listing's five-version bound on the described path, which ADR 0026 §9
+requires to be measured on the first described release, before LucentRoot is
+switched. The release job's own read-back is one source of evidence for the
+second.
+
+To be explicit about the kind of evidence above: everything in this section
+is a pull-request check, a unit or integration test against a fake or
+loopback registry, or an anonymous *read* of GHCR. None of it attaches
+anything. A static mock cannot establish that ORAS attaches on GHCR, that the
+referrers tag schema GHCR then serves lists what was attached, or that
+Fabric's reader reads the attached document back as *complete* — those three
+require real-registry publication evidence, whether from the first release or
+from a separately approved rehearsal. Either runs under ADR 0026's rollout
+order — a verified hold on automatic updates first, a proven rollback
+candidate, then the tag under its own authorisation — and neither has been
+performed by this change; nothing in PRs #95–#99, merged or not, authorises
+one (see [packaging](architecture/packaging.md), "Before the first
+publication").
 
 ## Acting on Keycloak as the operator
 
@@ -1364,8 +1385,10 @@ Named here rather than left for a reader to discover.
 - **No component descriptor has been read from a real registry.** The
   adapter's referrers reading is proven against a fake registry on loopback
   sockets, the release-unit rule and the picker against in-memory fakes of the
-  registry port, and all of it against GHCR only as far as *undescribed*. A real *complete* waits for the first release that attaches
-  one (ADR 0026, "What is built first").
+  registry port, and all of it against GHCR only as far as *undescribed*. A
+  real *complete* needs real-registry publication evidence — a release or a
+  separately approved rehearsal that attaches one (ADR 0026, "What is built
+  first").
 - **No credentialed registry has been exercised.** Registering with a token,
   a realm refusing it, and a private repository read with it are proven
   against fakes only; the live checks above were all anonymous.

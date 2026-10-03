@@ -538,7 +538,11 @@ mark belongs to the stored credential, not to a client: adding or removing a
 repository rebuilds the client and keeps it, and a refusal while a repository
 is proven marks the client Platform Management reads through. It answers
 `502 registry_refused`, not a retryable `503`, so a sweep does not retry it into
-a locked account. A restart presents it once more.
+a locked account. The mark is this process's memory and nothing more: a
+restart clears it, so a later read or proof may present the credential again,
+and a successor pod running beside the old one during a rolling update holds
+its own mark and may present it too. The refusal's message says exactly that. Whether a refusal should outlive the
+process is not decided here.
 
 **At startup.** Every recorded registry is rebuilt, never fatally. A credential
 the secret store did not answer for is read anonymously, flagged, and asked for
@@ -563,10 +567,49 @@ repository could not be registered before it. The catalogue and
 registry may be removed while a catalogue holds components resolved from it.
 The token stays in the control plane (ADR 0026 section 6): no route, log,
 audit event or diagnostic carries it, there is no reveal, and the control plane
-writes no pull secret. ADR 0026 section 6 also requires `saas-fabric-platform`
-to deny its External Secrets policy, `platform-secrets`, the instance prefix
-before any environment stores a registry credential; nothing in this
-repository can enforce that.
+writes no pull secret. ADR 0026 section 6 also gates storing a registry
+credential in any environment on that environment's OpenBao instance passing
+the platform's
+[External Secrets runbook](https://github.com/FieldstateNZ/saas-fabric-platform/blob/main/applications/core/external-secrets/README.md#updating-the-policy-on-an-initialised-instance):
+a separately authorised review of the External Secrets identity's effective
+policy set; a read-back of the running `platform-secrets` policy, with an
+in-place write under its existing name only where that read-back shows a
+correction is needed; and, in every case, verification of the real External
+Secrets identity's capabilities against the instance partition. The running
+ACL is the boundary. Merging the denial into `saas-fabric-platform`, and the
+ConfigMap or policy reconciliation that follows a merge, proves nothing about
+it — OpenBao applies the `initialize` stanza once, at first start — so neither
+meets the gate on its own, and no wipe or rebuild of the instance is required
+or implied by it. Until that verification is recorded for an environment, no
+registry credential is stored there; this release's own component is read
+anonymously. Nothing in this repository can enforce that; the runbook is the
+one place the commands live.
+
+A second gate sits beside it. A stored registry credential is data only the
+environment's OpenBao instance holds — the control plane keeps no copy, and no
+retry brings a lost one back — so before the first registry credential is
+stored in any environment, authorised operators must have verified an
+encrypted, off-host backup of that instance's relevant data and tested
+recovery from it, and recorded both. Off-host recovery remains unproven for LucentRoot in the current rollout
+evidence; every environment needs its own recorded proof. No wipe or rebuild
+is required or implied. The linked External Secrets runbook states the backup
+and seal-key prerequisites and requires an approved restore plan; it does
+not itself prove recovery. Establish and rehearse that environment-specific
+plan before this gate is cleared.
+
+The ordering of registry changes is one process's, under a process-local
+mutex, with the record set read whole and written back whole. A desired
+replica count of one does not keep that true across an upgrade: a default
+rolling update starts a pod's successor before the pod stops, so two
+processes can each read the set and overwrite the other's write, each holding
+its own refusal marks. Before registry writes are enabled across an upgrade,
+the rollout needs a reviewed way to prevent that overlap — a single writer by
+drain and verified termination, or coordination between writers — with the
+availability it costs approved. Which is not chosen here, and a replica count
+or a drain on its own is not fencing against a pod deleted by hand or a
+partitioned node; whatever guarantee the chosen strategy claims must be
+demonstrated for it, not assumed from the count. This is an open activation
+gate, not a selected architecture.
 
 **What the console shows.** The Integrations page has an *Image registries*
 section beneath the two Git cards and apart from them, loaded by its own
@@ -1401,7 +1444,7 @@ Image registries answer codes of their own, never the platform's
 | `409 registry_credential_unreadable` | the recorded credential is not in the secret store; set it again or remove it — no retry brings it back |
 | `422 registry_not_proven` | the registry's `/v2/` endpoint did not prove |
 | `422 repository_not_readable` | "not readable through this registry": a `401`, `403` or `404`, one message |
-| `502 registry_refused` | the realm refused the credential; it is not presented again until replaced or set again |
+| `502 registry_refused` | the realm refused the credential; this process does not present it again until it is replaced or set again; a restart clears that mark, and a later read or proof may present it again |
 | `503 registry_unavailable` | the registry could not be asked; `Retry-After` |
 | `503 registries_unavailable` | the records or a credential could not be read or written now; `Retry-After` |
 | `500 registries_invalid` | the stored records do not parse; never saved over |

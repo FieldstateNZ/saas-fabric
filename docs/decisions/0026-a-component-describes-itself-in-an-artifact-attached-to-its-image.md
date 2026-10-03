@@ -346,8 +346,12 @@ registered; a later challenge naming another origin is an error that names
 both, and nothing is sent to the new one. A `Basic` challenge is honoured only
 by a `distribution` registry, and only toward its own origin. A registry that
 never challenges is read with no credential. A token request asks for no scope
-when it proves the `/v2/` endpoint, and otherwise only for
-`repository:<path>:pull`, whatever the challenge offered.
+when a credential proves the `/v2/` endpoint, and otherwise only for
+`repository:<path>:pull`, whatever the challenge offered. A proof with no
+credential ends at the challenge: a `Bearer` challenge naming a realm the
+kind's rule allows is the proof, and no token is asked for — GHCR's realm
+refuses an anonymous request for no scope while granting every public
+repository.
 
 **A credential is optional.** Reading needs none. When one is given it is a
 username and a long-lived token. It is stored in the control plane's secret
@@ -405,7 +409,19 @@ therefore be removed while a catalogue holds components resolved from it; what
 they recorded stays, and selecting another version needs the registry back.
 
 Every operator may manage registries; the control plane has no operator tiers.
-The ordering of registry changes is one process's, as every integration's is.
+The ordering of registry changes is one process's, as every integration's is:
+the set is read whole and written back whole, under a lock that one process
+holds. A replica count of one does not make that true across an upgrade — a
+default rolling update can start a pod's successor before the pod stops, so two processes
+can each read the set and overwrite the other's write, and each holds its own
+refusal marks. Before registry or catalogue writes are enabled across an
+upgrade, the rollout needs a reviewed way to prevent the overlap — a drain and
+verified termination, or coordination between writers — with the availability
+it costs approved; which one is not chosen here. A replica count or a drain on
+its own is not fencing: neither stops a pod deleted by hand or a partitioned
+node from writing. Whatever fencing or coordination guarantee the chosen
+strategy claims against those cases must be demonstrated for that strategy,
+not assumed from the count.
 Registering, replacing and removing a registry, its credential and its
 repositories — including a proof that was refused — are audit events naming the
 operator, the host, the operation and the outcome, never a username, a token or
@@ -415,12 +431,36 @@ a realm's response.
 
 A registry token stays in the control plane. No route, log, audit event,
 diagnostic or document carries it out, and the control plane writes no pull
-secret. The platform's External Secrets policy, `platform-secrets`, can today
-read every path under `secret/data/platform/`, Fabric's instance partition
-included; nothing references it, but nothing prevents it. `saas-fabric-platform`
-denies that policy `platform/saas-fabric/instances/*`, and its `check.py`
-refuses a policy or `ExternalSecret` that reaches the prefix; that lands before
-any environment stores a registry credential. How a cluster will pull a private
+secret. The platform's External Secrets policy, `platform-secrets`, is declared
+as a broad grant over `secret/data/platform/`; a grant of that breadth reaches
+Fabric's instance partition unless something narrower denies it, and what the
+running instance actually enforces is not known from this text or from the
+platform repository. `saas-fabric-platform` declares a deny for that policy on
+`platform/saas-fabric/instances/*`. Its `check.py` verifies that the
+`initialize` stanza declares that deny inside `platform-secrets` and that the
+External Secrets role binds that policy, and it refuses any `ExternalSecret`
+managed by that repository that could select a path beneath the partition
+through the platform store. It
+does not evaluate the identity's effective policy set, and it does not reject
+every effective policy that grants a deeper path. Both are defence in depth:
+the declaration is what first start writes, and the checker reads
+declarations, not the instance. **The running ACL is the boundary**, and merging
+the denial proves nothing about it. OpenBao applies the `initialize` stanza once,
+at first start, so an instance initialised before the denial still runs whatever
+policy it was given then; a more specific grant beneath the partition — in
+`platform-secrets` itself, in another policy the role binds, or in one the
+External Secrets token carries through identity or group membership — outranks
+the glob deny wherever it sits. Before any environment stores a registry
+credential, its instance passes the gate the platform's
+[External Secrets runbook](https://github.com/FieldstateNZ/saas-fabric-platform/blob/main/applications/core/external-secrets/README.md#updating-the-policy-on-an-initialised-instance)
+sets out: a separately authorised review of the identity's effective policy
+set; a read-back of the running policy, with an in-place write under its
+existing name only where that read-back shows a correction is needed; and, in
+every case, verification of the real External Secrets identity's capabilities.
+No rebuild is required or implied by this; the runbook is the one place the
+commands live. Until that gate is recorded for an environment, no registry
+credential is stored there; this release's own component is read without one,
+as the rollout says. How a cluster will pull a private
 component's images is not decided here: GHCR offers only a person's token, and
 the platform cannot generate one the way ADR 0025's credentials are generated.
 
@@ -596,10 +636,12 @@ platform that provides them. The release workflow's matrix gives each image its
   with `saas-fabric-platform`.
 - **On a tag**, the version is computed once, by a leading job every other job
   uses; each build job records the digest it pushed, and refuses to move a
-  version tag that already exists — reusing a version is not supported, so a
-  build job that pushed cannot be re-run, and a new preview is the fix; and a
-  final job, which fails rather than skips when the tagged commit is not on
-  `main`, and runs only when every earlier job succeeded:
+  version tag that already exists, failing closed when it cannot tell —
+  reusing a version is not supported, so a build job that pushed its version
+  cannot be re-run, and the next version is the fix (another preview, or for a
+  stable release a workspace version bump); and a final job, which fails rather
+  than skips when the tagged commit is not on `main`, and runs only when every
+  earlier job succeeded and the run was not cancelled:
   1. checks each tag still resolves to the digest its build recorded;
   2. renders the component descriptor from those digests with the renderer this
      repository builds;
@@ -669,16 +711,75 @@ attach step lands is the rule, not which release ships what. In this order:
    Ends — once slice 5's first release exists — in an operator registering
    `ghcr.io/fieldstatenz/saas-fabric` and its two sibling repositories and
    selecting a version. Declared fields and resources are proven by tests until a
-   component that declares them is published.
+   component that declares them is published. The registries section's
+   account of which registry each managed component is read through (section
+   5) lands here, where the platform view first carries each component's
+   repositories; slice 3 has nothing to join it against.
 5. **Publishing.** The release workflow's final job in §10, and the packaging
    documentation's fourth artifact.
 
-Then the rollout, in this order: merge the External Secrets denial; tag the
-release carrying all five; let LucentRoot advance to it through the `oci` path it
-uses today; confirm it runs (ADR 0022); measure the rollback listing's bound on
-its component descriptor; hold `saas-fabric` in the console; switch it to
-`type: described`, schema 3, in a platform pull request; resume; and let the
-next preview advance through its component descriptor.
+Then the rollout. Slices 1 to 4 are on `main` before slice 5, so the publisher
+cannot land before every reader of what it attaches. LucentRoot reads
+`saas-fabric` today as `type: oci`, schema 2, `update: automatic`, with no hold,
+and the `oci` path needs no component descriptor: the release workflow tags
+every image before its final job attaches one, so a run that fails or is
+cancelled after its images are pushed leaves a version the `oci` path would
+advance to on its own. The order below exists to make that impossible. Each
+step is recorded before the next; none is performed by this decision, and the
+tag and the promotion each carry their own authorisation. The §6 gate is
+separate from this sequence: it precedes storing a registry credential, and
+this release is required to prove itself anonymously — the final job's reader
+answers *complete* for `saas-fabric` on GHCR with no credential, as step 2
+requires — so none is stored for it. That is a fact about this release's
+public images, not about any private registry or private image.
+
+1. **Hold first.** `saas-fabric` is held in the console, and the hold is
+   verified — in desired state and in what the console reports — before the
+   first tag the release workflow would publish. Nothing after this step may
+   advance automatically.
+2. **Tag**, under the release authorisation. The workflow's final job must
+   succeed: every image at the digest its build recorded, exactly one component
+   descriptor attached, Fabric's own reader answering *complete* anonymously,
+   and the component descriptor's digest in the run's summary. A run that stops
+   short leaves tagged images not proven complete for the described path: a
+   partial publication. The hold stays, nothing is promoted, and every tag the run
+   pushed is left exactly where it is. Recovery is the final job's supported
+   descriptor-only re-run — it attaches only to digests the run recorded, and
+   treats an attachment already present as done only when it equals what it
+   would push — and only when the run's retained digest evidence and that
+   validation of the existing attachment are enough to prove the version;
+   otherwise the fix is the next version. An image build that already pushed
+   its version is never re-run, no version tag is moved, and attaching a
+   component descriptor by hand is never treated as safe.
+3. **Name the rollback candidate** before promoting, and prove it. A candidate
+   qualifies only when it is checked against what is actually persisted — the
+   catalogue's drafts and releases, and every client's frozen copy — as the
+   Consequences say, never inferred from a tag, a schema number or the fact
+   that it is running. The version LucentRoot runs now may be the candidate
+   only if that check passes for it; it is never the candidate automatically.
+   The catalogue's `v2` format and `components.yaml` schema 3 are independent
+   boundaries: step 6 activates schema 3 and nothing else, and the first `v2`
+   write — selecting a described component in any catalogue — is its own
+   activation, behind its own separately authorised gate that step 6 does not
+   define. While the rollout relies on a candidate that reads only the older
+   formats, no write may introduce a newer one: no described component is
+   selected anywhere, and the candidate is re-proven, or replaced, before
+   that gate opens.
+4. **Promote**, by an operator advancing to exactly the verified version through
+   the `oci` path, the hold still in place and the authorisation recorded.
+5. **Accept the running reader**: ADR 0022 observes the promoted digests
+   running; the rollback listing's bound is measured against this release's
+   component descriptor; the console's diagnostics read the component through
+   both lookup paths.
+6. **Activate**, in a platform pull request of its own, separately reviewed:
+   `type: described`, schema 3, verified by discovery answering *complete*.
+   Selecting a described component in a catalogue is a second activation with
+   its own rollback boundary, and is not part of this step.
+7. **Observe** described discovery, the hold still in place, for the interval
+   the activation's reviewer sets.
+8. **Resume** automatic updates only on an explicit authorisation that names
+   what was observed, and let the next preview advance through its component
+   descriptor.
 
 ## Consequences
 
@@ -706,12 +807,20 @@ next preview advance through its component descriptor.
   last, and in-product rollback of a described component offers only versions
   with a component descriptor — so it cannot reach a build that refuses them. It
   can reach one older than a *later* format change; a floor for rolling back
-  Fabric's own component is owed. Break-glass below this decision, in one commit
-  per repository: `type: oci` and schema 2 in `components.yaml`; and every
-  described component removed from the catalogue's drafts and releases, its id
-  removed from every feature that names it, the catalogue's `apiVersion` set back
-  to `fabric.fieldstate.nz/v1`, and the same components removed from every
-  client's `spec.product` — records that are otherwise never edited.
+  Fabric's own component is owed. **Two boundaries, not one.** Rolling
+  `components.yaml` back to `type: oci` and schema 2 is a platform-repository
+  edit that changes what runs; it touches neither the catalogue, whose
+  `apiVersion` stays `v2` for as long as any draft *or release* holds a
+  described component, nor the frozen copies in every client's `spec.product`.
+  Removing a described component from the current draft does not lower the
+  format. A rollback candidate is safe only when it demonstrably reads what is
+  actually persisted — the drafts, the release history and every client's
+  frozen copy — proven against those records, not inferred from an image tag
+  or a schema number. Below that floor there is no rollback, only a reviewed,
+  backed-up and rehearsed recovery of three record sets at once; release
+  history and client records are never deleted or rewritten to fit an older
+  reader. Where the floor sits once a later format change exists stays under
+  *What this does not decide*; nothing here sets it.
 - **Previews cut from a commit not on `main`** get no component descriptor, so
   once `saas-fabric` is described they are *undescribed* and are never advanced
   to or offered for rollback.
@@ -791,7 +900,9 @@ copied under another registry's host names its original registry. **Registries
 with short-lived credentials**, and **registries on private networks** an operator
 registers. **A floor for rolling back** Fabric's own component below a later
 format change. **More than one replica** of the control plane, which every
-integration's ordering assumes away. **Connector kinds**: a `Database` capability
+integration's ordering assumes away, and **how a rolling update's overlap is
+prevented or coordinated** (section 5), with the availability that costs.
+**Connector kinds**: a `Database` capability
 cannot yet say which connector it needs, and saying so is a new component
 descriptor version.
 

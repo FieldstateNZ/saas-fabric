@@ -10,8 +10,15 @@
 //! 5). Anonymous requests are unaffected. The mark belongs to the
 //! credential, shared by every client built with it through
 //! [`Credential::sharing_refusal`]: rebuilding a client for the same
-//! credential keeps it, while a new credential — like a restart — starts
-//! unmarked and is presented once more.
+//! credential keeps it, while a new credential starts unmarked.
+//!
+//! The mark is held in this process's memory and nowhere else. It is not
+//! persisted, so a restart — or a successor pod started beside this one
+//! during a rolling update — holds no mark, and a later read or proof through
+//! it may present the credential again; and two processes running at once
+//! each hold their own. The message an operator sees says exactly that much.
+//! Whether a refusal should outlive the process, and what a restart may retry
+//! into, is not decided here.
 
 use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -80,6 +87,11 @@ impl OciRegistry {
 
     /// Fails without contacting anything if the credential was refused.
     ///
+    /// The wording claims only what the mark guarantees: this process will
+    /// not present the credential again until it is replaced, and a restart
+    /// clears the mark, after which a later read or proof may present it
+    /// again. It does not promise the refusal outlives the process.
+    ///
     /// # Errors
     ///
     /// [`RegistryError::Denied`] once the realm has refused it.
@@ -87,7 +99,7 @@ impl OciRegistry {
         if self.credential_refused() {
             return Err(RegistryError::Denied {
                 detail: format!(
-                    "{operation}: the realm refused this registry's credential, which is not presented again until it is replaced"
+                    "{operation}: the realm refused this registry's credential; this process does not present it again until it is replaced; a restart clears that, and a later read or proof may present it again"
                 ),
             });
         }

@@ -46,7 +46,9 @@ function CredentialStanding({
   if (credential.refused) {
     return (
       <p className="integration__diagnostic">
-        Refused by its realm. It is not presented again until it is replaced.
+        Refused by its realm. This running control plane does not present it again until it
+        is replaced; a restart clears that refusal, and a later read or proof may present it
+        again.
       </p>
     )
   }

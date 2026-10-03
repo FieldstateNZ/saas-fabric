@@ -1,7 +1,8 @@
 # fabric-client-model — LLM context
 
-The control plane's desired-state model. Depends on `fabric-core`, `serde`,
-`serde_norway`, `thiserror`. **No I/O, no HTTP, no Git, no Keycloak.**
+The control plane's desired-state model. Depends on `fabric-core`,
+`fabric-component`, `fabric-runtime-publication`, `serde`, `serde_norway`,
+`thiserror`. **No I/O, no HTTP, no Git, no Keycloak.**
 
 ## Public surface
 
@@ -58,17 +59,32 @@ The control plane's desired-state model. Depends on `fabric-core`, `serde`,
 - `API_VERSION = "fabric.fieldstate.nz/v1"` (deprecated, still read),
   `API_VERSION_V2 = "fabric.fieldstate.nz/v2"` (written), `KIND = "Client"`.
 
-- `catalogue::ApplicationResource { name: LogicalResourceName, data_source:
-  LogicalDataSourceName, collection: CollectionName, key_field: FieldName
-  (default `id`), operations: Vec<OperationKind> (default read, list),
-  queryable_fields: Vec<FieldName> }` — camelCase, `deny_unknown_fields`;
-  `into_definition() -> (LogicalResourceName, ResourceDefinitionDocument)`
-  is field by field. `ApplicationDefinition.resources` is
-  `#[serde(default, skip_serializing_if = Vec::is_empty)]` so pre-existing
-  releases parse and re-render unchanged. Validation lives in
-  `catalogue/validation/resource.rs`: per-definition rules on every save,
-  and `check_cross_application_conflicts` at publication only (releases of
-  other applications, never their drafts).
+- `catalogue::{ApplicationResource, ConfigurationField, FieldKind}` are
+  **declared in `fabric-component`** (ADR 0026 section 2) and re-exported
+  here at their old paths, byte for byte: one declaration each, shared with
+  the component descriptor. `ApplicationResource { name: LogicalResourceName,
+  data_source: LogicalDataSourceName, collection: CollectionName, key_field:
+  FieldName (default `id`), operations: Vec<OperationKind> (default read,
+  list), queryable_fields: Vec<FieldName> }` — camelCase,
+  `deny_unknown_fields`; `into_definition() -> (LogicalResourceName,
+  ResourceDefinitionDocument)` is field by field.
+  `ApplicationDefinition.resources` is `#[serde(default, skip_serializing_if
+  = Vec::is_empty)]` so pre-existing releases parse and re-render unchanged.
+- Validation of those shapes is `fabric_component::{validate_fields,
+  check_key, check_value, is_timezone, validate_resources, text, unique}`,
+  their messages frozen as part of the catalogue's API.
+  `catalogue/validation.rs`, `validation/fields.rs` and
+  `validation/resource.rs` delegate to them; only `values()` (per-client
+  values against declared fields, via `check_value`) and
+  `check_cross_application_conflicts` (at publication only: releases of
+  other applications, never their drafts) live in this crate. Capabilities
+  parse as `fabric_component::PlatformCapability`, with the same "Unknown
+  platform capability" message. `errors/contract_error.rs` maps
+  `ContractError` to `InvalidField { field: "catalogue", detail }`.
+- `tests/catalogue_fixture.rs` and `tests/client_document_fixture.rs` hold
+  a catalogue and a client document rendered before the move, which must
+  re-render byte for byte; `tests/value_rules_agree.rs` holds
+  `fabric_component::{is_hostname, is_identifier}` to `Host` and `ClientId`.
 - `catalogue::{DerivedCatalogue, DerivedResource, CatalogueConflict}` and
   `Catalogue::runtime_catalogue() -> Result<DerivedCatalogue, CatalogueConflict>`
   (`catalogue/runtime_catalogue.rs`): newest release per application,

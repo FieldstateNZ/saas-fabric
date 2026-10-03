@@ -1,0 +1,148 @@
+apiVersion: fabric.fieldstate.nz/v2
+kind: Client
+metadata:
+  name: acme
+spec:
+  displayName: Acme
+  hosts:
+  - acme.example.com
+  identity:
+    realm: acme
+    roles:
+    - Client Realm Administrator
+    - Client Realm User
+    clients:
+    - id: reports
+      type: oidc
+      pkce: s256
+      redirect:
+        strategy: claimedHttps
+        uris:
+        - https://acme.reports.example.com/callback
+        - https://acme.example.com/reports/callback
+  product:
+    legalName: Acme Limited
+    region: au
+    timezone: Pacific/Auckland
+    definitionVersion: 1
+    configuration: {}
+    applications:
+    - applicationId: reports
+      release:
+        version: 2
+        note: Every field kind, and a restricted resource.
+        publishedAt: 1790086400
+        definition:
+          name: Reports
+          description: Scheduled reporting over a client's own data.
+          domain: '{client}.reports.example.com'
+          components:
+          - id: api
+            name: Reports API
+            kind: container
+            reference: registry.example.com/acme/reports
+            version: 1.4.0
+            required: true
+            policy: manual
+          - id: database
+            name: Database
+            kind: capability
+            reference: Database
+            version: ''
+            required: true
+            policy: automatic
+          features:
+          - id: scheduling
+            name: Scheduling
+            description: Runs reports on a schedule.
+            implementedBy:
+            - api
+            - database
+          plans:
+          - id: standard
+            name: Standard
+            description: Every feature.
+            features:
+            - scheduling
+            configuration:
+              seats: '10'
+          fields:
+          - key: team
+            label: Team
+            kind: text
+            required: true
+            default: null
+            options: []
+            description: ''
+          - key: seats
+            label: Seats
+            kind: number
+            required: false
+            default: '5'
+            options: []
+            description: How many people may sign in.
+          - key: audit
+            label: Audit
+            kind: boolean
+            required: false
+            default: 'false'
+            options: []
+            description: ''
+          - key: tier
+            label: Tier
+            kind: choice
+            required: false
+            default: gold
+            options:
+            - gold
+            - silver
+            description: ''
+          - key: portal
+            label: Portal
+            kind: hostname
+            required: false
+            default: portal.example.com
+            options: []
+            description: ''
+          - key: slug
+            label: Slug
+            kind: identifier
+            required: false
+            default: acme
+            options: []
+            description: ''
+          - key: zone
+            label: Zone
+            kind: timezone
+            required: false
+            default: Pacific/Auckland
+            options: []
+            description: ''
+          navigation:
+          - label: Reports
+            route: /reports
+            feature: scheduling
+            permission: reports.read
+          resources:
+          - name: reports
+            dataSource: primary
+            collection: reports
+            keyField: id
+            operations:
+            - read
+            - list
+            - create
+            queryableFields:
+            - id
+            - owner
+          - name: schedules
+            dataSource: primary
+            collection: schedules
+            keyField: scheduleId
+            operations:
+            - read
+            queryableFields: []
+      planId: standard
+      configuration:
+        team: finance
+    activity: []

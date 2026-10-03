@@ -56,6 +56,16 @@ fabric-fga-auth-api = { path = "crates/fabric-fga-auth-api" }
 # plane's graph.
 fabric-runtime-publication = { path = "crates/fabric-runtime-publication" }
 
+# Also in neither plane, on the same footing as fabric-runtime-publication:
+# what a component says it is (ADR 0026) -- the component descriptor, its
+# renderer, and the configuration-field, resource and capability shapes the
+# catalogue shares with it. Its only internal edges are fabric-core and
+# fabric-runtime-publication, and it has no transport, so anything outside
+# the runtime plane may depend on it; its edge to fabric-runtime-publication
+# puts it behind ADR 0018's publisher fence, which the runtime plane may not
+# cross.
+fabric-component = { path = "crates/fabric-component" }
+
 # Also in neither plane, and test-only: no [dependencies], dev-dependencies
 # only. Neither the publisher's crate nor any runtime-plane crate can host
 # the composed NDC connector acceptance test without failing an architecture

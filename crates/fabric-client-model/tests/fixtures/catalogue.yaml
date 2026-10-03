@@ -1,0 +1,173 @@
+apiVersion: fabric.fieldstate.nz/v1
+kind: Catalogue
+spec:
+  applications:
+  - id: reports
+    draft:
+      name: Reports
+      description: Scheduled reporting over a client's own data.
+      domain: '{client}.reports.example.com'
+      components:
+      - id: api
+        name: Reports API
+        kind: container
+        reference: registry.example.com/acme/reports
+        version: 1.4.0
+        required: true
+        policy: manual
+      - id: database
+        name: Database
+        kind: capability
+        reference: Database
+        version: ''
+        required: true
+        policy: automatic
+      features:
+      - id: scheduling
+        name: Scheduling
+        description: Runs reports on a schedule.
+        implementedBy:
+        - api
+        - database
+      plans:
+      - id: standard
+        name: Standard
+        description: Every feature.
+        features:
+        - scheduling
+        configuration:
+          seats: '10'
+      fields:
+      - key: team
+        label: Team
+        kind: text
+        required: true
+        default: null
+        options: []
+        description: ''
+      - key: seats
+        label: Seats
+        kind: number
+        required: false
+        default: '5'
+        options: []
+        description: How many people may sign in.
+      - key: audit
+        label: Audit
+        kind: boolean
+        required: false
+        default: 'false'
+        options: []
+        description: ''
+      - key: tier
+        label: Tier
+        kind: choice
+        required: false
+        default: gold
+        options:
+        - gold
+        - silver
+        description: ''
+      - key: portal
+        label: Portal
+        kind: hostname
+        required: false
+        default: portal.example.com
+        options: []
+        description: ''
+      - key: slug
+        label: Slug
+        kind: identifier
+        required: false
+        default: acme
+        options: []
+        description: ''
+      - key: zone
+        label: Zone
+        kind: timezone
+        required: false
+        default: Pacific/Auckland
+        options: []
+        description: ''
+      navigation:
+      - label: Reports
+        route: /reports
+        feature: scheduling
+        permission: reports.read
+      resources:
+      - name: reports
+        dataSource: primary
+        collection: reports
+        keyField: id
+        operations:
+        - read
+        - list
+        - create
+        queryableFields:
+        - id
+        - owner
+      - name: schedules
+        dataSource: primary
+        collection: schedules
+        keyField: scheduleId
+        operations:
+        - read
+        queryableFields: []
+    releases:
+    - version: 1
+      note: First release.
+      publishedAt: 1790000000
+      definition:
+        name: Reports
+        description: ''
+        domain: '{client}.reports.example.com'
+        components:
+        - id: api
+          name: Reports API
+          kind: container
+          reference: registry.example.com/acme/reports
+          version: 1.3.0
+          required: true
+          policy: manual
+        features: []
+        plans:
+        - id: standard
+          name: Standard
+          description: ''
+          features: []
+          configuration: {}
+        fields:
+        - key: team
+          label: Team
+          kind: text
+          required: true
+          default: null
+          options: []
+          description: ''
+        navigation: []
+        resources:
+        - name: reports
+          dataSource: primary
+          collection: reports
+          keyField: id
+          operations:
+          - read
+          - list
+          queryableFields: []
+  clientFields:
+  - key: region
+    label: Region
+    kind: choice
+    required: true
+    default: null
+    options:
+    - nz
+    - au
+    description: Where the client's data lives.
+  settings:
+    platformName: SaaS Fabric
+    defaultRegion: New Zealand
+    timezone: Pacific/Auckland
+  environments: []
+  activity: []
+  definitionVersion: 3

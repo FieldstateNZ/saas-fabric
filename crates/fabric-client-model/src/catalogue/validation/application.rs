@@ -2,6 +2,7 @@
 use super::{config, invalid, text, unique, validate_fields};
 use crate::catalogue::{ApplicationDefinition, ComponentKind};
 use crate::DesiredStateError;
+use fabric_component::PlatformCapability;
 impl ApplicationDefinition {
     /// Validates component, feature, plan and navigation references.
     /// # Errors
@@ -29,16 +30,7 @@ impl ApplicationDefinition {
                 256,
             )?;
             if component.kind == ComponentKind::Capability
-                && ![
-                    "Identity",
-                    "Database",
-                    "Secrets",
-                    "Authorization",
-                    "Routing",
-                    "Object storage",
-                    "Messaging",
-                ]
-                .contains(&component.reference.as_str())
+                && PlatformCapability::parse(&component.reference).is_none()
             {
                 return Err(invalid("Unknown platform capability"));
             }

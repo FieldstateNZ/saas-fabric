@@ -8,6 +8,12 @@ repository.workspace = true
 
 [dependencies]
 fabric-core.workspace = true
+# The shapes a component descriptor declares -- configuration fields,
+# application resources, platform capabilities -- are the catalogue's own,
+# declared once there with their validators (ADR 0026 section 2) and
+# re-exported here at their old paths. In neither plane, like
+# `fabric-runtime-publication` below, so the edge is legal.
+fabric-component.workspace = true
 # `PlacementClassDocument`, for `spec.data.<logical>.class` (ADR 0023 part 2).
 # One vocabulary for intent and placement: this crate's `DataIntent` reuses
 # the wire's own enum rather than declaring a third copy of the six

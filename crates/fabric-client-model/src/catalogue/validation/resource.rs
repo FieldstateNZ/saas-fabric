@@ -2,7 +2,7 @@
 //! its own, and the cross-application conflict only the whole catalogue can
 //! see.
 
-use super::{invalid, unique};
+use super::invalid;
 use crate::catalogue::{Application, ApplicationDefinition, ApplicationResource};
 use crate::{ClientId, DesiredStateError};
 
@@ -10,45 +10,14 @@ impl ApplicationDefinition {
     /// Checks this application's own resources are internally coherent:
     /// unique names, non-empty and duplicate-free operations, and
     /// duplicate-free queryable fields that include the key field whenever
-    /// the list restricts anything.
+    /// the list restricts anything -- `fabric_component::validate_resources`,
+    /// the rule a component descriptor's declared resources follow too.
     ///
     /// Run on every save, the same as the other sections' own checks --
     /// unlike [`check_cross_application_conflicts`], nothing here needs to
     /// see another application.
     pub(super) fn validate_resources(&self) -> Result<(), DesiredStateError> {
-        unique(self.resources.iter().map(|r| r.name.as_str()), "resource")?;
-
-        for resource in &self.resources {
-            if resource.operations.is_empty() {
-                return Err(invalid(format!(
-                    "Resource '{}' must permit at least one operation",
-                    resource.name
-                )));
-            }
-            unique(
-                resource.operations.iter().map(|op| op.as_str()),
-                "resource operation",
-            )?;
-            unique(
-                resource
-                    .queryable_fields
-                    .iter()
-                    .map(fabric_runtime_publication::FieldName::as_str),
-                "queryable field",
-            )?;
-            if !resource.queryable_fields.is_empty()
-                && !resource
-                    .queryable_fields
-                    .iter()
-                    .any(|field| field == &resource.key_field)
-            {
-                return Err(invalid(format!(
-                    "Resource '{}' must include its key field '{}' among its queryable fields",
-                    resource.name, resource.key_field
-                )));
-            }
-        }
-        Ok(())
+        Ok(fabric_component::validate_resources(&self.resources)?)
     }
 }
 

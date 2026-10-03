@@ -1,8 +1,15 @@
 //! The shape the console reads.
+//!
+//! Over the 120-line advisory threshold. The reason is that this is the whole
+//! of `GET /api/platform`'s response, one struct per row, and each field's
+//! documentation is the contract the console words from; the diagnostics and
+//! the publication row, which have rules of their own, are already apart.
 
+mod diagnostics;
 mod publication;
 mod render;
 
+pub(crate) use diagnostics::DiagnosticRow;
 pub(crate) use publication::{pass_outcome_word, PublicationRow};
 
 /// An environment's composition, as the console shows it.
@@ -61,7 +68,9 @@ pub struct ComponentRow {
     /// The standing decision about advancement.
     pub policy: &'static str,
 
-    /// What this component is published as: `oci` or `helm`.
+    /// What this component is published as: `oci` or `helm`. A described
+    /// component is `oci` (ADR 0026 section 9): it is images, found through
+    /// what it says it is, and a rollback restores the same exact bytes.
     ///
     /// Not "whether it can be rolled back". Both kinds can — rolling back
     /// restores an older published version — and what differs is
@@ -84,7 +93,7 @@ pub struct ComponentRow {
     /// Why advancement is paused, when it is.
     pub hold: Option<HoldRow>,
 
-    /// Versions that exist and were not selected.
+    /// Versions that exist and were not selected, each with why.
     pub diagnostics: Vec<DiagnosticRow>,
 }
 
@@ -100,19 +109,6 @@ pub struct HoldRow {
 
     /// What the operator wanted the next person to know.
     pub note: Option<String>,
-}
-
-/// A version that exists and was not selected.
-#[derive(Debug, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DiagnosticRow {
-    /// The version.
-    pub version: String,
-
-    /// `publishing` — some of its images are not there yet, and it is expected
-    /// to become available on a later pass. Or `incoherent` — its images were
-    /// built from different commits, and waiting will not fix that.
-    pub state: &'static str,
 }
 
 /// The last sweep.

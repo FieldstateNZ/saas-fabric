@@ -1,19 +1,14 @@
 //! What the console is told about a component.
 
+mod diagnostics;
 mod reconciliation;
+mod running;
 
+pub use diagnostics::Diagnostics;
 pub use reconciliation::Reconciliation;
+pub use running::Running;
 
 use crate::{ArtifactKind, ComponentDesired, Discovery, Hold, UpdatePolicy, Version};
-
-/// A running version established by independent deployment evidence.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Running {
-    /// No single healthy running version is currently established.
-    Unknown,
-    /// All active observed workloads are healthy and agree on this version.
-    Observed(String),
-}
 
 /// Whether desired state has somewhere to go.
 ///
@@ -28,21 +23,6 @@ pub enum DesiredStateStatus {
 
     /// Something newer is available.
     UpdateAvailable,
-}
-
-/// Versions that exist and were not selected, and why.
-///
-/// `not_yet` is transient — images still publishing — and is expected to
-/// empty itself. `incoherent` is not: those versions were built more than
-/// once, and no waiting fixes them. Reported so an environment jumping
-/// `preview.2` to `preview.4` can say what happened to `preview.3`.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct Diagnostics {
-    /// Still publishing.
-    pub not_yet: Vec<Version>,
-
-    /// Built from more than one commit.
-    pub incoherent: Vec<Version>,
 }
 
 /// Everything the console shows about one component.
@@ -126,6 +106,8 @@ impl ComponentStatus {
             diagnostics: Diagnostics {
                 not_yet: discovery.not_yet.clone(),
                 incoherent: discovery.incoherent.clone(),
+                undescribed: discovery.undescribed.clone(),
+                invalid: discovery.invalid.clone(),
             },
         }
     }

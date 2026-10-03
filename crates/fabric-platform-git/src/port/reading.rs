@@ -1,8 +1,10 @@
 //! Reading one component out of an environment's manifest.
 
+use std::collections::BTreeMap;
+
 use fabric_platform_management::{ArtifactSource, ComponentDesired, DesiredRevision, DesiredStateError};
 
-use crate::PlatformGitRepository;
+use crate::{ImagePin, PlatformGitRepository};
 
 impl PlatformGitRepository {
     /// Reads one component out of the environment's manifest.
@@ -45,16 +47,26 @@ impl PlatformGitRepository {
             hold: entry.hold.clone(),
             source: match &entry.artifact {
                 crate::Artifact::Oci { images, .. } => ArtifactSource::Oci {
-                    repositories: images
-                        .iter()
-                        .map(|(role, image)| (role.clone(), image.repository.clone()))
-                        .collect(),
+                    repositories: repositories(images),
                 },
                 crate::Artifact::Helm { repository, chart } => ArtifactSource::Helm {
                     repository: repository.clone(),
                     chart: chart.clone(),
                 },
+                crate::Artifact::Described { primary, images, .. } => ArtifactSource::Described {
+                    primary: primary.clone(),
+                    repositories: repositories(images),
+                },
             },
         })
     }
+}
+
+/// Images by role, as the registry repositories discovery reads: the digests
+/// and the commit are what desired state *asks for*, not where to look.
+fn repositories(images: &BTreeMap<String, ImagePin>) -> BTreeMap<String, String> {
+    images
+        .iter()
+        .map(|(role, image)| (role.clone(), image.repository.clone()))
+        .collect()
 }

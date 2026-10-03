@@ -1,8 +1,12 @@
 //! Which renderer writes a pin, and what it is allowed to write.
 
-use crate::components::{repin, retarget, Artifact, Component, Pin};
-use crate::desired::WantedVersion;
+mod images;
+
+use crate::components::{retarget, Artifact, Component, Pin};
+use crate::desired::{identity, WantedVersion};
 use crate::PlatformGitError;
+
+use images::{repin_role, unrenderable};
 
 /// Rewrites one file the way its pin says to.
 ///
@@ -32,6 +36,15 @@ use crate::PlatformGitError;
 /// `Ok(None)` means this pin has nothing to write for this release — an image
 /// the release does not carry — which is not a failure.
 ///
+/// # Written out, pair by pair
+///
+/// The release's shape is matched against the artifact first, and the pin
+/// inside each arm, with no wildcard anywhere: another artifact kind or
+/// renderer leaves a match non-exhaustive and does not compile, rather than
+/// compiling and refusing every pin at runtime until somebody noticed. A
+/// described component renders exactly as images do — the same pins, the
+/// same `repin` — because what it deploys is the same thing.
+///
 /// # Errors
 ///
 /// [`Rejected`](PlatformGitError::Rejected) if the pin names an image the
@@ -46,68 +59,52 @@ pub(super) fn render(
     pin: &Pin,
     wanted: &WantedVersion,
 ) -> Result<Option<String>, PlatformGitError> {
-    match (pin, &entry.artifact, wanted) {
-        (
-            Pin::KustomizeImage { image: role, .. },
-            Artifact::Oci { images, .. },
-            WantedVersion::Images(unit),
-        ) => {
-            // A pin naming an image the component does not publish is the
-            // manifest disagreeing with itself, and repinning anyway would
-            // write whichever entry happened to match.
-            let image = images.get(role).ok_or_else(|| PlatformGitError::Rejected {
-                detail: format!("{path} pins '{role}', which {component} does not publish"),
-            })?;
-
-            let Some(offered) = unit.images.get(role) else {
-                return Ok(None);
-            };
-
-            Ok(Some(repin(
-                text,
-                &image.repository,
-                &unit.version,
-                &offered.digest,
-            )?))
-        }
+    match (&entry.artifact, wanted) {
+        (Artifact::Oci { images, .. }, WantedVersion::Images(unit))
+        | (Artifact::Described { images, .. }, WantedVersion::Described { version: unit, .. }) => match pin {
+            Pin::KustomizeImage { image: role, .. } => repin_role(text, path, component, images, role, unit),
+            Pin::ArgoTargetRevision { .. } => Err(unrenderable(path, component, pin, &entry.artifact)),
+        },
 
         (
-            Pin::ArgoTargetRevision {
-                chart: pinned_chart,
-                repository: pinned_repository,
-                ..
-            },
             Artifact::Helm {
                 chart: published_chart,
                 repository: published_repository,
             },
             WantedVersion::Chart { version, .. },
-        ) => {
-            // The release already agrees with the artifact — decided by
-            // `identity::check_release` before this function was ever
-            // called. What is checked here is the pin itself: whether this
-            // file names the chart the component is published as, which is a
-            // fact about the manifest's own consistency and not about what
-            // any caller requested.
-            if pinned_chart != published_chart || pinned_repository != published_repository {
-                return Err(PlatformGitError::Rejected {
-                    detail: format!(
-                        "{path}: {component} is published as {published_chart} from \
-                         {published_repository}, and this pins {pinned_chart} from \
-                         {pinned_repository}"
-                    ),
-                });
+        ) => match pin {
+            Pin::ArgoTargetRevision {
+                chart: pinned_chart,
+                repository: pinned_repository,
+                ..
+            } => {
+                // The release already agrees with the artifact — decided by
+                // `identity::check_release` before this function was ever
+                // called. What is checked here is the pin itself: whether
+                // this file names the chart the component is published as,
+                // which is a fact about the manifest's own consistency and
+                // not about what any caller requested.
+                if pinned_chart != published_chart || pinned_repository != published_repository {
+                    return Err(PlatformGitError::Rejected {
+                        detail: format!(
+                            "{path}: {component} is published as {published_chart} from \
+                             {published_repository}, and this pins {pinned_chart} from \
+                             {pinned_repository}"
+                        ),
+                    });
+                }
+
+                Ok(Some(retarget(text, pinned_repository, pinned_chart, version)?))
             }
+            Pin::KustomizeImage { .. } => Err(unrenderable(path, component, pin, &entry.artifact)),
+        },
 
-            Ok(Some(retarget(text, pinned_repository, pinned_chart, version)?))
+        // Refused before any file was read; refused again rather than
+        // rendered approximately if that ever stopped being true.
+        (Artifact::Oci { .. }, WantedVersion::Chart { .. } | WantedVersion::Described { .. })
+        | (Artifact::Helm { .. }, WantedVersion::Images(_) | WantedVersion::Described { .. })
+        | (Artifact::Described { .. }, WantedVersion::Images(_) | WantedVersion::Chart { .. }) => {
+            Err(identity::mismatch(component, entry, wanted))
         }
-
-        (pin, artifact, _) => Err(PlatformGitError::Rejected {
-            detail: format!(
-                "{path} renders {} for {component}, which is published as {}",
-                pin.describe(),
-                artifact.describe()
-            ),
-        }),
     }
 }

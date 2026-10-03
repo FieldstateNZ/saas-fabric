@@ -81,7 +81,7 @@ pub struct PlatformManagementConfig {
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RegistryBinding {
-    /// Where to talk to the registry.
+    /// Where to talk to the registry: `https://` only, refused at startup otherwise.
     #[serde(default = "default_registry_base_url")]
     pub base_url: String,
 

@@ -2,7 +2,7 @@
 
 use fabric_platform_management::DesiredRevision;
 
-use crate::desired::{identity, plan, HoldChange, WantedVersion};
+use crate::desired::{apply, identity, plan, HoldChange, WantedVersion};
 use crate::host::PlatformGitRepository;
 use crate::{CommitRevision, PlatformGitError};
 
@@ -46,7 +46,7 @@ impl PlatformGitRepository {
         identity::check_release(component, entry, wanted)?;
 
         let mut changes = plan::rewrite_pins(self, &read.head, component, entry, wanted, &roots).await?;
-        plan::apply(entry, wanted);
+        apply::apply(component, entry, wanted)?;
 
         if let HoldChange::Set(hold) = hold {
             entry.hold = Some(hold.clone());

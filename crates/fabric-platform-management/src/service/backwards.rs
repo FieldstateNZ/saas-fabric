@@ -5,10 +5,14 @@
 //! from the same place. Rollback used to dispatch nowhere at all — it took the
 //! OCI repositories or refused — which is why this file did not exist.
 
+mod one;
+
+pub(super) use one::one;
+
 use crate::service::look::series_of;
 use crate::{
-    chart_history, history, resolve, resolve_chart, ArtifactSource, ChartIndex, ComponentDesired, History,
-    Registry, RegistryError, Release,
+    chart_history, described_history, history, ArtifactSource, ChartIndex, ComponentDesired, History,
+    Registry, RegistryError,
 };
 
 /// What this component could be rolled back to, whichever kind it is.
@@ -44,51 +48,17 @@ pub(super) async fn candidates(
             )
             .await
         }
-    }
-}
-
-/// Resolves the one version an operator named, whichever kind it is.
-///
-/// One version, not the listing again. Re-deriving the whole listing to check
-/// membership made an operator's click pay for five versions plus a Git write,
-/// which exceeded the request budget against a real registry and answered 504.
-///
-/// # Errors
-///
-/// [`RegistryError`] if the registry or the chart repository could not be
-/// asked. `Ok(None)` means the version is not one this component can be rolled
-/// back to, which is a different thing from not being able to find out.
-pub(super) async fn one(
-    registry: &dyn Registry,
-    charts: &dyn ChartIndex,
-    desired: &ComponentDesired,
-    wanted: &str,
-) -> Result<Option<Release>, RegistryError> {
-    // The same rule as the listing above, so the two cannot disagree about
-    // what is eligible.
-    let series = series_of(desired);
-
-    match &desired.source {
-        ArtifactSource::Oci { repositories } => {
-            resolve(
+        ArtifactSource::Described {
+            primary,
+            repositories,
+        } => {
+            described_history(
                 registry,
+                primary,
                 repositories,
                 desired.channel,
                 series,
                 &desired.version,
-                wanted,
-            )
-            .await
-        }
-        ArtifactSource::Helm { repository, chart } => {
-            resolve_chart(
-                charts,
-                repository,
-                chart,
-                desired.channel,
-                series,
-                &desired.version,
-                wanted,
             )
             .await
         }

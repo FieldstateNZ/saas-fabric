@@ -80,8 +80,12 @@ fabric-platform-git    → fabric-core
 
 fabric-platform-management → fabric-core            (the rules; no transport)
                        → fabric-runtime-publication (a data source's own sub-types)
+                       → fabric-component           (the one reader of a component
+                                                     descriptor; ADR 0026)
 
 fabric-registry        → fabric-platform-management  (implements Registry)
+                       → fabric-component            (the component descriptor's
+                                                      family and size bound)
 
 fabric-client-git      → fabric-core
                        → fabric-client-model
@@ -185,7 +189,11 @@ already follows).
 `fabric-registry` implements that port and holds no credential at all: the
 packages are public, so it exchanges an anonymous pull token and reads. A
 credential that does not exist cannot be conflated with the GitHub App that
-writes desired state, which is the boundary that matters here.
+writes desired state, which is the boundary that matters here. Its edge to
+`fabric-component` is for two facts of the component descriptor's contract —
+the artifact type family it keeps referrers of, and the size bound it reads
+up to — and never for parsing one: the bytes go back through the port
+unparsed, and `fabric-platform-management` is their one reader.
 
 The edge from `fabric-platform-git` runs the other way and is one type deep:
 an update policy is a rule before it is a field in a file, so the rules crate
@@ -308,7 +316,7 @@ fabric-component       → fabric-core
 A component descriptor (ADR 0026) is read on two sides of the graph. The
 catalogue in `fabric-client-model` — control plane — will select a described
 component and freeze what it declares; `fabric-platform-management` — in
-neither plane — will read one to decide whether a version is a release unit.
+neither plane — reads one to decide whether a version is a release unit.
 If either crate owned the shapes, the other would need an edge it cannot
 have: `fabric-platform-management` may not depend on `fabric-client-model`.
 So the shapes live in a crate of their own, on exactly the footing
@@ -333,11 +341,10 @@ are re-declared here over `fabric_core::naming` — as
 `fabric-runtime-publication` re-declares its identifiers — and a test in
 `fabric-client-model` holds the two copies to one answer.
 
-`fabric-platform-management` does not depend on it yet. It will in slice 2 of
-ADR 0026, when discovery reads a component descriptor attached to an image to
-decide what a version is, and that edge is added to the `expected` table in
-`scripts/check_architecture.py` then — never pre-authorised ahead of the code
-that needs it.
+`fabric-platform-management` depends on it since slice 2 of ADR 0026:
+discovery reads the component descriptor attached to an image to decide
+whether a version is a release unit (ADR 0026 section 3), through this crate's
+own reader, so the contract has one reader wherever it is read.
 
 ## `fabric-ndc-acceptance` is test-only, and also in neither plane
 

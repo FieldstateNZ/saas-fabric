@@ -224,6 +224,17 @@ fn images_on_two_registries_are_refused() {
     ));
 
     assert!(error.contains("one registry"), "{error}");
+    let typed = read(&example().replacen(
+        "registry.example.com/acme/reports-web",
+        "ghcr.io/acme/reports-web",
+        1,
+    ))
+    .map(|_| ())
+    .unwrap_err();
+    assert!(
+        matches!(typed, ContractError::OtherRegistry { .. }),
+        "a reader names it without parsing a message: {typed:?}"
+    );
     let port = refusal(&example().replacen(
         "registry.example.com/acme/reports-web",
         "registry.example.com:5000/acme/reports-web",

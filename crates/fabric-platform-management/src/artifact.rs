@@ -2,13 +2,15 @@
 
 use std::collections::BTreeMap;
 
-use crate::{ReleaseUnit, Version};
+mod release;
+
+pub use release::Release;
 
 /// Where a component's versions are published, in the terms discovery needs.
 ///
-/// The domain's half of the platform repository's `artifact`. Two kinds,
+/// The domain's half of the platform repository's `artifact`. Three kinds,
 /// because they are discovered differently and guarantee different things —
-/// not two shapes of one thing with fields left empty.
+/// not three shapes of one thing with fields left empty.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ArtifactSource {
     /// Container images by role, published to a registry.
@@ -38,9 +40,31 @@ pub enum ArtifactSource {
         /// The chart's name within it.
         chart: String,
     },
+
+    /// Container images by role, described by a component descriptor
+    /// attached to the primary one (ADR 0026 section 9).
+    ///
+    /// The same guarantee as [`Oci`](Self::Oci) and one more: a version is
+    /// eligible only when the component descriptor attached to the primary
+    /// image's version tag says it is this version, names exactly these
+    /// roles at these repositories, and agrees with every image on one
+    /// commit — and every image still carries the version.
+    Described {
+        /// The role whose image carries the component descriptor, and whose
+        /// repository's tags are the versions there are. One of
+        /// `repositories`' roles.
+        primary: String,
+
+        /// Registry repositories by role, as the environment pins them.
+        repositories: BTreeMap<String, String>,
+    },
 }
 
-/// Which of the two kinds a component is published as, and nothing more.
+/// Which of the two kinds of artifact a component is published as, and
+/// nothing more.
+///
+/// Two, although [`ArtifactSource`] has three: a described component is
+/// images pinned by digest, and reports [`Oci`](Self::Oci).
 ///
 /// [`ArtifactSource`] carries *where* things are published, which is what
 /// discovery needs and what nobody outside this crate should have to hold.
@@ -68,52 +92,12 @@ impl ArtifactSource {
     #[must_use]
     pub const fn kind(&self) -> ArtifactKind {
         match self {
-            Self::Oci { .. } => ArtifactKind::Oci,
+            // Images, pinned by digest: a rollback of a described component
+            // restores the same exact bytes an image rollback does, which is
+            // the whole of what the console words from this. How versions
+            // are *found* is not the console's concern.
+            Self::Oci { .. } | Self::Described { .. } => ArtifactKind::Oci,
             Self::Helm { .. } => ArtifactKind::Helm,
-        }
-    }
-}
-
-/// What an environment is asked to move to.
-///
-/// Kept separate from [`ReleaseUnit`] rather than widening it. A release unit
-/// is the OCI concept — one version published as several images that agree on
-/// their source — and a chart version is not a degenerate one of those. Making
-/// it a variant keeps the vocabulary meaning what it has always meant.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Release {
-    /// Several images, moving together.
-    Unit(ReleaseUnit),
-
-    /// A chart version, and the chart it is a version of.
-    ///
-    /// # Why the identity travels with the version
-    ///
-    /// A bare version says nothing about *what* it is a version of. Discovery
-    /// found `7.3.1` of one chart in one repository; a pin names a chart in a
-    /// repository too, and if the write does not compare them then a release
-    /// discovered from one chart can be written into a pin for another. The
-    /// number would be plausible and the software would be wrong.
-    Chart {
-        /// The chart repository this version was discovered in.
-        repository: String,
-
-        /// The chart it is a version of.
-        chart: String,
-
-        /// The chart version. Not the application version: Argo pins the
-        /// chart, and an application version is metadata beside it.
-        version: Version,
-    },
-}
-
-impl Release {
-    /// The version this release is.
-    #[must_use]
-    pub const fn version(&self) -> &Version {
-        match self {
-            Self::Unit(unit) => &unit.version,
-            Self::Chart { version, .. } => version,
         }
     }
 }

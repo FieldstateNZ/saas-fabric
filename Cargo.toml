@@ -21,6 +21,14 @@ figment = { version = "0.10", features = ["env", "toml"] }
 http = "1"
 jsonwebtoken = "9"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-native-roots"] }
+# SHA-256, for the registry adapter to hash what it reads: every digest Fabric
+# records is one it computed (ADR 0026 section 3), and only `ring::digest` is
+# used. Already in the resolved graph via the TLS stack and `jsonwebtoken`, so
+# the direct edge adds no package and no licence surface (verified at 0.17.14:
+# Apache-2.0 AND ISC, both allowed); what it avoids is a second hash
+# implementation beside the one the TLS stack already trusts. No default
+# features: hashing needs neither `alloc` nor a random source.
+ring = { version = "0.17", default-features = false }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # The maintained fork of `serde_yaml`, whose author archived it. Verified at

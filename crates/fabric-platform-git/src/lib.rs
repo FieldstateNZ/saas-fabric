@@ -68,7 +68,8 @@ mod model;
 mod port;
 
 pub use components::{
-    Artifact, Component, Desired, Hold, ImagePin, Manifest, Pin, UpdatePolicy, SCHEMA_VERSION,
+    Artifact, Component, Desired, Hold, ImagePin, Manifest, Pin, UpdatePolicy, DESCRIBED_SCHEMA_VERSION,
+    SCHEMA_VERSIONS,
 };
 pub use config::PlatformRepositoryConfig;
 pub use desired::{ComponentVersion, ImageDigest, WantedVersion};

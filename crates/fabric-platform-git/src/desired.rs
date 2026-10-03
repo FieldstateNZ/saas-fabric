@@ -1,5 +1,6 @@
 //! Moving one component's desired state, as one commit.
 
+mod apply;
 mod identity;
 mod inputs;
 mod plan;

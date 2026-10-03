@@ -92,6 +92,18 @@ this one's ports; only the composition root sees them.
 - Writing an unchanged identity returns the current state without writing: a
   no-op commit would reset a converged client to `pending` and put an empty
   change in the audit trail.
+- `GET /api/platform`'s versions-not-selected rows
+  (`handlers/platform/body/diagnostics.rs` + `diagnostics/{state,found}.rs`)
+  are `{version, state}` with a closed `DiagnosticState` — `publishing`,
+  `undescribed`, `incoherent`, `invalid` — and only `invalid` carries a
+  `reason`, `InvalidReason::code()` from `fabric-platform-management` (ADR
+  0026 section 9), and beside `unsupportedVersion` alone a `found` format
+  version (`v` and at most fifteen digits, else left out), because ADR 0026
+  section 2 has a reader name the version it found. `DiagnosticRow::every`
+  destructures `Diagnostics` so a new list cannot go unrendered. A described
+  component reports `artifact: "oci"`, and its rollback candidates
+  (`handlers/platform/rollback/candidates.rs`) name `source_revision` as an
+  image component's do — never the component descriptor's digest.
 - `audit` is a separate module from `logging` because the two have different
   audiences and retention expectations. Git history is a second copy of the
   trail, not the whole of it — a refused write leaves no commit.

@@ -1,4 +1,8 @@
 //! Reading a component's situation, and acting on it.
+//!
+//! Over the 120-line advisory threshold. The reason is that this is the
+//! service's one type, its dependencies and its module map; each thing it
+//! does already lives in a module of its own.
 
 use std::sync::Arc;
 
@@ -8,9 +12,12 @@ mod backwards;
 mod brake;
 mod errors;
 mod look;
+mod messages;
 mod reconcile;
 mod rollback;
 
+#[cfg(test)]
+mod described_service_tests;
 #[cfg(test)]
 mod service_tests;
 

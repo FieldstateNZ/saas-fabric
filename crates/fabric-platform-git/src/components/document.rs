@@ -4,8 +4,11 @@
 #[path = "document_tests.rs"]
 mod document_tests;
 
-use crate::components::{Manifest, SCHEMA_VERSION};
+mod header;
+
+use crate::components::{schema, Manifest, SCHEMA_VERSIONS};
 use crate::PlatformGitError;
+use header::header_of;
 
 /// A manifest, and the header it was found under.
 ///
@@ -46,7 +49,8 @@ impl Document {
     /// # Errors
     ///
     /// Returns [`PlatformGitError::Rejected`] if the document does not parse,
-    /// or declares a schema version this crate was not written against.
+    /// declares a schema version this crate was not written against, or
+    /// uses what its own version does not have — see `schema::check`.
     pub(crate) fn parse(text: &str) -> Result<Self, PlatformGitError> {
         // The version first, on its own, before anything expects a field to be
         // where this build puts it.
@@ -61,11 +65,12 @@ impl Document {
                 detail: format!("the components manifest could not be read: {error}"),
             })?;
 
-        if declared.schema_version != SCHEMA_VERSION {
+        if !SCHEMA_VERSIONS.contains(&declared.schema_version) {
             return Err(PlatformGitError::Rejected {
                 detail: format!(
-                    "the components manifest declares schemaVersion {}, and this reads {SCHEMA_VERSION}",
-                    declared.schema_version
+                    "the components manifest declares schemaVersion {}, and this reads {}",
+                    declared.schema_version,
+                    schema::readable()
                 ),
             });
         }
@@ -74,6 +79,7 @@ impl Document {
             serde_norway::from_str(text).map_err(|error| PlatformGitError::Rejected {
                 detail: format!("the components manifest could not be read: {error}"),
             })?;
+        schema::check(&manifest)?;
 
         Ok(Self {
             header: header_of(text),
@@ -96,37 +102,4 @@ impl Document {
 
         Ok(format!("{}{body}", self.header))
     }
-}
-
-/// The leading comment block, including any document separator.
-///
-/// Stops at the first line that is content. A blank line inside the comment
-/// block is kept, because a header written in paragraphs should stay in
-/// paragraphs; a blank line *after* it is not, because the renderer supplies
-/// its own layout below.
-fn header_of(text: &str) -> String {
-    let mut header = String::new();
-    let mut pending_blanks = String::new();
-
-    for line in text.lines() {
-        let trimmed = line.trim();
-
-        if trimmed.is_empty() {
-            pending_blanks.push_str(line);
-            pending_blanks.push('\n');
-            continue;
-        }
-
-        if trimmed.starts_with('#') || trimmed == "---" {
-            header.push_str(&pending_blanks);
-            pending_blanks.clear();
-            header.push_str(line);
-            header.push('\n');
-            continue;
-        }
-
-        break;
-    }
-
-    header
 }

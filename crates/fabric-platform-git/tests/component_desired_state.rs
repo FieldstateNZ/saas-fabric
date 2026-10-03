@@ -730,7 +730,9 @@ async fn an_unknown_component_or_environment_is_refused() {
 
 #[tokio::test]
 async fn a_manifest_from_a_newer_schema_is_refused_rather_than_guessed_at() {
-    let manifest = MANIFEST_TEXT.replace("schemaVersion: 2", "schemaVersion: 3");
+    // Schema 3 is read too (ADR 0026 section 9); the first one this build was
+    // not written against is 4.
+    let manifest = MANIFEST_TEXT.replace("schemaVersion: 2", "schemaVersion: 4");
     let host = FakePlatformHost::start(&[
         (MANIFEST, &manifest),
         (RUNTIME_OVERLAY, RUNTIME_OVERLAY_TEXT),

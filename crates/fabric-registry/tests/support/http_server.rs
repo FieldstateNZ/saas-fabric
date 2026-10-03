@@ -20,13 +20,18 @@ pub struct RecordedRequest {
 
     /// The `Authorization` header, if one was sent.
     pub authorization: Option<String>,
+
+    /// The `Accept` header, if one was sent.
+    pub accept: Option<String>,
 }
 
 /// What a fake answers with.
 ///
-/// Headers, not just a body: this adapter reads a manifest's digest out of
-/// `Docker-Content-Digest` and follows pagination through `Link`, so a server
-/// that could only return a body could not exercise either.
+/// Headers, not just a body: this adapter checks a manifest's digest against
+/// `Docker-Content-Digest`, follows pagination through `Link`, tells an index
+/// from anything else by `Content-Type`, and follows a blob's redirect
+/// through `Location`, so a server that could only return a body could not
+/// exercise any of them.
 pub struct Reply {
     /// The status code.
     pub status: u16,
@@ -36,6 +41,11 @@ pub struct Reply {
 
     /// The body.
     pub body: String,
+
+    /// Whether the body is sent chunked, with no `Content-Length`: the only
+    /// way a reader's bound is exercised as the body arrives rather than
+    /// against a declared length.
+    pub unlengthed: bool,
 }
 
 impl Reply {
@@ -45,6 +55,7 @@ impl Reply {
             status,
             headers: Vec::new(),
             body: body.into(),
+            unlengthed: false,
         }
     }
 
@@ -91,18 +102,50 @@ async fn serve(mut stream: TcpStream, responder: &Responder, recorded: &Arc<Mute
 
         let reply = responder(&request);
         let mut extra = String::new();
+        // JSON unless the reply names its own type, as a registry names a
+        // manifest's.
+        if !reply
+            .headers
+            .iter()
+            .any(|(name, _)| name.eq_ignore_ascii_case("content-type"))
+        {
+            extra.push_str("Content-Type: application/json\r\n");
+        }
         for (name, value) in &reply.headers {
             extra.push_str(name);
             extra.push_str(": ");
             extra.push_str(value);
             extra.push_str("\r\n");
         }
-        let response = format!(
-            "HTTP/1.1 {} X\r\nContent-Type: application/json\r\n{extra}Content-Length: {}\r\n\r\n{}",
-            reply.status,
-            reply.body.len(),
-            reply.body
-        );
+        // A `HEAD` is answered with the headers a `GET` would have, and no
+        // body: sending one would be read as the start of the next response.
+        let body = if request.method == "HEAD" {
+            ""
+        } else {
+            reply.body.as_str()
+        };
+        let response = if reply.unlengthed {
+            let chunks = if body.is_empty() {
+                "0\r\n\r\n".to_owned()
+            } else {
+                format!("{:x}\r\n{body}\r\n0\r\n\r\n", body.len())
+            };
+            let chunks = if request.method == "HEAD" {
+                ""
+            } else {
+                chunks.as_str()
+            };
+            format!(
+                "HTTP/1.1 {} X\r\n{extra}Transfer-Encoding: chunked\r\n\r\n{chunks}",
+                reply.status,
+            )
+        } else {
+            format!(
+                "HTTP/1.1 {} X\r\n{extra}Content-Length: {}\r\n\r\n{body}",
+                reply.status,
+                reply.body.len(),
+            )
+        };
 
         if stream.write_all(response.as_bytes()).await.is_err() {
             return;
@@ -158,6 +201,7 @@ async fn read_request(stream: &mut TcpStream, buffer: &mut Vec<u8>) -> Option<Re
         path,
         body,
         authorization: headers.get("authorization").cloned(),
+        accept: headers.get("accept").cloned(),
     })
 }
 

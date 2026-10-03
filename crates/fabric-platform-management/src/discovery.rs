@@ -2,21 +2,35 @@
 
 use std::collections::BTreeMap;
 
+mod candidates;
 mod chart_history;
 mod chart_resolve;
 mod charts;
+mod described;
+mod described_history;
+mod described_search;
+mod found;
 mod history;
 mod unit;
 
 pub use chart_history::chart_history;
 pub use chart_resolve::resolve_chart;
 pub use charts::discover_chart;
+pub use described::{evaluate, DescribedRelease, Evaluation, Expectation, InvalidReason, RevisionOf};
+pub use described_history::{described_history, resolve_described};
+pub use described_search::discover_described;
+pub use found::{Discovery, InvalidVersion};
 pub use history::{history, resolve, History};
 
+#[cfg(test)]
+mod described_search_tests;
+#[cfg(test)]
+pub(crate) use described::fake_registry_tests as described_fake_registry;
 #[cfg(test)]
 mod discovery_tests;
 
 use crate::{Channel, Registry, RegistryError, Version};
+use candidates::{candidates, every_role, Direction};
 
 /// One image of a release unit, resolved.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -39,46 +53,6 @@ pub struct ReleaseUnit {
 
     /// Images by role.
     pub images: BTreeMap<String, ResolvedImage>,
-}
-
-/// What a discovery pass found.
-///
-/// # Why the rejected versions are reported rather than dropped
-///
-/// `not_yet` is the case that must not be remembered. A component's images are
-/// published by parallel jobs, so a version existing in two repositories and
-/// not the third is normally a window of a minute or two — and a discovery
-/// that recorded "0.3.0-preview.3 is not a thing" would still believe it an
-/// hour later. Every pass recomputes from the registry, and a version listed
-/// here is expected to move to `newer` on a later one.
-///
-/// `incoherent` is the opposite: images that all exist and disagree about
-/// which commit they came from. That is one version built twice, and no
-/// waiting fixes it.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct Discovery {
-    /// The newest complete, coherent version that sorts after the floor.
-    ///
-    /// # Not "the available version"
-    ///
-    /// It is the newest eligible version *newer than desired*, which is a
-    /// narrower fact and needs the narrower name. Nothing here observes
-    /// whether the desired version itself is still in the registry, so a
-    /// broader name would be a claim this type is not entitled to make — and
-    /// the console said exactly that for a while, rendering `Available —`
-    /// about an environment running the newest preview there was.
-    ///
-    /// A `Latest available` worth the name arrives with a versions view, where
-    /// Fabric enumerates what exists rather than inferring it from what it
-    /// declined to advance to.
-    pub newer: Option<crate::Release>,
-
-    /// Newer versions that are still publishing. Transient — retried, never
-    /// remembered.
-    pub not_yet: Vec<Version>,
-
-    /// Newer versions whose images disagree about their source commit.
-    pub incoherent: Vec<Version>,
 }
 
 /// Finds the newest release unit an environment may move to.
@@ -111,8 +85,8 @@ pub async fn discover(
     series: Option<&Version>,
     floor: &Version,
 ) -> Result<Discovery, RegistryError> {
-    let candidates =
-        unit::candidates(registry, roles, channel, series, floor, unit::Direction::Above).await?;
+    let repositories = every_role(roles);
+    let candidates = candidates(registry, &repositories, channel, series, floor, Direction::Above).await?;
     let mut discovery = Discovery::default();
 
     for version in candidates {

@@ -4,9 +4,9 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use crate::{
-    ArtifactSource, Channel, ChartIndex, CheckOutcome, ComponentDesired, DesiredRevision, DesiredState,
-    DesiredStateError, PlatformManagement, Provenance, Registry, RegistryError, Release, Resolved,
-    SweepResult, SweepState, Swept, UpdatePolicy, Version,
+    ArtifactSource, Attached, Channel, ChartIndex, CheckOutcome, ComponentDesired, DesiredRevision,
+    DesiredState, DesiredStateError, PlatformManagement, Provenance, Registry, RegistryError, Release,
+    Resolved, SweepResult, SweepState, Swept, UpdatePolicy, Version,
 };
 
 const RUNTIME: &str = "ghcr.io/fieldstatenz/saas-fabric";
@@ -29,6 +29,10 @@ impl Registry for Registries {
             digest: format!("sha256:{}", tag.len()),
             provenance: Provenance::Agreed("bbbb".to_owned()),
         }))
+    }
+
+    async fn component_descriptor(&self, _: &str, _: &str) -> Result<Attached, RegistryError> {
+        Ok(Attached::Nothing)
     }
 }
 

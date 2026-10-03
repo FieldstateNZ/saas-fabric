@@ -1,123 +1,114 @@
 //! What an artifact says about where it came from.
 
+use std::collections::BTreeSet;
+
 use fabric_platform_management::{Provenance, RegistryError};
 
-use crate::client::resolve::MANIFEST_TYPES;
+use crate::client::blob::{Blob, Found};
+use crate::client::fetch::Held;
+use crate::client::revisions::{deployable, revisions_in, verdict};
 use crate::client::wire::{Config, Manifest};
-use crate::client::OciRegistry;
-use crate::errors::transport_failure;
-
-/// The label a build stamps its source commit into.
-const REVISION: &str = "org.opencontainers.image.revision";
+use crate::client::{bounds, OciRegistry};
+use crate::errors::unreadable;
 
 impl OciRegistry {
-    /// What the artifact says about where it came from.
+    /// What the artifact says about where it came from, by the rule
+    /// [`Provenance`] documents (ADR 0026 section 3).
     ///
-    /// For a plain image manifest that is one label. For an index it is
-    /// **every supported child**, and they must agree: reading one platform's
-    /// label proves that platform's provenance, not the artifact's, and "the
-    /// architecture we happen to run today" is not a fact about the image.
+    /// An image's revisions are its config's labels and its manifest's
+    /// annotations. For an index they are gathered **per deployable child**
+    /// — its labels, its annotations and the index's — and every child must
+    /// agree: reading one platform's label proves that platform's provenance,
+    /// not the artifact's, and "the architecture we happen to run today" is
+    /// not a fact about the image.
     ///
-    /// Only **deployable** children participate. A deployable child declares a
-    /// concrete runtime platform; an index member that does not is not a
-    /// workload image, and its provenance is not this artifact's.
+    /// A deployable child declares a concrete runtime platform; an index
+    /// member that does not is not a workload image. That is the rule stated
+    /// in terms of what matters rather than as a fact about any one build
+    /// system, and it happens to exclude the attestation manifests Buildx
+    /// writes under `unknown/unknown`.
     ///
-    /// That is the rule stated in terms of what matters — *could this
-    /// descriptor be a workload* — rather than as a fact about any one build
-    /// system. It happens to exclude the attestation manifests Buildx writes
-    /// under `unknown/unknown`, which carry no revision and would otherwise
-    /// make every multi-architecture image look unprovenanced.
-    ///
-    /// An index with no deployable child at all is [`Absent`](Provenance::Absent)
-    /// and not `Agreed`: zero children cannot agree with each other, and there
-    /// is no artifact here whose provenance there would be to prove.
+    /// A child, or a config, the registry will not serve (`404`) is an
+    /// absence of the image as much as of its provenance, and reads as
+    /// [`Absent`](Provenance::Absent) — wait, rather than promote. A registry
+    /// that cannot be asked is an error, never an absence.
     pub(super) async fn provenance_of(
         &self,
         repository: &str,
         manifest: &Manifest,
     ) -> Result<Provenance, RegistryError> {
-        let mut agreed: Option<String> = None;
-
-        for config in self.configs_of(repository, manifest).await? {
-            let Some(revision) = self.revision_in(repository, &config).await? else {
-                return Ok(Provenance::Absent);
-            };
-
-            match &agreed {
-                None => agreed = Some(revision),
-                Some(first) if first == &revision => {}
-                Some(_) => return Ok(Provenance::Disagreed),
-            }
-        }
-
-        Ok(agreed.map_or(Provenance::Absent, Provenance::Agreed))
-    }
-
-    /// The config blob of every manifest whose provenance counts.
-    async fn configs_of(&self, repository: &str, manifest: &Manifest) -> Result<Vec<String>, RegistryError> {
-        if let Some(config) = &manifest.config {
-            return Ok(vec![config.digest.clone()]);
+        if manifest.config.is_some() {
+            return Ok(match self.image_revisions(repository, manifest).await? {
+                Some(revisions) => verdict(&[revisions]),
+                None => Provenance::Absent,
+            });
         }
 
         let Some(entries) = &manifest.manifests else {
-            return Ok(Vec::new());
+            return Ok(Provenance::Absent);
         };
 
-        let mut configs = Vec::new();
+        let shared = revisions_in(manifest.annotations.as_ref());
+        let mut children = Vec::new();
 
-        for entry in entries {
-            let Some(platform) = &entry.platform else {
-                continue;
+        for entry in entries.iter().filter(|entry| deployable(entry)) {
+            let Some(content) = self
+                .manifest_by_digest(repository, &entry.digest, Held::Use)
+                .await?
+            else {
+                return Ok(Provenance::Absent);
             };
-            if platform.os == "unknown" || platform.architecture == "unknown" {
-                continue;
+            let child: Manifest =
+                serde_json::from_slice(&content.bytes).map_err(|_| unreadable("reading a manifest"))?;
+
+            if child.config.is_none() {
+                // A deployable entry that is not itself an image.
+                return Ok(Provenance::Absent);
             }
-
-            let url = self.url(repository, &format!("manifests/{}", entry.digest));
-            let response = self
-                .get("reading a manifest", repository, &url, MANIFEST_TYPES)
-                .await?;
-
-            if !response.status().is_success() {
-                // A child the index names and the registry will not serve. Not
-                // an absence of provenance so much as an absence of the image;
-                // either way this is not something to promote.
-                return Ok(Vec::new());
-            }
-
-            let inner: Manifest = response
-                .json()
-                .await
-                .map_err(|error| transport_failure("reading a manifest", &error))?;
-
-            match inner.config {
-                Some(config) => configs.push(config.digest),
-                None => return Ok(Vec::new()),
-            }
+            let Some(mut revisions) = self.image_revisions(repository, &child).await? else {
+                return Ok(Provenance::Absent);
+            };
+            revisions.extend(shared.iter().cloned());
+            children.push(revisions);
         }
 
-        Ok(configs)
+        Ok(verdict(&children))
     }
 
-    /// The revision label in one config blob.
-    async fn revision_in(&self, repository: &str, config: &str) -> Result<Option<String>, RegistryError> {
-        let url = self.url(repository, &format!("blobs/{config}"));
-        let response = self
-            .get("reading an image config", repository, &url, "*/*")
-            .await?;
+    /// One image manifest's revisions, or `None` if its config is not served.
+    async fn image_revisions(
+        &self,
+        repository: &str,
+        manifest: &Manifest,
+    ) -> Result<Option<BTreeSet<String>>, RegistryError> {
+        let mut revisions = revisions_in(manifest.annotations.as_ref());
+        let Some(config) = &manifest.config else {
+            return Ok(Some(revisions));
+        };
 
-        if !response.status().is_success() {
-            return Ok(None);
-        }
+        let operation = "reading an image config";
+        let blob = Blob {
+            digest: &config.digest,
+            size: config.size,
+            most: bounds::CONFIG,
+            operation,
+        };
+        let content = match self.blob(repository, &blob).await? {
+            Found::Missing => return Ok(None),
+            Found::OtherSize => {
+                return Err(RegistryError::Refused {
+                    detail: format!("{operation}: the config is not the size its manifest declares"),
+                })
+            }
+            Found::Bytes(content) => content,
+        };
 
-        let config: Config = response
-            .json()
-            .await
-            .map_err(|error| transport_failure("reading an image config", &error))?;
+        let parsed: Config = serde_json::from_slice(&content.bytes).map_err(|_| RegistryError::Refused {
+            detail: format!("{operation}: the config is not JSON this adapter reads"),
+        })?;
+        let labelled = parsed.config.and_then(|inner| inner.labels);
+        revisions.extend(revisions_in(labelled.as_ref()));
 
-        Ok(config
-            .config
-            .and_then(|labels| labels.labels)
-            .and_then(|labels| labels.get(REVISION).cloned()))
+        Ok(Some(revisions))
     }
 }

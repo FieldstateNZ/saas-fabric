@@ -250,6 +250,9 @@ export interface PlatformComponent {
    * bytes, a chart rollback restores the version and a chart repository can
    * republish the bytes behind a version. The console needs the kind so it can
    * say which, which the `rollable` boolean this replaces could not.
+   *
+   * A described component is `oci`: it is images, found through what it says
+   * it is, and a rollback restores the same exact bytes.
    */
   readonly artifact: 'oci' | 'helm'
   /**
@@ -271,12 +274,50 @@ export interface PlatformHold {
   readonly note: string | null
 }
 
-/** A version that exists and was not selected. */
-export interface PlatformDiagnostic {
-  readonly version: string
-  /** `publishing` will resolve itself; `incoherent` will not. */
-  readonly state: 'publishing' | 'incoherent'
-}
+/**
+ * A version that exists and was not selected, and why.
+ *
+ * Four states, each worded for itself and none as another (ADR 0026 section
+ * 9). `publishing` will resolve itself; `incoherent`, built more than once,
+ * will not. `undescribed` and `invalid` are a described component's: no
+ * component descriptor attached, which Fabric cannot tell from one still to
+ * come, and one attached that cannot be used. Only `invalid` has a `reason`.
+ */
+export type PlatformDiagnostic =
+  | {
+      readonly version: string
+      readonly state: 'publishing' | 'undescribed' | 'incoherent'
+    }
+  | {
+      readonly version: string
+      readonly state: 'invalid'
+      readonly reason: InvalidReasonCode
+      /**
+       * The format version a component descriptor was written in, such as
+       * `v2`: present only beside `unsupportedVersion`, whose meaning is that
+       * Fabric found one it does not read and names it (ADR 0026 section 2).
+       * Always `v` and digits, never text a publisher wrote freely.
+       */
+      readonly found?: string
+    }
+
+/**
+ * Why a component descriptor cannot be used: `InvalidReason::code` in
+ * `fabric-platform-management`, a closed list whose spellings never change
+ * once published. A new one is a new member here, and every map keyed by this
+ * type stops compiling until it has a wording.
+ */
+export type InvalidReasonCode =
+  | 'unreadable'
+  | 'unsupportedVersion'
+  | 'wrongVersion'
+  | 'several'
+  | 'primaryNotNamed'
+  | 'otherRegistry'
+  | 'missingImage'
+  | 'noSingleRevision'
+  | 'notRegistered'
+  | 'notPinned'
 
 /**
  * What the last reconciliation sweep found.

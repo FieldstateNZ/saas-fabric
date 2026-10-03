@@ -47,9 +47,9 @@ const MAX_PATH_CHARS: usize = 200;
 /// function rather than formatted directly, so the guarantee is one rule
 /// applied everywhere a URL might be shown, not a judgement call repeated at
 /// every call site — including a redirect target, which reaches this
-/// function no matter its shape (see [`validated_index_url`]'s docs on why
-/// refusing a cannot-be-a-base address up front does not, by itself, cover
-/// that case).
+/// function no matter its shape (see the chart reader's
+/// `validated_index_url` on why refusing a cannot-be-a-base address up front
+/// does not, by itself, cover that case).
 ///
 /// The path itself is not treated as secret — it names which repository and
 /// which chart, which is exactly what a reader needs — so it is capped for
@@ -58,9 +58,8 @@ const MAX_PATH_CHARS: usize = 200;
 /// this sentence, not by accident.
 ///
 /// [`RegistryError::Refused`]: fabric_platform_management::RegistryError::Refused
-/// [`validated_index_url`]: super::validated_index_url
 #[must_use]
-pub(in crate::charts) fn shown(url: &reqwest::Url) -> String {
+pub(crate) fn shown(url: &reqwest::Url) -> String {
     use std::fmt::Write as _;
 
     if url.cannot_be_a_base() {

@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use std::sync::Mutex;
 
 use super::discover;
-use crate::{Channel, Provenance, Registry, RegistryError, Resolved, Version};
+use crate::{Attached, Channel, Provenance, Registry, RegistryError, Resolved, Version};
 
 const RUNTIME: &str = "ghcr.io/fieldstatenz/saas-fabric";
 const CONTROL_PLANE: &str = "ghcr.io/fieldstatenz/saas-fabric-control-plane";
@@ -64,6 +64,10 @@ impl Registry for FakeRegistry {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .get(&(repository.to_owned(), tag.to_owned()))
             .cloned())
+    }
+
+    async fn component_descriptor(&self, _: &str, _: &str) -> Result<Attached, RegistryError> {
+        Ok(Attached::Nothing)
     }
 }
 

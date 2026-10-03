@@ -150,7 +150,7 @@ Kubernetes, or opens a connection (§6).
 | [`fabric-git-host`](crates/fabric-git-host) | Authenticating to a Git host as a GitHub App — mints, caches and expires an installation token, shared by both Git integrations. |
 | [`fabric-platform-git`](crates/fabric-platform-git) | Atomic desired-state mutation in the platform repository — one tree, one commit, one ref update. |
 | [`fabric-platform-management`](crates/fabric-platform-management) | Deciding which version of a component an environment should run. Defines the `Registry` and `DeploymentObserver` ports; no transport of its own. |
-| [`fabric-registry`](crates/fabric-registry) | Reading published artifacts from an OCI registry, anonymously. |
+| [`fabric-registry`](crates/fabric-registry) | Reading published artifacts, anonymously: images from an OCI registry, hashed to the digest Fabric records, the component descriptors attached to them (ADR 0026), and chart versions from a chart repository. |
 | [`fabric-ndc-acceptance`](crates/fabric-ndc-acceptance) | Test-only. Composes the real publisher, runtime, Data API and NDC adapter against a running connector; no production code. |
 
 **Applications**

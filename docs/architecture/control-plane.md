@@ -382,15 +382,24 @@ it has not moved to.
 #### Two artifact kinds, and what rollback means for each
 
 A component is published either as **container images** or as a **Helm chart**,
-and the two are discovered differently and guarantee different things. They are
-not one shape with fields left empty:
+and the two are discovered differently and guarantee different things. Images
+are found one of two ways: by every role's repository carrying the version
+(`type: oci` in `components.yaml`), or through the **component descriptor**
+attached to the primary image (`type: described`, schema 3 —
+[ADR 0026](../decisions/0026-a-component-describes-itself-in-an-artifact-attached-to-its-image.md)
+section 9). They are not one shape with fields left empty:
 
-| | images | chart |
-|---|---|---|
-| discovered from | a registry — tags, manifests, config blobs | a chart repository's `index.yaml` |
-| eligibility | every image carries the version and agrees on its source commit | the version is published |
-| what deploys | an immutable digest | a version |
-| rollback | offered — restores the version *and* the exact bytes | offered — restores the version, not provably the bytes |
+| | images (`oci`) | described images (`described`) | chart (`helm`) |
+|---|---|---|---|
+| discovered from | a registry — tags, manifests, config blobs, for every role | the primary repository's tags, and the component descriptor attached to each version's primary image | a chart repository's `index.yaml` |
+| eligibility | every image carries the version and agrees on its source commit | the one rule below: one usable component descriptor naming this version and the roles and repositories the environment pins, and every image present, still tagged with the version, and built from the descriptor's commit | the version is published |
+| what deploys | an immutable digest | an immutable digest per image | a version |
+| rollback | offered — restores the version *and* the exact bytes | offered — restores the version *and* the exact bytes | offered — restores the version, not provably the bytes |
+
+The console is told two kinds, `oci` and `helm`, because what it words from the
+kind is how much of an old release a rollback brings back. A described
+component is images and comes back byte for byte, so it is reported as `oci`.
+How its versions are *found* is not the console's concern.
 
 **Rollback means restoring an older published version of the component.** That
 is the definition, and it is offered for every artifact kind. It is not a
@@ -432,6 +441,64 @@ supplying a digest.
 
 Pause and resume are offered for both, and always were. Stopping an environment
 advancing needs no artifact guarantee at all.
+
+#### One rule decides whether a described version is a release unit
+
+A described component's versions are its primary repository's version tags,
+and each is decided by the rule
+[ADR 0026](../decisions/0026-a-component-describes-itself-in-an-artifact-attached-to-its-image.md)
+section 3 states once, for Platform Management's discovery and, later, the
+catalogue's selection alike. It lives in `fabric-platform-management` as `evaluate`, and the two
+callers differ only in what they already know about the component. In order,
+the first failure deciding the answer:
+
+1. the primary repository's tag for the version resolves to a digest;
+2. exactly one component descriptor is attached to that digest;
+3. it is valid and of a version this build reads, names this version, names
+   the primary image at that digest, and names exactly the roles, the
+   repositories and the primary the environment pins. Every image being on
+   the primary's registry is step 4's rule in the ADR, but a v1 document
+   naming two registries breaks its own version's rules, so it is found here
+   and answered with its own reason, `otherRegistry`;
+4. every other image it names exists at its digest, and its repository's tag
+   for the version still resolves to that digest;
+5. every image names exactly one commit, and they and the component
+   descriptor's own revision are one commit.
+
+Steps 4 and 5 run in that order: an image that does not exist is reported
+first, then another image's version tag that is missing or moved
+(*incoherent*), then an image with no single revision, and only then are
+commits compared. A missing image is the more basic fact, and one version
+built twice is the answer whatever the images it names say about their
+commits.
+
+The answer is one of four, and none is worded as another:
+
+| Answer | Means |
+|---|---|
+| complete | a release unit: what an environment advances to, or is offered to roll back to |
+| `undescribed` | the tag exists and no component descriptor is attached. Fabric cannot tell a publication in progress from one that will never attach one, and says only what it saw |
+| `incoherent` | the images and the component descriptor name different commits, or another image no longer carries the version at the digest named: one version built twice |
+| `invalid` | a component descriptor is attached and cannot be used, for a reason from a closed list (below, under what the platform panel reports) |
+
+**Nothing about an answer is remembered**; every pass asks again. A registry
+that cannot be asked — a timeout, a `429` or `5xx`, a `401` or `403` once a
+token was issued — is an error and never an answer: a rate limit must not read
+as *undescribed*, and an image that cannot be read is not an image that does
+not exist.
+
+**Every advance and rollback applies the rule again** at the moment of the
+write, and writes the images and the commit together in one commit, as for
+`oci`. The component descriptor's digest is **not** recorded in
+`components.yaml` — a digest typed into a platform pull request is a fact
+nothing proved, and every break-glass edit would need one looked up by hand —
+so the commit message names it instead, beside the commit the release was
+built from.
+
+`components.yaml` may be schema 2 or 3 and is written back at the version it
+was read at. `type: described` requires schema 3, and its `primary` must be one
+of its images; a build that predates schema 3 refuses the file by naming its
+version rather than failing on an unknown field.
 
 #### A chart repository is read over HTTPS, end to end
 
@@ -551,9 +618,12 @@ POST /api/platform/components/{component}/rollback    put it back on one
 An operator names **a version and nothing else**. For an image component every
 candidate the listing offers is one Fabric resolved from the registry to a
 complete, coherent release unit — three images that exist and agree about the
-commit they were built from. A version that never was one is not offered and is
-refused if asked for (`422 version_not_rollable`), because rolling back to it
-would deploy a composition nobody ever ran.
+commit they were built from. For a described component it is a version the one
+rule above calls complete, and the listing names its commit the same way; the
+component descriptor's digest is the commit message's to name, never the
+listing's. A version that never was one is not offered and is refused if asked
+for (`422 version_not_rollable`), because rolling back to it would deploy a
+composition nobody ever ran.
 
 **A chart's candidates come from the index**, and carry no source revision. A
 chart repository lists versions and no provenance, so there is no commit to
@@ -565,8 +635,9 @@ never a release unit is — `422 version_not_rollable`, decided against the inde
 on this request.
 
 What gets written is resolved at the moment of the write, **with the hold**, in
-one commit: for images the version, its source commit and its three digests;
-for a chart the version, together with the repository and chart name it was
+one commit: for images the version, its source commit and its three digests —
+for a described component found through its component descriptor, by the rule
+applied again on this request; for a chart the version, together with the repository and chart name it was
 discovered under, so a number that is plausible against the wrong chart is
 still refused. There is no request shape carrying a digest, so "roll back to
 whatever Git used to say" is not expressible.
@@ -787,6 +858,42 @@ makes automatic selection unable to move an environment backwards.
 `Newer version` and `Desired state` overlap in the steady state, and that is
 accepted: one answers "what would Fabric advance to", the other "does desired
 state need advancing".
+
+**Versions that exist and were not selected** are listed under their component,
+each with its own wording, and none falls through to another's
+([ADR 0026](../decisions/0026-a-component-describes-itself-in-an-artifact-attached-to-its-image.md)
+section 9). `GET /api/platform` sends each as `{version, state}`, and only an
+`invalid` one carries a `reason` (and, for `unsupportedVersion` alone, the
+format version it `found`):
+
+| `state` | The console says | Means |
+|---|---|---|
+| `publishing` | still publishing | some of an image component's images are not there yet; expected to resolve on a later pass |
+| `undescribed` | no component descriptor attached | a described component's version is tagged and nothing is attached to it |
+| `incoherent` | built more than once | its images, or its images and its component descriptor, name different commits; waiting will not fix it |
+| `invalid` | component descriptor cannot be used, and why | one is attached and fails the rule for `reason` |
+
+A `reason` is a stable code from a closed list, `InvalidReason::code`, and the
+console words each from one map keyed by the code, which its type checks is
+complete. The code is sent and not the detail a few reasons carry — a role or
+a repository — because that detail is text the component's publisher wrote.
+The one exception is `unsupportedVersion`'s `found`, such as `v2`: ADR 0026
+section 2 has a reader answer *invalid* naming the version it found, and a
+reader only ever produces `v` and digits, so the control plane sends it when
+it is `v` and at most fifteen digits and the console names it.
+
+| `reason` | What Fabric observed |
+|---|---|
+| `unreadable` | it, or the way it is attached, breaks the rules of its format: not the shape of a component descriptor's manifest, a referrers tag that is not an index, a manifest naming another subject, a layer missing or not its declared size, or a document breaking a rule of its version. Fabric read it; a read that failed is an error, never this |
+| `unsupportedVersion` | a component descriptor of a version this build does not read, named by `found` |
+| `wrongVersion` | it, or its `version` annotation, names a version other than the tag it was found by |
+| `several` | more than one is attached to the digest, or more than sixteen are listed and none was fetched; Fabric never chooses between them |
+| `primaryNotNamed` | it does not name the image it is attached to |
+| `otherRegistry` | it names an image on a registry other than the primary's |
+| `missingImage` | an image it names does not exist at its digest |
+| `noSingleRevision` | an image, or the component descriptor itself, names no commit or more than one |
+| `notRegistered` | it names a repository no registry holds registered (the catalogue's rule) |
+| `notPinned` | its roles, repositories or primary are not the ones this environment pins (Platform Management's rule) |
 
 ### Integration status
 

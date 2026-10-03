@@ -14,6 +14,12 @@ fabric-core.workspace = true
 # data-sources.yaml from ever disagreeing with what gets published from it,
 # because there is only one declaration of the shape.
 fabric-runtime-publication.workspace = true
+# The component descriptor: its types, and the one reader of its published
+# bytes (ADR 0026 sections 2 and 3). Discovery decides whether a version is a
+# release unit by reading what a component says it is, and a second reader of
+# that contract here would be a second place for it to drift. In neither
+# plane, like this crate, with no transport.
+fabric-component.workspace = true
 
 async-trait.workspace = true
 serde.workspace = true

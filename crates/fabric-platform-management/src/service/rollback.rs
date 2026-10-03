@@ -1,7 +1,7 @@
 //! Putting an environment back on an older published version.
 
 use crate::service::brake::ROLLBACK;
-use crate::service::{backwards, PlatformError, PlatformManagement};
+use crate::service::{backwards, messages, PlatformError, PlatformManagement};
 use crate::{ComponentStatus, Discovery, History, Hold};
 
 impl PlatformManagement {
@@ -112,10 +112,7 @@ impl PlatformManagement {
                 &release,
                 &hold,
                 &desired.revision,
-                &format!(
-                    "Roll {component} in {environment} back to {}",
-                    release.version().as_str()
-                ),
+                &messages::roll_back(environment, component, &release),
             )
             .await?;
 

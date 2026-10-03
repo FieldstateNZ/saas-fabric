@@ -2,22 +2,31 @@
 
 /// Why a value, a component descriptor or its authored source was refused.
 ///
-/// # Why two variants, and not one per rule
+/// # Why three variants, and not one per rule
 ///
-/// Everything this crate checks is either a value that breaks a rule or a
-/// document of a version this build does not read, and those two are the
-/// only distinction a caller acts on differently: ADR 0026 section 2 has a
-/// reader answer *invalid, naming the version it found* for the second,
-/// never *undescribed*, and a caller that wants to say so needs the version
-/// without parsing a message. Every other refusal is carried as its message,
-/// because the catalogue's own validators already speak in messages its
-/// console shows verbatim, and those messages are part of its API.
+/// Everything this crate checks is a value that breaks a rule, except two
+/// refusals a caller acts on differently, which ADR 0026 section 3 has a
+/// reader name in its closed list of reasons: a document of a version this
+/// build does not read (*invalid, naming the version it found*, never
+/// *undescribed*), and images on more than one registry (*an image on
+/// another registry*). A caller that wants to say either needs it without
+/// parsing a message. Every other refusal is carried as its message, because
+/// the catalogue's own validators already speak in messages its console
+/// shows verbatim, and those messages are part of its API.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ContractError {
     /// A value, or a document, that breaks a rule of this contract.
     #[error("{detail}")]
     Invalid {
         /// What was wrong, in words an operator can act on.
+        detail: String,
+    },
+
+    /// A component names images on more than one registry: every image is on
+    /// the primary image's registry, host and port alike.
+    #[error("{detail}")]
+    OtherRegistry {
+        /// Which registries, in words an operator can act on.
         detail: String,
     },
 

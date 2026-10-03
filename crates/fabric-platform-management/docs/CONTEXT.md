@@ -26,11 +26,16 @@ own data-source sub-types rather than re-declared, so a hand-editable
 ## Public surface (all re-exported from `lib.rs`)
 
 - `ArtifactSource` — `Oci { repositories: BTreeMap<String, String> }` |
-  `Helm { repository: String, chart: String }`. `.kind() -> ArtifactKind`.
+  `Helm { repository: String, chart: String }` | `Described { primary:
+  String, repositories: BTreeMap<String, String> }` (ADR 0026 section 9).
+  `.kind() -> ArtifactKind`; `Described` reports `Oci`, because a rollback
+  restores the same exact bytes.
 - `ArtifactKind` — `Oci` | `Helm`. What the console is told to word a
   rollback's guarantee; not a `rollable: bool`.
-- `Release` — `Unit(ReleaseUnit)` | `Chart { repository, chart, version }`.
-  `.version() -> &Version`.
+- `Release` — `Unit(ReleaseUnit)` | `Chart { repository, chart, version }` |
+  `Described { unit: ReleaseUnit, primary: String, descriptor: String }`
+  (`descriptor` is the component descriptor's digest, named in commit
+  messages and never written to desired state). `.version() -> &Version`.
 - `Version` — `SemVer`-precedence `Ord`/`PartialOrd`; hand-written
   `PartialEq` = same precedence (build metadata ignored, matching `SemVer`).
   `as_str()`, `channel() -> Channel`, `is_series(&self, series: &Self) ->
@@ -97,10 +102,26 @@ own data-source sub-types rather than re-declared, so a hand-editable
 - `DeploymentHealth` — `Healthy | Progressing | Degraded | Stopped |
   Unavailable` (`Copy`, `Serialize`, `rename_all = "camelCase"`).
 - `Discovery { newer: Option<Release>, not_yet: Vec<Version>, incoherent:
-  Vec<Version> }` (`Default`). `discover`, `history`, `resolve` (OCI);
-  `discover_chart`, `chart_history`, `resolve_chart` (Helm) — all
-  `pub use discovery::...` at crate root, all only ever look *above* a
-  floor version.
+  Vec<Version>, undescribed: Vec<Version>, invalid: Vec<InvalidVersion> }`
+  (`Default`); `InvalidVersion { version, reason: InvalidReason }`.
+  `discover`, `history`, `resolve` (OCI); `discover_chart`,
+  `chart_history`, `resolve_chart` (Helm); `discover_described`,
+  `described_history`, `resolve_described` (described) — all `pub use
+  discovery::...` at crate root; forward searches only ever look *above* a
+  floor version, backward ones strictly below it.
+- `evaluate(registry, repository, version, Expectation) -> Evaluation` —
+  ADR 0026 section 3's one release-unit rule, written once. `Expectation`
+  is `Pinned { primary, repositories }` (Platform Management) or
+  `Registered(&dyn Fn(&str) -> bool)` (the catalogue, the release job).
+  `Evaluation` is `NotTagged | Complete(Box<DescribedRelease>) |
+  Undescribed | Incoherent | Invalid(InvalidReason)`. `InvalidReason` is a
+  closed list with stable `code()`s: `unreadable`, `unsupportedVersion`,
+  `wrongVersion`, `several`, `primaryNotNamed`, `otherRegistry` (from
+  `ContractError::OtherRegistry`), `missingImage`, `noSingleRevision` (of
+  an image by role, or of the component descriptor), `notRegistered`,
+  `notPinned`. Steps 4 and 5 run in the ADR's order: missing image, then a
+  missing or moved version tag (`Incoherent`), then no single revision,
+  then one commit.
 - `ReleaseUnit { version, source_revision, images: BTreeMap<String,
   ResolvedImage> }`; `ResolvedImage { repository, digest }`.
 - `History` (from `discovery::history`) — the rollback-candidates listing
@@ -150,7 +171,8 @@ own data-source sub-types rather than re-declared, so a hand-editable
   observed workload is healthy and agrees on this version — added by PR #72
   / ADR 0022).
 - `DesiredStateStatus` — `Current` | `UpdateAvailable`.
-- `Diagnostics { not_yet: Vec<Version>, incoherent: Vec<Version> }`.
+- `Diagnostics { not_yet: Vec<Version>, incoherent: Vec<Version>,
+  undescribed: Vec<Version>, invalid: Vec<InvalidVersion> }`.
 - `Reconciliation { was: Version, status: ComponentStatus }`. `.advanced()
   -> bool` (`was != status.desired`).
 - `Sweep { components: Vec<(String, Swept)> }` (`Default`).
@@ -389,7 +411,14 @@ own data-source sub-types rather than re-declared, so a hand-editable
 
 ## Internal modules
 
-- `artifact.rs` — `ArtifactSource`, `ArtifactKind`, `Release`.
+- `artifact.rs` + `artifact/release.rs` — `ArtifactSource`, `ArtifactKind`,
+  `Release`.
+- `discovery/described.rs` + `discovery/described/*` — the release-unit
+  rule (`evaluate`, steps 1-3 in `evaluate.rs`, the expectation in
+  `expectation.rs`, steps 4-5 in `images.rs`, the reasons in `reason.rs`);
+  `discovery/described_search.rs` and `described_history.rs` — the three
+  searches over it; `discovery/candidates.rs` — the version filter every
+  image search shares.
 - `version.rs` + `version/{ordering,parse}.rs` — `Version`, `Channel`; two
   grammars (`parse` for OCI tags, `parse_chart` for Helm chart versions,
   which may carry build metadata).
@@ -475,9 +504,10 @@ own data-source sub-types rather than re-declared, so a hand-editable
 - `diagnostic.rs` + `diagnostic/redaction.rs` — `SafeDiagnostic`,
   `CREDENTIAL_PREFIXES` (`ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_`,
   `github_pat_`, `hvs.`, `hvb.`), `MAX = 200`.
-- `discovery.rs` + `discovery/{chart_history,chart_resolve,charts,history,unit}.rs`
+- `discovery.rs` + `discovery/{chart_history,chart_resolve,charts,found,history,unit}.rs`
   — forward search (above a floor) and history search (below, bounded at 5)
-  for both artifact kinds; `unit.rs` is the OCI-specific
+  for images and charts; `found.rs` holds `Discovery` and `InvalidVersion`,
+  what every search reports; `unit.rs` is the OCI-specific
   candidate-then-assemble machinery (`Assembly::{Complete,Incomplete,Incoherent}`).
   A chart's `discover_chart`/`chart_history` never populate `not_yet` or
   `incoherent` — a chart is one artifact, so it cannot be half-published or
@@ -522,7 +552,12 @@ own data-source sub-types rather than re-declared, so a hand-editable
   `service/runtime_catalogue_source.rs`), the `/api/platform` row, the
   operator trigger, and the schedule (`fabric-control-plane-api`'s
   `startup/platform/{publication,publishing}.rs`) — is not here.
-- `registry.rs` — `Registry` trait, `Resolved`, `Provenance`, `RegistryError`.
+- `registry.rs` + `registry/{attached,resolved}.rs` — `Registry` trait
+  (`tags`, `resolve` by tag or `sha256` digest, `component_descriptor`),
+  `RegistryError`; `attached.rs`: `Attached`, `AttachedDescriptor`,
+  `Unusable` (what is attached to a digest, returned as unparsed bytes: the
+  one reader of a component descriptor is `evaluate`, here); `resolved.rs`:
+  `Resolved`, `Provenance`.
 - `running_guard.rs` (private) — `RunningFlag(AtomicBool)` (`Default`) +
   `RunningGuard<'a> { flag: &'a AtomicBool }` (field private to this
   module). `RunningFlag::try_enter(&self) -> Option<RunningGuard<'_>>` is
@@ -538,20 +573,25 @@ own data-source sub-types rather than re-declared, so a hand-editable
   `try_enter()` immediately, and answer `AlreadyRunning` on `None`.
 - `selector.rs` + `selector/selector_tests.rs` — `decide`, `Decision`,
   `Reason`. Pure.
-- `service.rs` + `service/{backwards,brake,errors,look,reconcile,rollback}.rs`
+- `service.rs` + `service/{backwards,backwards/one,brake,errors,look,messages,reconcile,rollback}.rs`
   — `PlatformManagement` itself, including the `observer:
   Option<Arc<dyn DeploymentObserver>>` field and `with_observer`. `look.rs`:
   shared read+discover step behind `status`/`reconcile` (also owns
   `series_of`, the preview-only-series rule). `brake.rs`: `pause`/`resume`,
   the `PAUSED` hold reason, `stamp()` (RFC 3339 `since`). `backwards.rs`:
   rollback candidate/resolve dispatch by artifact kind, mirroring `look.rs`'s
-  shape. `rollback.rs`: `rollback_candidates`/`roll_back`, the `ROLLBACK`
-  hold reason. Only `status`/`statuses` (directly in `service.rs`) ever call
+  shape (`backwards/one.rs` resolves the one version asked for).
+  `messages.rs`: the advance and rollback commit messages; a described
+  release's names its component descriptor's digest, which is written
+  nowhere else. `rollback.rs`: `rollback_candidates`/`roll_back`, the
+  `ROLLBACK` hold reason. Only `status`/`statuses` (directly in `service.rs`) ever call
   the observer; `reconcile`, `pause`, `resume`, `roll_back` all build their
   `ComponentStatus` via `ComponentStatus::assemble`, which leaves
   `running`/`observation` at their zero values.
-- `status.rs` + `status/reconciliation.rs` — `ComponentStatus` (with its
-  `running`/`observation` fields) and friends, `Reconciliation`.
+- `status.rs` + `status/{diagnostics,reconciliation,running}.rs` —
+  `ComponentStatus` (with its `running`/`observation` fields) and friends;
+  `Diagnostics`, one list per reason a version was not selected;
+  `Reconciliation`; `Running`.
 - `sweep.rs` + `sweep/{record,sweep_tests,types}.rs` — `sweep`/`sweep_once`,
   `SweepState`, `SweepResult`, `Sweep`, `Swept`, `LastCheck`, `CheckOutcome`.
   `sweep_once` calls `reconcile`, never `status`, so a sweep never touches
@@ -601,6 +641,16 @@ own data-source sub-types rather than re-declared, so a hand-editable
     pair before calling `select`; publication reads `PlacementRecord` and
     copies it, it never recomputes one — the record is the fact, not a
     formula run again (ADR 0007, ADR 0023 part 2).
+11. **A described version is decided by `evaluate` and nothing else, and no
+    answer is remembered.** Discovery, history and a rollback's resolve all
+    call it, every pass asks the registry again, and a registry that cannot
+    be asked is a `RegistryError`, never *undescribed*: a rate limit must
+    not read as a missing component descriptor (ADR 0026 section 3).
+12. **`InvalidReason::code()` spellings are a published contract.**
+    `fabric-control-plane` sends them on `GET /api/platform` and the console
+    words each from a map keyed by them, so renaming one leaves a console
+    with nothing to say about it. A new reason is a new variant with a new
+    code; an existing code never changes.
 
 ## Notes
 

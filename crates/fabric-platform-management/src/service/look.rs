@@ -1,7 +1,10 @@
 //! Reading a component, and asking the right registry what exists.
 
 use crate::service::{PlatformError, PlatformManagement};
-use crate::{discover, discover_chart, ArtifactSource, Channel, ComponentDesired, Discovery, Version};
+use crate::{
+    discover, discover_chart, discover_described, ArtifactSource, Channel, ComponentDesired, Discovery,
+    Version,
+};
 
 /// The release line a search is bounded to, if this version has one.
 ///
@@ -44,10 +47,10 @@ impl PlatformManagement {
         let desired = self.desired_state.component(environment, component).await?;
         let series = series_of(&desired);
 
-        // Two searches, not one generalised one. A chart repository answers a
-        // different question with a weaker answer, and squeezing it through
-        // the registry port would have meant a digest nobody has and a
-        // provenance nobody checked.
+        // Separate searches, not one generalised one. A chart repository
+        // answers a different question with a weaker answer, and squeezing it
+        // through the registry port would have meant a digest nobody has and
+        // a provenance nobody checked.
         let discovery = match &desired.source {
             ArtifactSource::Oci { repositories } => {
                 discover(
@@ -64,6 +67,22 @@ impl PlatformManagement {
                     self.charts.as_ref(),
                     repository,
                     chart,
+                    desired.channel,
+                    series,
+                    &desired.version,
+                )
+                .await?
+            }
+            // Images too, found through what the component says it is
+            // rather than by assembling every role's tags.
+            ArtifactSource::Described {
+                primary,
+                repositories,
+            } => {
+                discover_described(
+                    self.registry.as_ref(),
+                    primary,
+                    repositories,
                     desired.channel,
                     series,
                     &desired.version,

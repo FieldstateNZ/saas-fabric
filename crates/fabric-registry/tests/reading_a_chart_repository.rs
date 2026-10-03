@@ -37,12 +37,14 @@ async fn serving(body: &str) -> Served {
                 status: 200,
                 headers: Vec::new(),
                 body: body.clone(),
+                unlengthed: false,
             }
         } else {
             Reply {
                 status: 404,
                 headers: Vec::new(),
                 body: String::new(),
+                unlengthed: false,
             }
         }
     }))

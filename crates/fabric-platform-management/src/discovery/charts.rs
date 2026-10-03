@@ -13,10 +13,10 @@ use crate::{Channel, ChartIndex, RegistryError, Release, Version};
 /// The identity travels with the version, so the write can refuse a release
 /// discovered somewhere other than where the pin says to put it.
 ///
-/// # `not_yet` and `incoherent` stay empty, and that is not a gap
+/// # The diagnostics stay empty, and that is not a gap
 ///
 /// Those diagnostics exist because a component published as three images can
-/// be half-published, or built twice. A chart is one artifact: it cannot be
+/// be half-published, or built twice, or described badly or not at all. A chart is one artifact: it cannot be
 /// partly there and it cannot disagree with itself. There is nothing to
 /// report, rather than something going unreported.
 ///
@@ -41,8 +41,7 @@ pub async fn discover_chart(
 
     Ok(Discovery {
         newer: newest.map(|version| chart_release(repository, chart, version)),
-        not_yet: Vec::new(),
-        incoherent: Vec::new(),
+        ..Discovery::default()
     })
 }
 

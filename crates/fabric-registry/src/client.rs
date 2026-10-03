@@ -3,21 +3,59 @@
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 
+mod attached;
+mod blob;
+mod bounds;
+mod build;
+mod by_tag;
+mod digest;
+#[cfg(test)]
+mod digest_tests;
+mod fetch;
+mod http;
+mod link;
+#[cfg(test)]
+mod link_tests;
+mod media;
 mod provenance;
+mod reference;
 mod resolve;
+mod revisions;
+#[cfg(test)]
+mod revisions_tests;
+mod send;
 mod tags;
 mod token;
+mod verified;
+#[cfg(test)]
+mod verified_tests;
 mod wire;
 
-use fabric_platform_management::{Registry, RegistryError, Resolved};
+use fabric_platform_management::{Attached, Registry, RegistryError, Resolved};
 
-/// Reads an OCI registry anonymously.
+/// Reads an OCI registry anonymously, over HTTPS, hashing everything it
+/// records.
 pub struct OciRegistry {
-    /// The HTTP client, which owns the keep-alive connection pool.
-    pub(crate) http: reqwest::Client,
+    /// For manifests, tags, referrers and tokens: follows a redirect only to
+    /// the origin the request went to, so a registry can never steer one of
+    /// these — or the pull token it carries — somewhere else.
+    pub(crate) api: reqwest::Client,
 
-    /// Where to talk to it, scheme and all.
+    /// For blobs, which every hosted registry serves from a CDN on another
+    /// host: follows no redirect itself. Each hop is followed by hand, to any
+    /// origin the transport rule permits, and the pull token is attached only
+    /// to a hop on the registry's own origin — never judged against the hop
+    /// before, which is how `reqwest` would judge it.
+    pub(crate) blobs: reqwest::Client,
+
+    /// The transport rule every blob redirect hop is held to.
+    pub(crate) transport: crate::transport::Transport,
+
+    /// Where to talk to it, scheme and all, with no trailing `/`.
     pub(crate) base_url: String,
+
+    /// The same address, parsed: the origin a `Link` must stay on.
+    pub(crate) origin: reqwest::Url,
 
     /// How repositories are *named*, which is not always where they are
     /// served from. A manifest says `ghcr.io/fieldstatenz/saas-fabric`
@@ -27,60 +65,18 @@ pub struct OciRegistry {
 
     /// One anonymous pull token per repository.
     ///
-    /// A credential, not an answer. Nothing about *what was found* is
-    /// remembered between passes — a version missing from one repository is a
-    /// publishing window, and an adapter that cached that would still believe
-    /// it an hour later.
-    ///
-    /// Held without an expiry. A token that has aged out comes back as `401`,
-    /// which is cheaper to notice than to predict, and the retry path already
-    /// has to exist for a token revoked early.
+    /// A credential, not an answer — and an anonymous one: nothing about
+    /// *what was found* is remembered between passes. Held without an
+    /// expiry: a token that has aged out comes back as `401`, which is
+    /// cheaper to notice than to predict, and the retry path already has to
+    /// exist for a token revoked early.
     pub(crate) tokens: Mutex<BTreeMap<String, String>>,
+
+    /// Bytes this client has hashed, by digest: content, never an answer.
+    pub(crate) verified: verified::Verified,
 }
 
 impl OciRegistry {
-    /// Builds a client, e.g. `new("https://ghcr.io", "ghcr.io", 30)`.
-    ///
-    /// # Errors
-    ///
-    /// Returns a message if either address is empty, if the base URL is not an
-    /// HTTP URL, or if the HTTP client cannot be built. The message names the
-    /// field and never its value.
-    pub fn new(
-        base_url: impl Into<String>,
-        registry_host: impl Into<String>,
-        timeout_seconds: u64,
-    ) -> Result<Self, String> {
-        let base_url = base_url.into();
-        let registry_host = registry_host.into();
-
-        if registry_host.trim().is_empty() {
-            return Err("registry: registry_host is empty".to_owned());
-        }
-
-        if !base_url.starts_with("http://") && !base_url.starts_with("https://") {
-            return Err("registry: base_url is not an HTTP URL".to_owned());
-        }
-
-        if timeout_seconds == 0 {
-            // reqwest reads zero as "no timeout", which is the difference
-            // between a bounded discovery pass and one that hangs.
-            return Err("registry: timeout_seconds is zero".to_owned());
-        }
-
-        let http = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(timeout_seconds))
-            .build()
-            .map_err(|error| format!("registry: could not build an HTTP client: {error}"))?;
-
-        Ok(Self {
-            http,
-            base_url: base_url.trim_end_matches('/').to_owned(),
-            registry_host,
-            tokens: Mutex::new(BTreeMap::new()),
-        })
-    }
-
     /// The base URL for a repository's API.
     pub(crate) fn url(&self, repository: &str, suffix: &str) -> String {
         format!("{}/v2/{}/{suffix}", self.base_url, self.path(repository))
@@ -105,7 +101,11 @@ impl Registry for OciRegistry {
         self.list_tags(repository).await
     }
 
-    async fn resolve(&self, repository: &str, tag: &str) -> Result<Option<Resolved>, RegistryError> {
-        self.resolve_tag(repository, tag).await
+    async fn resolve(&self, repository: &str, reference: &str) -> Result<Option<Resolved>, RegistryError> {
+        self.resolve_reference(repository, reference).await
+    }
+
+    async fn component_descriptor(&self, repository: &str, subject: &str) -> Result<Attached, RegistryError> {
+        self.attached(repository, subject).await
     }
 }

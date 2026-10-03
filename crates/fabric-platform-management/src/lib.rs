@@ -47,7 +47,10 @@ pub use data_sources::{
 };
 pub use desired_state::{ComponentDesired, DesiredRevision, DesiredState, DesiredStateError, Hold};
 pub use diagnostic::SafeDiagnostic;
-pub use discovery::{Discovery, History, ReleaseUnit, ResolvedImage};
+pub use discovery::{
+    evaluate, DescribedRelease, Discovery, Evaluation, Expectation, History, InvalidReason, InvalidVersion,
+    ReleaseUnit, ResolvedImage, RevisionOf,
+};
 // The wire's own sub-types, re-exported because they are the field types of
 // `DataSourceDeclaration` (ADR 0023 part 1) and `PlacementRecord` (ADR 0023
 // part 2): a caller that builds or reads either has to name them, and the
@@ -68,7 +71,7 @@ pub use publication::{
     compose, CatalogueSourceError, ComposeError, LastPass, PassOutcome, PassResult, PublicationState,
     RuntimeCatalogueSource, RuntimePublisher, WaitingReason,
 };
-pub use registry::{Provenance, Registry, RegistryError, Resolved};
+pub use registry::{Attached, AttachedDescriptor, Provenance, Registry, RegistryError, Resolved, Unusable};
 pub use selector::{decide, Decision, Reason};
 pub use service::{PlatformError, PlatformManagement};
 pub use status::{ComponentStatus, DesiredStateStatus, Diagnostics, Reconciliation, Running};
@@ -76,5 +79,8 @@ pub use sweep::{CheckOutcome, LastCheck, Sweep, SweepResult, SweepState, Swept};
 pub use version::{Channel, Version};
 
 /// Finds the releases an environment is allowed to move to, above and below
-/// the version it runs, for either artifact kind.
-pub use discovery::{chart_history, discover, discover_chart, history, resolve, resolve_chart};
+/// the version it runs, for every artifact kind.
+pub use discovery::{
+    chart_history, described_history, discover, discover_chart, discover_described, history, resolve,
+    resolve_chart, resolve_described,
+};

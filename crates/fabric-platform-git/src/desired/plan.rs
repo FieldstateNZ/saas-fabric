@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::components::{check_writable, Artifact, Component};
+use crate::components::{check_writable, Component};
 use crate::desired::{render::render, WantedVersion};
 use crate::host::PlatformGitRepository;
 use crate::{CommitRevision, FileChange, PlatformGitError};
@@ -54,34 +54,4 @@ pub(super) async fn rewrite_pins(
     }
 
     Ok(edited.into_values().collect())
-}
-
-/// Records the new version in the manifest entry.
-///
-/// Only the version, the source commit and each image's digest. The channel,
-/// the update policy, the hold and every `pinnedIn` are the platform
-/// repository's, and survive untouched.
-pub(super) fn apply(entry: &mut Component, wanted: &WantedVersion) {
-    wanted.version().clone_into(&mut entry.desired.version);
-
-    let (
-        Artifact::Oci {
-            source_revision,
-            images,
-        },
-        WantedVersion::Images(unit),
-    ) = (&mut entry.artifact, wanted)
-    else {
-        // A chart's version is the whole of its desired state. There is no
-        // provenance to record and no digest to move.
-        return;
-    };
-
-    source_revision.clone_from(&unit.source_revision);
-
-    for (role, image) in images {
-        if let Some(offered) = unit.images.get(role) {
-            image.digest.clone_from(&offered.digest);
-        }
-    }
 }

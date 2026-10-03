@@ -145,3 +145,12 @@ edit, so it is not expressible at all.
 [the control-plane architecture](../architecture/control-plane.md), and
 deliberately not built. When it is, it belongs behind a port beside the identity
 one — not as a control-plane mutation reaching into a runtime registry.
+
+**An exception, stated by [ADR 0026](0026-a-component-describes-itself-in-an-artifact-attached-to-its-image.md) (2026-09-29).** Operator-managed
+integration state — the Git applications' records since ADR 0011, and image
+registries since ADR 0026 — is kept in the instance's secret partition, not in
+desired state: a credential cannot live in Git, and an integration that depended
+on the client-configuration repository could not be connected before it. The
+exception holds only while nothing in desired state refers to such a record by
+anything but a name the record's own data repeats, such as a repository's full
+name.

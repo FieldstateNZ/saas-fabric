@@ -417,3 +417,8 @@ surfacing it on the client's Data tab is owed.
 **Multiple environments.** A deployment manages one environment and its files.
 A client placed in two environments is two placement records in two
 repositories, and nothing here reconciles them.
+
+**Extended by [ADR 0026](0026-a-component-describes-itself-in-an-artifact-attached-to-its-image.md) (2026-09-29).** A published release's resources
+are its *effective* resources: the ones an operator authored and the ones its
+described components declare. The runtime catalogue and the publish-time
+cross-application check both read the effective set.

@@ -634,3 +634,12 @@ repository is single-process by its lock, and is a development mode only.
 7. **Upgrading clients.** Whether clients ever move to a newer release without
    an operator saving each one, and whether a component's `automatic` policy is
    meant to mean anything for application components.
+
+**Extended by [ADR 0026](0026-a-component-describes-itself-in-an-artifact-attached-to-its-image.md) (2026-09-29).** An application component gains
+a fourth kind, `described`, selected from a registry and resolved by the
+server, and the fields and resources its component descriptor declares are in
+effect beside authored ones. A catalogue holding one is
+`fabric.fieldstate.nz/v2`. The configuration-field and application-resource
+rules may from now on only relax, which answers, for those shapes, part of
+"How catalogue validation rules may change". Saving a draft takes a request
+shape of its own that cannot carry what the server resolved.

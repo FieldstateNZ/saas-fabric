@@ -37,9 +37,9 @@ impl OciRegistry {
     /// # Errors
     ///
     /// [`RegistryError`] if a request could not be sent, if the token could
-    /// not be minted, or if a redirect had no usable `Location`, left HTTPS
-    /// or passed the bound. No refusal names the target: a CDN's signed
-    /// query is a credential.
+    /// not be minted, or if a redirect had no usable `Location`, left HTTPS,
+    /// passed the bound or named a credential. No refusal names the target:
+    /// a CDN's signed query is a credential.
     pub(super) async fn follow_blob(
         &self,
         repository: &str,
@@ -66,6 +66,11 @@ impl OciRegistry {
             permits(self.transport, &hops, &next).map_err(|refused| RegistryError::Refused {
                 detail: refusal(refused),
             })?;
+            if carries_credential(&next) {
+                return Err(RegistryError::Refused {
+                    detail: format!("{operation} was redirected to a location carrying a credential"),
+                });
+            }
 
             let mut request = self.blobs.request(Method::GET, next.clone()).header(ACCEPT, ANY);
             if same_origin(&next, &self.origin) {
@@ -79,6 +84,19 @@ impl OciRegistry {
 
         Ok(response)
     }
+}
+
+/// Whether a redirect target names a user or a password in its authority.
+///
+/// `reqwest` turns a URL's `user:password@` into a `Basic` `Authorization`
+/// header on the request it builds from it, so following such a target
+/// would send a credential the far end chose, to a host the far end chose —
+/// on a hop this crate otherwise sends anonymously. `link.rs` refuses the
+/// same shape in a `Link`. Checked before the hop is sent, and worded like
+/// every other
+/// refusal here: without the target, and without what it carried.
+fn carries_credential(url: &reqwest::Url) -> bool {
+    !url.username().is_empty() || url.password().is_some()
 }
 
 /// Whether a status is one a `GET` follows: `301`, `302`, `303`, `307` or

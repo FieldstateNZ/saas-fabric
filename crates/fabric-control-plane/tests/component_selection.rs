@@ -787,7 +787,10 @@ async fn a_save_landing_while_a_version_resolves_wins_and_the_selection_is_a_los
         "the catalogue changed since it was read; re-read it and apply the change again",
         "{body}"
     );
-    assert!(body["error"].get("answer").is_none(), "a lost race is no answer of the rule: {body}");
+    assert!(
+        body["error"].get("answer").is_none(),
+        "a lost race is no answer of the rule: {body}"
+    );
     assert!(!retry_after, "re-reading, not waiting, is the remedy");
     assert!(
         harness.registry.reads() > 1,

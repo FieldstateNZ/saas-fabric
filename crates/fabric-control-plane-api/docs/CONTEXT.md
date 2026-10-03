@@ -40,6 +40,23 @@ testable.
   config or a zero interval spawns nothing, the first tick is immediate, a
   failed pass never stops the loop, nor does a panicking one -- see
   "Design notes" for the mechanism.
+- `config::RegistriesConfig { http_timeout_seconds }` (`[registries]`,
+  default 10, zero refused at startup): the one setting for registries an
+  operator registers; which registries exist is operator-managed state.
+- `startup::{compose_registries, RegistryComposition, ComposedRegistries}`:
+  builds the `fabric_registry::Registries` router (the deployment's registry
+  from `[platform_management.registry]`, anonymous, `Any` addresses,
+  following its challenge) and the `RegistryService` over the instance
+  stores, with the connector in `startup/registries/connector.rs` installing
+  into that router. Each registry is built by its kind
+  (`startup/registries/kind.rs`); an operator's registration of the
+  deployment's host is built the same way and then `at_deployment` — the
+  deployment's endpoint and network, the kind's realm — and refused at any
+  other endpoint. The credential's refusal mark is handed to the adapter
+  (`sharing_refusal`). Restores at startup, never fatally, and when a store
+  did not answer spawns `restore_until_complete`. The same router is
+  Platform Management's `Registry`. The console workbench composes it over
+  in-memory stores.
 - `telemetry::init`.
 
 ## Hard invariants — do not break

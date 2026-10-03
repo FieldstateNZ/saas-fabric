@@ -14,8 +14,9 @@
 //!
 //! # What this crate is, and what it is not
 //!
-//! It implements three ports the control plane owns — the platform's own
-//! secret store, its integration record, and a client's secrets — and it is
+//! It implements four ports the control plane owns — the platform's own
+//! secret store, its integration record, its image registry records, and a
+//! client's secrets — and it is
 //! the only place in this workspace that knows OpenBao exists. Nothing above
 //! it names a mount, a path, an authentication method or a lease — the domain
 //! asks for a secret by name within a partition, and where that lands is
@@ -27,10 +28,12 @@ mod client_secrets;
 mod config;
 mod integration_store;
 mod kv;
+mod registry_store;
 mod secret_store;
 
 pub use client::OpenBao;
 pub use client_secrets::OpenBaoClientSecrets;
 pub use config::OpenBaoConfig;
 pub use integration_store::OpenBaoIntegrationStore;
+pub use registry_store::OpenBaoRegistryStore;
 pub use secret_store::OpenBaoSecretStore;

@@ -68,6 +68,7 @@ mod operator;
 mod preconditions;
 mod reconcile;
 mod registration;
+mod registries;
 mod repository;
 mod routes;
 mod secrets_service;
@@ -98,6 +99,13 @@ pub use operator::{
 };
 pub use registration::{
     build_control_plane, ControlPlaneDeps, ControlPlaneServices, PlatformBinding, PublicationSink,
+};
+// The registry ports' vocabulary, re-exported as `SecretNamespace` is.
+pub use fabric_component::Repository;
+pub use registries::{
+    DeploymentRegistry, InMemoryRegistryStore, Readability, RealmOrigin, RegistryClient, RegistryConnection,
+    RegistryConnector, RegistryCredential, RegistryFailure, RegistryHost, RegistryKind, RegistryRecord,
+    RegistryService, RegistryServiceParts, RegistryStore, RegistryStoreError,
 };
 pub use repository::{
     ChangeContext, ClientRepository, DesiredStateBinding, InMemoryClientRepository, RepositoryError,

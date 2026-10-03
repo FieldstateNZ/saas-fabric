@@ -1,4 +1,6 @@
 //! The application graph, top to bottom.
+//!
+//! Past 120 lines: the graph is one function, its order reasoned beside it.
 
 use std::sync::Arc;
 
@@ -7,7 +9,7 @@ use fabric_control_plane::{build_control_plane, ControlPlaneDeps};
 use fabric_core::SystemClock;
 
 use crate::config::ControlPlaneAppConfig;
-use crate::startup::{adapters, integration, operator_keys, platform, reserved_names, serving};
+use crate::startup::{adapters, integration, operator_keys, platform, registries, reserved_names, serving};
 
 /// The assembled control plane, plus the work that must outlive a request.
 pub struct Application {
@@ -32,10 +34,9 @@ pub struct Application {
 /// 4. The API, which is given the repository and the reconciliation status —
 ///    and **not** the provider. There is no wiring here by which a handler
 ///    could reach Keycloak, which is the structural form of ADR 0008.
-/// 5. The Git connection flows, each given the binding it drives so that an
-///    operator connecting a repository takes effect without a restart. There
-///    are two, separate all the way down: two applications on the host, two
-///    records in the store, two an operator may connect or forget separately.
+/// 5. This instance's stores and the image registries over them, before the
+///    Platform Management that reads through their router; then the Git flows,
+///    each given the binding it drives, so a connection needs no restart.
 ///
 /// There is no sixth step for *clients* any more. A reconciliation loop used to
 /// be spawned here holding a service account's credential; ADR 0012 removed it,
@@ -87,17 +88,21 @@ pub async fn build(config: &ControlPlaneAppConfig) -> Result<Application, String
 
     let (keys, sign_in) = operator_keys::establish(&config.control_plane.operator)?;
 
+    let stores = integration::build_stores(config, &clock)?;
+    let registries = registries::establish(config, &stores, &clock).await?;
+
     // Before the flows, because one of them connects it.
     // Plus the host's call timeout: that sum is what a disconnect must fit in.
     let established = platform::establish(
         config.platform_management.as_ref(),
+        &registries.router,
         config.git_host.http_timeout_seconds,
         config.request_timeout_seconds,
         &clock,
     )?;
 
-    let integrations =
-        integration::establish(config, &repository, established.platform.as_ref(), &clock).await?;
+    let platform = established.platform.as_ref();
+    let integrations = integration::establish(config, &repository, platform, &stores, &clock).await?;
 
     let services = build_control_plane(
         &config.control_plane,
@@ -113,6 +118,7 @@ pub async fn build(config: &ControlPlaneAppConfig) -> Result<Application, String
             platform: established.platform.clone(),
             platform_integration: integrations.platform,
             publication: established.publication,
+            registries: registries.service,
 
             // Always the configured posture. The override exists for tests.
             operators: None,

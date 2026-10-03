@@ -110,4 +110,11 @@ pub struct ControlPlaneDeps {
     ///
     /// Computed the same way, and for the same reason, as `reserved_realms`.
     pub reserved_client_ids: BTreeSet<String>,
+
+    /// The image registries operators register (ADR 0026 section 5).
+    ///
+    /// Not optional, unlike `platform`: registries and the version picker
+    /// exist whether or not Platform Management is configured. The host
+    /// restores it before handing it in.
+    pub registries: Arc<crate::RegistryService>,
 }

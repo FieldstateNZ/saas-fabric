@@ -220,18 +220,22 @@ async fn a_credential_in_a_redirect_to_the_registrys_own_origin_is_refused_too()
         .expect_err("a credential in a redirect is refused");
 
     assert!(matches!(failure, RegistryError::Refused { .. }), "{failure:?}");
+    // Exactly the one blob request that was redirected: the redirect target,
+    // though on this same origin, was never contacted.
     assert_eq!(
         fake.count("GET", "/blobs/"),
         1,
         "no hop was sent: {:?}",
         fake.paths()
     );
+    // The first manifest read goes anonymously and is challenged, so only
+    // the blob requests are held to carrying the pull token and nothing else.
     assert!(
         fake.requests()
             .iter()
-            .filter(|request| request.path.starts_with("/v2/"))
+            .filter(|request| request.path.contains("/blobs/"))
             .all(|request| request.authorization.as_deref() == Some("Bearer token-1")),
-        "no request carried anything but the pull token: {:?}",
+        "no blob request carried anything but the pull token: {:?}",
         fake.requests()
     );
 }
@@ -312,9 +316,16 @@ async fn a_token_named_access_token_is_presented_like_any_other() {
     let resolved = registry(&fake).resolve(RUNTIME, "0.3.0").await.unwrap();
 
     assert!(resolved.is_some());
-    assert!(fake
+    // The first read goes with nothing, and is challenged; every one after
+    // it presents the token the realm named `access_token`.
+    let presented: Vec<_> = fake
         .requests()
-        .iter()
+        .into_iter()
         .filter(|request| request.path.starts_with("/v2/"))
+        .skip(1)
+        .collect();
+    assert!(!presented.is_empty());
+    assert!(presented
+        .iter()
         .all(|request| request.authorization.as_deref() == Some("Bearer token-1")));
 }

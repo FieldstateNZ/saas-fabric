@@ -79,7 +79,11 @@ own data-source sub-types rather than re-declared, so a hand-editable
 - `Provenance` — `Agreed(String)` | `Absent` | `Disagreed` (three states,
   not two — absence and disagreement need different responses: wait, vs.
   never resolves).
-- `RegistryError` — `Unavailable { detail }` | `Refused { detail }`.
+- `RegistryError` — `Unavailable { detail }` | `Refused { detail }` |
+  `Denied { detail }` (the registry's realm refused an operator's credential:
+  not retryable; the control plane's registry routes answer it `502`,
+  Platform Management's routes treat it as any registry that could not
+  answer).
 - `ChartIndex` (async trait, chart discovery port) — `versions(repository,
   chart) -> Vec<Version>`. Implementations must refuse (not silently accept)
   two entries of equal `SemVer` precedence.

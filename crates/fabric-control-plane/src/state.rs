@@ -1,4 +1,7 @@
 //! Router state for the control-plane API.
+//!
+//! Past 120 lines because each field's reason for being here, or for being
+//! optional, is stated beside it; that is the file's whole purpose.
 
 use std::sync::Arc;
 
@@ -94,6 +97,10 @@ pub(crate) struct ControlPlaneState {
     ///
     /// Shared with the loop the host starts. Read here, written there.
     pub(crate) platform_sweeps: Arc<fabric_platform_management::SweepState>,
+
+    /// The image registries operators register. Not optional: registries
+    /// exist whether or not Platform Management is configured.
+    pub(crate) registries: Arc<crate::RegistryService>,
 }
 
 impl ControlPlaneState {

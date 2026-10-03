@@ -217,3 +217,27 @@ mode = "in_memory"
 #     # working -- `POST /api/platform/publication` still publishes on
 #     # demand either way.
 #     interval_seconds = 60
+
+
+# ---------------------------------------------------------------------------
+# Image registries
+# ---------------------------------------------------------------------------
+#
+# Which registries exist is not configuration: an operator registers them in
+# the console (Integrations → Image registries) — GHCR, Docker Hub, or any
+# registry speaking the distribution API at an HTTPS origin — with a
+# credential or none, and registers the repositories under each. Records live
+# beside the Git integrations' in the secret store, and a token is never
+# returned by any route. They exist whether or not platform_management is
+# configured, so their one setting is a section of its own.
+#
+# Every registry an operator registers is read at public addresses only. The
+# deployment's own registry is `[platform_management.registry]` — base_url,
+# host and http_timeout_seconds, defaulting to https://ghcr.io and ghcr.io —
+# on any network the deployment chooses; an operator may give it a credential
+# only by registering its host at that same endpoint.
+[registries]
+
+# How long one call to an operator-registered registry may take. Zero is
+# refused at startup.
+http_timeout_seconds = 10

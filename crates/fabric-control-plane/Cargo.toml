@@ -8,6 +8,10 @@ repository.workspace = true
 
 [dependencies]
 fabric-client-model.workspace = true
+# A registry's repositories are `Repository` values, validated by the one rule
+# every image reference is (ADR 0026 section 5), and a registry's host by the
+# same rule; a version tag is a `ComponentVersion`.
+fabric-component.workspace = true
 fabric-core.workspace = true
 # The platform surface the operator console reads. Optional at runtime: a
 # deployment without it mounts the route and answers that it is not connected.
@@ -35,6 +39,9 @@ fabric-reconciliation.workspace = true
 
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util"] }
 tower = { workspace = true, features = ["util"] }
+# Capturing the audit and log lines a registry change emits, so a test can
+# assert no credential is in any of them.
+tracing-subscriber.workspace = true
 
 [lints]
 workspace = true

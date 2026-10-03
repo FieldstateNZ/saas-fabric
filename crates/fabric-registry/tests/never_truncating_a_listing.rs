@@ -60,6 +60,17 @@ fn next(path: &str) -> String {
     format!("<{path}>; rel=\"next\"")
 }
 
+/// How many `GET` requests the fake received under `listing`, whatever they
+/// presented: a reply fixed for a path is answered before any challenge, so
+/// every page here is read anonymously, and the fake's own count, which
+/// keeps only requests that presented something, would miss them all.
+fn pages_read(fake: &FakeRegistry, listing: &str) -> usize {
+    fake.requests()
+        .iter()
+        .filter(|request| request.method == "GET" && request.path.starts_with(listing))
+        .count()
+}
+
 #[tokio::test]
 async fn a_descriptor_on_a_later_referrers_page_is_not_lost() {
     let (fake, subject) = published().await;
@@ -94,7 +105,7 @@ async fn a_descriptor_on_a_later_referrers_page_is_not_lost() {
     let mut both = vec![first, second];
     both.sort();
     assert_eq!(digests, both);
-    assert_eq!(fake.count("GET", REFERRERS), 2, "{:?}", fake.paths());
+    assert_eq!(pages_read(&fake, REFERRERS), 2, "{:?}", fake.paths());
 }
 
 #[tokio::test]
@@ -120,7 +131,7 @@ async fn a_later_referrers_page_that_is_not_there_is_an_error_not_the_first_page
         matches!(failure, Err(RegistryError::Refused { .. })),
         "never `One` from the first page alone: {failure:?}"
     );
-    assert_eq!(fake.count("GET", REFERRERS), 2, "{:?}", fake.paths());
+    assert_eq!(pages_read(&fake, REFERRERS), 2, "{:?}", fake.paths());
 }
 
 #[tokio::test]
@@ -146,7 +157,7 @@ async fn a_later_referrers_page_that_is_not_an_index_is_an_error_not_the_first_p
         matches!(failure, Err(RegistryError::Unavailable { .. })),
         "never `One` from the first page alone: {failure:?}"
     );
-    assert_eq!(fake.count("GET", REFERRERS), 2, "{:?}", fake.paths());
+    assert_eq!(pages_read(&fake, REFERRERS), 2, "{:?}", fake.paths());
 }
 
 #[tokio::test]
@@ -169,7 +180,7 @@ async fn referrers_paged_past_ten_pages_is_an_error_after_exactly_ten_requests()
         panic!("expected Unavailable, got {failure:?}");
     };
     assert!(detail.contains("paged past 10 pages"), "{detail}");
-    assert_eq!(fake.count("GET", REFERRERS), 10, "{:?}", fake.paths());
+    assert_eq!(pages_read(&fake, REFERRERS), 10, "{:?}", fake.paths());
 }
 
 #[tokio::test]
@@ -191,5 +202,5 @@ async fn tags_paged_past_fifty_pages_is_an_error_after_exactly_fifty_requests() 
         panic!("expected Unavailable, got {failure:?}");
     };
     assert!(detail.contains("paged past 50 pages"), "{detail}");
-    assert_eq!(fake.count("GET", TAGS), 50, "{:?}", fake.paths().len());
+    assert_eq!(pages_read(&fake, TAGS), 50, "{:?}", fake.paths().len());
 }

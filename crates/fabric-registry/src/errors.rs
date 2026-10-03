@@ -33,7 +33,14 @@ pub(crate) fn transport_failure(operation: &str, error: &reqwest::Error) -> Regi
 /// it with `Unavailable` would tell an operator to retry a request that will
 /// refuse again. `reqwest` keeps the reason the policy raised as the error's
 /// `source()`, worded by the reader that refused, so that is what is shown.
+///
+/// An address the policy refused — a name resolving to no public address, or
+/// a redirect to an IP literal — reads as every such refusal does, wherever
+/// it happened.
 pub(crate) fn send_failure(operation: &str, error: &reqwest::Error) -> RegistryError {
+    if crate::address::refused_in(error) {
+        return crate::address::refused();
+    }
     if !error.is_redirect() {
         return transport_failure(operation, error);
     }
@@ -75,10 +82,7 @@ pub(crate) fn status_failure(
     status: reqwest::StatusCode,
     headers: &reqwest::header::HeaderMap,
 ) -> RegistryError {
-    let rate_limited = status == reqwest::StatusCode::TOO_MANY_REQUESTS
-        || (status == reqwest::StatusCode::FORBIDDEN && quota_exhausted(headers));
-
-    if rate_limited || status.is_server_error() {
+    if rate_limited(status, headers) || status.is_server_error() {
         return RegistryError::Unavailable {
             detail: format!("{operation} returned {}", status.as_u16()),
         };
@@ -87,6 +91,12 @@ pub(crate) fn status_failure(
     RegistryError::Refused {
         detail: format!("{operation} was refused with {}", status.as_u16()),
     }
+}
+
+/// Whether a status is a rate limit: a `429`, or a `403` with no quota left.
+pub(crate) fn rate_limited(status: reqwest::StatusCode, headers: &reqwest::header::HeaderMap) -> bool {
+    status == reqwest::StatusCode::TOO_MANY_REQUESTS
+        || (status == reqwest::StatusCode::FORBIDDEN && quota_exhausted(headers))
 }
 
 /// Whether the registry reported no remaining quota.

@@ -24,4 +24,11 @@
 mod fake_registry;
 pub mod http_server;
 
-pub use fake_registry::{sha256, FakeRegistry, Head, Listed, HOST};
+pub use fake_registry::{basic, sha256, Challenge, FakeRegistry, Head, Listed, HOST};
+
+/// The same address under the name `localhost`: the only way a registry held
+/// to public addresses is served from a test's socket, since it refuses an
+/// IP literal outright and resolves a name through its own resolver.
+pub fn localhost(url: &str) -> String {
+    url.replace("127.0.0.1", "localhost")
+}

@@ -3,7 +3,8 @@
 use fabric_control_plane::ControlPlaneConfig;
 
 use crate::config::{
-    DesiredStateConfig, GitHostConfig, IdentityProviderConfig, PlatformManagementConfig, SecretStoreConfig,
+    DesiredStateConfig, GitHostConfig, IdentityProviderConfig, PlatformManagementConfig, RegistriesConfig,
+    SecretStoreConfig,
 };
 
 /// The process's configuration, in one struct.
@@ -60,6 +61,11 @@ pub struct ControlPlaneAppConfig {
     /// a week why an environment never advanced.
     #[serde(default)]
     pub platform_management: Option<PlatformManagementConfig>,
+
+    /// The image registries operators register: their call timeout.
+    /// Defaulted, because registries exist in every deployment.
+    #[serde(default)]
+    pub registries: RegistriesConfig,
 
     /// The overall budget for one control-plane request, in seconds.
     ///

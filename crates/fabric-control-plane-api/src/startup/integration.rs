@@ -10,6 +10,8 @@ use crate::config::{ControlPlaneAppConfig, DesiredStateConfig};
 mod services;
 mod stores;
 
+pub(super) use stores::{build as build_stores, InstanceStores};
+
 /// The connection flows this deployment runs, and what they keep state in.
 ///
 /// Both flows are optional and independently so. A deployment that names its
@@ -41,17 +43,18 @@ pub(super) struct Integrations {
 ///
 /// # Errors
 ///
-/// Returns a message if a client for the Git host or the secret store cannot
-/// be built. **Not** if either is unreachable: this runs at startup, and a
+/// Returns a message if a client for the Git host cannot be built. **Not** if either is unreachable: this runs at startup, and a
 /// control plane that refuses to start because a dependency is down cannot be
 /// used to find out why.
 pub(super) async fn establish(
     config: &ControlPlaneAppConfig,
     desired_state: &Arc<DesiredStateBinding>,
     platform: Option<&PlatformBinding>,
+    stores: &InstanceStores,
     clock: &Arc<dyn Clock>,
 ) -> Result<Integrations, String> {
-    let (secrets, store, client_secrets) = stores::build(config, clock)?;
+    let (secrets, store) = (&stores.secrets, &stores.integrations);
+    let client_secrets = stores.client_secrets.clone();
     let connects_clients = matches!(config.desired_state, DesiredStateConfig::Managed);
 
     let mut integrations = Integrations {
@@ -73,7 +76,7 @@ pub(super) async fn establish(
     }
 
     if connects_clients {
-        integrations.clients = Some(services::clients(config, desired_state, &secrets, &store, clock)?);
+        integrations.clients = Some(services::clients(config, desired_state, secrets, store, clock)?);
     }
 
     // Both or neither: the binding exists exactly when the section does, and
@@ -84,8 +87,8 @@ pub(super) async fn establish(
             config,
             binding,
             managed.operation_timeout_seconds,
-            &secrets,
-            &store,
+            secrets,
+            store,
             clock,
         )?);
     }

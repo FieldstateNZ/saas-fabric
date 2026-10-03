@@ -8,7 +8,7 @@ use fabric_platform_management::{
     ChartIndex, DataSourceState, DataSources, DesiredState, Placements, PlatformDesiredState,
     PlatformManagement, PlatformRepository, Registry,
 };
-use fabric_registry::{HelmCharts, OciRegistry};
+use fabric_registry::{HelmCharts, Registries};
 
 mod budget;
 mod established;
@@ -65,11 +65,15 @@ use crate::config::PlatformManagementConfig;
 /// check is a floor rather than a recommendation; the defaults leave five
 /// seconds.
 ///
+/// Images are read through `registries`, which every registry change
+/// installs into: see `startup::registries`.
+///
 /// # Errors
 ///
 /// Returns a message naming the field. Never a credential.
 pub fn establish(
     config: Option<&PlatformManagementConfig>,
+    registries: &Arc<Registries>,
     http_timeout_seconds: u64,
     request_timeout_seconds: u64,
     clock: &Arc<dyn Clock>,
@@ -86,21 +90,15 @@ pub fn establish(
     // Beside the budget check, for the same "fail loudly at startup" reason.
     let publication = publication::build_sink(config.publication.as_ref())?;
 
-    let registry = OciRegistry::new(
-        &config.registry.base_url,
-        &config.registry.host,
-        config.registry.http_timeout_seconds,
-    )?;
-
-    // Anonymous, like the image registry, and for the same reason: a chart
-    // repository serves its index to anybody, so there is no credential here
-    // to be conflated with the platform application's authority.
+    // Anonymous: a chart repository serves its index to anybody, so there is
+    // no credential here to be conflated with the platform application's
+    // authority.
     let charts = HelmCharts::new(config.registry.http_timeout_seconds)?;
 
     let repository = PlatformDesiredState::unconnected();
 
     let service = PlatformManagement::new(
-        Arc::new(registry) as Arc<dyn Registry>,
+        Arc::clone(registries) as Arc<dyn Registry>,
         Arc::new(charts) as Arc<dyn ChartIndex>,
         Arc::clone(&repository) as Arc<dyn DesiredState>,
         Arc::clone(clock),
@@ -166,6 +164,10 @@ mod tests {
         fabric_core::SystemClock::shared()
     }
 
+    fn registries() -> Arc<Registries> {
+        Arc::new(Registries::new(std::collections::BTreeMap::new()))
+    }
+
     #[test]
     fn a_budget_that_could_outlast_a_request_is_refused_at_startup() {
         // The failure this prevents is silent: the operator's disconnect would
@@ -177,7 +179,7 @@ mod tests {
             // `err()` rather than `expect_err`: the success type is not
             // `Debug`, and making a composition-root binding printable to
             // please a test would be the wrong way round.
-            let message = establish(Some(&managed(operation)), 10, 30, &clock())
+            let message = establish(Some(&managed(operation)), &registries(), 10, 30, &clock())
                 .err()
                 .expect("a budget at or over the request timeout must not start");
 
@@ -194,7 +196,7 @@ mod tests {
         // disconnect queued behind it is cut off at thirty with nothing to
         // show the operator, which is exactly the silence the check exists to
         // prevent.
-        let message = establish(Some(&managed(25)), 10, 30, &clock())
+        let message = establish(Some(&managed(25)), &registries(), 10, 30, &clock())
             .err()
             .expect("a budget that only fits without the call it cannot cut short must not start");
 
@@ -205,7 +207,7 @@ mod tests {
 
     #[test]
     fn a_zero_budget_is_refused_at_startup() {
-        let message = establish(Some(&managed(0)), 10, 30, &clock())
+        let message = establish(Some(&managed(0)), &registries(), 10, 30, &clock())
             .err()
             .expect("zero would time every operation out immediately");
 
@@ -216,7 +218,7 @@ mod tests {
     fn a_budget_inside_the_request_starts() {
         // The shipped defaults: fifteen, plus the ten a call may take, inside
         // thirty with five to spare for the rest of a disconnect.
-        assert!(establish(Some(&managed(15)), 10, 30, &clock()).is_ok());
+        assert!(establish(Some(&managed(15)), &registries(), 10, 30, &clock()).is_ok());
     }
 
     #[test]
@@ -224,7 +226,7 @@ mod tests {
         // Absent is deliberately unconfigured, not misconfigured. Validating a
         // section nobody wrote would turn "we do no platform management" into a
         // startup failure.
-        let established = establish(None, 10, 1, &clock()).expect("absent is fine");
+        let established = establish(None, &registries(), 10, 1, &clock()).expect("absent is fine");
 
         assert!(established.platform.is_none());
         assert!(established.publication.is_none());

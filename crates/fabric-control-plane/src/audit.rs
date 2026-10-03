@@ -1,5 +1,8 @@
 //! The record of what an operator changed.
 //!
+//! Past 120 lines for one reason: the reasoning for every event stays beside
+//! it, and each later group of events lives in its own file below.
+//!
 //! # Why this is not just another log module
 //!
 //! `logging` records what the process did. This records **what a human
@@ -31,8 +34,10 @@
 //! knowing about.
 
 mod product;
+mod registry;
 
 pub(crate) use product::{catalogue_changed, client_created, product_updated};
+pub(crate) use registry::{registry_changed, RegistryOperation};
 
 use fabric_client_model::{ClientId, ClientRevision};
 use fabric_core::{event_id, EventType};

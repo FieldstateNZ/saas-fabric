@@ -21,4 +21,11 @@ impl FakeRegistry {
     pub fn strict_accept(&self) {
         self.locked().modes.strict_accept = true;
     }
+
+    /// Names the CDN `localhost` rather than by its address, so a registry
+    /// held to public addresses, which follows no IP literal, can reach it.
+    pub fn cdn_by_name(&self) {
+        let mut state = self.locked();
+        state.cdn = state.cdn.take().map(|cdn| cdn.replace("127.0.0.1", "localhost"));
+    }
 }

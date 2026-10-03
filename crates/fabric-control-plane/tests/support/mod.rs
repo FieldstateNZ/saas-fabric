@@ -19,7 +19,9 @@ use fabric_client_model::{ClientDocument, ClientRevision};
 use fabric_control_plane::testing::AcceptingOperator;
 use fabric_control_plane::{
     build_control_plane, ControlPlaneConfig, ControlPlaneDeps, DesiredStateBinding, IdentityProviderFactory,
-    InMemoryClientRepository, OperatorToken, PlatformBinding, PublicationSink,
+    InMemoryClientRepository, InMemoryRegistryStore, InMemorySecretStore, OperatorToken, PlatformBinding,
+    PublicationSink, RegistryClient, RegistryConnection, RegistryConnector, RegistryHost, RegistryService,
+    RegistryServiceParts,
 };
 use fabric_core::Clock;
 use fabric_reconciliation::testing::FakeIdentityProvider;
@@ -196,7 +198,37 @@ pub const SECRET_VALUE: &str = "a-value-that-must-not-leak";
 
 /// Builds a control plane holding one client.
 pub fn control_plane() -> TestControlPlane {
-    build(None, None, None)
+    build(None, None, None, no_registries())
+}
+
+/// Builds a control plane holding one client, with `registries` behind the
+/// registry routes.
+pub fn control_plane_with_registries(registries: Arc<RegistryService>) -> TestControlPlane {
+    build(None, None, None, registries)
+}
+
+/// A registry service that can build no client: every test that is not
+/// about registries, which still get a service because the control plane
+/// always has one.
+pub fn no_registries() -> Arc<RegistryService> {
+    Arc::new(RegistryService::new(RegistryServiceParts {
+        store: Arc::new(InMemoryRegistryStore::new()),
+        secrets: Arc::new(InMemorySecretStore::new()),
+        connector: Arc::new(NoConnector),
+        clock: Arc::new(FixedClock),
+        deployment: None,
+    }))
+}
+
+/// Builds nothing and installs nowhere.
+struct NoConnector;
+
+impl RegistryConnector for NoConnector {
+    fn connect(&self, _connection: RegistryConnection) -> Result<Arc<dyn RegistryClient>, String> {
+        Err("registry: this harness reads no registry".to_owned())
+    }
+
+    fn install(&self, _clients: std::collections::BTreeMap<RegistryHost, Arc<dyn RegistryClient>>) {}
 }
 
 /// Builds a control plane holding one client, converging against `provider`
@@ -208,13 +240,18 @@ pub fn control_plane() -> TestControlPlane {
 /// /api/reconciliation`, the real door an operator uses — so it is the one
 /// caller of this function.
 pub fn control_plane_with_identity_provider(provider: Arc<FakeIdentityProvider>) -> TestControlPlane {
-    build(Some(Arc::new(FakeIdentityProviderFactory(provider))), None, None)
+    build(
+        Some(Arc::new(FakeIdentityProviderFactory(provider))),
+        None,
+        None,
+        no_registries(),
+    )
 }
 
 /// Builds a control plane with a platform bound, for tests that drive
 /// `/api/platform/*` against something other than "nothing is managed".
 pub fn control_plane_with_platform(platform: PlatformBinding) -> TestControlPlane {
-    build(None, Some(platform), None)
+    build(None, Some(platform), None, no_registries())
 }
 
 /// Builds a control plane with a platform bound *and* somewhere to publish
@@ -222,16 +259,17 @@ pub fn control_plane_with_platform(platform: PlatformBinding) -> TestControlPlan
 /// `publication` row `GET /api/platform` renders (ADR 0023 part 4) against
 /// something other than "nothing is configured".
 pub fn control_plane_with_publication(platform: PlatformBinding, sink: PublicationSink) -> TestControlPlane {
-    build(None, Some(platform), Some(sink))
+    build(None, Some(platform), Some(sink), no_registries())
 }
 
 /// Shared by every constructor above; only what lends the identity
-/// provider's authority, which platform is bound, and where it publishes
-/// differ between them.
+/// provider's authority, which platform is bound, where it publishes and
+/// which registries it has differ between them.
 fn build(
     identity_provider: Option<Arc<dyn IdentityProviderFactory>>,
     platform: Option<PlatformBinding>,
     publication: Option<PublicationSink>,
+    registries: Arc<RegistryService>,
 ) -> TestControlPlane {
     let repository = Arc::new(InMemoryClientRepository::new());
     let revision = repository
@@ -278,6 +316,7 @@ fn build(
 
             reserved_realms,
             reserved_client_ids: [RESERVED_APPLICATION_ID.to_owned()].into_iter().collect(),
+            registries,
         },
     )
     .expect("the control plane must build");

@@ -30,22 +30,20 @@ fn registry(state: &Arc<Mutex<State>>, request: &RecordedRequest) -> Reply {
     }
 
     if request.path.starts_with("/token") {
-        state.mints += 1;
-        let key = state.token_key.clone().unwrap_or_else(|| "token".to_owned());
-        return Reply::json(200, json!({ key: format!("token-{}", state.mints) }).to_string());
+        return super::auth::token(&mut state, request);
     }
 
-    // A token the fake has decided is no longer good. The adapter must notice
-    // the `401`, mint another, and retry -- rather than failing the pass.
-    if let Some(stale) = state.stale_token.clone() {
-        if request.authorization.as_deref() == Some(&format!("Bearer {stale}")) {
-            return Reply::json(401, "{}");
-        }
+    if let Some(challenge) = super::auth::challenged(&state, request) {
+        return challenge;
     }
 
     let Some(rest) = request.path.strip_prefix("/v2/") else {
         return Reply::json(404, "{}");
     };
+    // The API's own endpoint, which a registry is proven by.
+    if rest.is_empty() {
+        return Reply::json(200, "{}");
+    }
 
     if let Some((repository, query)) = rest.split_once("/tags/list") {
         return tags(&state, repository, query);

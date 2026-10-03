@@ -1,5 +1,7 @@
-//! Following a blob's redirects by hand, so the pull token goes to the
-//! registry's own origin and nowhere else.
+//! Following a blob's redirects by hand, so the pull token — or a
+//! registry's credential — goes to the registry's own origin and nowhere
+//! else, and every hop to a public address when the registry must keep to
+//! them.
 //!
 //! # Why by hand, and not through `reqwest`'s redirect policy
 //!
@@ -11,8 +13,12 @@
 //! registry's `Authorization` back. Deciding here, per hop, against the
 //! registry's own origin rather than the previous hop keeps ADR 0026
 //! section 4's guarantee — credentials never follow a redirect to another
-//! origin — for chains of any length. The pull token is anonymous today;
-//! the same path will carry an operator's registry credential.
+//! origin — for chains of any length, whether what is held is a pull token
+//! or a `distribution` registry's `Basic` credential.
+//!
+//! Every hop is also held to the address policy: an IP-literal target is
+//! refused before its request, and a name is dialled only at the public
+//! addresses the client's resolver hands back.
 
 use reqwest::header::{ACCEPT, LOCATION};
 use reqwest::{Method, Response, StatusCode};
@@ -20,6 +26,7 @@ use reqwest::{Method, Response, StatusCode};
 use fabric_platform_management::RegistryError;
 
 use crate::client::http::refusal;
+use crate::client::scope::Scope;
 use crate::client::send::Via;
 use crate::client::OciRegistry;
 use crate::errors::send_failure;
@@ -31,15 +38,16 @@ const ANY: &str = "*/*";
 impl OciRegistry {
     /// `GET` a blob, following at most
     /// [`MAX_REDIRECTS`](crate::transport::MAX_REDIRECTS) redirects to any
-    /// origin the transport rule permits, with the pull token on the
-    /// registry's own origin only. The answer is the last hop's response.
+    /// origin the transport rule and the address policy permit, with what
+    /// the repository holds attached on the registry's own origin only. The
+    /// answer is the last hop's response.
     ///
     /// # Errors
     ///
     /// [`RegistryError`] if a request could not be sent, if the token could
     /// not be minted, or if a redirect had no usable `Location`, left HTTPS,
-    /// passed the bound or named a credential. No refusal names the target:
-    /// a CDN's signed query is a credential.
+    /// named an address the policy refuses, passed the bound or named a
+    /// credential. No refusal names the target: a signed query is a credential.
     pub(super) async fn follow_blob(
         &self,
         repository: &str,
@@ -72,9 +80,12 @@ impl OciRegistry {
                 });
             }
 
+            self.address.check(&next)?;
+
             let mut request = self.blobs.request(Method::GET, next.clone()).header(ACCEPT, ANY);
             if same_origin(&next, &self.origin) {
-                request = request.bearer_auth(self.token(operation, repository, false).await?);
+                let scope = Scope::Repository(self.path(repository));
+                request = self.authorize(request, self.held(scope, self.presents(scope)).as_ref());
             }
             response = request
                 .send()

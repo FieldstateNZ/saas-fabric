@@ -251,6 +251,16 @@ pub enum ControlPlaneError {
     #[error(transparent)]
     Platform(#[from] fabric_platform_management::PlatformError),
 
+    /// An image registry operation was refused (ADR 0026 section 5).
+    ///
+    /// Carried whole, with its own statuses and codes beside the platform's
+    /// rather than folded into them: a registry an operator is registering
+    /// failing to prove is not Platform Management being unavailable, and
+    /// a console reading `platform_unavailable` would send them to the
+    /// wrong page. See `errors::status_mapping::registry`.
+    #[error(transparent)]
+    Registry(#[from] crate::RegistryFailure),
+
     /// This deployment converges no identity provider.
     #[error("this platform converges no identity provider")]
     ConvergenceUnavailable,

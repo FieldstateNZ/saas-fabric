@@ -16,6 +16,7 @@ mod identity_provider;
 mod loading;
 mod platform_management;
 mod publication;
+mod registries;
 mod secret_store;
 
 pub use app_config::ControlPlaneAppConfig;
@@ -25,4 +26,5 @@ pub use git_host::GitHostConfig;
 pub use identity_provider::IdentityProviderConfig;
 pub use platform_management::{PlatformManagementConfig, RegistryBinding};
 pub use publication::PublicationConfig;
+pub use registries::RegistriesConfig;
 pub use secret_store::SecretStoreConfig;

@@ -1,4 +1,7 @@
 //! Wiring the control-plane domain.
+//!
+//! Past 120 lines for one reason: `build_control_plane` is the whole graph,
+//! and splitting the one function that assembles it would hide half of it.
 
 use std::sync::Arc;
 
@@ -46,6 +49,7 @@ pub fn build_control_plane(
         publication,
         reserved_realms,
         reserved_client_ids,
+        registries,
     } = deps;
 
     let repository = &repository;
@@ -117,6 +121,7 @@ pub fn build_control_plane(
         platform,
         platform_integration,
         platform_sweeps: Arc::clone(&platform_sweeps),
+        registries,
     });
 
     Ok(ControlPlaneServices {

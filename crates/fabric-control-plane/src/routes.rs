@@ -12,6 +12,7 @@ use crate::state::ControlPlaneState;
 
 mod integrations;
 mod platform;
+mod registries;
 
 /// The path prefix every control-plane route is nested under.
 ///
@@ -42,6 +43,7 @@ pub const API_PREFIX: &str = "/api";
 /// PUT        /api/integrations/{git,platform}/repository  choose one
 /// GET        /api/integrations/{git,platform}/created     host callback   (no operator)
 /// GET        /api/integrations/{git,platform}/installed   host callback   (no operator)
+/// GET/POST   /api/integrations/registries…          image registries: see routes::registries
 /// One handler set is a nested router built in routes::platform:
 /// GET        /api/platform                          what this environment runs
 /// PUT/DELETE /api/platform/components/{c}/hold      stop it advancing / let it advance again
@@ -141,7 +143,8 @@ pub(crate) fn control_plane_routes(state: ControlPlaneState) -> Router {
             clients
                 .merge(session)
                 .merge(integrations::client_configuration())
-                .merge(integrations::platform_management()),
+                .merge(integrations::platform_management())
+                .merge(registries::routes()),
         )
         .with_state(state)
 }

@@ -147,7 +147,9 @@ async fn a_blob_redirected_to_a_location_carrying_a_credential_is_refused_before
     // along, as a CDN's would, so the refusal is checked against both.
     let target = format!(
         "{}/blobs/sha256:0?X-Amz-Signature=signedquery",
-        elsewhere.base_url.replacen("http://", "http://cdnuser:s3cret@", 1)
+        elsewhere
+            .base_url
+            .replacen("http://", "http://cdnuser:s3cret@", 1)
     );
     fake.answer(
         "GET",

@@ -200,13 +200,15 @@ describe('useCatalogue: a read that was out when a write landed cannot land over
   it('a refresh that began before the save succeeded does not replace the saved catalogue', async () => {
     const staleRead = deferred<StoredCatalogue>()
     const write = deferred<StoredCatalogue>()
-    vi.mocked(getCatalogue).mockReturnValueOnce(staleRead.promise)
     vi.mocked(changeCatalogue).mockReturnValueOnce(write.promise)
     const { result } = await mountLoaded(catalogueNamed('Loaded', 'rev-1'))
 
+    // Queued only after the mount has consumed its own response, so this read is the refresh.
+    vi.mocked(getCatalogue).mockReturnValueOnce(staleRead.promise)
     act(() => {
       result.current.refresh()
     })
+    expect(getCatalogue).toHaveBeenCalledTimes(2)
     expect(result.current.loading).toBe(true)
 
     const saved = catalogueNamed('Saved', 'rev-2')
@@ -232,13 +234,15 @@ describe('useCatalogue: a read that was out when a write landed cannot land over
   it('a refresh that began before the save succeeded cannot report a load error afterwards', async () => {
     const staleRead = deferred<StoredCatalogue>()
     const write = deferred<StoredCatalogue>()
-    vi.mocked(getCatalogue).mockReturnValueOnce(staleRead.promise)
     vi.mocked(changeCatalogue).mockReturnValueOnce(write.promise)
     const { result } = await mountLoaded(catalogueNamed('Loaded', 'rev-1'))
 
+    vi.mocked(getCatalogue).mockReturnValueOnce(staleRead.promise)
     act(() => {
       result.current.refresh()
     })
+    expect(getCatalogue).toHaveBeenCalledTimes(2)
+    expect(result.current.loading).toBe(true)
 
     const saved = catalogueNamed('Saved', 'rev-2')
     const save = startTogether(() => result.current.save(settingsCommand()))
@@ -291,13 +295,14 @@ describe('useCatalogue: a landed write is a load, and recovers from a load error
   it('a refresh that failed while the save was out stops being a load error once the save lands', async () => {
     const failedRead = deferred<StoredCatalogue>()
     const write = deferred<StoredCatalogue>()
-    vi.mocked(getCatalogue).mockReturnValueOnce(failedRead.promise)
     vi.mocked(changeCatalogue).mockReturnValueOnce(write.promise)
     const { result } = await mountLoaded(catalogueNamed('Loaded', 'rev-1'))
 
+    vi.mocked(getCatalogue).mockReturnValueOnce(failedRead.promise)
     act(() => {
       result.current.refresh()
     })
+    expect(getCatalogue).toHaveBeenCalledTimes(2)
     const save = startTogether(() => result.current.save(settingsCommand()))
     expect(result.current.loading).toBe(true)
     expect(result.current.saving).toBe(true)
@@ -327,14 +332,15 @@ describe('useCatalogue: a landed write is a load, and recovers from a load error
   })
 
   it('a refused write leaves an existing load error alone', async () => {
-    vi.mocked(getCatalogue).mockRejectedValueOnce(new Error('the network dropped the read'))
     const write = deferred<StoredCatalogue>()
     vi.mocked(changeCatalogue).mockReturnValueOnce(write.promise)
     const { result } = await mountLoaded(catalogueNamed('Loaded', 'rev-1'))
 
+    vi.mocked(getCatalogue).mockRejectedValueOnce(new Error('the network dropped the read'))
     act(() => {
       result.current.refresh()
     })
+    expect(getCatalogue).toHaveBeenCalledTimes(2)
     await waitFor(() => {
       expect(result.current.loading).toBe(false)
     })

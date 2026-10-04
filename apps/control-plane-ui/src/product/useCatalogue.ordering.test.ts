@@ -219,6 +219,7 @@ describe('useCatalogue: a read that was out when a write landed cannot land over
 
     await act(async () => {
       staleRead.resolve(catalogueNamed('Before the save', 'rev-1'))
+      await staleRead.promise
     })
     await waitFor(() => {
       expect(result.current.loading).toBe(false)
@@ -248,6 +249,7 @@ describe('useCatalogue: a read that was out when a write landed cannot land over
 
     await act(async () => {
       staleRead.reject(new Error('the network dropped the old read'))
+      await staleRead.promise.catch(() => undefined)
     })
     await waitFor(() => {
       expect(result.current.loading).toBe(false)
@@ -303,6 +305,7 @@ describe('useCatalogue: a landed write is a load, and recovers from a load error
     // The read fails first, while no write has landed, so its error is legitimate.
     await act(async () => {
       failedRead.reject(new Error('the network dropped the read'))
+      await failedRead.promise.catch(() => undefined)
     })
     await waitFor(() => {
       expect(result.current.loading).toBe(false)

@@ -104,10 +104,30 @@ python3 examples/disposable-dogfood/dogfood.py reset --yes     # remove only the
 python3 -m unittest discover -s scripts/tests -v
 ```
 
-Python 3.11 or newer; standard library only. Docker Compose v2.24 or newer
-(long-form `env_file`). The default invocation, `check` and `enforcement`
-never call Docker. `build`, `activate` and `reset` require `--yes`. None of
-the Docker-touching commands has been run by the author.
+Python 3.11 or newer; standard library only; Linux (`termios`). Docker
+Compose v2.24 or newer (long-form `env_file`). The default invocation,
+`check` and `enforcement` never call Docker. `build`, `activate` and `reset`
+require `--yes`. None of the Docker-touching commands has been run by the
+author.
+
+**Staging from a review branch.** `prepare` and `check` refuse unless the
+source checkout is at exactly the pinned commit `1f46788…`, because the
+console header comparison reads that tree's `nginx.conf`. The commands above
+therefore fail when run from the head of the PR branch that carries these
+files. Stage them like this instead (nothing below has been executed by the
+author):
+
+1. Make a detached checkout of the pin: `git worktree add --detach
+   <stage-dir> 1f46788ecd5c59af1a4937aae0e51cf59b8f8081`, and confirm
+   `git -C <stage-dir> rev-parse HEAD` prints the full pinned commit.
+2. Overlay only the *tracked* files of this directory from the reviewed PR
+   ref into that checkout: `git archive <reviewed-ref>
+   examples/disposable-dogfood | tar -x -C <stage-dir>`. Tracked files only;
+   `.out/` is untracked and must not be copied.
+3. Run `prepare` and `check` from `<stage-dir>`. The checkout's HEAD is still
+   the pin, so the worktree check passes, and the overlaid launcher is the
+   reviewed one. The overlay shows as modified files in that worktree; do
+   not commit them there.
 
 **prepare / check.** Reads `profile.toml` (allowlisted keys only), renders
 `control-plane.toml`, `console.nginx.conf` and `compose.json` into `.out/`,
@@ -132,14 +152,25 @@ lock records the commit, three local image IDs, the base digest and the daemon
 identity. Nothing is pushed anywhere.
 
 **activate.** In order, each step a refusal if it fails: a controlling
-terminal exists (the operator password is written to `/dev/tty` only, never to
-stdout or a log); `check`; lock is real, not synthetic; no credential or
+terminal exists and is a terminal (`/dev/tty` opens read-write and
+`isatty`); `check`; lock is real, not synthetic; no credential or
 ownership receipt exists; the daemon is the expected one; `iptables -S INPUT`
 and `iptables -S DOCKER-USER` are readable and contain the full gate as the
 first rules of each chain in order (unreadable, missing, reordered, or any
 rule above the gate all refuse); no container with this profile's names or
 project label and no network with its name exists (existing resources are
-never adopted). Only then it creates the bootstrap admin credential
+never adopted). Only then, with nothing yet created, it asks the human on
+the controlling terminal for a **new** password for the synthetic operator:
+read by direct verified-terminal echo-off input (the tool opens `/dev/tty`
+itself, requires `isatty`, clears `ECHO` with `termios` on that descriptor,
+reads that descriptor only and restores the attributes in `finally`; it does
+not use `getpass`, whose fallback can silently read a terminal on stdin),
+typed twice, refused if empty, shorter than 16 characters, or mismatched,
+and refused (nothing read from anywhere) if `/dev/tty` cannot be opened, is
+not a terminal, or its echo cannot be cleared. The
+tool never prints, logs or writes that password; it is sent once to
+Keycloak when the operator is created and then dropped. A rejected entry
+leaves nothing to clean up. Then it creates the bootstrap admin credential
 (`.out/.ephemeral/keycloak.env`, exclusive create, `0600`, never through a
 symlink), runs `compose up --no-build --pull never`, inspects the three
 containers and the network, and accepts them as its own only if name, project
@@ -149,7 +180,10 @@ resources do not verify, it removes only containers/network that match name,
 label and image, deletes the credential, and stops. Bootstrap (realm, public
 PKCE-S256 client, `fabric-operator` role, one operator) runs only after the
 owned Keycloak container is seen to publish `8080/tcp` on exactly
-`127.0.0.1:18781`. Realm bootstrap uses loopback HTTP only (below).
+`127.0.0.1:18781`. Realm bootstrap uses loopback HTTP only (below). On
+success the tool prints the operator **username** only; the password is the
+one you typed. The CI trial never prompts: it calls `bootstrap_realm`
+without a password, which generates one in memory and returns it.
 
 **status.** Loopback readiness evidence: console `/healthz`, `/api/session`
 through the proxy, issuer discovery, and the network inspect (internal, IPv6
@@ -250,7 +284,12 @@ proxy and allowlist refusals with real loopback servers; exclusive `0600`
 credential creation that refuses symlinks; forged receipts of eight shapes;
 ownership evaluators; `activate` fails closed on a missing gate, a wrong
 daemon, a name collision, a missing terminal, and does not bootstrap until the
-owned Keycloak publishes the port; partial startup removes only owned
+owned Keycloak publishes the port; the password read, against a real
+pseudo-terminal, delivers the typed line without echoing it and restores the
+terminal attributes after success, end of input and an interrupt, refuses a
+`/dev/tty` that is not a terminal before any read, and with `/dev/tty`
+unavailable never touches a readable terminal supplied on stdin; partial
+startup removes only owned
 resources; `reset` without a receipt touches no Docker resource, with a
 receipt removes exactly the recorded IDs and never a volume, and refuses a
 forged receipt, a tampered compose, a reshaped receipt and a symlinked

@@ -10,7 +10,7 @@ require `--yes`, verify the exact daemon they expect, and are never the default.
     python3 dogfood.py check           # validate what is on disk
     python3 dogfood.py enforcement     # print (never apply) the per-sandbox firewall gate and its exact inverse
     python3 dogfood.py build --yes     # git-archive the pinned commit; docker build; pull Keycloak by digest; derive it
-    python3 dogfood.py activate --yes  # fail closed unless the firewall gate is observed; compose up; bootstrap
+    python3 dogfood.py activate --yes  # fail closed unless the firewall gate is observed; prompt for the operator password; compose up; bootstrap
     python3 dogfood.py status          # loopback HTTP readiness evidence
     python3 dogfood.py reset --yes     # remove ONLY the containers and network recorded by activation
 
@@ -38,6 +38,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import termios
 import time
 import urllib.error
 import urllib.parse
@@ -1623,19 +1624,106 @@ def wait_for(description: str, probe: Callable[[], Any], attempts: int = 60, del
     raise ProfileError(f"timed out waiting for {description}")
 
 
+MIN_OPERATOR_PASSWORD_LENGTH = 16
+
+
 def human_console() -> Any:
-    """The controlling terminal, for the one line that carries the operator password. None if there is none."""
+    """The controlling terminal, verified to be a terminal, for the prompt text that precedes the operator password. None if there is none.
+
+    Opens `/dev/tty` read-write without becoming its controlling process and
+    refuses anything that is not a terminal (a redirected or piped
+    `/dev/tty` cannot disable echo). Nothing secret is ever written to it.
+    """
     try:
-        return open("/dev/tty", "w", encoding="utf-8")
+        fd = os.open("/dev/tty", os.O_RDWR | os.O_NOCTTY)
     except OSError:
         return None
+    if not os.isatty(fd):
+        os.close(fd)
+        return None
+    return os.fdopen(fd, "w", encoding="utf-8")
 
 
-def bootstrap_realm(profile: Profile, admin_user: str, admin_password: str) -> tuple[str, str]:
+def read_secret_from_terminal(prompt: str) -> str:
+    """One echo-disabled line from `/dev/tty`, opened and verified here. Never stdin, never echoed.
+
+    `getpass` is not used: when `/dev/tty` cannot be opened it silently reads
+    `sys.stdin` instead (a TTY stdin gets no `GetPassWarning`), so a warning
+    filter cannot guarantee the no-stdin rule. This function opens `/dev/tty`
+    itself, requires `isatty`, clears ECHO with termios on that descriptor,
+    reads from that descriptor only, and restores the attributes in `finally`
+    whatever happens. If the terminal is unavailable nothing is read from
+    anywhere. Linux only, like the rest of this launcher.
+    """
+    try:
+        fd = os.open("/dev/tty", os.O_RDWR | os.O_NOCTTY)
+    except OSError:
+        raise ProfileError("no controlling terminal (/dev/tty): the operator password is never read from stdin") from None
+    try:
+        if not os.isatty(fd):
+            raise ProfileError("/dev/tty is not a terminal: the operator password is never read from stdin")
+        saved = termios.tcgetattr(fd)
+        quiet = list(saved)
+        quiet[3] &= ~termios.ECHO
+        termios.tcsetattr(fd, termios.TCSAFLUSH, quiet)
+        try:
+            os.write(fd, prompt.encode("utf-8"))
+            line = b""
+            while not line.endswith(b"\n"):
+                chunk = os.read(fd, 1024)
+                if not chunk:
+                    raise EOFError
+                line += chunk
+        finally:
+            try:
+                termios.tcsetattr(fd, termios.TCSAFLUSH, saved)
+                os.write(fd, b"\n")  # the newline the terminal did not echo; nothing secret
+            except (OSError, termios.error):
+                pass  # the terminal is gone; the read already failed and the fd is closed below
+        return line.decode("utf-8", errors="strict")[:-1]
+    finally:
+        os.close(fd)
+
+
+def prompt_operator_password(console: Any, read_secret: Callable[[str], str] = read_secret_from_terminal) -> str:
+    """Asks the human, twice, for a NEW password for the synthetic dogfood operator.
+
+    Rejects an empty entry, one shorter than MIN_OPERATOR_PASSWORD_LENGTH, a
+    mismatch between the two entries, or a terminal whose echo cannot be
+    disabled. The password is returned to the caller for the one Keycloak
+    request that sets it; it is never printed, logged or written to disk by
+    this tool. Error messages name the reason only, never the input.
+    """
+    console.write(
+        "Choose a NEW password for the synthetic dogfood operator: one not used anywhere else,\n"
+        f"at least {MIN_OPERATOR_PASSWORD_LENGTH} characters, typed twice with echo off. It is set on the throwaway realm only,\n"
+        "never shown again and never stored by this tool; it is gone on reset.\n"
+    )
+    console.flush()
+    try:
+        first = read_secret("operator password: ")
+        second = read_secret("operator password (again): ")
+    except (EOFError, OSError, UnicodeDecodeError, termios.error) as error:
+        raise ProfileError(f"operator password not read ({error.__class__.__name__}): the controlling terminal could not be read with echo off; nothing was read from stdin") from None
+    if not first:
+        raise ProfileError("operator password rejected: empty")
+    if len(first) < MIN_OPERATOR_PASSWORD_LENGTH:
+        raise ProfileError(f"operator password rejected: shorter than {MIN_OPERATOR_PASSWORD_LENGTH} characters")
+    if first != second:
+        raise ProfileError("operator password rejected: the two entries differ")
+    return first
+
+
+def bootstrap_realm(profile: Profile, admin_user: str, admin_password: str, operator_password: str | None = None) -> tuple[str, str]:
     """Creates the throwaway realm, console client, operator role and one operator.
 
-    Everything created here lives in the Keycloak container's tmpfs and is
-    gone on reset. Errors carry status codes only, never bodies or secrets.
+    Returns `(operator_username, operator_password)`. When `operator_password`
+    is None (the noninteractive CI path) a random one is generated and
+    returned so the caller can use it without any human or any output;
+    otherwise the given password (interactive activation, typed by the human)
+    is set and returned unchanged. Everything created here lives in the
+    Keycloak container's tmpfs and is gone on reset. Errors carry status
+    codes only, never bodies or secrets.
     """
     base = profile.keycloak_public_base
     form = urllib.parse.urlencode({"grant_type": "password", "client_id": "admin-cli", "username": admin_user, "password": admin_password}).encode()
@@ -1668,7 +1756,7 @@ def bootstrap_realm(profile: Profile, admin_user: str, admin_password: str) -> t
         },
     )
     operator = f"operator-{secrets.token_hex(3)}"
-    password = secrets.token_urlsafe(24)
+    password = secrets.token_urlsafe(24) if operator_password is None else operator_password
     headers = post(
         f"/{profile.realm}/users",
         {"username": operator, "enabled": True, "credentials": [{"type": "password", "value": password, "temporary": False}]},
@@ -1769,9 +1857,9 @@ def cmd_activate(paths: Paths, yes: bool) -> int:
         return 2
     console = human_console()
     if console is None:
-        print("refusing: no controlling terminal (/dev/tty); the operator password is shown only on a human console, never logged", file=sys.stderr)
+        print("refusing: no controlling terminal (/dev/tty); the operator password is typed by a human with echo off, never read from stdin or logged", file=sys.stderr)
         return 1
-    console.close()  # availability proven; reopened only for the one line that carries the password
+    console.close()  # availability proven; reopened for the prompt once every read-only check has passed
     if cmd_check(paths) != 0:
         return 1
     profile = load_profile(paths.profile_file)
@@ -1790,6 +1878,20 @@ def cmd_activate(paths: Paths, yes: bool) -> int:
         print("refusing to activate: existing resources would be adopted, never acceptable:", file=sys.stderr)
         for finding in collisions:
             print(f"  - {finding}", file=sys.stderr)
+        return 1
+
+    # Every read-only check has passed; nothing has been created yet. The human
+    # types the operator password now, so a refusal above never asks for it and
+    # a rejected entry below leaves nothing to clean up. It stays in memory only.
+    console = human_console()
+    if console is None:
+        print("refusing: the controlling terminal went away before the operator password could be read; nothing was started", file=sys.stderr)
+        return 1
+    try:
+        with console:
+            operator_password = prompt_operator_password(console)
+    except ProfileError as error:
+        print(f"refusing to activate: {error}; nothing was started", file=sys.stderr)
         return 1
 
     admin_user = f"bootstrap-{secrets.token_hex(3)}"
@@ -1841,17 +1943,12 @@ def cmd_activate(paths: Paths, yes: bool) -> int:
         return True if status == 200 else None
 
     wait_for("Keycloak master realm on the loopback port", master_realm_ready)
-    operator, password = bootstrap_realm(profile, admin_user, admin_password)
+    operator, _ = bootstrap_realm(profile, admin_user, admin_password, operator_password)
+    del operator_password
     _, discovery, _ = http_json(f"{profile.issuer}/.well-known/openid-configuration", profile)
     findings = evaluate_discovery(discovery, profile)
     findings += cmd_status(paths, quiet=True)
-    print(f"\nactivated. Sign in at {profile.console_origin}; the operator credential is on your terminal only.")
-    console = human_console()
-    if console is None:
-        print("terminal vanished; the operator password was not emitted anywhere. Reset and activate again from a terminal.", file=sys.stderr)
-        return 1
-    with console:
-        console.write(f"operator username: {operator}\noperator password: {password}   (ephemeral; shown once; gone on reset)\n")
+    print(f"\nactivated. Sign in at {profile.console_origin} as operator username: {operator} with the password you typed (ephemeral; gone on reset).")
     print("Before interactive use: run the negative connectivity canaries in README.md; none has been run by this tool.")
     if findings:
         print("readiness findings:", file=sys.stderr)

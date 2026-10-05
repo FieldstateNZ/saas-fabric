@@ -15,7 +15,7 @@ Revalidation of six draft PRs against `FieldstateNZ/saas-fabric` main `1f46788ec
 
 All six are open drafts, `mergeable_state: clean`, with zero review threads, zero review comments and zero PR comments. There are no existing findings to resolve. Issue #109 has no comments.
 
-Composed result: all six merged onto main in order 102, 103, 104, 105, 106, 107 with no conflicts. On that composition `npm ci` (npm 10.9.4, Node 22.22.0), `vitest run` (391/391, 52 files), `eslint .`, `tsc -b && vite build` and `npm audit` (0 findings) all pass. This reproduces the 391 composed figure in PR106 and PR107.
+Composed result: all six merged onto main in order 102, 103, 104, 105, 106, 107 with no conflicts. On that composition `npm ci` (npm 10.9.4, Node 22.22.0), `vitest run` (391/391, 52 files), `eslint .`, `tsc -b && vite build` and `npm audit` (0 findings) all pass. This reproduces the 391 composed figure in PR107 and issue #109. PR106's 385 figure is the 102–106 composition (its body labels it "PR102–105"), also reproduced here: 385/385.
 
 ## Base, merge-ability and overlap
 
@@ -73,7 +73,7 @@ Each head shows duplicate-looking job names because the CI workflow ran twice (p
 
 - #102 `13d08b6`: 24 check runs, all success. Includes cargo fmt/clippy/test --workspace/doc/deny, ndc-postgres acceptance, control-plane-ui, architectural invariants, file-size policy, CodeQL aggregate and Analyze (actions, csharp, javascript-typescript, python, rust).
 - #103 `8094188`: 24, all success (same set).
-- #104 `f0c8f0f`: 30 runs: 28 success, 2 skipped (`component descriptor`, `gates`, the tag-only release jobs). Includes the three image builds (`saas-fabric`, `saas-fabric-control-plane`, `saas-fabric-control-plane-ui`) and `version`. Matches the issue's "28 successful, two skipped".
+- #104 `f0c8f0f`: 30 runs: 28 success, 2 skipped: `component descriptor` and `gates` (tag-only). Includes the three image builds (`saas-fabric`, `saas-fabric-control-plane`, `saas-fabric-control-plane-ui`) and `version`. Matches the issue's "28 successful, two skipped".
 - #105 `cd5cb1d`: 24, all success.
 - #106 `12edde9`: 24, all success. The PR body still says "Exact-head CI and CodeQL pending"; that is stale, the checks have all completed successfully.
 - #107 `d35ef27`: 24, all success.
@@ -144,15 +144,19 @@ Regression sensitivity: reverting the wiring (`SecretRow.tsx` to main) fails all
 
 ### #107 Fix ordered Identity role change detection (head `d35ef27`)
 
-Scope: `IdentityPanel.tsx` replaces `roles.join(' ') !== current.roles.join(' ')` with an element-wise, order-sensitive comparison (`IdentityPanel.tsx:49`); 6 rendered tests with synthetic API replies. Ordering is justified: `crates/fabric-client-model/src/identity.rs` stores roles as an ordered `Vec`.
+Scope: `IdentityPanel.tsx` replaces `roles.join(' ') !== current.roles.join(' ')` with an element-wise, order-sensitive comparison (`IdentityPanel.tsx:50-51`); 6 rendered tests with synthetic API replies. Ordering is justified: `crates/fabric-client-model/src/identity.rs` stores roles as an ordered `Vec`.
 
 Review comments: none. Findings:
 
 - NON-BLOCKING: reorder-only edits become saveable, which will issue a PUT that may trigger reconciliation for a change with no semantic effect if the platform treats roles as a set. The PR states this intent. Needs a product call, not a code fix.
 - The fix itself is correct and the reasoning (no safe delimiter) is sound.
-- PR body only says "Draft and unmerged". The explicit no-merge/no-deploy restriction is stated in issue #109 ("PR107 remains draft/unmerged under its explicit no-merge/no-deploy restriction until scope changes"), not in the PR text; I found no other statement of it.
+- PR body only says "Draft and unmerged". The restriction is stated in issue #109 (acceptance criteria) and in Riley's roadmap comment on #70 ([6000470608](https://github.com/FieldstateNZ/saas-fabric/issues/70#issuecomment-6000470608)). Both describe it as already "explicit" without citing an originating decision; the originating statement was not found on GitHub.
 
 Regression sensitivity: reverting `IdentityPanel.tsx` to main fails 2 collision tests, 4 pass as controls (command 11). Matches PR claim. Disposition: HOLD. Technically sound, but per #109 it stays a draft, unmerged and undeployed until its scope changes. Do not mark ready or merge.
+
+## Related, untracked: PR101
+
+Draft PR #101 "Prepare isolated disposable dogfood profile and gated verification" (`codex/disposable-dogfood`, head `8cd1c5fe5f9ccacfe4fada62cca379de1e67fad8`, base `1f46788`, 2 commits, 11 files, +5121) is open, draft and mergeable. Check runs: 27, 26 success and 1 skipped (`publish`, tag-only). It touches no file in PR102–107. Neither #109 nor #70's roadmap comment tracks it; #111 (W1, M1) lists it under "Existing work to reuse" and should own it. Its `sign_in_through_console` stage depends on `/api/session`, which interacts with #108's D01-9. Not revalidated here beyond the check-run count.
 
 ## Proposed merge order (for when Riley approves; this document authorises nothing)
 
@@ -175,3 +179,7 @@ Because the file sets are disjoint, the order is a preference for risk and CI cl
 - #107: hold (keep draft; assess only; no merge, no deploy).
 
 No PR has a blocking finding. Before approving any of them, re-run this validation if the head SHA changes from the values recorded above, since the issue requires revalidation when heads change.
+
+## Cross-check
+
+A second, independent agent re-verified this record on 2026-10-05: all six heads unchanged, check-run counts matched, and it reproduced the #105 revert (12 failed), the #102 handler mutation (3 failed), the #106 surviving mutant, the 385 and 391 compositions and the audit counts. No blocking findings. Non-blocking additions from that pass: #106's per-row buttons ("Read version", "Refresh", "Retry") have no per-row accessible name (the existing Reveal and Delete buttons share this), and its `role="status"` is inserted with its text, which some screen readers do not announce; #105 does not move focus to the invalid field after a refusal. Suggested follow-up: `aria-label` naming the secret path.

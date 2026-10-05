@@ -1,8 +1,8 @@
 # M0 — Fabric lifecycle and authorization contract decisions
 
 Deliverable for [#108](https://github.com/FieldstateNZ/saas-fabric/issues/108)
-(W0, gate M0, planning key `D01`). Read-only analysis: no code, no provider
-apply, no credential change, nothing merged.
+(W0, gate M0, planning key `D01`). This is read-only analysis. It changes no
+code, applies nothing to a provider, changes no credential and merges nothing.
 
 | Source | Ref | Head read |
 |---|---|---|
@@ -12,16 +12,23 @@ apply, no credential change, nothing merged.
 | `FieldstateNZ/saas-fabric-platform` PR #45 | `pull/45/head` | `fd12327373820b545ddcf33bd84887a4c3c18a50` (parent `355fe6d`) |
 | Date | | 2026-10-05 |
 
-**Reading rules.** "Decided" means an ADR with status Accepted. A Proposed ADR
-is reported as *Proposed — built* or *Proposed — not built*, never as decided,
-even where code implements it. Cluster facts are not re-observed here; anything
-this document could not check is marked **not verified**. Every unresolved
-choice has decision owner **Brett** (product owner). Recommendations are
-labelled as such and are not decisions.
+**Reading rules.**
 
-ADR status at `1f46788`: Accepted — 0001–0003, 0005–0017 (0014 for the control
-plane only), 0020, 0022 (LucentRoot readiness milestone only), 0024, 0025.
-Superseded — 0004. **Proposed — 0018, 0019, 0021, 0023, 0026.**
+- "Decided" means an ADR with status Accepted. Nothing else counts as decided.
+- A Proposed ADR is reported as *Proposed, built* or *Proposed, not built*,
+  even where code implements it.
+- Architecture documents and code that no Accepted ADR covers appear under
+  "Documented or built, not an Accepted ADR".
+- Cluster facts are not re-observed here. Anything this document could not
+  check is marked **not verified**.
+- Brett (product owner) owns every unresolved choice.
+- Recommendations are labelled as such. They are not decisions.
+
+ADR status at `1f46788`:
+- **Accepted:** 0001–0003, 0005–0017 (0014 for the control plane only), 0020,
+  0022 (LucentRoot readiness milestone only), 0024, 0025.
+- **Superseded:** 0004.
+- **Proposed:** 0018, 0019, 0021, 0023, 0026.
 
 ---
 
@@ -29,62 +36,93 @@ Superseded — 0004. **Proposed — 0018, 0019, 0021, 0023, 0026.**
 
 ### Decided
 
-- **Desired state is the authority** — ADR 0008 (Accepted). Nothing is
-  inferred from a label — ADR 0007 (Accepted); a shared data source serves
-  discriminator isolation only — ADR 0006 (Accepted).
-- **Platform repository owns wiring, not data** for the runtime documents: the
-  platform declares the Role, RoleBinding and whole-volume mounts; the three
-  `fabric-runtime-*` ConfigMaps are declared nowhere in Git. This is stated in
-  ADR 0018 and ADR 0023, **both Proposed**, so it is *not decided* — but it is
-  built on both sides (platform #40, per #70 comment of 2026-09-20; platform
-  `applications/core/saas-fabric/base/configmap.yaml:25-39`).
+- **Desired state is the authority:** ADR 0008 (Accepted).
+- **Isolation is checked against an observed fact, not a label:** ADR 0007
+  (Accepted). It supersedes ADR 0006's rule and keeps that rule as one of its
+  two conditions: a shared data source serves discriminator isolation only
+  (ADR 0006, Accepted, extended by 0007).
+
+### Documented or built, not an Accepted ADR
+
+- **The platform repository owns wiring, not data, for the runtime documents.**
+  The platform declares the Role, the RoleBinding and the whole-volume mounts.
+  The three `fabric-runtime-*` ConfigMaps are declared nowhere in Git.
+  - This is stated in ADR 0018 and ADR 0023, both **Proposed**.
+  - It is built on both sides: platform #40 (per the #70 comment of
+    2026-09-20) and platform
+    `applications/core/saas-fabric/base/configmap.yaml:25-39`.
 
 ### Built under Proposed ADRs (evidence, not decision)
 
 | Contract | ADR (status) | Code | Tests |
 |---|---|---|---|
-| Three versioned documents, monotonic revision, byte-compared divergence, refuse emptying/dangling refs | 0018 (Proposed) | `crates/fabric-runtime-publication/src/validate.rs:59-136`, `src/verdict.rs` | `verdict_tests.rs::an_older_revision_against_a_held_manifest_and_payload_is_refused` (:66), `::the_same_revision_with_different_bytes_is_refused_as_divergent` (:81); `tests/published_state_serves_two_tenants.rs::a_stale_revision_publication_is_refused_and_the_last_good_files_remain` (:262), `::an_emptying_publication_is_refused_unless_it_is_intended` (:463); mutation table `docs/verification.md:228-305` |
-| Publisher is a control-plane controller with its own ServiceAccount, on a schedule and on `POST /api/platform/publication` | 0023 §4 (Proposed) | `fabric-platform-management/src/publication/*`; route doc `crates/fabric-control-plane/src/routes.rs` (the `/api/platform/publication` line) | `crates/fabric-control-plane/tests/platform_publication.rs::publishing_composes_declared_state_into_the_runtimes_three_documents_and_settles_unchanged` (:200), `::a_catalogue_with_no_published_resources_is_waiting_and_writes_nothing` (:353) |
-| Kubernetes adapter over plain HTTPS, `get/create/update`, no `delete`, no `kube` crate | 0023 §4 amending 0018 (Proposed) | `crates/fabric-publication-kubernetes/src/publish.rs` | `publish_tests.rs::a_first_publication_creates_three_objects_in_order_with_the_label` (:24), `::a_stale_snapshot_is_refused_before_any_write` (:178), `::a_document_past_the_object_cap_is_refused_before_any_write` (:207) |
+| Three versioned documents, monotonic revision, byte-compared divergence, refuse emptying and dangling references | 0018 (Proposed) | `crates/fabric-runtime-publication/src/validate.rs:59-136`, `src/verdict.rs` | `verdict_tests.rs::an_older_revision_against_a_held_manifest_and_payload_is_refused` (:66), `::the_same_revision_with_different_bytes_is_refused_as_divergent` (:81); `tests/published_state_serves_two_tenants.rs::a_stale_revision_publication_is_refused_and_the_last_good_files_remain` (:262), `::an_emptying_publication_is_refused_unless_it_is_intended` (:463); mutation table `docs/verification.md:228-305` |
+| The publisher is a control-plane controller with its own ServiceAccount, running on a schedule and on `POST /api/platform/publication` | 0023 §4 (Proposed) | `fabric-platform-management/src/publication/*`; the `/api/platform/publication` line of the route list in `crates/fabric-control-plane/src/routes.rs` | `crates/fabric-control-plane/tests/platform_publication.rs::publishing_composes_declared_state_into_the_runtimes_three_documents_and_settles_unchanged` (:200), `::a_catalogue_with_no_published_resources_is_waiting_and_writes_nothing` (:353) |
+| Kubernetes adapter over plain HTTPS: `get/create/update`, no `delete`, no `kube` crate | 0023 §4, amending 0018 (Proposed) | `crates/fabric-publication-kubernetes/src/publish.rs` | `publish_tests.rs::a_first_publication_creates_three_objects_in_order_with_the_label` (:24), `::a_stale_snapshot_is_refused_before_any_write` (:178), `::a_document_past_the_object_cap_is_refused_before_any_write` (:207) |
 | Data sources are environment desired state (`data-sources.yaml`); placement is a recorded Fabric write (`placements.yaml`) | 0023 §1–2 (Proposed) | `crates/fabric-platform-management/src/placements/select.rs:26-56` | `placements/select_tests.rs::rule_3_a_shared_candidate_isolates_by_the_tenant_id_as_the_discriminator_value` (:257); `crates/fabric-control-plane/tests/platform_placements.rs::a_clients_data_intent_is_placed_recorded_and_protects_its_data_source` (:180) |
 
-Deployed evidence: #70 (2026-09-22) records platform #41 merged as `dc5323a`
-enabling `[platform_management.publication]` on LucentRoot, with expected row
-`waiting`. **Not verified** here whether the row now reads `waiting`,
-`published`, `refused` or `failed`.
+**Deployed evidence.** The #70 comment of 2026-09-22 records platform #41
+merged as `dc5323a`. That change enabled `[platform_management.publication]`
+on LucentRoot, with an expected status row of `waiting`. **Not verified:**
+whether the row now reads `waiting`, `published`, `refused` or `failed`.
 
 ### Unresolved
 
-**U1.1 — Who provisions a tenant's database, schema and connector process.**
-ADR 0018 names `ProvisionedPlacement` as an input with "no owner yet"
-(`docs/decisions/0018-…:512-579`); ADR 0023 refuses provisioning and the
-connector deployment (`docs/decisions/0023-…:389-405`). Brett's direction
-(#70, 2026-09-22): *a connector definition is a platform contract; provisioning
-is per client — ADR to follow*. No ADR exists at `1f46788`. ADR 0026 also
-leaves "connector kinds" undecided (`docs/decisions/0026-…:890-907`).
-Note: `select.rs:44-47` already places a tenant on a *pre-declared*
-non-shared data source with no prior placement; ADR 0023 Consequences says
-"placement on anything but a shared source is refused until provisioning
-exists". The code and the Proposed text disagree on wording — **D01-2**.
+**U1.1: who provisions a tenant's database, schema and connector process.**
+This is part (a) of **D01-3**.
+
+The evidence:
+- ADR 0018 names `ProvisionedPlacement` as an input with "no owner yet"
+  (`docs/decisions/0018-…:512-579`).
+- ADR 0023 refuses both provisioning and the connector deployment
+  (`docs/decisions/0023-…:389-405`).
+- Brett's direction (#70, 2026-09-22): *a connector definition is a platform
+  contract; provisioning is per client; ADR to follow*. No such ADR exists at
+  `1f46788`.
+- ADR 0026 leaves "connector kinds" undecided
+  (`docs/decisions/0026-…:890-907`).
+
+D01-3 covers three per-client questions, because they share one mechanism:
+(a) this one, (b) U2.5 and (c) U4.4.
 
 | Option | Shape | For | Against |
 |---|---|---|---|
-| A | **Platform composition per client**: OpenTofu Application per client (the `master-instance` pattern, ADR 0025) creates the database/role, the connector Deployment and its `[[connectors]]` entry; Fabric declares the data source and records placement | Same mechanism already proven for the master realm; keeps ADR 0012's "no standing credential in the product"; Git explains the environment | A per-client platform change for every new client; needs a trigger from Fabric's client creation to the platform repo |
-| B | **Fabric controller provisions** with its own database-admin credential | One write path; client creation can complete end to end | Reverses ADR 0012's posture for a new provider; a standing high-privilege credential in the control plane |
-| C | **Pre-provisioned pools only** (status quo): operators declare shared data sources; dedicated is manual | Nothing new to build | Dedicated tenants never self-serve; connector deployment still has no owner |
+| A | **Platform composition per client.** An OpenTofu Application per client, following the `master-instance` pattern (ADR 0025), creates the database and role, the connector Deployment and its `[[connectors]]` entry. Fabric declares the data source and records the placement | The mechanism is already proven for the master realm; it keeps ADR 0012's "no standing credential in the product"; Git explains the environment | Every new client needs a platform change; Fabric's client creation needs a way to trigger the platform repository |
+| B | **A Fabric controller provisions**, using its own database-admin credential | One write path; client creation can complete end to end | Reverses ADR 0012's posture for a new provider; puts a standing high-privilege credential in the control plane |
+| C | **Pre-provisioned pools only** (status quo). Operators declare shared data sources; dedicated databases are made by hand | Nothing new to build | Dedicated tenants can never self-serve; the connector deployment still has no owner |
 
-*Recommendation:* **A**, consistent with Brett's 2026-09-22 direction and ADR
-0025's boundary. Decision owner: **Brett** — **D01-3**.
+*Recommendation:* **A**. It matches Brett's 2026-09-22 direction and the
+boundary ADR 0025 draws. Decision owner: **Brett**.
 
-**U1.2 — Whether ADR 0018 and ADR 0023 are accepted as built.** Both are
-implemented, wired on LucentRoot, and still Proposed; ADR 0026 states that
-accepting it accepts the parts of 0021/0023 it builds on
-(`docs/decisions/0026-…:18-20`). Options: A accept both with their
-"as built" amendments; B amend first (e.g. the dedicated-placement wording
-above, the README line at `README.md:451-454` that still says "the console
-does not yet show that row", which #81 built); C leave Proposed.
-*Recommendation:* **B then accept** — small text fixes, then Accepted.
-Owner: **Brett** — **D01-1** (0018), **D01-2** (0023).
+**U1.2: whether ADR 0018 and ADR 0023 are accepted as built** (**D01-1**,
+**D01-2**). Both are implemented, wired on LucentRoot and still Proposed. ADR
+0026 says that accepting it accepts the parts of 0021 and 0023 it builds on
+(`docs/decisions/0026-…:18-20`).
+
+ADR 0023 contradicts itself on non-shared placement:
+- Decision part 2 (`:222-228`) and Consequences (`:370-372`) say dedicated
+  placement is refused until provisioning exists.
+- `:230-235` says any non-shared class holds at most one tenant, and the first
+  tenant to ask takes it.
+- `select.rs:44-47` implements `:230-235`.
+
+The amendment that fixes this belongs to the heading at `:222` and to the
+Consequence. It is part of D01-2.
+
+Other text owed:
+- `README.md:451-454` still says "the console does not yet show that row".
+  #81 built that row.
+- Accepting ADR 0023 as built also accepts §5's manual raise
+  (`:316-325`). Choosing option B for D01-18 therefore means amending §5.
+- D01-1 includes runtime-document rollback (U5.3), because ADR 0018 §6 already
+  entails it.
+
+Options:
+- **A.** Accept both with their "as built" amendments.
+- **B.** Amend first (the points above), then accept.
+- **C.** Leave both Proposed.
+
+*Recommendation:* **B**. Owner: **Brett**.
 
 ---
 
@@ -92,111 +130,185 @@ Owner: **Brett** — **D01-1** (0018), **D01-2** (0023).
 
 ### Decided
 
-- **Trusted ingress is the canonical runtime posture** — ADR 0002 (Accepted);
-  platform runtime config `mode = "trusted_ingress"`
+- **Trusted ingress is the canonical runtime posture:** ADR 0002 (Accepted).
+  The platform's runtime config sets `mode = "trusted_ingress"`
   (`saas-fabric-platform: applications/core/saas-fabric/base/configmap.yaml:23-24`).
-- **Operator identity is not tenant identity** — ADR 0009; operators sign in
-  against the platform (master) realm — ADR 0010 (both Accepted).
-- **Sign-in belongs to the gateway; the browser never holds a token; one
-  route `GET /api/user/current`; surfaces are federated modules** — ADR 0024
-  (Accepted 2026-09-22).
-- **Master-realm instance resources (gateway client, `fabric-operator` role,
-  operator grants) are platform composition**; ADR 0012 still governs client
-  realms — ADR 0025 (Accepted 2026-09-22).
+- **Operator identity is not tenant identity:** ADR 0009 (Accepted).
+  Operators sign in against the platform (master) realm: ADR 0010 (Accepted).
+- **Sign-in belongs to the gateway, and the browser never holds a token:**
+  ADR 0024 (Accepted 2026-09-22). The same ADR fixes one identity route,
+  `GET /api/user/current`, and makes product surfaces federated modules.
+- **The master realm's instance resources are platform composition:** ADR 0025
+  (Accepted 2026-09-22). These are the gateway client, the `fabric-operator`
+  role and the operator grants. ADR 0012 still governs client realms.
 
-Evidence of what is built:
+What is built:
 
-- ADR 0024 slice 1 (fabric side): `GET /api/operator` is the gateway-session
-  probe and answers `401 operator_refused` for a refused forwarded bearer —
-  `crates/fabric-control-plane/src/handlers/get_operator.rs:15-33`.
-- ADR 0024 slice 2 **not built**: `GET/POST /api/session` still mounted
-  (`crates/fabric-control-plane/src/routes.rs:36`, `:79-82`);
-  no `/api/user/current` route exists in `crates/`.
-- ADR 0024 slices 3–5 **not built**: `apps/app-shell` has no sign-in and no
-  runtime module loading; no `/v1/identity` route on the runtime.
-- Platform side: OIDC `SecurityPolicy` at
-  `applications/core/saas-fabric-control-plane/overlays/lucentroot/oidc.yaml`
-  and the `master-instance` convergence (platform #43, `355fe6d`). First
-  sign-in through the gateway: **not verified**.
-- **Platform `main` roster is broken.** `master-instance-config.yaml:40` on
-  `0ff5d66` still reads `operators: '["brett@fieldstate.nz"]'`, an account the
-  master realm does not hold; PR45's README records three plan-time failures
-  and `Degraded` on 2026-09-22. #108's Oct-3 inventory also reports degraded
-  master-instance convergence. PR45 changes the roster to `["admin"]`.
+- **ADR 0024 slice 1, Fabric side.** `GET /api/operator` is the probe for a
+  gateway session. It answers `401 operator_refused` when it refuses a
+  forwarded bearer (`crates/fabric-control-plane/src/handlers/get_operator.rs:15-33`).
+- **ADR 0024 slice 2: not built.**
+  - `GET/POST /api/session` is mounted only when `sign_in` is configured
+    (`crates/fabric-control-plane/src/routes.rs:79-82`).
+  - LucentRoot still configures it: platform
+    `applications/core/saas-fabric-control-plane/overlays/lucentroot/control-plane.toml:54-64`
+    says "`/api/session` returns this value … retires … in ADR 0024 slice 2".
+  - No `/api/user/current` route exists in `crates/`.
+- **ADR 0024 slices 3–5: not built.** `apps/app-shell` has no sign-in and does
+  not load modules at runtime. The runtime has no `/v1/identity` route.
+- **Platform side.** There is an OIDC `SecurityPolicy` at
+  `applications/core/saas-fabric-control-plane/overlays/lucentroot/oidc.yaml`,
+  and the `master-instance` convergence exists (platform #43, `355fe6d`).
+  **Not verified:** the first sign-in through the gateway.
+- **Operator roster: the evidence conflicts, and the cause of `Degraded` is
+  not established.**
+  - Platform `main` (`0ff5d66`) has
+    `master-instance-config.yaml:40` = `operators: '["brett@fieldstate.nz"]'`.
+    The lookup is by Keycloak *username*, not email (`:33-35`), so the value
+    names a username.
+  - Supporting "the account exists":
+    - platform `applications/core/master-instance/README.md:110-113` on
+      `main` says the grants were made by hand and "are now converged";
+    - the #70 comment of 2026-09-22 08:22Z says the same.
+  - Supporting "the account does not exist":
+    - PR45's README and commit message, which is unmerged, say the master
+      realm holds only `admin` and that three runs failed at plan time on
+      2026-09-22;
+    - PR93's body says the same.
+  - #108's Oct-3 inventory reports "degraded master-instance convergence" and
+    gives no cause.
+  - Diagnosis belongs to platform #48, "[W2] Diagnose and prove state-aware
+    master-instance convergence".
+  - **Not verified:** whether a master-realm user named `brett@fieldstate.nz`
+    exists today, and whether the roster caused the Oct-3 `Degraded`.
 
 ### Runtime tenant identity (ADR 0019, Proposed)
 
-- *Proposed — built (runtime half):* §2 issuer names the tenant, claim must
-  agree, empty registry refuses start —
-  `crates/fabric-identity/src/resolver/tenant_binding.rs:45-57`,
-  `src/identity/trusted_issuer.rs:101-131`; tests
-  `crates/fabric-identity/src/resolver_tests.rs::a_token_from_an_unregistered_issuer_is_refused` (:126),
-  `::a_token_with_no_issuer_is_refused_rather_than_treated_as_unregistered` (:139),
-  `::a_tenant_claim_that_disagrees_with_its_issuer_is_refused` (:165).
-- *Proposed — not built (edge half):* §G checklist G1–G17
-  (`docs/decisions/0019-…:1255-1283`). Platform runtime `HTTPRoute`
+**Proposed, built: the runtime half.** ADR 0019 §2 is in code:
+- the issuer names the tenant;
+- the token's tenant claim must agree;
+- an empty registry refuses to start.
+
+Code:
+- `crates/fabric-identity/src/resolver/tenant_binding.rs:45-57`
+- `src/identity/trusted_issuer.rs:108-131` (`validate_registry`)
+
+Tests:
+- `crates/fabric-identity/src/resolver_tests.rs::a_token_from_an_unregistered_issuer_is_refused` (:126)
+- `::a_token_with_no_issuer_is_refused_rather_than_treated_as_unregistered` (:139)
+- `::a_tenant_claim_that_disagrees_with_its_issuer_is_refused` (:165)
+- `crates/fabric-identity/src/config.rs::a_runtime_with_no_trusted_issuers_refuses_to_start` (:197)
+
+**Proposed, not built: the edge half.** This is the §G checklist, G1–G17
+(`docs/decisions/0019-…:1255-1283`).
+- The platform runtime `HTTPRoute`
   (`applications/core/saas-fabric/base/httproute.yaml`) has no JWT policy and
-  host `fabric.invalid`; its header comment says client routes "are created by
-  OpenTofu in the client's own namespace", which contradicts G1's "one route
-  per runtime service, no per-tenant route". Runtime config has no
-  `[identity]` section, so the runtime would refuse to start even with
-  documents published (`trusted_issuer.rs:111`). Runtime held at
-  `replicas: 0` (`applications/core/saas-fabric/base/deployment.yaml:20`).
+  uses the host `fabric.invalid`.
+- Its header comment (`:3-4`) says client hostnames such as `acme.<domain>`
+  get routes "created by OpenTofu in the client's own namespace". It does not
+  say whether those routes reach `/v1/data`. That conflicts with G1 ("one
+  route per runtime service … no per-tenant route") only if they do.
+  **Ambiguous, not verified.**
+- The runtime config has no `[identity]` section, so the runtime would refuse
+  to start even with its documents published (`trusted_issuer.rs:111`).
+- The runtime is held at `replicas: 0`
+  (`applications/core/saas-fabric/base/deployment.yaml:20`).
 
 ### Unresolved
 
-**U2.1 — Accept ADR 0019, and who owns the edge (§G).** Options: A accept
-as written, platform implements G1–G17; B amend G1 to the per-client-route
-shape the platform comment describes; C defer the edge and keep the runtime
-at zero. *Recommendation:* **A** — the runtime half is built and tested to
-the single-route model; the platform comment is the stale party. Owner:
-**Brett** — **D01-5**.
+**U2.1: accept ADR 0019, and decide who owns the edge (§G)** (**D01-5**).
 
-**U2.2 — The issuer-to-tenant registry generator (ADR 0019 §G4a).** Nothing
-generates it (#70; `README.md:455-457`; ADR 0023 rejected "a fourth document,
-now", `docs/decisions/0023-…:387`).
+Options:
+- **A.** Accept as written. The platform implements G1–G17, and its route
+  comment is clarified to say client routes do not reach `/v1/data`.
+- **B.** Amend G1 to allow per-client routes to the runtime's `/v1/data`,
+  each carrying the same JWT policy.
+- **C.** Defer the edge and keep the runtime at zero replicas.
+
+*Recommendation:* **A**. The runtime half is built and tested against the
+single-route model. Owner: **Brett**.
+
+**U2.2: the generator for the issuer-to-tenant registry (ADR 0019 §G4a)**
+(**D01-4**). Nothing generates it: see #70 and `README.md:455-457`. ADR 0023
+rejected "a fourth document, now" (`docs/decisions/0023-…:387`).
 
 | Option | Shape | For | Against |
 |---|---|---|---|
-| A | **Fabric publisher generates both** from client realms + placements: the runtime registry inside the published tenants document (an ADR 0018 `v2` change), and the gateway's issuer allow-list as a Fabric-written object | One generator, one change (G4a's own requirement); the realm list is already Fabric's | Schema change to a `deny_unknown_fields` document; widens the publisher's RBAC to a gateway policy object |
-| B | **Platform composition** generates both per client (the U1.1-A Application) | Matches ADR 0025's edge-is-platform boundary | Two repositories must agree on the tenant list; Fabric's placement is the source of truth for which tenants exist |
-| C | Hand-maintained `[identity].trusted_issuers` + gateway list | Fastest for one trial tenant | Exactly the drift G4a forbids |
+| A | **The Fabric publisher generates both lists** from client realms and placements: the runtime registry inside the published tenants document (an ADR 0018 `v2` change), and the gateway's issuer allow-list | One generator, one change, as G4a requires; the realm list is already Fabric's | Schema change to a `deny_unknown_fields` document. Reverses ADR 0023's Consequence that the registry "is still configuration" (`0023-…:373-376`). A Fabric-written gateway object widens the publisher's RBAC. If the platform renders the allow-list instead, from a list Fabric publishes, that risks breaking G4a's "in the same change" (`0019-…:1268`) |
+| B | **Platform composition** generates both per client (the D01-3 Application) | Matches ADR 0025's boundary: the edge belongs to the platform | Two repositories must agree on the tenant list, while Fabric's placement is the source of truth for which tenants exist |
+| C | Hand-maintained `[identity].trusted_issuers` and gateway list | Fastest route to one trial tenant | Exactly the drift G4a forbids |
 
-*Recommendation:* **A** for the runtime registry; whether the gateway
-allow-list is Fabric-written or platform-rendered from a Fabric-published
-list is the sub-choice. Owner: **Brett** — **D01-4**.
+*Recommendation:* **A** for the runtime registry. The sub-choice is whether the
+gateway allow-list is written by Fabric (wider RBAC) or rendered by the
+platform (risk to G4a). Owner: **Brett**.
 
-**U2.3 — How an operator's master-realm account comes to exist.** The
-convergence grants roles and creates no accounts (PR93 / PR45). Options:
-A **broker to an upstream IdP** (Karo's model; Brett names the upstream);
-B convergence **creates declared local accounts**; C bootstrap `admin`
-remains the only operator. *Recommendation:* merge PR45/PR93 now so the
-roster is true (C as interim), then **A**. Owner: **Brett** — **D01-6**.
+**U2.3: how an operator's master-realm account comes to exist** (**D01-6**).
+The convergence grants roles to accounts and creates none (PR93, PR45).
 
-**U2.4 — Operator revocation.** Grants are `exhaustive = false`; removing a
-name revokes nothing (PR45 README "Who the operators are"; #70
-2026-09-22). Options: A exhaustive grant management in the convergence;
-B revocation stays a Keycloak act, documented; C revoke at the upstream IdP
-once U2.3-A exists. *Recommendation:* **C** if U2.3 is A, else **A**.
-Owner: **Brett** — **D01-7**.
+Options:
+- **A.** Broker to an upstream identity provider. This is Karo's model; Brett
+  names the upstream.
+- **B.** The convergence creates declared local accounts.
+- **C.** The bootstrap `admin` stays the only operator.
+- **D.** An empty roster `[]`. The README (`:117-118`) says this is valid,
+  grants nothing and blocks no sync.
 
-**U2.5 — Who provisions a client *instance* (its realm's gateway client,
-host, OIDC policy).** ADR 0025 leaves it open, naming Karo's "every directory
-alike" as the expected answer (`docs/decisions/0025-…:133-140`); client realms
-themselves stay with the control plane under ADR 0012. Options: A platform
-composition per client instance, Fabric continues reconciling realm
-*content*; B the control plane creates the instance resources as the
-operator (ADR 0012 posture); C every client shares the master pattern
-unchanged. *Recommendation:* **A**, decided together with D01-3 since both
-are a per-client platform Application. Owner: **Brett** — **D01-8**.
+*Recommendation:* C as the interim and A as the target. Making the roster
+true is a PR disposition (see "PR dispositions") and needs authorisation to
+deploy. Owner: **Brett**.
 
-**U2.6 — The loopback workbench and `/api/session` retirement.** ADR 0024 §2
-retires `/api/session` (decided); ADR 0021 owed decision 1 (keep/remove the
-loopback workbench) is still open and affects how the console is developed
-once its own sign-in is gone. Options: A keep with guard rails, amend
-control-plane architecture; B remove, local work needs `hosting/` Envoy +
-Keycloak. *Recommendation:* **B**, since ADR 0024 already puts the gateway on
-the local path. Owner: **Brett** — **D01-9**.
+Sub-choice **D01-6b**, operator revocation (formerly D01-7):
+- Grants are `exhaustive = false`, so removing a name revokes nothing
+  (README "Who the operators are").
+- Options:
+  - **A.** Manage grants exhaustively in the convergence.
+  - **B.** Revocation stays an act in Keycloak, and is documented.
+  - **C.** Revoke at the upstream IdP once D01-6 is A.
+- *Recommendation:* **C** if D01-6 is A, otherwise **A**.
+
+**U2.5: who provisions a client *instance*** (its realm's gateway client, host
+and OIDC policy). This is part (b) of **D01-3**, formerly D01-8.
+- ADR 0025 leaves this open and names Karo's "every directory alike" as the
+  expected answer (`docs/decisions/0025-…:133-140`).
+- Client realms themselves stay with the control plane under ADR 0012.
+
+Options:
+- **A.** Platform composition per instance; Fabric keeps reconciling realm
+  content.
+- **B.** The control plane creates the instance resources, acting as the
+  operator (ADR 0012's posture).
+- **C.** Every client reuses the master pattern unchanged.
+
+*Recommendation:* **A**. Owner: **Brett**.
+
+**U2.6: the loopback workbench, and retiring `/api/session`** (**D01-9**).
+ADR 0024 §2 retires `/api/session`; that part is decided. ADR 0021's owed
+decision 1, keep or remove the loopback workbench, is still open.
+
+Sequencing:
+- Draft PR #101 (`codex/disposable-dogfood`, head `8cd1c5f`) builds its trial
+  around console sign-in through `/api/session`. Its
+  `examples/disposable-dogfood/ci_smoke.py:96` defines a
+  `sign_in_through_console` stage, and lines `:401-402` call `/api/session`.
+- So retiring `/api/session` (ADR 0024 slice 2) and removing the workbench must
+  be sequenced with PR101.
+- PR102 (anonymous catalogue-write tests at the operator boundary) and PR107
+  (identity role edits in the console) touch this area too. They are tracked
+  in #109.
+
+Options:
+- **A.** Keep the workbench, with guard rails, and amend the control-plane
+  architecture.
+- **B.** Remove it, so local work needs the `hosting/` Envoy and Keycloak.
+
+*Recommendation:* **B**, after PR101 has moved to the gateway flow or been
+parked. Owner: **Brett**.
+
+**U2.7: who owns tenant end-user sessions for client instances** (**D01-26**).
+ADR 0024 fixes the shape: the gateway holds the session, and `/v1/identity`
+answers on the runtime (slices 3–5). It does not fix who configures each
+client instance's gateway session, or when. That depends on D01-3(b) and #114.
+Owner: **Brett**.
 
 ---
 
@@ -204,72 +316,97 @@ the local path. Owner: **Brett** — **D01-9**.
 
 ### Decided
 
-- **Authorization is declared in the platform's words** (resources →
-  relations → operations) and memberships are runtime data, not desired
-  state — ADR 0013 (Accepted); model in `crates/fabric-client-model/src/authorization.rs`.
-- **Fabric owns the OpenFGA front door**: identity bound from the verified
-  `iss`; two listeners (runtime surface, control-plane surface) — ADR 0016
-  (Accepted). Runtime surface built in `crates/fabric-fga-auth/` (registry
-  pins `authorization_model_id`, `src/registry.rs:129-131`).
-- **Control plane calls OpenFGA as the operator** — ADR 0014 (Accepted, control
-  plane only).
-- **Fabric decides which client secret boundary an operation reaches** —
+- **Authorization is declared in the platform's words:** ADR 0013 (Accepted).
+  A client declares resources, the relations on them and the operations each
+  relation permits. Memberships are runtime data, not desired state. Model:
+  `crates/fabric-client-model/src/authorization.rs`.
+- **Fabric owns the OpenFGA front door:** ADR 0016 (Accepted). Identity is
+  bound from the verified `iss`, and there are two listeners (a runtime
+  surface and a control-plane surface). The runtime surface is built in
+  `crates/fabric-fga-auth/`; its registry pins `authorization_model_id`
+  (`src/registry.rs:129-131`).
+- **The control plane calls OpenFGA as the operator:** ADR 0014 (Accepted, for
+  the control plane only).
+- **Fabric decides which client secret boundary an operation reaches:**
   ADR 0017 (Accepted).
-- **Operator authority is coarse and separate from tenants** — ADR 0009;
-  `docs/verification.md` "What is not verified": "Every authenticated operator
-  may do everything the API offers."
+- **Operator authority is coarse and separate from tenant identity:** ADR 0009
+  (Accepted). `docs/verification.md`, "What is not verified", says: "Every
+  authenticated operator may do everything the API offers."
 
 ### What actually enforces today
 
-- **Data API:** scope/role check only. `ResourcePermissions`
-  (`crates/fabric-data-api/src/authorization.rs:47-74`): scopes
-  `data:<resource>:read|write`, or the `platform-admin` role (`:62`) bypasses.
-  No call to `fabric-fga-auth` or OpenFGA on the data path (no reference in
-  `fabric-data-api`, `fabric-api`, `fabric-tenant-runtime`). Ordering tests:
-  `crates/fabric-data-api/tests/authorization_ordering.rs::an_unauthorised_caller_cannot_tell_an_exposed_verb_from_a_withheld_one` (:181) and siblings.
-- **OpenFGA is not deployed**: platform
-  `applications/core/openfga/README.md:11` — "**not deployed** — no
-  `application.yaml`". ADR 0016's control-plane surface and the converging of
-  `spec.authorization` into a store/model are not built
-  (`docs/architecture/control-plane.md:1607-1620`: "OpenFGA ← not built").
-- **Entitlements:** ADR 0021 (Proposed) — "Navigation is an entitlement
-  preview; the application enforces its own permissions"
-  (`docs/decisions/0021-…:591-592`). ADR 0024 §3 (Accepted) — `roles` is the
-  realm tier, finer checks belong to the module.
+- **The Data API checks scopes and roles only.** `ResourcePermissions`
+  (`crates/fabric-data-api/src/authorization.rs:47-74`):
+  - The scopes are `data:<resource>:read` and `data:<resource>:write`.
+  - `require_scopes = false` makes `permits` return `true` for everything
+    (`:75-76`).
+  - `administrator_role` is configurable and defaults to `platform-admin`
+    (`:62`; `examples/config.toml:189-190`). A token holding that role passes
+    every check.
+  - Nothing calls `fabric-fga-auth` or OpenFGA on the data path. The only
+    mention is a comment in `fabric-api`
+    (`src/config/validation/issuers.rs:43`).
+  - Tests that information about withheld verbs does not leak:
+    `crates/fabric-data-api/tests/authorization_ordering.rs::an_unauthorised_caller_cannot_tell_an_exposed_verb_from_a_withheld_one`
+    (:181) and its siblings.
+- **OpenFGA is not deployed.** Platform
+  `applications/core/openfga/README.md:11` says "**not deployed** — no
+  `application.yaml`".
+  - ADR 0016's control-plane surface is not built.
+  - Nothing converges `spec.authorization` into an OpenFGA store or model
+    (`docs/architecture/control-plane.md:1607-1620`: "OpenFGA ← not built").
+- **Entitlements.**
+  - ADR 0021 (Proposed): "Navigation is an entitlement preview; the
+    application enforces its own permissions" (`docs/decisions/0021-…:591-592`).
+  - ADR 0024 §3 (Accepted): `roles` is the realm tier; finer checks belong to
+    the module.
 
 ### Unresolved
 
-**U3.1 — What enforces data-path authorization for a served tenant.**
+**U3.1: what enforces data-path authorization for a served tenant**
+(**D01-10**).
 
 | Option | Shape | For | Against |
 |---|---|---|---|
-| A | **Scopes/roles only** (status quo) for the first tenant; ReBAC later | Built and tested; no new service on the critical path | `spec.authorization` declares relations nothing enforces; `platform-admin` is a tenant-realm role bypass |
-| B | **Data API calls `fabric-fga-auth` `Check`** after scope check | Enforces what ADR 0013 lets clients declare | Requires OpenFGA deployed, model convergence, and tuple-writing API; new failure mode (503) on every request |
-| C | Layered: A now, B per resource opt-in once OpenFGA is deployed | Incremental | Two models to explain to operators |
+| A | **Scopes and roles only** (status quo) for the first tenant; relationship-based checks later | Built and tested; no new service on the request path | Nothing enforces the relations `spec.authorization` declares; the administrator-role bypass applies |
+| B | **The Data API calls `fabric-fga-auth` `Check`** after the scope check | Enforces what ADR 0013 lets clients declare | Needs OpenFGA deployed, model convergence and an API to write tuples; adds a new failure mode (503) to every request |
+| C | **Layered:** A now, then B as a per-resource opt-in once OpenFGA is deployed | Incremental | Two models to explain to operators |
 
-*Recommendation:* **C**, with A as the M3 trial posture and an explicit
-statement that declared relations are not yet enforced. Owner: **Brett** —
-**D01-10**.
+*Recommendation:* **C**, with A as the posture for the M3 trial and an
+explicit statement that declared relations are not yet enforced. Owner:
+**Brett**.
 
-**U3.2 — Who deploys OpenFGA and converges `spec.authorization` into it.**
-Options: A platform deploys the `fabric-openfga` image, Fabric reconciles
-models via ADR 0016's control-plane surface; B defer OpenFGA until after the
-pilot. *Recommendation:* follows D01-10; if C, then **B** for M3 and **A**
-before M4. Owner: **Brett** — **D01-11**.
+Sub-choice **D01-10a** (formerly D01-11): who deploys OpenFGA and converges
+`spec.authorization` into it.
+- Options:
+  - **A.** The platform deploys the `fabric-openfga` image, and Fabric
+    reconciles models through ADR 0016's control-plane surface.
+  - **B.** Defer OpenFGA until after the pilot.
+- *Recommendation:* if D01-10 is C, then **B** for M3 and **A** before M4.
 
-**U3.3 — The `platform-admin` bypass and operator granularity.** Options:
-A keep a realm-role bypass in the Data API; B remove it (administrators
-use scopes like everyone); C operator roles finer than `fabric-operator`.
-*Recommendation:* **B** for the Data API (a tenant-realm role should not be an
-all-resource bypass by default); operator granularity stays coarse until a
-second operator persona exists. Owner: **Brett** — **D01-12**.
+**U3.2: the administrator-role bypass and operator granularity** (**D01-12**).
 
-**U3.4 — Entitlement enforcement point.** Whether Fabric enforces plan
-entitlements (e.g. a `/api/user/configuration` per ADR 0024's Karo reference)
-or only previews them. Options: A applications enforce, Fabric previews
-(ADR 0021 text); B Fabric enforces at the edge/runtime by plan. *Recommendation:*
-**A** for M4, revisit with commercial policy (#127). Owner: **Brett** —
-**D01-13**.
+Options:
+- **A.** Keep a configurable realm-role bypass in the Data API (status quo).
+- **B.** Remove `administrator_role`, or allow it to be set to none, and
+  forbid `require_scopes = false` outside tests.
+- **C.** Introduce operator roles finer than `fabric-operator`.
+
+*Recommendation:* **B** for the Data API. A role from a tenant realm should not
+bypass every resource check by default, and switching scopes off disables
+enforcement completely. Operator granularity stays coarse until a second
+operator persona exists. Owner: **Brett**.
+
+**U3.3: where entitlements are enforced** (**D01-13**). Does Fabric enforce
+plan entitlements, for example through a `/api/user/configuration` route like
+the Karo reference in ADR 0024, or does it only preview them?
+
+Options:
+- **A.** Applications enforce and Fabric previews (ADR 0021's text).
+- **B.** Fabric enforces at the edge or the runtime, by plan.
+
+*Recommendation:* **A** for M4, revisited with commercial policy (#127).
+Owner: **Brett**.
 
 ---
 
@@ -277,116 +414,219 @@ or only previews them. Options: A applications enforce, Fabric previews
 
 ### Decided
 
-- **Fabric's own components** advance automatically, can be paused (hold) and
-  rolled back with a hold; desired state in platform Git — control-plane
-  architecture `docs/architecture/control-plane.md:698-720`; running version
-  comes from deployment evidence — ADR 0022 (Accepted, milestone-scoped);
-  tests `crates/fabric-deployment-kubernetes/src/evaluate_tests.rs::stopped_workloads_require_completed_scale_down` and others listed at `docs/verification.md:517-592`.
-- **Master realm lifecycle needs no human** — ADR 0025 §5 (Accepted).
-- **Nothing in identity reconciliation deletes** — ADR 0008 "Deletion"
-  (Accepted).
+- **The master realm's lifecycle needs no human:** ADR 0025 §5 (Accepted).
+  `scripts/check.py` in the platform repository is the enforcement point.
+- **Running versions come from deployment evidence:** ADR 0022 (Accepted,
+  scoped to the LucentRoot readiness milestone).
+  - Tests: `crates/fabric-deployment-kubernetes/src/evaluate_tests.rs::stopped_workloads_require_completed_scale_down`,
+    and the others listed at `docs/verification.md:517-592`.
+
+### Documented or built, not an Accepted ADR
+
+- **Fabric's own components** advance automatically. They can be paused (with
+  a hold) and rolled back (also with a hold). Their desired state lives in
+  platform Git (`docs/architecture/control-plane.md:698-720`).
+- **Deletion is not decided.** ADR 0008 lists "Deletion" under "What this does
+  not decide" (`0008-…:126-131`). Today nothing in identity reconciliation
+  deletes. This feeds **D01-14**.
 
 ### Proposed (built, not decided)
 
-- Console creates clients; assignments projected as public identity clients;
-  **removing an assigned application is refused** — ADR 0021 §2, §4, §5
-  (Proposed). `crates/fabric-control-plane/src/service/set_product.rs:45-57`;
-  test `crates/fabric-control-plane/tests/product_workflows.rs::put_product_refuses_to_remove_an_assigned_application_and_leaves_the_client_unchanged` (:330).
-- Data source removal refused while a tenant is placed (route list,
-  `routes.rs`); runtime fails closed when a data source disappears —
-  `crates/fabric-data-api/tests/data_source_lifecycle.rs::removing_a_data_source_makes_its_tenants_fail_closed` (:156).
-- **Runtime raise is a manual one-line platform change** once publication is
-  complete, connectors are listed and the issuer registry covers placed
-  tenants — ADR 0023 §5 (Proposed), `docs/decisions/0023-…:316-325`.
-- Components describe themselves (OCI descriptor); selection is an operator
-  act — ADR 0026 (Proposed).
+- **ADR 0021 §2, §4, §5 (Proposed).** The console creates clients; assignments
+  are projected as public identity clients; **removing an assigned application
+  is refused.**
+  - Code: `crates/fabric-control-plane/src/service/set_product.rs:45-57`.
+  - Test: `crates/fabric-control-plane/tests/product_workflows.rs::put_product_refuses_to_remove_an_assigned_application_and_leaves_the_client_unchanged` (:330).
+- **Data source removal.**
+  - Removing a data source is refused while a tenant is placed on it (the
+    route list in `routes.rs`).
+  - If a data source disappears anyway, the runtime fails closed:
+    `crates/fabric-data-api/tests/data_source_lifecycle.rs::removing_a_data_source_makes_its_tenants_fail_closed` (:156).
+- **ADR 0023 §5 (Proposed): raising the runtime is a manual one-line platform
+  change** (`docs/decisions/0023-…:316-325`). It happens once three conditions
+  hold:
+  - the documents are published;
+  - the connectors are listed;
+  - the issuer registry covers every placed tenant.
+- **ADR 0026 (Proposed).** Components describe themselves in an OCI
+  descriptor; selecting one is an operator's act.
 
 ### Not built
 
-No controller deploys application components, issues DNS/certificates or
-observes their health (`README.md:468-470`); no client deletion
-(`README.md:463-467`); no connector deployment (§1).
+- Nothing deploys application components, issues their DNS names or
+  certificates, or observes their health (`README.md:468-470`).
+- There is no client deletion (`README.md:463-467`).
+- There is no connector deployment (see §1).
 
 ### Unresolved
 
-**U4.1 — Deprovisioning semantics** (ADR 0021 owed 3; ADR 0023 "Deprovisioning").
-Options: A tombstone — mark removed, revoke identity client, keep data for a
-retention window, then delete with confirmation; B hard delete with typed
-confirmation; C keep refusing removal (status quo, exit is a Git hand edit).
-*Recommendation:* **A**, with retention set by #127. Owner: **Brett** —
-**D01-14**.
+**U4.1: what deprovisioning undoes** (**D01-14**). Sources: ADR 0021 owed
+decision 3, ADR 0023 "Deprovisioning" and ADR 0008 "Deletion".
 
-**U4.2 — Private-network (`.internal`) clients** (ADR 0021 owed 4; #70
-"Point 3"). Options: A projected client follows the host kind
-(`privateNetwork` for `.internal`); B applications are public-host only.
-*Recommendation:* **A** — LucentRoot needs it. Owner: **Brett** — **D01-15**.
+Options:
+- **A.** Tombstone: mark removed, revoke the identity client, keep data for a
+  retention window, then delete with confirmation.
+- **B.** Hard delete with typed confirmation.
+- **C.** Keep refusing removal (status quo). The only exit is a hand edit in
+  Git.
 
-**U4.3 — Client upgrades and `automatic` for application components**
-(ADR 0021 owed 7; ADR 0026 "What this does not decide"). Options: A every
-client move is an operator save; B per-client policy mirroring Fabric's own
-`automatic`/hold; C catalogue-level rollout waves. *Recommendation:* **A** for
-the pilot. Owner: **Brett** — **D01-16**.
+*Recommendation:* **A**, with retention set by #127. Owner: **Brett**.
 
-**U4.4 — Who deploys an application's components** (ADR 0021 / ADR 0026 both
-leave it open). Options: A platform composition per client (with D01-3/D01-8);
-B a Fabric deployment controller with namespaced write RBAC. *Recommendation:*
-**A**, one per-client platform Application covering D01-3, D01-8 and this.
-Owner: **Brett** — **D01-17**.
+**U4.2: private-network (`.internal`) clients** (**D01-15**). Sources: ADR 0021
+owed decision 4; #70 "Point 3".
 
-**U4.5 — Raising the runtime.** Options: A manual one-line change after a
-checklist (ADR 0023 §5 as Proposed); B Fabric reports a "ready to raise" gate
-and a person flips it; C automate. *Recommendation:* **B**. Owner: **Brett** —
-**D01-18**.
+Options:
+- **A.** A projected client follows the kind of its hosts (`privateNetwork` for
+  `.internal`).
+- **B.** Applications are for public hosts only.
 
-**U4.6 — Remaining ADR 0021 owed items** 2 (what "client created" means
-before routing/data/secret boundary), 5 (who owns a projected identity
-client), 6 (activity size/retention), and acceptance of ADR 0021 and ADR 0026
-(with its six owed items, `docs/decisions/0026-…:909-935`). Not analysed in
-depth here; listed so they are not lost. Owner: **Brett** — **D01-19**.
+*Recommendation:* **A**, because LucentRoot needs it. Owner: **Brett**.
+
+**U4.3: client upgrades, and what `automatic` means for application
+components** (**D01-16**). Sources: ADR 0021 owed decision 7; ADR 0026 "What
+this does not decide".
+
+Options:
+- **A.** Every client move is an operator save.
+- **B.** A per-client policy that mirrors Fabric's own `automatic` and hold.
+- **C.** Catalogue-level rollout waves.
+
+*Recommendation:* **A** for the pilot. Owner: **Brett**.
+
+**U4.4: who deploys an application's components.** This is part (c) of
+**D01-3**, formerly D01-17. ADR 0021 and ADR 0026 both leave it open.
+
+Options:
+- **A.** Platform composition per client.
+- **B.** A Fabric deployment controller with namespaced write RBAC.
+
+*Recommendation:* **A**. Owner: **Brett**.
+
+**U4.5: raising the runtime** (**D01-18**).
+
+Options:
+- **A.** A manual one-line change after a checklist (ADR 0023 §5 as written).
+- **B.** Fabric reports a "ready to raise" gate, and a person flips it.
+- **C.** Automate it.
+
+*Recommendation:* **B**. This requires amending ADR 0023 §5 (see D01-2).
+Owner: **Brett**.
+
+**U4.6: the rest of ADR 0021's owed decisions, and accepting ADR 0021 and
+ADR 0026.** Owner: **Brett**.
+
+- **D01-19a: what "client created" means** (ADR 0021 owed decision 2,
+  `0021-…:612-615`). Evidence: the README says creation writes only the
+  document (`README.md:463-467`).
+  - **A.** A document with a realm and a product configuration counts as
+    "created".
+  - **B.** Creation waits for routing, data placement and a secret boundary.
+  - **C.** Creation is shown with an explicit "incomplete" state.
+  - *Recommendation:* **C**.
+- **D01-19b: who owns a projected identity client** (ADR 0021 owed decision 5,
+  `0021-…:626-628`). Evidence: §4's projection replaces entries by id
+  (`0021-…:273-313`).
+  - **A.** A product save keeps overwriting hand edits.
+  - **B.** Projected clients are marked as the product's and refused in
+    identity edits.
+  - *Recommendation:* **B**.
+- **D01-19c: activity and the document size limit** (ADR 0021 owed decision 6,
+  `0021-…:629-633`). Evidence: today activity is bounded only by
+  `422 document_too_large`.
+  - **A.** Keep activity in desired state, with a trimming rule.
+  - **B.** Move it to a durable audit store.
+  - **C.** Drop it in favour of Git history.
+  - *Recommendation:* **B**, with retention from #127.
+- **D01-19d: accept ADR 0021 and ADR 0026.**
+  - Accepting ADR 0026 partly accepts ADR 0023 (`0026-…:18-20`), so it comes
+    after D01-2.
+  - ADR 0026's six owed decisions are at `0026-…:909-935`: images without a
+    descriptor, browsing, declared fields and plans, adoption, defaults, and
+    the free-text kinds.
+  - **A.** Accept each after its owed decisions.
+  - **B.** Accept now and record the owed decisions as follow-ups.
+  - *Recommendation:* **A**, in order: 0023, then 0021, then 0026.
 
 ---
 
 ## 5. Rollback boundaries
 
-### Decided / documented
+### Decided
 
 | Boundary | Rule | Source |
 |---|---|---|
-| Fabric's own component (images) | Roll back to an older published version; restores version **and** bytes; writes a hold (`reason: rollback`) in the same commit; a digest in the request is refused | `docs/architecture/control-plane.md:722-780, 960-1030`; `crates/fabric-control-plane/tests/platform_integration.rs::a_rollback_carrying_a_digest_is_refused_rather_than_ignored` (:200); `platform_described.rs::a_described_rollback_candidate_names_its_commit_and_no_digest` (:137) |
-| Fabric's own component (chart) | Restores version, not provably bytes; stated, not enforced | same, `:744-760` |
-| Config across an observer boundary | Older binaries reject new config; rollback must remove config with image pins | ADR 0022 "Rollout" (Accepted) |
-| Runtime documents | Revision is monotonic; an older revision is refused; deprovisioning is an empty set inside a document, never a delete; breaking change ships as new file names beside old | ADR 0018 §6, §9 (Proposed); tests in §1 |
-| Master instance | Idempotent apply + drift check; state loss recovered by adoption; `prevent_destroy`; gateway secret rotation is regenerate + re-run | ADR 0025 Consequences (Accepted) |
-| Wave ordering | Holds at environment **creation** only; on an existing environment children sync independently | PR93 / PR45 (open, not merged); observed 2026-09-22 per PR45 text — **not re-verified** |
-| Identity reconciliation | Adds and corrects, never deletes | ADR 0008 (Accepted) |
+| Configuration across the observer boundary | Older binaries reject the new configuration, so rolling back across that boundary must remove the configuration along with the image pins | ADR 0022 "Rollout" (Accepted) |
+| Master instance | Apply is idempotent and its drift check is the proof. Lost OpenTofu state is recovered by adopting existing objects. `prevent_destroy` guards against deleting a client. Rotating the gateway secret means regenerating it and re-running | ADR 0025 Consequences (Accepted) |
+
+### Documented or built, not an Accepted ADR
+
+| Boundary | Rule | Source |
+|---|---|---|
+| Fabric's own component (images) | Rolls back to an older published version, restoring the version **and** the exact bytes. Writes a hold (`reason: rollback`) in the same commit. A request carrying a digest is refused | `docs/architecture/control-plane.md:722-780, 960-1030`; `crates/fabric-control-plane/tests/platform_integration.rs::a_rollback_carrying_a_digest_is_refused_rather_than_ignored` (:200); `platform_described.rs::a_described_rollback_candidate_names_its_commit_and_no_digest` (:137) |
+| Fabric's own component (chart) | Restores the version, but not provably the bytes. The difference is stated, not enforced | same document, `:744-760` |
+| Runtime documents | The revision is monotonic, and an older revision is refused (§6). A breaking change ships under new file names beside the old ones (§9). Deprovisioning is an empty set inside a document, never a delete (`0018-…:616-617`) | ADR 0018 (Proposed); tests in §1 |
+| Wave ordering | Holds only when an environment is **created**. On an existing environment the child Applications sync independently | PR93 and PR45 (both open, not merged); observed on 2026-09-22 according to PR45's text, **not re-verified** |
+| Identity reconciliation | Adds and corrects. Deletion is not decided (ADR 0008 "What this does not decide"; see D01-14) | ADR 0008 (Accepted) |
 
 ### Unresolved
 
-**U5.1 — Ordering updates, not only creation** (platform #44, `RollingSync`).
-Options: A adopt `RollingSync`; B accept creation-only ordering and rely on
-loud `Degraded` + manual revert of the OIDC policy; C a pre-sync health check
-in wave 40. *Recommendation:* **B** for the disposable trial, **A** before the
-durable pilot. Owner: **Brett** — **D01-20**. Platform #44 state: **not
-verified**.
+**U5.1: ordering updates, not only creation** (**D01-20**). The mechanism under
+discussion is platform #44, `RollingSync`.
 
-**U5.2 — Rollback floor for Fabric's own component across a format change**
-(ADR 0026 "What this does not decide"). Options: A record a minimum rollable
-version per release and refuse below it; B document only; C forward-fix only.
+Options:
+- **A.** Adopt `RollingSync`.
+- **B.** Accept creation-only ordering, and rely on a loud `Degraded` plus a
+  manual revert of the OIDC policy.
+- **C.** Add a pre-sync health check in wave 40.
+
+*Recommendation:* **B** for the disposable trial, then **A** before the durable
+pilot. Owner: **Brett**. **Not verified:** the state of platform #44.
+
+**U5.2: a rollback floor for Fabric's own component across a format change**
+(**D01-21**). ADR 0026 lists this under "What this does not decide".
+
+Options:
+- **A.** Record a minimum rollable version per release, and refuse rollback
+  below it.
+- **B.** Document the floor only.
+- **C.** Only fix forward.
+
 *Recommendation:* **A**, as part of the release compatibility manifest (#124).
-Owner: **Brett** — **D01-21**.
+Owner: **Brett**.
 
-**U5.3 — Rolling back runtime documents.** Revisions cannot go backwards.
-Options: A roll-forward only — republish prior content at a new revision
-(matches the built verdict table); B allow an operator revision reset;
-C rely on Git revert of `placements.yaml`/`data-sources.yaml` and let the
-publisher republish. *Recommendation:* **A**, with C as the mechanism; record
-it in ADR 0018 on acceptance. Owner: **Brett** — **D01-22**.
+**U5.3: rolling back runtime documents.** This is now part of **D01-1**
+(formerly D01-22). Revisions cannot go backwards.
 
-**U5.4 — Tenant data rollback and schema migration.** Nothing creates tables
-(ADR 0023) and off-host recovery is unproven (#108 evidence limits; platform
-#50). Options: A platform owns backup/restore per data source; B Fabric
-records restore points beside placements; C out of scope until the durable
-pilot. *Recommendation:* **A**, gated to M5. Owner: **Brett** — **D01-23**.
+Options:
+- **A.** Roll forward only: republish the earlier content at a new revision.
+  This matches the verdict table as built.
+- **B.** Allow an operator to reset the revision.
+- **C.** Revert `placements.yaml` and `data-sources.yaml` in Git and let the
+  publisher republish.
+
+*Recommendation:* **A**, using C as the mechanism. Record it in ADR 0018 when
+it is accepted.
+
+**U5.4: tenant data rollback and schema migration** (**D01-23**). Nothing
+creates tables (ADR 0023), and off-host recovery is unproven (#108's evidence
+limits; platform #50).
+
+Options:
+- **A.** The platform owns backup and restore for each data source.
+- **B.** Fabric records restore points beside placements.
+- **C.** Out of scope until the durable pilot.
+
+*Recommendation:* **A**, gated to M5. Owner: **Brett**.
+
+**Other gaps, each owned by Brett:**
+- **D01-25: lifecycle and rollback of client secrets.** ADR 0017 decides where
+  a secret boundary is. Nothing decides how versions are retired, or how a
+  secret is rolled back. Draft PR105 and PR106 touch secret versions in the
+  console.
+- **D01-27: rollback of the desired-state repositories.** This covers
+  `saas-fabric-clients` (the catalogue and client documents) and the platform's
+  `data-sources.yaml` and `placements.yaml`. Is a Git revert a supported
+  operator action, given conditional writes and activity entries? Not decided.
 
 ---
 
@@ -395,52 +635,86 @@ pilot. *Recommendation:* **A**, gated to M5. Owner: **Brett** — **D01-23**.
 | | saas-fabric PR #93 | saas-fabric-platform PR #45 |
 |---|---|---|
 | Head | `647ef8d` (1 commit, 1 file, +20/−3) | `fd12327` (1 commit on `355fe6d`, 5 files, +110/−34) |
-| Draft / ready | Ready (not draft), open | **Not verified** — GitHub API access to this repository is not enabled for this session |
-| Mergeability | API `mergeable_state: clean`; local `git merge-tree` against `1f46788` clean; `main` has moved 7 commits (#94–#100) since base `8676af4`, none touching ADR 0025 | Local `git merge-tree` against `0ff5d66` clean; `main` moved 2 commits (#46, #47) since `355fe6d`; #46 touched `saas-fabric-control-plane/README.md`, which PR45 also edits, without textual conflict. GitHub mergeability **not verified** |
-| CI | 24/24 check runs `success` on `647ef8d` (2026-09-22: workspace tests, clippy, fmt, deny, doc, architecture invariants, file-size, control-plane-ui, ndc acceptance, CodeQL). Not re-run against current `main` | **Not verified** |
-| What it decides | Docs only. ADR 0025 wave-gate sentence corrected (gate holds at creation, not every update; #44 tracks updates); adds "what this does not decide": operator *account* origin, Karo brokering as reference, upstream is Brett's | Roster `["brett@fieldstate.nz"]` → `["admin"]` (functional: fixes the plan-time lookup failure); READMEs state when the wave gate holds; records brokering as the open question |
-| Recommended disposition | **Merge** after Brett confirms D01-6 interim (bootstrap admin as operator) — a text correction to an Accepted ADR, no contract change | **Merge first** of the two after CI is confirmed on `fd12327`: platform `main` still names an account that does not exist, so `master-instance` stays `Degraded` (matches #108's Oct-3 inventory). Merging triggers a LucentRoot sync — that is an operational act needing separate authorisation |
+| Draft or ready | Ready (not draft), open | **Not verified.** GitHub API access to this repository is not enabled for this session |
+| Mergeability | GitHub reports `mergeable_state: clean`. A local `git merge-tree` against `1f46788` is clean. `main` has moved 7 commits (#94–#100) since the base `8676af4`, and none touch ADR 0025 | A local `git merge-tree` against `0ff5d66` is clean. `main` has moved 2 commits (#46, #47) since `355fe6d`. #46 changed `scripts/check.py` by +621/−9 and also edited `saas-fabric-control-plane/README.md`, which PR45 edits too. A clean textual merge does not mean the checks pass. **Not verified:** GitHub's mergeability |
+| CI | 24 check runs, all `success`, on `647ef8d` (2026-09-22). They are two runs of the same workflow (9 jobs each), five CodeQL analyses and the CodeQL aggregate check. Not re-run against current `main` | **Not verified** |
+| What it changes | Amends **Accepted ADR 0025 §1**: the wave gate holds when an environment is created, not on every update, and platform #44 tracks ordering updates. It also adds an interim rule to "What this does not decide": the bootstrap administrator is the declared operator until account origin is decided, with Karo's brokering cited as the reference. The status stays Accepted | Changes the roster from `["brett@fieldstate.nz"]` to `["admin"]`, which changes what the convergence grants. The READMEs now say when the wave gate holds and record brokering as the open question |
+
+### PR dispositions (formerly D01-24)
+
+**P-1. Neither PR merges under #108.**
+
+1. Brett decides the interim for D01-6 first.
+2. PR45 then merges only as a separately authorised change to LucentRoot,
+   because merging it is a deployment:
+   - LucentRoot tracks platform `main`
+     (`environments/lucentroot/kustomization.yaml:37-52`).
+   - The `master-instance` Job re-runs on every sync with the bootstrap
+     administrator's credential.
+3. Before PR45 merges, three things must be in place:
+   - platform #48's diagnosis;
+   - CI passing on PR45's exact head after rebasing onto `0ff5d66`;
+   - a stated rollback: revert to the earlier roster, or to `[]`.
+4. PR93 merges in the same window. Its new ADR 0025 text says the bootstrap
+   administrator is the declared operator, which describes PR45's roster and
+   is not true of platform `main` until PR45 lands. Brett accepts that
+   amendment and interim as part of D01-6.
 
 ---
 
 ## Decisions owed
 
-All owned by **Brett**. "Rec." is a recommendation only.
+Brett owns every decision. "Rec." is a recommendation only. IDs merged during
+review are noted, and the original IDs are not reused.
 
 | ID | Area | Decision | Rec. |
 |---|---|---|---|
-| D01-1 | Publication | Accept or amend ADR 0018 (built, Proposed) | Amend "as built", accept |
-| D01-2 | Publication | Accept or amend ADR 0023; reconcile dedicated-placement wording with `select.rs:44-47`; fix stale `README.md:451-454` | Amend, accept |
-| D01-3 | Provisioner | Who provisions tenant databases/schemas and connector processes (Brett's 2026-09-22 direction, ADR owed) | Platform composition per client |
-| D01-4 | Identity | Generator for the issuer-to-tenant registry (ADR 0019 §G4a) | Fabric publisher, one generator |
-| D01-5 | Identity | Accept ADR 0019; platform owns §G edge; correct per-client-route comment | Accept as written |
-| D01-6 | Identity | How operator master-realm accounts exist (broker upstream / create / admin only) | Merge PR45+PR93 (admin interim), then broker; Brett names upstream |
-| D01-7 | Identity | Operator revocation mechanism | Revoke at upstream IdP (or exhaustive grants) |
-| D01-8 | Identity | Who provisions client instances (gateway client, host, OIDC policy) | Platform composition, with D01-3 |
-| D01-9 | Session | Keep or remove loopback workbench as `/api/session` retires (ADR 0021 owed 1) | Remove |
-| D01-10 | Authorization | Data-path enforcement: scopes only / FGA check / layered | Layered; scopes-only for M3 trial |
-| D01-11 | Authorization | Who deploys OpenFGA and converges `spec.authorization` | Defer to before M4 |
-| D01-12 | Authorization | `platform-admin` bypass in Data API; operator granularity | Remove bypass; operators stay coarse |
-| D01-13 | Authorization | Entitlement enforcement point | Applications enforce; Fabric previews |
-| D01-14 | Lifecycle | Deprovisioning semantics (ADR 0021 owed 3) | Tombstone + retention + confirmed delete |
-| D01-15 | Lifecycle | `.internal` private-network clients (ADR 0021 owed 4) | Follow host kind |
-| D01-16 | Lifecycle | Client upgrades / `automatic` for application components (ADR 0021 owed 7) | Operator save per client for pilot |
-| D01-17 | Lifecycle | Who deploys application components | Platform composition per client |
-| D01-18 | Lifecycle | How the runtime is raised from `replicas: 0` | Fabric-reported gate, person flips |
-| D01-19 | Lifecycle | ADR 0021 owed 2, 5, 6; accept ADR 0021 and ADR 0026 (+ its six owed) | Separate session |
-| D01-20 | Rollback | Order updates as well as creation (`RollingSync`, platform #44) | Creation-only for trial; RollingSync before pilot |
-| D01-21 | Rollback | Rollback floor for Fabric's own component across format changes | Min rollable version in release manifest |
-| D01-22 | Rollback | Runtime document rollback | Roll-forward only |
-| D01-23 | Rollback | Tenant data backup/restore and migration owner | Platform, gated to M5 |
-| D01-24 | PRs | Dispositions of PR93 and platform PR45 | Merge both, PR45 first, after CI and authorisation |
+| D01-1 | Publication | Accept or amend ADR 0018 (built, Proposed), including runtime-document rollback (U5.3, formerly D01-22) | Amend "as built", accept; roll forward only |
+| D01-2 | Publication | Accept or amend ADR 0023: resolve the non-shared placement contradiction (`:222-228`/`:370-372` vs `:230-235`, implemented by `select.rs:44-47`); §5 against D01-18; fix the stale `README.md:451-454` | Amend, then accept |
+| D01-3 | Provisioning | Per-client platform composition, three sub-choices: (a) databases, schemas and connector processes; (b) client instance resources (formerly D01-8); (c) application component deployment (formerly D01-17) | Platform composition per client for all three |
+| D01-4 | Identity | Generator for the issuer-to-tenant registry (ADR 0019 §G4a) | Fabric publisher, one generator; gateway sub-choice open |
+| D01-5 | Identity | Accept ADR 0019; the platform owns the §G edge; clarify the client-route comment | Accept as written |
+| D01-6 | Identity | How operator master-realm accounts come to exist (broker / create / `admin` only / `[]`); sub-choice 6b, revocation (formerly D01-7); accepting PR93's interim | `admin` interim, brokering as target; Brett names the upstream |
+| D01-9 | Session | Keep or remove the loopback workbench as `/api/session` retires (ADR 0021 owed 1); sequence with PR101 | Remove, after PR101 is settled |
+| D01-10 | Authorization | Data-path enforcement: scopes only / OpenFGA check / layered; sub-choice 10a, deploying OpenFGA (formerly D01-11) | Layered; scopes only for the M3 trial; OpenFGA before M4 |
+| D01-12 | Authorization | The administrator-role bypass and `require_scopes = false`; operator granularity | Remove the bypass, forbid disabling scopes outside tests; operators stay coarse |
+| D01-13 | Authorization | Where entitlements are enforced | Applications enforce; Fabric previews |
+| D01-14 | Lifecycle | What deprovisioning undoes (ADR 0021 owed 3; ADR 0008 Deletion) | Tombstone, retention, confirmed delete |
+| D01-15 | Lifecycle | `.internal` private-network clients (ADR 0021 owed 4) | Follow the host kind |
+| D01-16 | Lifecycle | Client upgrades, and `automatic` for application components (ADR 0021 owed 7) | Operator save per client for the pilot |
+| D01-18 | Lifecycle | How the runtime is raised from `replicas: 0` (amends ADR 0023 §5) | Fabric reports a gate; a person flips it |
+| D01-19a | Lifecycle | What "client created" means (ADR 0021 owed 2) | Explicit "incomplete" state |
+| D01-19b | Lifecycle | Who owns a projected identity client (ADR 0021 owed 5) | Owned by the product; hand edits refused |
+| D01-19c | Lifecycle | Activity and the size limit (ADR 0021 owed 6) | Durable audit store |
+| D01-19d | Lifecycle | Accept ADR 0021 and ADR 0026 (0026 has six owed decisions; it comes after D01-2) | In order: 0023, 0021, 0026 |
+| D01-20 | Rollback | Order updates as well as creation (`RollingSync`, platform #44) | Creation-only for the trial; `RollingSync` before the pilot |
+| D01-21 | Rollback | Rollback floor for Fabric's own component across format changes | Minimum rollable version in the release manifest |
+| D01-23 | Rollback | Owner of tenant data backup, restore and migration | Platform, gated to M5 |
+| D01-25 | Secrets | Lifecycle and rollback of client secret versions (ADR 0017; PR105/106) | Not analysed |
+| D01-26 | Identity | Who owns tenant end-user sessions for client instances (ADR 0024 slices 3–5; #114) | With D01-3(b) |
+| D01-27 | Rollback | Rollback of the desired-state repositories (`saas-fabric-clients`, platform environment files) | Not analysed |
+
+**Retired IDs:**
+
+| Retired | Now part of |
+|---|---|
+| D01-7 | D01-6b |
+| D01-8 | D01-3(b) |
+| D01-11 | D01-10a |
+| D01-17 | D01-3(c) |
+| D01-22 | D01-1 |
+| D01-24 | P-1 |
 
 ## Not verified
 
-- Platform PR45 draft state, GitHub mergeability and CI (no API access to
-  `saas-fabric-platform` in this session; diff read from `pull/45/head`).
-- Platform issue #44 state.
-- Live LucentRoot state: publication row, `master-instance` health, first
-  gateway sign-in, runtime replicas (Git says `0`). The Oct-3 inventory in
-  #108 is the latest observation cited, not re-observed.
-- PR93 CI against current `main` (last run on base `8676af4`).
-- `saas-fabric-clients` contents.
+- PR45's draft state, GitHub mergeability and CI. This session has no API
+  access to `saas-fabric-platform`; the diff was read from `pull/45/head`.
+- Whether a master-realm user named `brett@fieldstate.nz` exists, and what
+  caused the Oct-3 `master-instance` `Degraded` (platform #48).
+- Whether per-client OpenTofu routes reach the runtime's `/v1/data`.
+- The state of platform #44.
+- Live LucentRoot state: the publication row, the first gateway sign-in and
+  the runtime replicas (Git says `0`). The Oct-3 inventory in #108 is the
+  latest observation cited, and it was not re-observed.
+- PR93's CI against current `main`. The last run was on the base `8676af4`.
+- The contents of `saas-fabric-clients`.

@@ -30,6 +30,18 @@ Deliverable for FieldstateNZ/saas-fabric#110 `[W0] Reconcile the whole WorkSpec 
 - Cluster/deployment facts from #110's evidence-limits paragraph are historical observations and are not used as proof of anything here.
 - "Plans/comparison" maps to the decision costed-options comparison model (`lib/yaml-schemas/src/decision.ts`, row 3). Brett should confirm that is the intended meaning, because the acceptance text does not define it.
 
+### Evidence receipts and provenance
+
+The runs in the bullets above were first made by the authoring agent on 2026-10-05. The lead session reran each one independently on 2026-10-06 against the same head. Logs are kept in the session scratch area, not committed; their SHA-256 sums identify them if they are attached later.
+
+| Run | Who / when (UTC) | Environment | Command (from `/home/user/workspec`, `WORKSPEC_TEST_DB_URL=postgres://workspec:workspec@localhost:5432/workspec_test`) | Result | Log SHA-256 |
+|---|---|---|---|---|---|
+| Targeted | lead rerun, 2026-10-06 03:17 | `47607db`; Node 22.22.0; pnpm 10.33.0; PostgreSQL 16.14 local (no Docker daemon) | `pnpm --filter @workspace/api-server exec vitest run` + the six files listed above | Files 1 failed / 5 passed; Tests 6 failed / 84 passed (90). All six failures are `checkAiUsageAllowed`, each on `violates check constraint "conversations_parent_check"` | `2e0bb9d9…62be8` |
+| Full API suite | lead rerun, 2026-10-06 03:18 | same | `pnpm --filter @workspace/api-server run test` | Files 7 failed / 92 passed (99); Tests 17 failed / 889 passed (906). Failing files: `create-diagram-dsl-nodes` (3), `workspaces/plan-limits` (6), `ops-log-actor-attribution` (4), `mcp/tool-registry` (1), `routes/repo-file-delete` (1), `routes/diagram-attach` (1), `pdf-generator` (1, no Chromium) | `ad1e8118…6f3f0` |
+| Drizzle generate (#442) | lead rerun, 2026-10-06 | same | `pnpm --filter @workspace/db run generate` | Completes; emits `0070_*.sql` with two `CREATE TABLE` (`hole_claims`, `threads`) and a `0070_snapshot.json`; latest committed snapshot is 0068. Generated files discarded | not kept |
+
+Both runs match the authoring agent's figures exactly. They are local runs, not CI, and the cause of the 16 non-environmental failures is not established.
+
 ## Fabric-side context that shapes every integration gap
 
 From ADR 0024 / 0021 / 0026 and `docs/architecture/`:
@@ -46,7 +58,7 @@ Downstream Fabric issues (not to be cloned): #118 shell navigation integration; 
 
 Paths are relative to the WorkSpec repo root unless prefixed `fabric:`. `API` = `artifacts/api-server`, `WEB` = `artifacts/workspec`. Test paths are under `API/test/` unless stated. The "Existing issues" column gives the state I found at head; full reasoning is in "Issues revalidated".
 
-"Complete WorkSpec" here means every capability area is covered inside Fabric. It does not mean keeping both UI generations: where a view still delegates to the v4 surface (rows 2 and 4), the gap is the capability, and whether the legacy view is retained or retired is a separate disposition.
+"Complete WorkSpec" here means every capability area is covered inside Fabric. It does not mean keeping both UI generations: where a view still delegates to the v4 surface (rows 2, 4 and 11), the gap is the capability, and whether the legacy view is retained or retired is a separate disposition.
 
 ### 1. Workspaces and projects
 
@@ -200,7 +212,7 @@ Paths are relative to the WorkSpec repo root unless prefixed `fabric:`. `API` = 
 | Fabric integration gap | Directly #118: Module Federation entry (`./Module`), `basePath` prefix handling for wouter, same-origin asset paths under `/modules/workspec/`, no token in browser (WorkSpec keeps its own cookie session and OAuth redirect pages), `401` to gateway sign-in rather than WorkSpec `/login`, WorkSpec `/setup`, `/register`, `/forgot-password` flows must not be reachable or must be Fabric-owned, module compatibility/manifest and error states. Plus `docs/` design handoff rule from #118: new visual design needs a fresh approved handoff. |
 | Owner (accountable) | Unassigned. Brett to assign (WorkSpec delivery dev-lead per workspec#307 proposed). |
 | Downstream | #118. |
-| Recommended disposition (pending Brett) | **In-launch.** The whole navigation (v4 sidebar and v5 four-view) must be reachable per #118's acceptance; Brett to decide whether v4 sidebar pages stay until #499 lands. |
+| Recommended disposition (pending Brett) | **In-launch.** Every navigation capability must be reachable per #118's acceptance ('whole WorkSpec navigation'). That does not require both the v4 sidebar and the v5 four-view; whether v4 sidebar pages are kept or retired is a separate disposition for Brett, sequenced with #499. |
 
 ## Issues revalidated
 
@@ -253,12 +265,12 @@ State is the issue state on GitHub on 2026-10-05; "verdict" is my finding at Wor
 
 Proposed titles only. No issues were created. Items in B already have an owning issue: comment on or reopen that scope, do not file a new issue. Before any item in A is filed, check it against the downstream Fabric issues #118–#122 first and add it there as scope where it fits; file a new issue only for what none of them covers.
 
-### A. Truly new (no existing issue covers it)
+### A. Not yet covered: add to #118–#122 first
 
-1. `[WorkSpec] Define and prove the tenant export/import contract: whole workspace/project bundle, unknown files preserved, cross-tenant denial` (row 7; needed by Fabric #121).
-2. `[WorkSpec] Module Federation entry for the WorkSpec SPA: ./Module, basePath-aware routing, no standalone auth pages` (row 11; #118 consumes it).
+1. `[WorkSpec] Define and prove the tenant export/import contract: whole workspace/project bundle, unknown files preserved, cross-tenant denial` (row 7; needed by Fabric #121). **Target: add as scope on #121.**
+2. `[WorkSpec] Module Federation entry for the WorkSpec SPA: ./Module, basePath-aware routing, no standalone auth pages` (row 11; #118 consumes it). **Target: #118.**
 3. `[Fabric] Decide authority between WorkSpec billing/Stripe/Atrium license and Fabric catalogue plan/entitlement` (rows 3 and 8; Brett decision, likely belongs under #119).
-4. `[Brett] Confirm "plans/comparison" = the decision costed-options comparison model` and add option/score/selection test coverage (row 3; goes to #121 evidence).
+4. `[Brett] Confirm "plans/comparison" = the decision costed-options comparison model` and add option/score/selection test coverage (row 3; goes to #121 evidence). **Target: #121.**
 5. WorkSpec-side parts of Fabric #119 only (link #119, do not duplicate): accept a Fabric-issued bearer / trusted-ingress identity alongside session cookies and map realm, subject and roles to workspace membership; server-side suspend/reinstate and revoked-product-assignment handling including session and MCP token invalidation.
 6. WorkSpec-side part of Fabric #120 only (link #120): a component descriptor (ADR 0026) and provisioning contract covering database, storage volume and health endpoints.
 7. `[WorkSpec] Test coverage for the ingestion route and service (spec upload, planner phases, rebuild)` (row 7; no ingestion test file was found; distinct from #469).

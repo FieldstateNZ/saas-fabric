@@ -316,13 +316,17 @@ bearer, and the browser never holds a token (§1 `docs/decisions/0024-…:78-86`
 §2 `:88-97`). `/v1/identity` answers on the runtime (slice 5, `:162-163`). What
 no ADR fixes is who writes each client instance's gateway session
 configuration (host, OIDC provider and realm, cookie secret) and when. This is
-the per-client gateway half of U2.5 (D01-3(b)), and #114 tracks it.
+the per-client gateway half of U2.5 (D01-3(b)). #114 (M3, open) proves the
+edge and session boundaries once they are configured; it does not assign who
+configures them.
 
 Evidence:
-- ADR 0024 puts one gateway filter chain per client, selected by host
-  (`:50-56`), and names a `SecurityPolicy` on LucentRoot (`:80-81`).
-- ADR 0025 puts the edge with the platform. Its master-instance pattern
-  regenerates the gateway secret on re-run (Consequences, quoted in §5).
+- ADR 0024 Context describes the adopted Karo shape: one Envoy filter chain
+  per client, selected by host (`:44-56`). Its decision names a
+  `SecurityPolicy` on LucentRoot (`:80-81`).
+- ADR 0025 puts the edge with the platform and sets the gateway secret
+  in-cluster, with rotation by convergence re-run (`0025-…:66-72`). It names the
+  same approach for client instances as the expected answer (`:135-138`).
 - ADR 0012 keeps client realm content with the control plane.
 - The same cost appears in U2.2 A: a Fabric-written gateway object widens the
   publisher's RBAC.
@@ -339,13 +343,14 @@ Options:
 - **C.** One platform-owned policy template, with Fabric publishing only the
   realm and host list (the D01-4 generator). For: one gateway object to
   review. Against: it needs the generator first. **Not verified:** whether a
-  single Envoy Gateway `SecurityPolicy` can select a realm per host, which
-  ADR 0024 describes as one chain per client.
+  single Envoy Gateway `SecurityPolicy` can select a realm per host, when ADR
+  0024 Context describes one filter chain per client (`:44-56`).
 
 *Recommendation:* **A**, decided together with D01-3(b). Owner: engineering
 ownership under ADR 0024; **Brett** confirms only if the answer changes
-D01-3(b). **Not verified:** the content and state of #114, and whether ADR 0024
-slices 3–5 are built.
+D01-3(b). A is engineering ownership within ADR 0024 and ADR 0025
+(`0025-…:135-138`). Choosing B or C changes ADR 0025's boundary and would need
+an ADR and Brett. **Not verified:** whether ADR 0024 slices 3–5 are built.
 
 ---
 
@@ -411,7 +416,9 @@ slices 3–5 are built.
 
 *Recommendation:* **C**, with A only as the posture for the isolated
 disposable trial (M1) and an explicit statement that declared relations are
-not yet enforced there; B enforced from M3 (see D01-10a). Owner: **Brett**.
+not yet enforced there; B enforced from M3, and for any tenant beyond the
+trial on every resource that declares relations (see D01-10a). Owner:
+**Brett**.
 
 Sub-choice **D01-10a** (formerly D01-11): who deploys OpenFGA and converges
 `spec.authorization` into it.
@@ -423,11 +430,16 @@ Sub-choice **D01-10a** (formerly D01-11): who deploys OpenFGA and converges
   - **Isolated disposable trial (M1):** no OpenFGA; scopes and roles only,
     with declared relations stated as unenforced. This is a trial exception,
     not a tenant-launch bar.
+  - **Convergence and runtime publication (M2):** no tenant beyond the trial,
+    so no change.
   - **Tenant trust and isolation (M3):** **A** — OpenFGA deployed and models
     converged, so the two-tenant proof (#116) runs against the enforcement
     that tenant launch will use.
-  - Any tenant served beyond the disposable trial requires A. Brett has not
-    decided this schedule.
+  - Any tenant served beyond the isolated disposable trial requires D01-10a A
+    (OpenFGA deployed, models converged) and the D01-10 B `Check` on every
+    resource whose `spec.authorization` declares relations; under C, opt-in
+    applies only to resources that declare none. Brett has not decided this
+    schedule.
 
 **U3.2: the administrator-role bypass and operator granularity** (**D01-12**).
 
@@ -674,9 +686,12 @@ Options:
   - Every write sends a check-and-set (`cas`) version, and `None` is sent as
     `0`, so a write to an existing secret without its version is refused
     (`crates/fabric-openbao/src/client_secrets/operations.rs:53-60`). A
-    mismatch is `SecretsError::Conflict` (`wire.rs:61-66`, `errors.rs:90-97`).
-    The route takes `expectedVersion` (`handlers/secrets/write.rs:23-29`;
-    `docs/architecture/control-plane.md:149`).
+    mismatch is `SecretsError::Conflict` (`crates/fabric-openbao/src/client_secrets/wire.rs:60-66`,
+    `crates/fabric-control-plane/src/client_secrets/errors.rs:21-28`).
+    The handler reads a body field `expectedVersion`
+    (`handlers/secrets/write.rs:17,29`), while
+    `docs/architecture/control-plane.md:149` describes it as an optional
+    `If-Match`. That is doc drift.
   - Delete goes to the metadata endpoint and removes **every** version,
     irreversibly (`operations.rs:69-83`; `control-plane.md:150`). There is no
     per-version delete, undelete or destroy.
@@ -684,7 +699,7 @@ Options:
     write and delete only (`crates/fabric-control-plane/src/client_secrets.rs:52`).
     Reveal takes a path and no version (`handlers/secrets/reveal.rs:21-24`), and
     metadata reports only the current version and its time
-    (`client_secrets/values.rs:16-22`). An older value cannot be read through
+    (`crates/fabric-control-plane/src/client_secrets/values.rs:14-22`). An older value cannot be read through
     Fabric.
   - Retention is unconfigured. No `max_versions` or `delete_version_after` is
     set in either repository, so the store's default applies. **Not verified:**
@@ -737,10 +752,15 @@ Options:
   - Placement `revision` is per record, and a tenant's published binding
     revision is the **sum** of its records' revisions
     (`crates/fabric-platform-management/src/placements/record.rs:48-70`;
-    `src/publication/snapshot.rs:78-107`). ADR 0018 says a tenant revision "only
-    ever increases" (`:407`) and the runtime ignores an older one (`:46`). A
-    revert that lowers a record's revision lowers the sum, so the runtime would
-    probably keep serving the old binding. **Not verified.**
+    `src/publication/snapshot.rs:78-107`). ADR 0018 (Proposed) says a tenant
+    revision "only ever increases" (`:407`) and the runtime ignores an older
+    one (`:46`). A revert that lowers a record's revision lowers the sum, so
+    the runtime would keep serving the pre-revert binding. A revert that
+    leaves the sum unchanged but the bytes different would be published
+    (the publisher answers `DivergentPayload` by bumping the document
+    revision, `publication/protocol.rs:46-51`), but the runtime's per-resource
+    rule (ADR 0018:46-47) would still refuse the tenant's changed binding at an
+    unchanged revision. **Not verified** by a test.
   - Publication advances a document revision only when the bytes differ. It
     offers the held revision and bumps only on `DivergentPayload`
     (`publication/protocol.rs:46-51`; ADR 0018 :270-273). Rollback of runtime
@@ -751,6 +771,16 @@ Options:
   - `record.rs` says a placement must not be removed by hand until
     deprovisioning exists (D01-14). Reverting the commit that placed a tenant
     does exactly that.
+  - An erroneous application assignment has no exit in the product: ADR 0021
+    §5 (Proposed, `0021-…:327-328`) says the only one is a hand edit in Git.
+    Nothing in the catalogue can be deleted either (§5). Verified at `4ed4088`:
+    no restore, history or revision route exists in
+    `crates/fabric-control-plane/src/routes.rs`.
+  - ADR 0023 (Proposed, `0023-…:87-88`) says editing `data-sources.yaml` by
+    hand remains the break-glass path and is expected to keep working.
+    `environments/README.md` at platform `0ff5d66` says the same for
+    `placements.yaml`. ADR 0023 `:205-211` forbids hand removal of a placement
+    record.
   - Platform `main` (`0ff5d66`) has no `data-sources.yaml` or `placements.yaml`
     under `environments/`. Only `environments/README.md:190-266` documents
     them, so there is no deployed file to revert today.
@@ -764,18 +794,23 @@ Options:
   - **B.** Revert only through the console, as a new write at the current
     revision. Git history is never rewound by hand. For: keeps conditional
     writes, activity and the audit event, and moves revisions forward. Against:
-    the console has no "restore previous" action today (**not verified**), and
-    placements have no console edit beyond placing.
+    the console has no restore or history action (verified at `4ed4088`: no
+    restore or history route exists), placements have no console edit beyond
+    placing, and an erroneous application assignment has no console exit
+    (ADR 0021 §5).
   - **C.** Forbid revert of `placements.yaml` and of data sources that a
     placement names. Allow a revert of the catalogue and client documents
     (through B, with Git revert as break-glass). For: protects the one part
     where a revert can strand tenant data. Against: a convention unless
     `scripts/check.py` or branch protection enforces it (**not verified**).
 
-  *Recommendation:* **C**. Placements and data sources roll forward only
-  (matching U5.3 A), and the catalogue and client documents roll back through
-  B. Make the Git revert claim only after a test shows what the reconciler and
-  runtime do with it. Owner: **Brett**.
+  *Recommendation:* **C**: placements roll forward only (ADR 0023 already
+  forbids hand removal), and data sources only by a revision-bumping edit, by
+  the console's `PUT` or by break-glass per ADR 0023. Catalogue and client
+  documents keep the Git edit as break-glass per ADR 0021 §5, until a console
+  restore exists. Decide with D01-1, D01-2 and D01-19d (acceptance of ADR 0021
+  and ADR 0023). Make no Git revert claim until a test shows what the
+  reconciler and runtime do with it. Owner: **Brett**.
 
 ---
 
@@ -809,15 +844,17 @@ Options:
      (D01-6b).
 4. PR93 merges in the same window. Its new ADR 0025 text says the bootstrap
    administrator is the declared operator, which describes PR45's roster and
-   is not true of platform `main` until PR45 lands. Brett accepts that
-   amendment and interim as part of D01-6.
+   is not true of platform `main` until PR45 lands. This requires Brett to
+   accept that amendment and interim as part of D01-6.
 
 ---
 
 ## Decisions owed
 
-Brett owns every policy decision; D01-26 is engineering ownership under ADR 0024 and needs Brett only if it changes D01-3(b). "Rec." is a recommendation only; none is approved. IDs merged during
-review are noted, and the original IDs are not reused.
+Brett owns every policy decision; D01-26 is engineering ownership under ADR
+0024 and needs Brett only if it changes D01-3(b). "Rec." is a recommendation
+only; none is approved. IDs merged during review are noted, and the original
+IDs are not reused.
 
 | ID | Area | Decision | Rec. |
 |---|---|---|---|
@@ -828,7 +865,7 @@ review are noted, and the original IDs are not reused.
 | D01-5 | Identity | Accept ADR 0019; the platform owns the §G edge; clarify the client-route comment | Accept as written |
 | D01-6 | Identity | How operator master-realm accounts come to exist (broker / create / `admin` only / `[]`); sub-choice 6b, revocation (formerly D01-7); accepting PR93's interim | `admin` interim, brokering as target; Brett names the upstream |
 | D01-9 | Session | Keep or remove the loopback workbench as `/api/session` retires (ADR 0021 owed 1); sequence with PR101 | Remove, after PR101 is settled |
-| D01-10 | Authorization | Data-path enforcement: scopes only / OpenFGA check / layered; sub-choice 10a, deploying OpenFGA (formerly D01-11) | Layered; scopes only for the isolated M1 trial; OpenFGA enforced from M3 and for any tenant beyond the trial |
+| D01-10 | Authorization | Data-path enforcement: scopes only / OpenFGA check / layered; sub-choice 10a, deploying OpenFGA (formerly D01-11) | Layered; scopes only for the isolated M1 trial; OpenFGA enforced from M3, and for any tenant beyond the trial on every resource that declares relations |
 | D01-12 | Authorization | The administrator-role bypass and `require_scopes = false`; operator granularity | Remove the bypass, forbid disabling scopes outside tests; operators stay coarse |
 | D01-13 | Authorization | Where entitlements are enforced | Applications enforce; Fabric previews |
 | D01-14 | Lifecycle | What deprovisioning undoes (ADR 0021 owed 3; ADR 0008 Deletion) | Tombstone, retention, confirmed delete |
@@ -844,7 +881,7 @@ review are noted, and the original IDs are not reused.
 | D01-23 | Rollback | Owner of tenant data backup, restore and migration | Platform, gated to M5 |
 | D01-25 | Secrets | Lifecycle and rollback of client secret versions (ADR 0017; PR105/106). Options: A roll forward only, B version read and restore, C retention and destroy | A now, with explicit retention; B when an older version must be read |
 | D01-26 | Identity | Who configures tenant end-user sessions for client instances. ADR 0024 already sets the policy (the gateway holds the session); this is engineering ownership, and Brett confirms only if it changes D01-3(b) (#114) | A, platform per-client composition, with D01-3(b) |
-| D01-27 | Rollback | Rollback of the desired-state repositories (`saas-fabric-clients`, platform environment files). Options: A Git revert supported, B revert through the console only, C no revert of placements | C: placements and data sources roll forward only; catalogue and client documents through the console |
+| D01-27 | Rollback | Rollback of the desired-state repositories (`saas-fabric-clients`, platform environment files). Options: A Git revert supported, B revert through the console only, C no revert of placements | C: placements roll forward only; data sources only by a revision-bumping edit; catalogue and client documents keep the Git edit as break-glass until a console restore exists. Decide with D01-1, D01-2, D01-19d |
 
 **Retired IDs:**
 

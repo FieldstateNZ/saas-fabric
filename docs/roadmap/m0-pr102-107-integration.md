@@ -180,6 +180,10 @@ Because the file sets are disjoint, the order is a preference for risk and CI cl
 
 No PR has a blocking finding. Before approving any of them, re-run this validation if the head SHA changes from the values recorded above, since the issue requires revalidation when heads change.
 
+## Lead receipt
+
+On 2026-10-06 the lead session reran the #106 surviving-mutant claim on head `12edde9` (Node 22.22.0, npm 10.9.4, in `apps/control-plane-ui` after `npm ci`): `npx vitest run src/components/tabs/SecretMetadata.test.tsx` passed 17/17; with `SecretMetadata.tsx:64` changed from `current.current === sequence` to `true`, the same command again passed 17/17. The mutant survives, as recorded above. The file was restored and the worktree removed.
+
 ## Cross-check
 
 A second, independent agent re-verified this record on 2026-10-05: all six heads unchanged, check-run counts matched, and it reproduced the #105 revert (12 failed), the #102 handler mutation (3 failed), the #106 surviving mutant, the 385 and 391 compositions and the audit counts. No blocking findings. Non-blocking additions from that pass: #106's per-row buttons ("Read version", "Refresh", "Retry") have no per-row accessible name (the existing Reveal and Delete buttons share this), and its `role="status"` is inserted with its text, which some screen readers do not announce; #105 does not move focus to the invalid field after a refusal. Suggested follow-up: `aria-label` naming the secret path.

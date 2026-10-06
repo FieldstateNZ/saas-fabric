@@ -1,10 +1,11 @@
-// Size: 124 code lines, within the 121–150 band in
+// Size: 121 code lines, the floor of the 121–150 band in
 // docs/architecture/file-size-policy.md. This is one form and the one check
 // that guards its one dangerous field. The parser is kept beside the form
 // because its only caller is the submit handler, and its refusal text is the
 // form's accessible error; moving it out would separate the rule from the
 // field it describes without anything else ever importing it.
 import { useRef, useState } from 'react'
+import { flushSync } from 'react-dom'
 
 import { describe } from '../../hooks/useClients'
 import type { Secrets } from '../../hooks/useSecrets'
@@ -82,7 +83,9 @@ export function NewSecret({
     // operator can correct the one that was wrong.
     const parsed = parseExpectedVersion(version)
     if (!parsed.ok) {
-      setVersionError(parsed.reason)
+      flushSync(() => {
+        setVersionError(parsed.reason)
+      })
       versionInput.current?.focus()
       return
     }

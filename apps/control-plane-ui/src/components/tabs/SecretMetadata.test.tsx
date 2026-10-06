@@ -186,7 +186,7 @@ describe('reading a secret version', () => {
     await renderTab()
 
     const button = readButton()
-    await act(async () => {
+    act(() => {
       button.click()
       button.click()
     })

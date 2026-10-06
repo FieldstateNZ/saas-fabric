@@ -145,9 +145,9 @@ async function renderTab(client: Client = ACME) {
   return rendered
 }
 
-const readButton = () => screen.getByRole('button', { name: 'Read version' })
-const refreshButton = () => screen.getByRole('button', { name: 'Refresh version' })
-const retryButton = () => screen.getByRole('button', { name: 'Retry' })
+const readButton = () => screen.getByRole('button', { name: `Read version of ${PATH}` })
+const refreshButton = () => screen.getByRole('button', { name: `Refresh version of ${PATH}` })
+const retryButton = () => screen.getByRole('button', { name: `Retry reading version of ${PATH}` })
 const shownVersion = (version: string) => screen.queryByText(version, { selector: 'code' })
 const findShownVersion = (version: string) => screen.findByText(version, { selector: 'code' })
 
@@ -160,11 +160,15 @@ describe('reading a secret version', () => {
     const plane = controlPlane()
     await renderTab()
 
+    const status = screen.getByRole('status')
+    expect(status).toBeEmptyDOMElement()
+
     await userEvent.click(readButton())
 
-    const reading = screen.getByRole('button', { name: 'Reading…' })
+    expect(screen.getByRole('status')).toBe(status)
+    const reading = screen.getByRole('button', { name: `Reading version of ${PATH}` })
     expect(reading).toBeDisabled()
-    expect(screen.getByText('Reading version…')).toHaveAttribute('role', 'status')
+    expect(status).toHaveTextContent('Reading version…')
 
     await userEvent.click(reading)
     expect(plane.reads).toHaveLength(1)
@@ -173,7 +177,7 @@ describe('reading a secret version', () => {
 
     expect(await findShownVersion('7')).toBeInTheDocument()
     expect(refreshButton()).toBeEnabled()
-    expect(screen.queryByText('Reading version…')).toBeNull()
+    expect(status).toBeEmptyDOMElement()
   })
 
   it('reads by GET on the entry and never reveals or posts anything', async () => {

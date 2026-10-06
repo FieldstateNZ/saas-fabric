@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
 
 import type { SecretMetadata as Metadata } from '../../api/types'
 import { describe } from '../../hooks/useClients'
@@ -23,9 +23,10 @@ type Observation =
  *
  * # What is shown is only ever the latest answer
  *
- * A read in flight clears the previous version, a failed read leaves none on
- * screen, and an answer that arrives after this row has gone is dropped. An
- * old number beside a fresh "Refresh" button would be an invitation to send it.
+ * A read in flight clears the previous version and a failed read leaves none
+ * on screen. An old number beside a fresh "Refresh" button would be an
+ * invitation to send it. An answer that arrives after this row has gone has
+ * nowhere to land: setting state on an unmounted component is a no-op.
  */
 export function SecretMetadata({
   path,
@@ -35,35 +36,22 @@ export function SecretMetadata({
   read: (path: string) => Promise<Metadata>
 }) {
   const [observation, setObservation] = useState<Observation>({ status: 'unread' })
-  // Which read is current. A response for any other number is obsolete: it
-  // was either superseded by a later read or outlived the row that asked.
-  const current = useRef(0)
   // A ref rather than `observation.status`: two clicks in one tick would both
-  // see the state from before either rendered.
+  // see the state from before either rendered. It also means at most one read
+  // is ever in flight for this row, so no answer can be superseded by another.
   const pending = useRef(false)
-
-  useEffect(
-    () => () => {
-      current.current += 1
-    },
-    [],
-  )
 
   function observe(): void {
     if (pending.current) {
       return
     }
 
-    const sequence = current.current + 1
-    current.current = sequence
     pending.current = true
     setObservation({ status: 'reading' })
 
     const settle = (answer: Observation): void => {
       pending.current = false
-      if (current.current === sequence) {
-        setObservation(answer)
-      }
+      setObservation(answer)
     }
 
     // The answer is taken as `unknown`, whatever `read` claims: the type is a
@@ -84,9 +72,11 @@ export function SecretMetadata({
   // `role="status"` while reading and `role="alert"` on failure, as the rest
   // of the console does for the same two states: the text changes under a
   // button the operator just pressed, and a screen reader is told about it.
+  // The status region is always in the tree: a live region inserted together
+  // with its text is not reliably announced.
   return (
     <span>
-      {observation.status === 'reading' && <span role="status">Reading version…</span>}
+      <span role="status">{observation.status === 'reading' ? 'Reading version…' : ''}</span>
       {observation.status === 'failed' && (
         <span className="error" role="alert">
           {observation.error}
@@ -99,7 +89,12 @@ export function SecretMetadata({
         </span>
       )}
 
-      <button type="button" disabled={observation.status === 'reading'} onClick={observe}>
+      <button
+        type="button"
+        aria-label={accessibleName(observation, path)}
+        disabled={observation.status === 'reading'}
+        onClick={observe}
+      >
         {label(observation)}
       </button>
     </span>
@@ -150,5 +145,19 @@ function label(observation: Observation): string {
       return 'Refresh version'
     case 'failed':
       return 'Retry'
+  }
+}
+
+/** The button's name with the secret it acts on: every row has the same label. */
+function accessibleName(observation: Observation, path: string): string {
+  switch (observation.status) {
+    case 'unread':
+      return `Read version of ${path}`
+    case 'reading':
+      return `Reading version of ${path}`
+    case 'read':
+      return `Refresh version of ${path}`
+    case 'failed':
+      return `Retry reading version of ${path}`
   }
 }

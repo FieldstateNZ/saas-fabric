@@ -177,7 +177,21 @@ describe('reading a secret version', () => {
 
     expect(await findShownVersion('7')).toBeInTheDocument()
     expect(refreshButton()).toBeEnabled()
-    expect(status).toBeEmptyDOMElement()
+    expect(screen.getByRole('status')).toBe(status)
+    expect(status).toHaveTextContent(`Observed version 7 of ${PATH}`)
+  })
+
+  it('admits one read even when clicked twice in one tick', async () => {
+    const plane = controlPlane()
+    await renderTab()
+
+    const button = readButton()
+    await act(async () => {
+      button.click()
+      button.click()
+    })
+
+    expect(plane.reads).toHaveLength(1)
   })
 
   it('reads by GET on the entry and never reveals or posts anything', async () => {

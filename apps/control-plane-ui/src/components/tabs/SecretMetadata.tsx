@@ -69,33 +69,38 @@ export function SecretMetadata({
     )
   }
 
-  // `role="status"` while reading and `role="alert"` on failure, as the rest
-  // of the console does for the same two states: the text changes under a
-  // button the operator just pressed, and a screen reader is told about it.
-  // The status region is always in the tree: a live region inserted together
-  // with its text is not reliably announced.
+  // `role="status"` carries both the reading and the observed result, so a
+  // screen reader hears the outcome and not only that a read began. Its
+  // element is always in the tree: a polite live region is announced when its
+  // content changes, not when it is inserted already filled. `role="alert"`
+  // is the exception -- it is announced on insertion -- so the failure needs
+  // no persistent container.
+  const { text, name } = describeButton(observation, path)
+
   return (
     <span>
-      <span role="status">{observation.status === 'reading' ? 'Reading version…' : ''}</span>
+      <span role="status">
+        {observation.status === 'reading' && 'Reading version…'}
+        {observation.status === 'read' && (
+          <>
+            Observed version <code>{observation.version}</code> of {path}
+            {observation.updatedAt !== null && <> (updated {observation.updatedAt})</>}
+          </>
+        )}
+      </span>
       {observation.status === 'failed' && (
         <span className="error" role="alert">
           {observation.error}
         </span>
       )}
-      {observation.status === 'read' && (
-        <span>
-          Observed version <code>{observation.version}</code>
-          {observation.updatedAt !== null && <> (updated {observation.updatedAt})</>}
-        </span>
-      )}
 
       <button
         type="button"
-        aria-label={accessibleName(observation, path)}
+        aria-label={name}
         disabled={observation.status === 'reading'}
         onClick={observe}
       >
-        {label(observation)}
+        {text}
       </button>
     </span>
   )
@@ -135,29 +140,22 @@ function fromMetadata(metadata: unknown): Observation {
   return { status: 'read', version, updatedAt: typeof updatedAt === 'string' ? updatedAt : null }
 }
 
-function label(observation: Observation): string {
+/**
+ * The button's visible text, and its accessible name: the same words with the
+ * secret they act on, since every row's button otherwise reads identically.
+ */
+function describeButton(
+  observation: Observation,
+  path: string,
+): { readonly text: string; readonly name: string } {
   switch (observation.status) {
     case 'unread':
-      return 'Read version'
+      return { text: 'Read version', name: `Read version of ${path}` }
     case 'reading':
-      return 'Reading…'
+      return { text: 'Reading…', name: `Reading version of ${path}` }
     case 'read':
-      return 'Refresh version'
+      return { text: 'Refresh version', name: `Refresh version of ${path}` }
     case 'failed':
-      return 'Retry'
-  }
-}
-
-/** The button's name with the secret it acts on: every row has the same label. */
-function accessibleName(observation: Observation, path: string): string {
-  switch (observation.status) {
-    case 'unread':
-      return `Read version of ${path}`
-    case 'reading':
-      return `Reading version of ${path}`
-    case 'read':
-      return `Refresh version of ${path}`
-    case 'failed':
-      return `Retry reading version of ${path}`
+      return { text: 'Retry', name: `Retry reading version of ${path}` }
   }
 }

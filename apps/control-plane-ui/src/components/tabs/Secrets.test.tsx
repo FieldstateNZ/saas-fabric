@@ -224,8 +224,16 @@ describe('writing a secret against a version', () => {
   ])('refuses %s without sending anything, and keeps what was typed', async (_label, typed) => {
     const fetched = await ready()
     await fillWriteForm(typed)
+    // A screen reader reads the field as focus lands, so the error has to be
+    // committed onto it by then, not after.
+    const field = screen.getByLabelText('Replacing version')
+    const atFocus: (string | null)[] = []
+    field.addEventListener('focus', () => {
+      atFocus.push(field.getAttribute('aria-invalid'), field.getAttribute('aria-describedby'))
+    })
 
     await userEvent.click(screen.getByRole('button', { name: 'Write' }))
+    expect(atFocus).toEqual(['true', 'secret-version-error'])
 
     const alert = await screen.findByRole('alert')
     // The message has to say what is accepted — decimal digits and the range —

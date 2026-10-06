@@ -1,4 +1,4 @@
-// Size: 121 code lines, the floor of the 121–150 band in
+// Size: 124 code lines, within the 121–150 band in
 // docs/architecture/file-size-policy.md. This is one form and the one check
 // that guards its one dangerous field. The parser is kept beside the form
 // because its only caller is the submit handler, and its refusal text is the

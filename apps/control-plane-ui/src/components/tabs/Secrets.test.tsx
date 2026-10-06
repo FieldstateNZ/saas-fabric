@@ -237,6 +237,7 @@ describe('writing a secret against a version', () => {
     const versionField = screen.getByLabelText('Replacing version')
     expect(versionField).toHaveAttribute('aria-invalid', 'true')
     expect(versionField).toHaveAccessibleDescription(alert.textContent)
+    expect(versionField).toHaveFocus()
 
     // No write of any kind reached the API: not a create, not a replacement.
     expect(

@@ -1,10 +1,10 @@
-// Size: 121 code lines, the floor of the 121–150 band in
+// Size: 124 code lines, within the 121–150 band in
 // docs/architecture/file-size-policy.md. This is one form and the one check
 // that guards its one dangerous field. The parser is kept beside the form
 // because its only caller is the submit handler, and its refusal text is the
 // form's accessible error; moving it out would separate the rule from the
 // field it describes without anything else ever importing it.
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 
 import { describe } from '../../hooks/useClients'
 import type { Secrets } from '../../hooks/useSecrets'
@@ -73,6 +73,7 @@ export function NewSecret({
   const [version, setVersion] = useState('')
   const [busy, setBusy] = useState(false)
   const [versionError, setVersionError] = useState<string | null>(null)
+  const versionInput = useRef<HTMLInputElement>(null)
 
   async function submit(): Promise<void> {
     onNotice(null)
@@ -82,6 +83,7 @@ export function NewSecret({
     const parsed = parseExpectedVersion(version)
     if (!parsed.ok) {
       setVersionError(parsed.reason)
+      versionInput.current?.focus()
       return
     }
 
@@ -146,6 +148,7 @@ export function NewSecret({
       <label htmlFor="secret-version">Replacing version</label>
       <input
         id="secret-version"
+        ref={versionInput}
         value={version}
         placeholder="blank if new"
         aria-invalid={versionError !== null ? true : undefined}

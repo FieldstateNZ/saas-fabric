@@ -17,7 +17,7 @@ Deliverable for FieldstateNZ/saas-fabric#110 `[W0] Reconcile the whole WorkSpec 
 
 - Read first: WorkSpec `CLAUDE.md` (there is no `AGENTS.md`; `.claude/` holds only `launch.json` and one plan file). Canonical rules applied: API surface owned by `lib/api-spec/openapi.yaml`; thin routes + per-domain services; migrations hand-registered in `_journal.json`; real-Postgres Testcontainers service tests, no DB mocks; Zod v4; no shims; no MVP framing.
 - Issue states are revalidated against source at `47607db` by reading code, migrations, workflows and test files. Issue titles and bodies were not accepted as proof either way.
-- **CI is red at `47607db`.** Deploy workflow run 28720876821 (push, 2026-07-04) failed at "Run full api-server test suite" (typecheck passed). The two prior main commits also failed (run 28702304690 at `8a04a32`; run 28684967187 at `065e82d`), as did PR CI for #490-#492. Logs have expired (HTTP 410). Build and deploy were skipped, so any staging deployment predates `47607db`. Treat every "fixed on main" below as source-level evidence, not a green build.
+- **CI is red at `47607db`.** Deploy workflow run 28720876821 (push, 2026-07-04) failed at "Run full api-server test suite" (typecheck passed). The two prior main commits also failed (run 28702304690 at `8a04a32`; run 28684967187 at `065e82d`), as did PR CI for #490-#492. Logs have expired (HTTP 410). Build and deploy were skipped in that workflow, so it did not deploy `47607db`. That does not establish what staging runs: `.do/staging-app.yaml` at the same head has `deploy_on_push: true` for three components, an alternative path. **Actual staging revision: unverified.** Treat every "fixed on main" below as source-level evidence, not a green build.
 - In the matrix, "Test evidence" means a test file exists at head unless the text says it was run; run results are in the next bullet.
 - **Tests executed (2026-10-05).** The Docker CLI is present but the daemon is not running (no `/var/run/docker.sock`), so Testcontainers could not start. Instead I started the machine's PostgreSQL 16 and used the supported `WORKSPEC_TEST_DB_URL` override, which `test/global-setup.ts` documents as the CI-service path (migrations 0000-0069 applied cleanly). Commands, from `/home/user/workspec` after `pnpm install --frozen-lockfile` (exit 0):
   - `export WORKSPEC_TEST_DB_URL=postgres://workspec:workspec@localhost:5432/workspec_test`
@@ -46,6 +46,8 @@ Downstream Fabric issues (not to be cloned): #118 shell navigation integration; 
 
 Paths are relative to the WorkSpec repo root unless prefixed `fabric:`. `API` = `artifacts/api-server`, `WEB` = `artifacts/workspec`. Test paths are under `API/test/` unless stated. The "Existing issues" column gives the state I found at head; full reasoning is in "Issues revalidated".
 
+"Complete WorkSpec" here means every capability area is covered inside Fabric. It does not mean keeping both UI generations: where a view still delegates to the v4 surface (rows 2 and 4), the gap is the capability, and whether the legacy view is retained or retired is a separate disposition.
+
 ### 1. Workspaces and projects
 
 | Field | Content |
@@ -54,7 +56,7 @@ Paths are relative to the WorkSpec repo root unless prefixed `fabric:`. `API` = 
 | WorkSpec source evidence | `lib/db/src/schema/workspaces.ts` (`seatMode`, `interactionMode`), `projects.ts`, `branch-contexts.ts`, `project-repos.ts`; `API/src/routes/workspaces.ts`, `projects.ts`, `presence*.ts`, `sidebar.ts`; `API/src/services/workspaces/*` (create, invite, accept, remove-member, change-seat-mode, change-interaction-mode, check-workspace-access); `API/src/middlewares/workspace-access.ts`; `API/src/services/project-setup.ts`, `workspace-setup.ts`; WEB `pages/dashboard*.tsx`, `workspace-create.tsx`, `invite.tsx`, `project-settings.tsx`; docs `docs/v4/interaction-modes-spec.md`, `project-lifecycle-model.md`. |
 | Test evidence | `routes/workspaces.test.ts` (member / non-member / cross-slug 403-not-404), `routes/idor-membership-gates.test.ts`, `services/workspaces/workspaces-service.integration.test.ts`, `services/workspaces/plan-limits.integration.test.ts`, `services/branch-context.integration.test.ts`, `routes/presence.test.ts`, `routes/presence-ws.test.ts`, `services/presence.test.ts`. No frontend tests for these pages (one WEB test file in the repo). |
 | API contract | Spec covers `/workspaces/*` (70 paths) and `/projects/{projectId}/*` (40 paths). Setup and instance routes are not in the spec. |
-| Existing issues | #408 partially mitigated (cross-tenant gates now covered for more than workspaces via `idor-membership-gates.test.ts`). #469 fixed on main (workspace-tier uniqueness, see row 6). #499 not built (retire `currentPhase` writes). #486 epic open. |
+| Existing issues | #408 partially mitigated (cross-tenant gates now covered for more than workspaces via `idor-membership-gates.test.ts`). #469 **partially mitigated (keep open)**: workspace-tier uniqueness and upsert are on main (row 6), but acceptance item 3, the Testcontainers concurrent workspace-persona ingest test, is missing; the cited dedupe test covers 0063/project-tier only. #499 not built (retire `currentPhase` writes). #486 epic open. |
 | Fabric integration gap | Workspace ownership is a WorkSpec `users` row; there is no mapping from a Fabric realm/client/tenant to a WorkSpec workspace, no provisioning hook ("assign WorkSpec to client" must create or adopt a workspace), and workspace slug routing is path-based, not host-based. Seat limits and plan limits come from WorkSpec's own `plans`/`subscriptions`, not the Fabric catalogue plan. No component descriptor (ADR 0026). |
 | Owner (accountable) | Unassigned. Brett to assign (WorkSpec delivery dev-lead per workspec#307 proposed). |
 | Downstream | #119 (identity to tenant/workspace mapping), #118 (hostname and routing), #120 (storage boundary). WorkSpec owner for in-product behaviour. |
@@ -249,7 +251,7 @@ State is the issue state on GitHub on 2026-10-05; "verdict" is my finding at Wor
 
 ## Gaps without an existing issue
 
-Proposed titles only. No issues were created. Items in B already have an owning issue: comment on or reopen that scope, do not file a new issue.
+Proposed titles only. No issues were created. Items in B already have an owning issue: comment on or reopen that scope, do not file a new issue. Before any item in A is filed, check it against the downstream Fabric issues #118–#122 first and add it there as scope where it fits; file a new issue only for what none of them covers.
 
 ### A. Truly new (no existing issue covers it)
 

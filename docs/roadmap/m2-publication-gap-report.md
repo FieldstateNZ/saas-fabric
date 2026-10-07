@@ -30,18 +30,23 @@ Each document is replaced atomically. The three documents together are not.
   volume. The catalogue is read once, at process start. So a reader can serve
   documents at different revisions in either order. The tests in this branch
   reproduce this deterministically.
-- **The mixed states found fail closed.** A tenant whose binding names a DataSource
-  the reader has not loaded, or has already dropped, gets `MissingDataSource`, which
-  is a 500. No mixed state was found that sends one tenant's request to another
-  tenant's rows. The window is "a tenant is down", not "a tenant boundary is
-  wrong". The window has no upper bound the publisher enforces.
+- **The mixed states tested fail closed.**
+  - A tenant whose binding names a DataSource the reader has not loaded, or has
+    already dropped, gets `MissingDataSource`, which is a 500 (G1, G2).
+  - A catalogue entry on a logical data source the tenant does not bind gets
+    `UnboundDataSource`, also a 500 (G8).
+  - No mixed state tested sends one tenant's request to another tenant's rows. The
+    window is "a tenant is down", not "a tenant boundary is wrong".
+  - The window has no upper bound the publisher enforces.
+  - Not tested: a *coupled* change served half-applied (G3), such as a DataSource
+    connection that moves together with a change to tenant isolation.
 - **The single writer is assumed, not enforced.** Two overlapping publishers can
   each pass every guard and together publish a binding to a DataSource that no
   longer exists. The `resourceVersion` check in the Kubernetes adapter covers only
   the objects a publication writes.
 - **Last-known-good behaviour lives only in a running reader's memory.** A reader
-  started afterwards cannot recover it. A held document the publisher cannot parse
-  blocks every later publication until an operator repairs it.
+  started afterwards cannot recover it. A held tenants or data-sources document the
+  publisher cannot parse blocks every later publication until an operator repairs it.
 - **Reader compatibility is a refusal, not a negotiation.** `contract_version` is
   written and never read. An unknown field stops every new reader from priming.
 
@@ -49,7 +54,7 @@ Against #112's acceptance criteria:
 
 | Acceptance criterion | Status | Gaps |
 |---|---|---|
-| Published tenant, data-source and catalogue revisions form a consistent contract | **Not met** across documents; met within one | G1, G2, G4, G7 |
+| Published tenant, data-source and catalogue revisions form a consistent contract | **Not met** across documents; met within one | G1, G2, G4, G7, G8 |
 | Compatible readers precede schema activation | **Not met.** No mechanism and no version handshake | G6 |
 | Interrupted publication cannot expose mixed revisions | **Not met.** It can, and so can uninterrupted publication | G1, G3 |
 | Last-known-good and failure behaviour are explicit | **Partly met.** The reader side is explicit in code; restart, publisher and rollback behaviour are not | G5 |
@@ -126,12 +131,18 @@ data sources then resolves acme.
 
 **Classification**
 
-- **G1a, reader refresh order: engineering.** One refresher could reload data
-  sources and then tenants in one pass. Alternatively, the tenants refresher could
-  defer a binding whose DataSource is not yet loaded and keep the held copy, as it
-  already does for an invalid entry (`registry/merge.rs:49-57`). Neither changes the
-  wire shape. Both touch the runtime plane, which ADR 0018's Consequences
-  (`:765-770`) ask to keep frozen for that milestone. Flag this in review.
+- **G1a, reader-side mitigation: engineering, as a runtime-plane change to review
+  against ADR 0018.**
+  - Option 1: one refresher reloads data sources and then tenants in one pass. This
+    helps only where both files change together, as in the filesystem layout. It
+    does not help in Kubernetes, where each document is its own volume and the
+    kubelet projects each one on its own.
+  - Option 2: the tenants refresher defers a binding whose DataSource is not yet
+    loaded and keeps the held copy, as it already does for an invalid entry
+    (`registry/merge.rs:49-57`). This helps in both layouts. It changes documented
+    reader behaviour (`errors/resolve_error.rs:50-53`).
+  - Neither option changes the wire shape. Both touch the runtime plane, which ADR
+    0018's Consequences (`:765-770`) ask to keep frozen.
 - **G1b, one consistent generation across the three documents: D01-1.** A cross-document
   generation, a single object, or a reader that reads the manifests replaces "three
   independently versioned documents" (ADR 0018 Decision, `:84-86`; part 2,
@@ -208,7 +219,7 @@ engineering once the rule says so. The G1a reader fix also narrows this window.
 - ADR 0018 answers concurrency with "exactly one writer" (`:605-607`) and puts
   multiple writers out of scope (`:859-862`).
 - The controller's single-flight guard is **in-process only**
-  (`fabric-platform-management/src/publication/publisher.rs:155-158`,
+  (`fabric-platform-management/src/publication/publisher.rs:85-88`,
   `state.running.try_enter()`). It covers the schedule and
   `POST /api/platform/publication` in one process, not two control-plane replicas.
   The replica count on LucentRoot is not verified here.
@@ -251,12 +262,17 @@ engineering once the rule says so. The G1a reader fix also narrows this window.
   (:321). Within one object, the API server's optimistic concurrency refuses the
   second writer.
 
-**Classification: engineering, plus a platform RBAC change.** Enforcing the single
-writer the ADR already assumes contradicts nothing written. Options:
+**Classification: mostly engineering.** Enforcing the single writer the ADR already
+assumes. Options:
 
 - A `coordination.k8s.io` `Lease` held by the publishing replica. ADR 0018 `:861`
-  names leader election as "the shape of the answer". This needs `Lease` verbs in
-  the platform repository's Role.
+  names leader election as "the shape of the answer".
+  - The publisher's RBAC is specified in ADR 0018 (`:614-618`, `:674`, and the
+    amendment at `:619-628`) and in ADR 0023 (`:290-291`). That text covers
+    `ConfigMap` verbs only.
+  - Adding `Lease` verbs, including a `create` that `resourceNames` cannot scope,
+    amends that text. This option is therefore **D01-1** (amend "as built"), plus
+    the platform repository's Role.
 - Asserting the `resourceVersion` of the objects a plan read but does not write. No
   multi-object transaction exists in the Kubernetes API, so this narrows the window
   but does not close it.
@@ -279,24 +295,30 @@ enforce one.
   (:419).
 - None of this survives a restart. A replica started against the same files has no
   earlier snapshot.
-- With the default `fail_fast_on_prime = true` (`config.rs:38`), the process exits
-  (`registration.rs:113-119`), which is a crash loop under a Deployment.
+- With the default `fail_fast_on_prime = true` (`config.rs:38`), `build_runtime`
+  returns an error (`registration.rs:113-119`). Its caller propagates the error and
+  the process fails to start (`fabric-api/src/startup/application.rs:57-61`).
+  Under a Deployment, that is a crash loop (inferred; compare ADR 0023 `:323-325`).
 - A malformed catalogue fails startup outright (`fabric-api/src/startup/catalog.rs:24-29`).
 
 **Evidence (publisher)**
 
 - There is no last-known-good record and no hold. A valid but wrong snapshot
   publishes and is served at the next refresh.
-- A held document that does not parse blocks **every** later publication, even at a
-  newer revision. `plan_publication` parses held tenants and data sources before
-  anything else (`plan.rs:60-69`, `plan/parse.rs:42-50`) and returns `Unreadable`.
-  The operator must repair or remove the held payload. No supported recovery path
-  exists.
+- A held tenants or data-sources payload that does not parse blocks **every** later
+  publication, even at a newer revision. The catalogue is only byte-compared, so a
+  corrupt held catalogue does not block.
+  - `plan_publication` parses held tenants and data sources before anything else
+    (`plan.rs:60-69`, `plan/parse.rs:42-50`) and returns `Unreadable`.
+  - A held manifest whose payload is gone blocks in the same way, as
+    `HeldPayloadLost` (`plan/parse.rs:85-86`).
+  - Either way the operator must repair or remove the held files. No supported
+    recovery path exists.
 - Rollback is unresolved: U5.3 recommends roll-forward only, and it is part of
   D01-1 (`m0-contract-decisions.md:654-665`, `:861`).
 
 **Test:** `publication_atomicity.rs::current_behaviour_last_known_good_does_not_survive_a_reader_restart`
-(:376). A running reader keeps serving a torn data-sources document. A fresh
+(:389). A running reader keeps serving a torn data-sources document. A fresh
 `build_runtime` against the same files fails. The publisher refuses a revision-2
 publication as `Unreadable`.
 
@@ -305,9 +327,9 @@ publication as `Unreadable`.
 - **D01-1:** the rollback and failure semantics: roll-forward only, what a refused or
   unparseable held document means, and whether a reader should persist or prefer a
   last-known-good.
-- **D01-2:** the pre-publication hold #112's scope names. Who may hold a
-  publication, and how it relates to ADR 0023 §5's raise gate (D01-18), is
-  ownership text in ADR 0023 §4 and §5 (`0023:276-325`).
+- **D01-1:** the pre-publication hold #112's scope names. A hold is publisher
+  behaviour, which ADR 0018 owns. How a hold relates to ADR 0023 §5's raise gate is
+  D01-18, which D01-2 sequences against §5 (`m0-contract-decisions.md:862`).
 - **Engineering, once those are decided:** a documented recovery command for an
   unparseable held document; surfacing reader `refresh_failed` counts on the
   platform panel.
@@ -320,8 +342,8 @@ publication as `Unreadable`.
   `data_source/data_source_resource.rs:31`,
   `fabric-data-api/src/catalog/resource_definition.rs:27`; ADR 0018 `:100-110`).
 - `contract_version` is written into every manifest
-  (`fabric-runtime-publication/src/manifest.rs:63-92`). No reader reads any manifest.
-  A search of `fabric-tenant-runtime`, `fabric-data-api` and `fabric-api` finds no
+  (`fabric-runtime-publication/src/manifest.rs:63-92`). No runtime consumer reads
+  any manifest; only the publisher and its adapters do. A search of `fabric-tenant-runtime`, `fabric-data-api` and `fabric-api` finds no
   reference to manifests or `contract_version`. ADR 0018 says this is deliberate
   (`:349-351`).
 - ADR 0018 §9's migration path is "new file names and new `ConfigMap` keys alongside
@@ -331,7 +353,8 @@ publication as `Unreadable`.
   the release compatibility manifest (#124, D01-21).
 
 **Test:** `publication_atomicity.rs::current_behaviour_a_forward_incompatible_document_keeps_running_readers_and_stops_new_ones`
-(:306). A tenants document gains one unknown field. The running reader keeps its
+(:306). A tenants document gains one unknown field and drops acme, so acceptance
+would be visible. The running reader keeps its
 last good snapshot. A new reader with `fail_fast_on_prime = true` fails to build,
 and the error names the field. With `false` it starts unprimed and answers
 `RuntimeUnavailable`.
@@ -341,7 +364,7 @@ and the error names the field. With `false` it starts unprimed and answers
 | Producer change | Running reader (holds a snapshot) | Reader starting now | Evidence |
 |---|---|---|---|
 | New revision, same shape | Applied at next refresh (catalogue: never, until restart) | Primes | existing suite; `catalog.rs:7-16` |
-| Field added at any level of tenants or data sources | Whole document refused as `Malformed`; stays on its last good snapshot and logs `refresh_failed`; **silently stale** | `fail_fast_on_prime = true`: exits. `false`: unprimed, 503 | new test (:306) |
+| Field added to tenants or data sources | Whole document refused as `Malformed`; stays on its last good snapshot and logs `refresh_failed`; **silently stale** | `fail_fast_on_prime = true`: fails to start. `false`: unprimed, 503 | Tested at the top level of a tenant binding (new test, :306). Nested types also deny unknown fields: `tenant_data_binding.rs:26`, `pool_settings.rs:21`, `capabilities.rs:26`, `residency.rs:32`, and the tagged isolation and connection documents (`fabric-connector/src/execution/tagged_documents.rs:59`, `:87`) |
 | Required field removed | As above (missing-field error) | As above | ADR 0018 `:100-110` (not separately tested) |
 | New enum variant (isolation kind, placement class, connection kind) | As above. Inferred from serde's tagged enums and `deny_unknown_fields`, not separately tested | As above | type definitions |
 | One resource invalid (for example an empty `data` map) | That resource keeps its held copy; the rest apply | Dropped. If nothing survives: `UnusableFirstLoad`, unprimed | `registry/merge.rs:41-58` |
@@ -377,6 +400,32 @@ and the error names the field. With `false` it starts unprimed and answers
 - **D01-1:** reader-side revision reporting changes the consumption shape.
 - **D01-2:** what §5's gate checks (D01-18).
 
+### G8. The catalogue and the tenants document are never checked against each other
+
+**Evidence**
+
+- `validate_snapshot`'s only catalogue rule is `refuse_empty_catalogue`
+  (`validate.rs:39`, `:59-64`).
+- A catalogue entry on a logical data source that some tenant does not bind is
+  published, and that tenant gets `UnboundDataSource`, a 500
+  (`fabric-data-api/src/errors/status_mapping.rs:41`). This can happen within one
+  internally consistent publication.
+- ADR 0018 part 4 chooses this deliberately (`:204-217`), as "a reconciliation gap
+  on the platform's side".
+- Across revisions it compounds G1. The catalogue is read only at start, so a
+  restarted replica pairs the newest catalogue with whatever tenants revision its
+  volume holds. A running replica keeps its startup catalogue against newer tenants.
+
+**Test:** none new. ADR 0018 part 4 cites the shipped `examples/catalog.json` as
+this shape.
+
+**Classification**
+
+- **D01-1:** refusing or holding such a publication reverses part 4.
+- **D01-1:** a generation that ties the catalogue to the tenants revision is G1b.
+- **Engineering:** surfacing the unbound pairs on the client's Data tab, which ADR
+  0023 already owes (`0023:411-415`).
+
 ## What this branch adds
 
 **Tests:** ten new tests. All run by default; none is ignored. Nine are named
@@ -397,4 +446,6 @@ and the error names the field. With `false` it starts unprimed and answers
 - **The control-plane replica count on LucentRoot,** and whether platform #40/#41
   wiring matches ADR 0018's RBAC amendment.
 - **Console copy** about catalogue selection and deployment.
+- **A coupled change served half-applied** (G3), and whether every such mixed state
+  fails closed.
 - **The Data API's request-path tests** beyond `MissingDataSource` → 500.

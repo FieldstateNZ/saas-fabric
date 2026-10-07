@@ -308,9 +308,21 @@ async fn current_behaviour_a_forward_incompatible_document_keeps_running_readers
 
     let held = std::fs::read_to_string(stack.dir.tenants_path()).unwrap();
     let mut tenants: serde_json::Value = serde_json::from_str(&held).unwrap();
-    for tenant in tenants.as_array_mut().unwrap() {
-        tenant["tier"] = serde_json::json!("gold");
-    }
+    // acme is left out as well, so a reader that accepted this document
+    // would deprovision acme. The assertion below then tells "refused" from
+    // "accepted".
+    let tenants = serde_json::Value::Array(
+        tenants
+            .as_array_mut()
+            .unwrap()
+            .drain(..)
+            .filter(|tenant| tenant["tenant"] != "acme")
+            .map(|mut tenant| {
+                tenant["tier"] = serde_json::json!("gold");
+                tenant
+            })
+            .collect(),
+    );
     stack.dir.write_raw(
         "tenants.json",
         serde_json::to_string_pretty(&tenants).unwrap().as_bytes(),
@@ -319,6 +331,7 @@ async fn current_behaviour_a_forward_incompatible_document_keeps_running_readers
     let loads_before = stack.tenant_loads.load(std::sync::atomic::Ordering::SeqCst);
     stack.handles.tenants.refresh_now();
     support::poll_for_load_count_above(&stack.tenant_loads, loads_before, Duration::from_secs(2)).await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
     assert_eq!(
         resolves_to(&stack.resolver, "acme").unwrap(),
         support::DATA_SOURCE_ID

@@ -69,9 +69,10 @@ with `iptables -S` and the network inspect under .canaries/:
   and 18780, 18781; every host listener bound to a specific address;
   1.1.1.1:53; https://example.com/ (which must fail name resolution: a resolved name leaked a lookup)
 
-Post (`canaries --phase post`, after reset and the REMOVE lines): no container, network or volume carries
-com.docker.compose.project=fabric-dogfood-disposable; no container or network has this profile's names;
-interface fabric-dogfood0 is gone; no iptables rule names fabric-dogfood0 or 10.213.7.0/24; .out/ is gone.
+Post (`canaries --phase post`, read-only, once after reset with the gate in place and again after the REMOVE
+lines): no container, network or volume carries com.docker.compose.project=fabric-dogfood-disposable; no container
+or network has this profile's names; interface fabric-dogfood0 is gone; .out/ is gone; the gate is complete or
+absent (no iptables rule names fabric-dogfood0 or 10.213.7.0/24), never partial.
 
 ## Activation sequence
 
@@ -87,14 +88,21 @@ commit (README, staging), `build --yes` recording the image IDs above, `check` p
 
 ## Cleanup and rollback
 
-Rollback and cleanup are the same steps, from any point after step 1:
+The gate is never removed before nothing owned remains. Cleanup, in order, from any point after step 1:
 
 1. `reset --yes`: docker rm --force each recorded container ID and docker network rm the recorded network ID,
-   each re-verified first; delete .out/ by exact file name. No prune, no compose down, no volume. Images are kept.
-2. The five REMOVE lines above.
-3. Remove the SSH key line and the sshd Match block.
-4. `canaries --phase post`; it must pass.
+   each re-verified first, then listed again; delete .out/ by exact file name. No prune, no compose down, no
+   volume. Images are kept. If it refuses (a listing, inspection or removal it cannot verify), it keeps the
+   receipt and local state: stop here, keep the gate, resolve, and run it again.
+2. `canaries --phase post` with the gate still in place; it must pass.
+3. Only then the five REMOVE lines above.
+4. `canaries --phase post` again; it must pass and record the gate as absent.
+5. Remove the SSH key line and the sshd Match block.
 
-If activate fails part way it removes only containers and the network it can prove it owns and deletes the
-credential; continue from cleanup step 2. Nothing in this trial is persisted, so there is nothing to restore.
-packet-sha256: 6d9db3de52da1e46b820e15ee5a80cb0f3d68e387cec6fc25995b36b496ca41e
+If activate fails after anything was created it rolls back itself and prints one of two outcomes:
+- "Rolled back and verified": nothing owned remains and the credential and receipt are deleted; continue at
+  cleanup step 1, which then only deletes the local state.
+- "ROLLBACK NOT VERIFIED": keep the gate. The receipt and credential are kept; recover with `reset --yes` (by hand
+  when there is no receipt) and continue at cleanup step 1. Nothing in this trial is persisted, so there is
+  nothing to restore.
+packet-sha256: 304f412f7d1eb45e7288ca5a0c3e52e133ae8cbdae9f3c1844ab9e0862950254

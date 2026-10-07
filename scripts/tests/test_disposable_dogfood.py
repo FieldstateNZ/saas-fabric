@@ -129,6 +129,7 @@ class FakeDocker:
     def __init__(self):
         self.calls: list[list[str]] = []
         self.handlers: list[tuple] = []
+        self.removal_fails = False
 
     def on(self, matcher, response):
         self.handlers.append((matcher, response))
@@ -143,17 +144,61 @@ class FakeDocker:
                 return response(args) if callable(response) else response
         raise AssertionError(f"unscripted docker call: {args}")
 
-    def inspect_responses(self, documents: dict[str, dict | None]):
-        """`<kind> inspect --format {{json .}} <ref>` answers from `documents`; a None raises like a missing ref."""
+    def inspect_responses(self, documents: dict[str, dict | BaseException | str | None]):
+        """Listings and `<kind> inspect` answered from `documents`, keyed by full ID or name.
+
+        A dict is listed and inspected; None is absent from a successful
+        listing; an exception is listed but its inspect raises it; a string is
+        listed and returned raw from inspect (malformed output).
+        """
+
+        def kind_of(ref, document):
+            if isinstance(document, dict):
+                return "network" if "IPAM" in document else "container"
+            return "network" if ref == dogfood.NETWORK_NAME or ref == FAKE_NETWORK_ID else "container"
+
+        def listing(kind):
+            def respond(args):
+                lines = []
+                for ref, document in documents.items():
+                    if document is None or kind_of(ref, document) != kind:
+                        continue
+                    if isinstance(document, dict):
+                        lines.append(f"{document.get('Id', ref)}\t{str(document.get('Name', ref)).lstrip('/')}")
+                    else:
+                        lines.append(f"{ref}\t{ref}")
+                return "\n".join(lines)
+            return respond
+
+        def find(reference):
+            if documents.get(reference) is not None:
+                return documents[reference]
+            for document in documents.values():
+                if isinstance(document, dict) and reference in (document.get("Id"), str(document.get("Name", "")).lstrip("/")):
+                    return document
+            return None
 
         def respond(args):
-            ref = args[-1]
-            document = documents.get(ref)
+            document = find(args[-1])
             if document is None:
-                raise subprocess.CalledProcessError(1, "docker")
-            return json.dumps(document)
+                raise AssertionError(f"inspect of an unlisted reference {args[-1]}: absence must come from the listing")
+            if isinstance(document, BaseException):
+                raise document
+            return document if isinstance(document, str) else json.dumps(document)
 
-        return self.on(lambda a: len(a) >= 2 and a[1] == "inspect", respond)
+        def remove(args):
+            identifier = args[-1]
+            for ref, document in list(documents.items()):
+                if isinstance(document, dict) and document.get("Id") == identifier:
+                    documents[ref] = None
+            return ""
+
+        self.handlers[:0] = [
+            (lambda a: a == dogfood.LISTING_ARGS["container"], listing("container")),
+            (lambda a: a == dogfood.LISTING_ARGS["network"], listing("network")),
+            (lambda a: (a[:2] == ["rm", "--force"] or a[:2] == ["network", "rm"]) and not self.removal_fails, remove),
+        ]
+        return self.on(lambda a: len(a) >= 2 and a[1] == "inspect" and a[0] in ("container", "network"), respond)
 
     def calls_matching(self, *prefix):
         return [c for c in self.calls if c[: len(prefix)] == list(prefix)]
@@ -808,32 +853,63 @@ class CommandLine(unittest.TestCase):
         self.assertEqual(self.docker.calls_matching("rm"), [], "nothing pre-existing may be removed")
         self.assertFalse((self.dir / ".out" / ".ephemeral").exists(), "no credential may exist after a refused activation")
 
-    def test_partial_startup_cleans_only_provably_owned_resources(self):
-        self.prepare_real()
-        project = self.profile.project_name
-        foreign_keycloak = container_doc("keycloak", "another-project", cid=FOREIGN_CONTAINER_ID)
+    def script_failed_start(self, documents):
         self.docker.on(lambda a: a[0] == "info", GOOD_INFO)
         self.docker.on(lambda a: a[:2] == ["ps", "--all"], "")
         self.docker.on(lambda a: a[:2] == ["network", "ls"], "bridge\n")
         self.docker.on(lambda a: a[0] == "compose" and "up" in a, subprocess.CalledProcessError(1, "docker"))
-        self.docker.inspect_responses({
+        self.docker.inspect_responses(documents)
+        self.docker.on(lambda a: a[:2] == ["rm", "--force"] or a[:2] == ["network", "rm"], "")
+
+    def test_partial_startup_rolls_back_owned_resources_and_verifies_before_advising_gate_removal(self):
+        self.prepare_real()
+        project = self.profile.project_name
+        self.script_failed_start({
             dogfood.CONTAINER_NAMES["cp"]: container_doc("cp", project),
             dogfood.CONTAINER_NAMES["console"]: None,
-            dogfood.CONTAINER_NAMES["keycloak"]: foreign_keycloak,
+            dogfood.CONTAINER_NAMES["keycloak"]: None,
             dogfood.NETWORK_NAME: network_doc(project),
         })
-        self.docker.on(lambda a: a[:2] == ["rm", "--force"] or a[:2] == ["network", "rm"], "")
         code, _, err = self.run_main(self.activate_argv())
         self.assertEqual(code, 1)
-        self.assertIn("activation abandoned", err)
+        self.assertIn("Rolled back and verified", err)
+        self.assertIn("Remove the host gate (REMOVE lines from `enforcement`) only after it passes", err)
         up = self.docker.calls_matching("compose")
         self.assertEqual(len(up), 1)
         self.assertIn("--no-build", up[0])
         self.assertEqual(self.docker.calls_matching("rm"), [["rm", "--force", FAKE_CONTAINER_IDS["cp"]]])
         self.assertEqual(self.docker.calls_matching("network", "rm"), [["network", "rm", FAKE_NETWORK_ID]])
-        self.assertNotIn(FOREIGN_CONTAINER_ID, str(self.docker.calls), "a container with our name but another project's label must be left alone")
-        self.assertFalse((self.dir / ".out" / ".ephemeral" / "keycloak.env").exists(), "the bootstrap credential must not outlive a failed start")
+        self.assertFalse((self.dir / ".out" / ".ephemeral" / "keycloak.env").exists(), "the bootstrap credential goes once rollback is verified")
         self.assertFalse((self.dir / ".out" / dogfood.RECEIPT_NAME).exists())
+
+    def test_a_foreign_same_named_container_keeps_the_gate_and_the_evidence(self):
+        self.prepare_real()
+        project = self.profile.project_name
+        self.script_failed_start({
+            dogfood.CONTAINER_NAMES["cp"]: container_doc("cp", project),
+            dogfood.CONTAINER_NAMES["console"]: None,
+            dogfood.CONTAINER_NAMES["keycloak"]: container_doc("keycloak", "another-project", cid=FOREIGN_CONTAINER_ID),
+            dogfood.NETWORK_NAME: network_doc(project),
+        })
+        code, _, err = self.run_main(self.activate_argv())
+        self.assertEqual(code, 1)
+        self.assertIn("ROLLBACK NOT VERIFIED", err)
+        self.assertIn("container fabric-dogfood-keycloak still exists", err)
+        self.assertIn("KEEP the host firewall gate in place", err)
+        self.assertNotIn("Remove the host gate", err)
+        self.assertNotIn(["rm", "--force", FOREIGN_CONTAINER_ID], self.docker.calls, "a container with our name but another project's label is left alone")
+        self.assertTrue((self.dir / ".out" / ".ephemeral" / "keycloak.env").exists(), "evidence is kept while rollback is unverified")
+
+    def test_a_listing_failure_during_rollback_keeps_the_gate_and_the_evidence(self):
+        self.prepare_real()
+        self.script_failed_start({})
+        self.docker.handlers[:0] = [(lambda a: a == dogfood.LISTING_ARGS["container"], subprocess.CalledProcessError(1, "docker"))]
+        code, _, err = self.run_main(self.activate_argv())
+        self.assertEqual(code, 1)
+        self.assertIn("ROLLBACK NOT VERIFIED", err)
+        self.assertIn("absence of fabric-dogfood-cp is not proven", err)
+        self.assertNotIn("Remove the host gate", err)
+        self.assertTrue((self.dir / ".out" / ".ephemeral" / "keycloak.env").exists())
 
     def test_activate_does_not_bootstrap_until_the_owned_keycloak_publishes_the_port(self):
         self.prepare_real()
@@ -849,14 +925,23 @@ class CommandLine(unittest.TestCase):
             dogfood.CONTAINER_NAMES["keycloak"]: container_doc("keycloak", project, ports=wrong_port),
             dogfood.NETWORK_NAME: network_doc(project),
         })
-        with mock.patch.object(dogfood, "http_json", side_effect=AssertionError("no HTTP request may be made before the port is verified")):
+        written = []
+        real_write = dogfood.write_regular_file
+        def record(path, text, mode, exclusive):
+            written.append((Path(path).name, mode))
+            return real_write(path, text, mode, exclusive)
+        with mock.patch.object(dogfood, "http_json", side_effect=AssertionError("no HTTP request may be made before the port is verified")), \
+                mock.patch.object(dogfood, "write_regular_file", record):
             code, _, err = self.run_main(self.activate_argv())
         self.assertEqual(code, 1)
         self.assertIn("refusing to bootstrap", err)
-        receipt = json.loads((self.dir / ".out" / dogfood.RECEIPT_NAME).read_text())
-        self.assertEqual(receipt["containers"]["cp"]["id"], FAKE_CONTAINER_IDS["cp"])
-        self.assertEqual(receipt["network"]["id"], FAKE_NETWORK_ID)
-        self.assertEqual(stat.S_IMODE((self.dir / ".out" / ".ephemeral" / "keycloak.env").stat().st_mode), 0o600)
+        self.assertIn((dogfood.RECEIPT_NAME, 0o600), written)
+        self.assertIn((dogfood.EPHEMERAL_ENV_NAME, 0o600), written)
+        self.assertEqual(sorted(c[-1] for c in self.docker.calls_matching("rm")), sorted(FAKE_CONTAINER_IDS.values()))
+        self.assertEqual(self.docker.calls_matching("network", "rm"), [["network", "rm", FAKE_NETWORK_ID]])
+        self.assertIn("Rolled back and verified", err)
+        self.assertFalse((self.dir / ".out" / dogfood.RECEIPT_NAME).exists())
+        self.assertFalse((self.dir / ".out" / ".ephemeral" / "keycloak.env").exists())
 
     def test_activate_refuses_without_a_human_console(self):
         self.prepare_real()
@@ -931,6 +1016,7 @@ class CommandLine(unittest.TestCase):
                 mock.patch.object(dogfood, "wait_for", lambda description, probe, **_: True):
             code, out, err = self.run_main(self.activate_argv())
         self.assertEqual(code, 0, err)
+        self.assertEqual(self.docker.calls_matching("rm"), [], "a successful activation removes nothing")
         bootstrap.assert_called_once()
         self.assertEqual(bootstrap.call_args.args[3], SYNTHETIC_OPERATOR_PASSWORD, "the typed password is what the operator is created with")
         self.assertIn("operator-abc123", out)
@@ -938,6 +1024,81 @@ class CommandLine(unittest.TestCase):
         for path in (self.dir / ".out").rglob("*"):
             if path.is_file():
                 self.assertNotIn(SYNTHETIC_OPERATOR_PASSWORD, path.read_text(errors="replace"), f"the password is never written: {path}")
+
+    def script_started(self, documents=None):
+        project = self.profile.project_name
+        self.docker.on(lambda a: a[0] == "info", GOOD_INFO)
+        self.docker.on(lambda a: a[:2] == ["ps", "--all"], "")
+        self.docker.on(lambda a: a[:2] == ["network", "ls"], "bridge\n")
+        self.docker.on(lambda a: a[0] == "compose" and "up" in a, "")
+        self.documents = documents or {
+            dogfood.CONTAINER_NAMES["cp"]: container_doc("cp", project),
+            dogfood.CONTAINER_NAMES["console"]: container_doc("console", project),
+            dogfood.CONTAINER_NAMES["keycloak"]: container_doc("keycloak", project, ports={"8080/tcp": [{"HostIp": "127.0.0.1", "HostPort": "18781"}]}),
+            dogfood.NETWORK_NAME: network_doc(project),
+        }
+        self.docker.inspect_responses(self.documents)
+
+    def activate_with_readiness_timeout(self):
+        def never_ready(description, probe, **_):
+            raise dogfood.ProfileError(f"timed out waiting for {description}")
+        bootstrap = mock.Mock(side_effect=AssertionError("no bootstrap after a readiness timeout"))
+        with mock.patch.object(dogfood, "wait_for", never_ready), mock.patch.object(dogfood, "bootstrap_realm", bootstrap):
+            return self.run_main(self.activate_argv())
+
+    def test_a_keycloak_readiness_timeout_rolls_back_and_verifies_before_advising_gate_removal(self):
+        self.prepare_real()
+        self.script_started()
+        code, out, err = self.activate_with_readiness_timeout()
+        self.assertEqual(code, 1)
+        self.assertIn("timed out waiting for Keycloak master realm", err)
+        self.assertEqual(sorted(c[-1] for c in self.docker.calls_matching("rm")), sorted(FAKE_CONTAINER_IDS.values()))
+        self.assertEqual(self.docker.calls_matching("network", "rm"), [["network", "rm", FAKE_NETWORK_ID]])
+        removals = [i for i, c in enumerate(self.docker.calls) if c[:2] in (["rm", "--force"], ["network", "rm"])]
+        listings = [i for i, c in enumerate(self.docker.calls) if c in (dogfood.LISTING_ARGS["container"], dogfood.LISTING_ARGS["network"])]
+        self.assertTrue(listings and max(listings) > max(removals), "absence is re-listed after the removals")
+        self.assertIn("Rolled back and verified", err)
+        self.assertLess(err.index("Rolled back and verified"), err.index("Remove the host gate"))
+        self.assertFalse((self.dir / ".out" / dogfood.RECEIPT_NAME).exists())
+        self.assertFalse((self.dir / ".out" / ".ephemeral" / "keycloak.env").exists())
+        self.assertNotIn("activated.", out)
+
+    def test_a_readiness_timeout_whose_rollback_cannot_be_verified_keeps_the_gate_receipt_and_credential(self):
+        self.prepare_real()
+        self.script_started()
+        self.docker.removal_fails = True  # `rm` "succeeds" but the daemon still lists everything
+        self.docker.on(lambda a: a[:2] == ["rm", "--force"] or a[:2] == ["network", "rm"], "")
+        code, _, err = self.activate_with_readiness_timeout()
+        self.assertEqual(code, 1)
+        self.assertIn("ROLLBACK NOT VERIFIED", err)
+        self.assertIn("KEEP the host firewall gate in place", err)
+        self.assertIn("Recover with `reset --yes`", err)
+        self.assertNotIn("Remove the host gate (REMOVE lines", err)
+        self.assertTrue((self.dir / ".out" / dogfood.RECEIPT_NAME).is_file(), "ownership evidence is kept")
+        self.assertTrue((self.dir / ".out" / ".ephemeral" / "keycloak.env").is_file())
+
+    def test_an_interrupt_after_start_rolls_back(self):
+        self.prepare_real()
+        self.script_started()
+        with mock.patch.object(dogfood, "wait_for", side_effect=KeyboardInterrupt):
+            code, _, err = self.run_main(self.activate_argv())
+        self.assertEqual(code, 130)
+        self.assertIn("activation failed: interrupted", err)
+        self.assertIn("Rolled back and verified", err)
+
+    def test_readiness_findings_after_bootstrap_roll_back_instead_of_reporting_activated(self):
+        self.prepare_real()
+        self.script_started()
+        with mock.patch.object(dogfood, "bootstrap_realm", return_value=("operator-abc123", SYNTHETIC_OPERATOR_PASSWORD)), \
+                mock.patch.object(dogfood, "http_json", return_value=(200, {}, {})), \
+                mock.patch.object(dogfood, "cmd_status", return_value=["console /healthz answered 502"]), \
+                mock.patch.object(dogfood, "evaluate_discovery", return_value=[]), \
+                mock.patch.object(dogfood, "wait_for", lambda description, probe, **_: True):
+            code, out, err = self.run_main(self.activate_argv())
+        self.assertEqual(code, 1)
+        self.assertNotIn("activated.", out)
+        self.assertIn("readiness findings: console /healthz answered 502", err)
+        self.assertIn("Rolled back and verified", err)
 
     # -- reset -----------------------------------------------------------------
 
@@ -966,10 +1127,71 @@ class CommandLine(unittest.TestCase):
         self.assertEqual(code, 0, err)
         self.assertEqual(self.docker.calls_matching("rm"), [["rm", "--force", FAKE_CONTAINER_IDS["cp"]], ["rm", "--force", FAKE_CONTAINER_IDS["keycloak"]]])
         self.assertEqual(self.docker.calls_matching("network", "rm"), [["network", "rm", FAKE_NETWORK_ID]])
+        self.assertIn("verified the recorded IDs are gone", text)
+        self.assertLess(text.index("canaries --phase post"), text.index("Remove the gate"))
         flat = " ".join(" ".join(c) for c in self.docker.calls)
         for forbidden in ("compose", "down", "--volumes", "--remove-orphans", "prune", "volume"):
             self.assertNotIn(forbidden, flat)
         self.assertFalse(out.exists())
+
+    def assert_reset_failed_closed(self, out: Path, expected: str):
+        code, text, err = self.run_main(["reset", "--yes"])
+        self.assertEqual(code, 1)
+        self.assertIn(expected, err)
+        self.assertTrue((out / dogfood.RECEIPT_NAME).is_file(), "the receipt is kept until removal or absence is verified")
+        self.assertTrue((out / dogfood.COMPOSE_NAME).is_file(), "local state is kept with it")
+        self.assertNotIn("Remove the gate", text + err)
+        return err
+
+    def test_reset_fails_closed_when_a_recorded_container_cannot_be_inspected(self):
+        out = self.prepare_real()
+        self.write_receipt(out)
+        project = self.profile.project_name
+        self.docker.on(lambda a: a[0] == "info", GOOD_INFO)
+        self.docker.inspect_responses({
+            FAKE_CONTAINER_IDS["cp"]: container_doc("cp", project),
+            FAKE_CONTAINER_IDS["console"]: subprocess.CalledProcessError(1, "docker"),
+            FAKE_CONTAINER_IDS["keycloak"]: container_doc("keycloak", project),
+            FAKE_NETWORK_ID: network_doc(project),
+        })
+        self.assert_reset_failed_closed(out, "is listed but could not be inspected")
+        self.assertEqual(self.docker.calls_matching("rm"), [], "nothing is removed while ownership cannot be re-verified")
+
+    def test_reset_fails_closed_when_the_recorded_network_cannot_be_inspected(self):
+        out = self.prepare_real()
+        self.write_receipt(out)
+        project = self.profile.project_name
+        self.docker.on(lambda a: a[0] == "info", GOOD_INFO)
+        self.docker.inspect_responses({
+            FAKE_CONTAINER_IDS["cp"]: container_doc("cp", project),
+            FAKE_CONTAINER_IDS["console"]: container_doc("console", project),
+            FAKE_CONTAINER_IDS["keycloak"]: container_doc("keycloak", project),
+            FAKE_NETWORK_ID: "not json",
+        })
+        self.assert_reset_failed_closed(out, "inspect output is not an object")
+        self.assertEqual(self.docker.calls_matching("rm"), [])
+
+    def test_reset_fails_closed_when_the_daemon_cannot_list(self):
+        out = self.prepare_real()
+        self.write_receipt(out)
+        self.docker.on(lambda a: a[0] == "info", GOOD_INFO)
+        self.docker.on(lambda a: a == dogfood.LISTING_ARGS["container"], subprocess.CalledProcessError(1, "docker"))
+        self.assert_reset_failed_closed(out, "absence of 111111111111 is not proven")
+
+    def test_reset_fails_closed_when_removal_is_not_verified(self):
+        out = self.prepare_real()
+        self.write_receipt(out)
+        project = self.profile.project_name
+        self.docker.on(lambda a: a[0] == "info", GOOD_INFO)
+        self.docker.inspect_responses({
+            FAKE_CONTAINER_IDS["cp"]: container_doc("cp", project),
+            FAKE_CONTAINER_IDS["console"]: container_doc("console", project),
+            FAKE_CONTAINER_IDS["keycloak"]: container_doc("keycloak", project),
+            FAKE_NETWORK_ID: network_doc(project),
+        })
+        self.docker.removal_fails = True
+        self.docker.on(lambda a: a[:2] == ["rm", "--force"] or a[:2] == ["network", "rm"], "")
+        self.assert_reset_failed_closed(out, "removal not verified; the ownership receipt is kept")
 
     def test_reset_refuses_a_forged_receipt_and_removes_nothing(self):
         out = self.prepare_real()

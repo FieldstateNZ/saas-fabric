@@ -112,7 +112,7 @@ class Trial:
     def __init__(self) -> None:
         self.results: list[dict[str, str]] = []
         self.notes: list[str] = []
-        self.cleanups: list[tuple[str, Callable[[], Any]]] = []
+        self.cleanups: list[tuple[str, Callable[[], Any], bool]] = []
         self._secrets: list[str] = []
         self.receipt: dict[str, Any] | None = None
         self.stage = "start"
@@ -132,14 +132,19 @@ class Trial:
             text = text.replace(value, "[redacted]")
         return text
 
-    def defer(self, label: str, action: Callable[[], Any]) -> None:
-        self.cleanups.append((label, action))
+    def defer(self, label: str, action: Callable[[], Any], only_after_clean: bool = False) -> None:
+        """`only_after_clean` cleanups run only if every cleanup before them succeeded (the firewall gate outlives any leftover)."""
+        self.cleanups.append((label, action, only_after_clean))
 
     def run_cleanups(self) -> int:
         """Runs every deferred cleanup, newest first. Returns how many FAILED; a failed cleanup fails the trial."""
         failed = 0
         while self.cleanups:
-            label, action = self.cleanups.pop()
+            label, action, only_after_clean = self.cleanups.pop()
+            if only_after_clean and failed:
+                failed += 1
+                self.notes.append(f"cleanup KEPT: {label}: an earlier cleanup failed, so removing it is not verified safe")
+                continue
             try:
                 outcome = action()
                 self.notes.append(f"cleanup: {label}: {self.redact(str(outcome if outcome is not None else 'done'))}")
@@ -232,7 +237,7 @@ def iptables_with_sudo(trial: Trial, profile: dogfood.Profile) -> None:
             host_run([SUDO, "-n", iptables, "-D", parts[2], *parts[4:]])
         return f"removed {len(applied)} rules"
 
-    trial.defer("remove the applied iptables rules (exact inverse, no flush)", remove_applied)
+    trial.defer("remove the applied iptables rules (exact inverse, no flush)", remove_applied, only_after_clean=True)
     for parts in apply:
         host_run([SUDO, "-n", iptables, *parts[1:]])
         applied.append(parts)

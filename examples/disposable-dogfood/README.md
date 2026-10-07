@@ -120,7 +120,7 @@ checks every value here against `profile.toml` and `dogfood.py`.
 | `fabric-dogfood-keycloak` | derived image ID recorded in `pins.lock.json`, `FROM quay.io/keycloak/keycloak@sha256:9d1f1b2b7261ff53c66cb1092dfcdc34a5fb77e81f9e6a6e75b8b6a795de8067`; user `1000:1000` | mem `1536m`, cpus `2.0`, pids `512`; tmpfs `/opt/keycloak/data` 64 MiB, `/opt/keycloak/lib/quarkus` 256 MiB, `/tmp` 64 MiB; logs 2 × `5m` | `127.0.0.1:18781` → `8080/tcp` | `reset`: `docker rm --force <recorded id>`, as above |
 | `fabric-dogfood-canary` | transient probe started only by `canaries --phase pre`: `node:22-bookworm-slim@sha256:83f487e0a63425e5b4d146fb5e5be574bcbe1b7b843d3ebafdd95eaf7767a7e5` (the pinned console builder base, pulled by digest in `build`); user `1000:1000`; project and canary labels | mem `64m`, cpus `0.25`, pids `32`; read-only root, no capabilities, logging off | none published; `fabric-dogfood-internal` only | `docker run --rm`; a lingering one is removed only if name, image and both labels match; `canaries --phase post` fails while one remains |
 | `fabric-dogfood-internal` | bridge network, interface `fabric-dogfood0`, subnet `10.213.7.0/24`, `internal`, IPv6 off, no masquerade | one /24 | no host port | `reset`: `docker network rm <recorded id>` after re-verifying name and label and that no foreign container is attached |
-| host firewall gate | the five rules printed by `enforcement`, scoped to `fabric-dogfood0` and `10.213.7.0/24` | five rules, two chains | none | the operator runs the 5 `iptables -D` REMOVE lines printed by `enforcement`, one rule at a time; no flush, no policy change |
+| host firewall gate | the five rules printed by `enforcement`, scoped to `fabric-dogfood0` and `10.213.7.0/24` | five rules, two chains | none | only after `reset` succeeds and `canaries --phase post` passes with the gate in place: the operator runs the 5 `iptables -D` REMOVE lines printed by `enforcement`, one rule at a time; no flush, no policy change; then `canaries --phase post` again |
 | SSH forwarding key | the `authorized_keys` line above, on the forwarding user | two `permitopen` destinations | workstation `127.0.0.1:18780` and `127.0.0.1:18781` | the operator deletes that one key line (and the `Match User` block if it was added for this trial) |
 | realm `fabric-dogfood` | realm, `saas-fabric-console` public PKCE client, `fabric-operator` role, one synthetic operator, one bootstrap admin | Keycloak's tmpfs | none | destroyed with the Keycloak container; nothing persists |
 | local state | `.out/control-plane.toml`, `.out/console.nginx.conf`, `.out/compose.json`, `.out/pins.lock.json`, `.out/ownership.json`, `.out/.ephemeral/keycloak.env` | a few KiB | none | `reset`: unlinked by exact name, never through a symlink, never a tree delete |
@@ -310,15 +310,30 @@ leaves nothing to clean up. Then it creates the bootstrap admin credential
 symlink), runs `compose up --no-build --pull never`, inspects the three
 containers and the network, and accepts them as its own only if name, project
 label and locked image ID all match. It writes `.out/ownership.json`
-recording their IDs and the SHA-256 of the compose file. If `up` fails or the
-resources do not verify, it removes only containers/network that match name,
-label and image, deletes the credential, and stops. Bootstrap (realm, public
+recording their IDs and the SHA-256 of the compose file. Bootstrap (realm, public
 PKCE-S256 client, `fabric-operator` role, one operator) runs only after the
 owned Keycloak container is seen to publish `8080/tcp` on exactly
 `127.0.0.1:18781`. Realm bootstrap uses loopback HTTP only (below). On
 success the tool prints the operator **username** only; the password is the
 one you typed. The CI trial never prompts: it calls `bootstrap_realm`
 without a password, which generates one in memory and returns it.
+
+**A failed activation rolls back, then says whether the gate may go.** Any
+failure after the credential exists goes through one rollback. That includes
+`up` failing, the resources not verifying, the port check, the Keycloak
+readiness timeout, a bootstrap error, readiness findings after bootstrap, an
+inspection error, or an interrupt. The rollback removes the recorded IDs
+(re-verified as with `reset`), or without a receipt only the containers and
+network that match name, label and image. Then it lists containers and
+networks again and requires that nothing with this profile's names or
+recorded IDs remains. Only then does it delete the credential and the
+receipt and print `Rolled back and verified`, with the next steps: `reset
+--yes` to delete the local state, then `canaries --phase post`, and the gate
+removed only after that passes. If anything still
+exists, or a listing, inspection or removal fails, it prints `ROLLBACK NOT
+VERIFIED` and what remains. It tells the operator to **keep the host gate**,
+keeps the receipt and credential as evidence, and names the recovery: `reset
+--yes` when a receipt exists, otherwise inspection by hand.
 
 **status.** Loopback readiness evidence: console `/healthz`, `/api/session`
 through the proxy, issuer discovery, and the network inspect (internal, IPv6
@@ -329,13 +344,20 @@ the compose file on disk (a forged, reshaped or stale receipt, or a tampered
 compose, refuses before any Docker call). Verifies the daemon, re-inspects
 each recorded container ID and the network ID, and refuses everything if any
 no longer matches name, project label and image, or if a foreign container is
-attached to the network. Then `docker rm --force <id>` per recorded container
-and `docker network rm <id>`. No `compose down`, no `--remove-orphans`, no
+attached to the network. A resource counts as already gone only when a
+listing succeeds and does not contain it. A failed listing, or something
+listed that cannot be inspected or parsed, refuses, keeping the receipt and
+local state, because it may still exist. Then `docker rm --force <id>` per
+recorded container and `docker network rm <id>`, and the recorded IDs are
+listed again: if any remains, reset refuses and keeps the receipt. No `compose down`, no `--remove-orphans`, no
 `--volumes`, no prune: no volume is ever created, so none is ever removed.
 Local state is deleted file by file by exact name (never `rmtree`, never
 through a symlink); unexpected files are left in place and reported. Without a
-receipt no Docker resource is touched. Images are kept. The firewall rules are
-*not* removed by the tool; use the REMOVE lines from `enforcement`.
+receipt no Docker resource is touched and none is verified absent. Images are
+kept. The firewall rules are *not* removed by the tool. The order is fixed:
+`reset` succeeds, then `canaries --phase post` passes with the gate still in
+place, and only then the REMOVE lines from `enforcement`, followed by
+`canaries --phase post` again.
 
 ## Loopback HTTP helper
 
@@ -424,12 +446,16 @@ contain it is not written.
 4. A lingering probe is removed only if its name, image and both labels
    match; anything else with that name is reported and left alone.
 
-`canaries --phase post` (read-only; after `reset` and the five REMOVE lines):
-no container, network or volume carries the project label; no container is
-named `fabric-dogfood-cp`, `fabric-dogfood-console`, `fabric-dogfood-keycloak`
-or `fabric-dogfood-canary`; no network is named `fabric-dogfood-internal`;
-the host interface `fabric-dogfood0` is gone; no `iptables -S` rule names
-`fabric-dogfood0` or `10.213.7.0/24`; `.out/` is gone.
+`canaries --phase post` (read-only). Run it once after `reset` with the gate
+still in place, and again after the five REMOVE lines. It checks: no
+container, network or volume carries the project label; no container is named
+`fabric-dogfood-cp`, `fabric-dogfood-console`, `fabric-dogfood-keycloak` or
+`fabric-dogfood-canary`; no network is named `fabric-dogfood-internal`; the
+host interface `fabric-dogfood0` is gone; `.out/` is gone. The gate must be
+either complete (the five rules first in their chains) or absent (no
+`iptables -S` rule names `fabric-dogfood0` or `10.213.7.0/24`), and the
+receipt records which. A half-removed or displaced gate fails. The gate is
+removed only after the first pass.
 
 Neither phase has been run against any host. The unit tests drive both with
 scripted Docker, iptables, `/proc`, `/sys` and loopback fakes, covering pass,

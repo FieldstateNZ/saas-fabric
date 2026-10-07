@@ -1061,7 +1061,8 @@ def enforcement_text(profile: Profile) -> str:
         "# APPLY (insert positions keep this top-to-bottom order; DOCKER-USER precedes Docker's own FORWARD rules):",
         *enforcement_apply_commands(profile),
         "#",
-        "# REMOVE on reset (exact inverse, one rule at a time; nothing flushed, no chain deleted, no policy changed):",
+        "# REMOVE only after `reset` succeeded and `canaries --phase post` passed with these rules still in place",
+        "# (exact inverse, one rule at a time; nothing flushed, no chain deleted, no policy changed):",
         *enforcement_remove_commands(profile),
         "#",
         "# Host->container traffic to the two published 127.0.0.1 ports is unaffected: the reply direction",
@@ -1297,11 +1298,20 @@ def split_iptables_ruleset(text: str) -> dict[str, str]:
     return {chain: "\n".join(lines) + "\n" for chain, lines in chains.items()}
 
 
-def evaluate_gate_absent(ruleset: str, profile: Profile) -> list[str]:
-    """After cleanup no rule may still name this sandbox's bridge or subnet."""
+def evaluate_gate_state(ruleset: str, profile: Profile) -> tuple[str, list[str]]:
+    """'present' (the whole gate, first in its chains), 'absent' (nothing names this sandbox), or a finding.
+
+    Cleanup keeps the gate until the post canary has passed with it in place,
+    then removes it and runs the post canary again, so both states are
+    legitimate there. Anything in between is a half-removed gate.
+    """
+    if not evaluate_iptables(split_iptables_ruleset(ruleset), profile):
+        return "present", []
     subnet = str(ipaddress.ip_network(profile.subnet))
     left = [line for line in ruleset.splitlines() if BRIDGE_NAME in line.split() or subnet in line.split()]
-    return [f"host rule still present: {line}" for line in left]
+    if not left:
+        return "absent", []
+    return "partial", [f"host gate is neither complete nor removed: {line}" for line in left]
 
 
 def redact_network_inspect(document: Any) -> Any:
@@ -1668,17 +1678,53 @@ def verify_daemon() -> dict[str, str]:
     return {key: info[key] for key in EXPECTED_DAEMON}
 
 
+LISTING_ARGS = {
+    "container": ["ps", "--all", "--no-trunc", "--format", "{{.ID}}\t{{.Names}}"],
+    "network": ["network", "ls", "--no-trunc", "--format", "{{.ID}}\t{{.Name}}"],
+}
+
+
+def docker_present(kind: str, reference: str) -> bool:
+    """Whether the daemon lists `reference` (a full ID or an exact name).
+
+    Absence is only ever a listing that succeeded and did not contain it. A
+    failed or unreadable listing raises, so no caller can mistake a daemon,
+    transport or permission failure for "already gone".
+    """
+    try:
+        listing = run_docker(LISTING_ARGS[kind], capture=True)
+    except (subprocess.CalledProcessError, OSError) as error:
+        raise ProfileError(f"could not list {kind}s ({error.__class__.__name__}); absence of {short_ref(reference)} is not proven") from None
+    for line in listing.splitlines():
+        identifier, _, names = line.partition("\t")
+        if reference == identifier or reference in names.split(","):
+            return True
+    return False
+
+
+def short_ref(reference: str) -> str:
+    return reference[:12] if CONTAINER_ID_PATTERN.match(reference) else reference
+
+
 def docker_inspect(kind: str, reference: str) -> dict[str, Any] | None:
-    """`docker <kind> inspect` as one object, or None when the daemon does not know the reference."""
+    """`docker <kind> inspect` as one object; None only when a successful listing proves the reference absent.
+
+    Something listed that then cannot be inspected or parsed raises: it may
+    still exist, and nothing downstream may treat it as removed.
+    """
+    if not docker_present(kind, reference):
+        return None
     try:
         text = run_docker([kind, "inspect", "--format", "{{json .}}", reference], capture=True)
-    except subprocess.CalledProcessError:
-        return None
+    except (subprocess.CalledProcessError, OSError) as error:
+        raise ProfileError(f"{kind} {short_ref(reference)} is listed but could not be inspected ({error.__class__.__name__}); it is not assumed absent") from None
     try:
         document = json.loads(text)
     except json.JSONDecodeError:
-        return None
-    return document if isinstance(document, dict) else None
+        document = None
+    if not isinstance(document, dict):
+        raise ProfileError(f"{kind} {short_ref(reference)} is listed but its inspect output is not an object; it is not assumed absent")
+    return document
 
 
 def preflight_enforcement(profile: Profile) -> None:
@@ -2085,6 +2131,15 @@ def bootstrap_realm(profile: Profile, admin_user: str, admin_password: str, oper
 # ---------------------------------------------------------------------------
 
 
+def remaining_owned(receipt: dict[str, Any] | None) -> list[str]:
+    """What still exists under this profile's fixed names or recorded IDs. Empty only on successful listings."""
+    references = {("container", name) for name in CONTAINER_NAMES.values()} | {("network", NETWORK_NAME)}
+    if receipt is not None:
+        references |= {("container", entry["id"]) for entry in receipt["containers"].values()}
+        references.add(("network", receipt["network"]["id"]))
+    return [f"{kind} {short_ref(reference)} still exists" for kind, reference in sorted(references) if docker_present(kind, reference)]
+
+
 def remove_owned_by_name(profile: Profile, lock: Lock) -> list[str]:
     """After a failed start: remove only containers/network that are provably ours. Returns what was removed."""
     removed = []
@@ -2134,7 +2189,49 @@ def remove_recorded(receipt: dict[str, Any], profile: Profile, lock: Lock) -> li
     for kind, identifier, label in plan:
         run_docker(["rm", "--force", identifier] if kind == "rm" else ["network", "rm", identifier])
         removed.append(f"{label} {identifier[:12]}")
+    still = [
+        f"{kind} {short_ref(reference)} still exists"
+        for kind, reference in [("container", e["id"]) for e in receipt["containers"].values()] + [("network", receipt["network"]["id"])]
+        if docker_present(kind, reference)
+    ]
+    if still:
+        raise ProfileError("removal not verified; the ownership receipt is kept: " + "; ".join(still))
     return removed
+
+
+def rollback_activation(paths: Paths, profile: Profile, lock: Lock) -> tuple[list[str], list[str]]:
+    """Undoes a failed activation. Returns (removed, problems); the credential and receipt go only when problems is empty."""
+    try:
+        receipt = read_receipt(paths, profile, lock)
+        removed = remove_recorded(receipt, profile, lock) if receipt is not None else remove_owned_by_name(profile, lock)
+        problems = remaining_owned(receipt)
+    except (ProfileError, subprocess.CalledProcessError, OSError) as error:
+        return [], [f"rollback stopped ({error.__class__.__name__}): {error}"]
+    if problems:
+        return removed, problems
+    paths.ephemeral_env.unlink(missing_ok=True)
+    paths.receipt.unlink(missing_ok=True)
+    return removed, []
+
+
+def gate_advice_after_failure(paths: Paths, removed: list[str], problems: list[str]) -> str:
+    if not problems:
+        return (
+            f"Rolled back and verified: removed {removed or 'nothing'}; no container named {sorted(CONTAINER_NAMES.values())} "
+            f"and no network {NETWORK_NAME} remains; the bootstrap credential and ownership receipt are deleted.\n"
+            "Next: `reset --yes` (deletes the local state), then `canaries --phase post`. "
+            "Remove the host gate (REMOVE lines from `enforcement`) only after it passes."
+        )
+    recovery = (
+        "Recover with `reset --yes`: it re-verifies every recorded ID and keeps the receipt until removal is verified."
+        if paths.receipt.exists()
+        else "There is no ownership receipt, so `reset` cannot remove anything: inspect the resources named above by hand."
+    )
+    return (
+        "ROLLBACK NOT VERIFIED: " + "; ".join(problems) + ".\n"
+        "KEEP the host firewall gate in place. The ownership receipt and the bootstrap credential, where they exist, are kept as evidence.\n"
+        f"{recovery} Remove the gate only after `canaries --phase post` passes."
+    )
 
 
 def delete_local_state(paths: Paths) -> list[str]:
@@ -2215,11 +2312,24 @@ def cmd_activate(paths: Paths, yes: bool, approved_packet: str | None) -> int:
     write_regular_file(paths.ephemeral_env, f"KC_BOOTSTRAP_ADMIN_USERNAME={admin_user}\nKC_BOOTSTRAP_ADMIN_PASSWORD={admin_password}\n", 0o600, exclusive=True)
 
     def abandon(reason: str) -> int:
-        removed = remove_owned_by_name(profile, lock)
-        paths.ephemeral_env.unlink(missing_ok=True)
-        print(f"activation abandoned: {reason}. Removed only provably owned resources: {removed or 'none'}", file=sys.stderr)
+        removed, problems = rollback_activation(paths, profile, lock)  # type: ignore[arg-type]
+        print(f"activation failed: {reason}.\n{gate_advice_after_failure(paths, removed, problems)}", file=sys.stderr)
         return 1
 
+    try:
+        return start_and_bootstrap(paths, profile, lock, daemon, admin_user, admin_password, operator_password, abandon)
+    except KeyboardInterrupt:
+        abandon("interrupted")
+        return 130
+    except (ProfileError, subprocess.CalledProcessError, urllib.error.URLError, OSError) as error:
+        return abandon(f"{error.__class__.__name__}: {error}")
+
+
+def start_and_bootstrap(
+    paths: Paths, profile: Profile, lock: Lock, daemon: dict[str, str], admin_user: str, admin_password: str,
+    operator_password: str, abandon: Callable[[str], int],
+) -> int:
+    """Everything after the credential exists. Every failure returns through `abandon`, or raises to the caller, which also abandons."""
     try:
         run_docker([*compose_args(paths, profile), "up", "--detach", "--no-build", "--pull", "never"])
     except subprocess.CalledProcessError as error:
@@ -2249,8 +2359,7 @@ def cmd_activate(paths: Paths, yes: bool, approved_packet: str | None) -> int:
     # Bootstrap only once the loopback port is proven to belong to the owned Keycloak container.
     port_findings = evaluate_published_port(observed[SERVICE_KEYCLOAK], KEYCLOAK_PORT, profile.bind_address, profile.oidc_port)
     if port_findings:
-        print("refusing to bootstrap: " + "; ".join(port_findings), file=sys.stderr)
-        return 1
+        return abandon("refusing to bootstrap: " + "; ".join(port_findings))
 
     def master_realm_ready() -> bool | None:
         status, _, _ = http_json(f"{profile.keycloak_public_base}/realms/master", profile)
@@ -2262,13 +2371,10 @@ def cmd_activate(paths: Paths, yes: bool, approved_packet: str | None) -> int:
     _, discovery, _ = http_json(f"{profile.issuer}/.well-known/openid-configuration", profile)
     findings = evaluate_discovery(discovery, profile)
     findings += cmd_status(paths, quiet=True)
+    if findings:
+        return abandon("readiness findings: " + "; ".join(findings))
     print(f"\nactivated. Sign in at {profile.console_origin} as operator username: {operator} with the password you typed (ephemeral; gone on reset).")
     print("Before interactive use: `canaries --phase pre --yes` must pass; nobody signs in until it does.")
-    if findings:
-        print("readiness findings:", file=sys.stderr)
-        for finding in findings:
-            print(f"  - {finding}", file=sys.stderr)
-        return 1
     return 0
 
 
@@ -2322,11 +2428,13 @@ def cmd_reset(paths: Paths, yes: bool) -> int:
             verify_daemon()
             removed = remove_recorded(receipt, profile, lock)  # type: ignore[arg-type]
         else:
-            print("no ownership receipt: no Docker resource is touched. If containers named "
+            print("no ownership receipt: no Docker resource is touched and none is verified absent. If containers named "
                   f"{sorted(CONTAINER_NAMES.values())} exist, inspect them by hand before removing anything.")
     leftovers = delete_local_state(paths)
-    print(f"reset: removed {removed or 'no Docker resources'}; local state deleted. Images are kept. No volume was ever created or removed.")
-    print("Remember to remove the host firewall rules with the REMOVE lines from `enforcement`; this tool does not.")
+    verified = "verified the recorded IDs are gone" if removed else "removed no Docker resources"
+    print(f"reset: {verified}{(': ' + ', '.join(removed)) if removed else ''}; local state deleted. Images are kept. No volume was ever created or removed.")
+    print("Next: `canaries --phase post` with the host gate still in place. Remove the gate (REMOVE lines from `enforcement`) "
+          "only after it passes, then run `canaries --phase post` again.")
     for leftover in leftovers:
         print(f"  - {leftover}", file=sys.stderr)
     return 1 if leftovers else 0
@@ -2338,12 +2446,14 @@ def cmd_reset(paths: Paths, yes: bool) -> int:
 
 
 def ephemeral_secret_values(paths: Paths) -> list[str]:
-    """The bootstrap admin values, so a receipt can be proven free of them. Unreadable means nothing to hide."""
-    try:
-        refuse_symlink(paths.ephemeral_env)
-        text = paths.ephemeral_env.read_text(encoding="utf-8")
-    except (OSError, ProfileError):
+    """The bootstrap admin values, so a receipt can be proven free of them. A file that exists but cannot be read refuses."""
+    refuse_symlink(paths.ephemeral_env)
+    if not os.path.lexists(paths.ephemeral_env):
         return []
+    try:
+        text = paths.ephemeral_env.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as error:
+        raise ProfileError(f"{paths.ephemeral_env} exists but cannot be read ({error.__class__.__name__}); a receipt could not be proven free of it") from None
     return [line.split("=", 1)[1] for line in text.splitlines() if "=" in line]
 
 
@@ -2442,7 +2552,7 @@ def canaries_pre(paths: Paths, profile: Profile, evidence: dict[str, Any]) -> li
 
 
 def canaries_post(paths: Paths, profile: Profile, evidence: dict[str, Any]) -> list[str]:
-    """After reset and the gate's REMOVE lines: nothing this profile owned may remain anywhere."""
+    """After reset, with the gate in place and again after its REMOVE lines: nothing this profile owned may remain."""
     evidence["daemon"] = verify_daemon()
     findings: list[str] = []
     label = f"label={COMPOSE_PROJECT_LABEL}={profile.project_name}"
@@ -2464,7 +2574,9 @@ def canaries_post(paths: Paths, profile: Profile, evidence: dict[str, Any]) -> l
         findings.append(f"host interface {BRIDGE_NAME} still exists")
     ruleset = read_iptables_ruleset()
     evidence["iptables_S"] = ruleset
-    findings += evaluate_gate_absent(ruleset, profile)
+    gate, gate_findings = evaluate_gate_state(ruleset, profile)
+    evidence["gate"] = gate
+    findings += gate_findings
     out = paths.profile_dir / OUT_DIR_NAME
     if os.path.lexists(out):
         findings.append(f"{out} still exists; reset deletes it")
@@ -2585,9 +2697,10 @@ def packet_text(profile: Profile, lock: Lock, rendered: Rendered) -> str:
         f"  and {profile.console_port}, {profile.oidc_port}; every host listener bound to a specific address;",
         f"  {CANARY_PUBLIC_TCP[0]}:{CANARY_PUBLIC_TCP[1]}; {CANARY_PUBLIC_URL} (which must fail name resolution: a resolved name leaked a lookup)",
         "",
-        "Post (`canaries --phase post`, after reset and the REMOVE lines): no container, network or volume carries",
-        f"com.docker.compose.project={profile.project_name}; no container or network has this profile's names;",
-        f"interface {BRIDGE_NAME} is gone; no iptables rule names {BRIDGE_NAME} or {profile.subnet}; .out/ is gone.",
+        "Post (`canaries --phase post`, read-only, once after reset with the gate in place and again after the REMOVE",
+        f"lines): no container, network or volume carries com.docker.compose.project={profile.project_name}; no container",
+        f"or network has this profile's names; interface {BRIDGE_NAME} is gone; .out/ is gone; the gate is complete or",
+        f"absent (no iptables rule names {BRIDGE_NAME} or {profile.subnet}), never partial.",
         "",
         "## Activation sequence",
         "",
@@ -2603,16 +2716,23 @@ def packet_text(profile: Profile, lock: Lock, rendered: Rendered) -> str:
         "",
         "## Cleanup and rollback",
         "",
-        "Rollback and cleanup are the same steps, from any point after step 1:",
+        "The gate is never removed before nothing owned remains. Cleanup, in order, from any point after step 1:",
         "",
         "1. `reset --yes`: docker rm --force each recorded container ID and docker network rm the recorded network ID,",
-        "   each re-verified first; delete .out/ by exact file name. No prune, no compose down, no volume. Images are kept.",
-        "2. The five REMOVE lines above.",
-        "3. Remove the SSH key line and the sshd Match block.",
-        "4. `canaries --phase post`; it must pass.",
+        "   each re-verified first, then listed again; delete .out/ by exact file name. No prune, no compose down, no",
+        "   volume. Images are kept. If it refuses (a listing, inspection or removal it cannot verify), it keeps the",
+        "   receipt and local state: stop here, keep the gate, resolve, and run it again.",
+        "2. `canaries --phase post` with the gate still in place; it must pass.",
+        "3. Only then the five REMOVE lines above.",
+        "4. `canaries --phase post` again; it must pass and record the gate as absent.",
+        "5. Remove the SSH key line and the sshd Match block.",
         "",
-        "If activate fails part way it removes only containers and the network it can prove it owns and deletes the",
-        "credential; continue from cleanup step 2. Nothing in this trial is persisted, so there is nothing to restore.",
+        "If activate fails after anything was created it rolls back itself and prints one of two outcomes:",
+        "- \"Rolled back and verified\": nothing owned remains and the credential and receipt are deleted; continue at",
+        "  cleanup step 1, which then only deletes the local state.",
+        "- \"ROLLBACK NOT VERIFIED\": keep the gate. The receipt and credential are kept; recover with `reset --yes` (by hand",
+        "  when there is no receipt) and continue at cleanup step 1. Nothing in this trial is persisted, so there is",
+        "  nothing to restore.",
         "",
     ]
     body = "\n".join(lines)

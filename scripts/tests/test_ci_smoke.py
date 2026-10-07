@@ -257,6 +257,17 @@ class TrialLedger(unittest.TestCase):
         self.assertIn("cleanup FAILED: second: Tripwire", trial.notes)
         self.assertNotIn("SYNTHETIC-DETAIL", "\n".join(trial.notes))
 
+    def test_the_gate_cleanup_is_kept_when_an_earlier_cleanup_failed(self):
+        for container_cleanup, expected_failures, removed in ((lambda: None, 0, True), (tripwire("container"), 2, False)):
+            with self.subTest(removed=removed):
+                trial, order = ci_smoke.Trial(), []
+                trial.defer("gate", lambda: order.append("gate"), only_after_clean=True)
+                trial.defer("containers", container_cleanup)
+                self.assertEqual(trial.run_cleanups(), expected_failures)
+                self.assertEqual(order == ["gate"], removed)
+                if not removed:
+                    self.assertTrue(any(n.startswith("cleanup KEPT: gate") for n in trial.notes))
+
 
 class ProbeExitCodes(unittest.TestCase):
     def probe_with(self, outcome):

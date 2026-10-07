@@ -206,8 +206,9 @@ class Canaries(unittest.TestCase):
                          "--pid", "--ipc", "--uts", "--userns", "--add-host", "--dns", "--security-opt=seccomp=unconfined", "--entrypoint"):
             self.assertNotIn(widening, run)
         self.assertNotIn("host", run[run.index("--network") + 1])
-        self.assertEqual({c[0] for c in self.docker.calls}, {"info", "container", "network", "image", "run"})
-        self.assertTrue(all(c[1] == "inspect" for c in self.docker.calls if c[0] in ("container", "network", "image")), "only reads besides the one probe")
+        reads = [dogfood.LISTING_ARGS["container"], dogfood.LISTING_ARGS["network"]]
+        writes = [c for c in self.docker.calls if c not in reads and c[0] != "info" and not (len(c) > 1 and c[1] == "inspect")]
+        self.assertEqual([c[0] for c in writes], ["run"], "only reads besides the one probe")
         self.assertEqual(self.http_calls, [f"{self.profile.console_origin}/healthz", f"{self.profile.issuer}/.well-known/openid-configuration"])
 
     def test_pre_redacts_an_ephemeral_value_that_reaches_the_evidence(self):
@@ -290,6 +291,8 @@ class Canaries(unittest.TestCase):
             "iptables unreadable": dict(setup=lambda: setattr(self, "ruleset", dogfood.ProfileError("could not read the iptables ruleset: permission denied"))),
             "listeners unreadable": dict(setup=lambda: setattr(self, "listeners", dogfood.ProfileError("/proc/net/tcp is missing"))),
             "network has no gateway": dict(network=no_gateway),
+            "recorded network listed but not inspectable": dict(network=subprocess.CalledProcessError(1, "docker")),
+            "recorded network inspect output malformed": dict(network="{not json"),
             "probe image absent": dict(probe_digests=[]),
             "probe output empty": dict(probe_output=""),
             "probe output not json": dict(probe_output="Segmentation fault\n"),
@@ -309,6 +312,18 @@ class Canaries(unittest.TestCase):
                 [receipt] = self.receipts()
                 self.assertEqual(receipt["result"], "fail")
                 self.assertTrue(receipt["findings"])
+
+    def test_an_unreadable_credential_file_refuses_rather_than_redacting_nothing(self):
+        self.activate_on_disk()
+        env = self.dir / ".out" / ".ephemeral" / "keycloak.env"
+        env.unlink()
+        env.mkdir()
+        self.script_activation()
+        code, _, err = self.run_main(["canaries", "--phase", "pre", "--yes"])
+        self.assertEqual(code, 1)
+        self.assertIn("exists but cannot be read", err)
+        self.assertEqual(self.receipts(), [], "no receipt is written that could not be proven free of it")
+        self.assertEqual(self.docker.calls, [])
 
     def test_pre_without_an_activation_has_nothing_to_test(self):
         self.docker.on(lambda a: a[0] == "info", GOOD_INFO)
@@ -365,14 +380,14 @@ class Canaries(unittest.TestCase):
             "lingering probe by name": dict(post=dict(names=f"{dogfood.CANARY_PROBE_NAME}\n")),
             "container by name": dict(post=dict(names="fabric-dogfood-keycloak\n")),
             "network by name": dict(post=dict(networks=f"bridge\n{dogfood.NETWORK_NAME}\n")),
-            "gate rules left": dict(ruleset=True),
+            "gate half removed": dict(ruleset=True),
             "bridge interface left": dict(bridge=True),
             "local state left": dict(out=True),
         }
         for name, case in cases.items():
             with self.subTest(name=name):
                 self.setUp()
-                self.ruleset = full_ruleset(self.profile) if case.get("ruleset") else self.clean_ruleset()
+                self.ruleset = full_ruleset(self.profile, drop_rule="INPUT") if case.get("ruleset") else self.clean_ruleset()
                 self.bridge_present = bool(case.get("bridge"))
                 if case.get("out"):
                     (self.dir / ".out").mkdir()
@@ -380,6 +395,16 @@ class Canaries(unittest.TestCase):
                 code, _, err = self.run_main(["canaries", "--phase", "post"])
                 self.assertEqual(code, 1, name)
                 self.assertEqual(self.receipts()[-1]["result"], "fail")
+
+    def test_post_passes_before_and_after_the_gate_is_removed_and_records_which(self):
+        for ruleset, state in ((full_ruleset(self.profile), "present"), (self.clean_ruleset(), "absent")):
+            with self.subTest(state=state):
+                self.setUp()
+                self.ruleset = ruleset
+                self.script_post()
+                code, _, err = self.run_main(["canaries", "--phase", "post"])
+                self.assertEqual(code, 0, err)
+                self.assertEqual(self.receipts()[-1]["evidence"]["gate"], state)
 
     def test_post_fails_closed_when_iptables_cannot_be_read(self):
         self.ruleset = dogfood.ProfileError("could not read the iptables ruleset: permission denied")
@@ -430,9 +455,14 @@ class CanaryPureFunctions(unittest.TestCase):
         doc["IPAM"]["Config"][0]["Gateway"] = GATEWAY
         self.assertEqual(dogfood.network_gateway(doc, self.profile), GATEWAY)
 
-    def test_gate_absence_is_judged_on_the_bridge_and_subnet_tokens(self):
-        self.assertTrue(dogfood.evaluate_gate_absent(full_ruleset(self.profile), self.profile))
-        self.assertEqual(dogfood.evaluate_gate_absent("-A FORWARD -i fabric-dogfood01 -j DROP\n-A INPUT -s 10.213.7.0/25 -j DROP\n", self.profile), [])
+    def test_gate_state_is_complete_absent_or_a_finding(self):
+        self.assertEqual(dogfood.evaluate_gate_state(full_ruleset(self.profile), self.profile), ("present", []))
+        self.assertEqual(dogfood.evaluate_gate_state("-A FORWARD -i fabric-dogfood01 -j DROP\n-A INPUT -s 10.213.7.0/25 -j DROP\n", self.profile), ("absent", []))
+        state, findings = dogfood.evaluate_gate_state(full_ruleset(self.profile, drop_rule="DOCKER-USER"), self.profile)
+        self.assertEqual(state, "partial")
+        self.assertTrue(findings)
+        state, findings = dogfood.evaluate_gate_state(full_ruleset(self.profile, above="INPUT"), self.profile)
+        self.assertEqual(state, "partial", "a displaced gate is not a complete one")
 
     def test_protected_host_ports_are_validated(self):
         for bad in ([], [0], [22, 22], "22", [True], [70000], list(range(1, dogfood.MAX_PROTECTED_HOST_PORTS + 2))):

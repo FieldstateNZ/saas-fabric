@@ -9,7 +9,7 @@ import { describe } from '../hooks/useClients'
 /** Reading and writing the product catalogue. */
 export interface CatalogueState {
   readonly value: StoredCatalogue | null
-  /** Why the catalogue failed to load. Never set by a failed `save`. */
+  /** Why the catalogue failed to load. Never set by a failed `save`; cleared by a successful one, which is a load. */
   readonly loadError: string | null
   readonly loading: boolean
   readonly saving: boolean
@@ -103,6 +103,24 @@ export interface CatalogueState {
  * there is nothing loaded yet or a write is already in flight, so every
  * caller can `await` it without also having to guard against calling it too
  * early.
+ *
+ * # One write at a time, and a landed write outranks the read it overlapped
+ *
+ * Both are kept in refs, not state, because the point is to decide before
+ * React commits anything. `saving` is what the UI shows; `inFlight` is what
+ * `save` and `select` actually check, so two calls in one render cannot both
+ * pass the guard and both go out at the same revision. `writesLanded` counts
+ * successful writes; a read that started under an older count is answering
+ * a question that has since been superseded, and neither its catalogue nor
+ * its error is allowed to land over what the write committed. A read that
+ * starts after the write is a fresh question and is accepted as before.
+ *
+ * The count cannot help a read that failed *before* the write landed: its
+ * `loadError` was set legitimately, and nothing in the read path will ever
+ * revisit it. A catalogue the server returned for a write is as fresh as one
+ * it returned for a read, so a landed write also clears `loadError` — the
+ * console has a current catalogue and no reason to keep showing a banner that
+ * says it has none. A refused write leaves `loadError` exactly as it found it.
  */
 export function useCatalogue(): CatalogueState {
   const [value, setValue] = useState<StoredCatalogue | null>(null)
@@ -118,6 +136,10 @@ export function useCatalogue(): CatalogueState {
   const setCurrentPage = useCallback((label: string) => {
     currentPage.current = label
   }, [])
+  /** Whether a write is out right now; checked synchronously, where `saving` cannot be. */
+  const inFlight = useRef(false)
+  /** How many writes have landed; a read compares this to what it saw when it started. */
+  const writesLanded = useRef(0)
 
   const clearSaveError = useCallback(() => {
     setSaveError(null)
@@ -133,18 +155,22 @@ export function useCatalogue(): CatalogueState {
 
   useEffect(() => {
     let active = true
+    const landedAtStart = writesLanded.current
+    // Still the read the hook wants: not replaced by a newer one, and not
+    // overtaken by a write that committed while it was out.
+    const current = () => active && writesLanded.current === landedAtStart
     setLoading(true)
 
     void getCatalogue()
       .then(
         (next) => {
-          if (active) {
+          if (current()) {
             setValue(next)
             setLoadError(null)
           }
         },
         (error: unknown) => {
-          if (active) {
+          if (current()) {
             setLoadError(describe(error))
           }
         },
@@ -166,13 +192,17 @@ export function useCatalogue(): CatalogueState {
     revision: string | null,
   ): Promise<{ error: unknown; here: boolean } | null> => {
     const startedOn = currentPage.current
+    inFlight.current = true
     setSaving(true)
     setSaveError(null)
     setConflict(false)
     setNavigatedAwayNotice(null)
 
     try {
-      setValue(await changeCatalogue(command, revision))
+      const next = await changeCatalogue(command, revision)
+      writesLanded.current += 1
+      setValue(next)
+      setLoadError(null)
       return null
     } catch (error: unknown) {
       const here = currentPage.current === startedOn
@@ -181,12 +211,13 @@ export function useCatalogue(): CatalogueState {
       }
       return { error, here }
     } finally {
+      inFlight.current = false
       setSaving(false)
     }
   }
 
   const save = async (command: CatalogueCommand) => {
-    if (!value || saving) {
+    if (!value || inFlight.current) {
       return false
     }
     const refused = await write(command, value.revision)
@@ -198,7 +229,7 @@ export function useCatalogue(): CatalogueState {
   }
 
   const select = async (command: SelectComponentVersion) => {
-    if (!value || saving) {
+    if (!value || inFlight.current) {
       return new ControlPlaneError(0, 'busy', 'Another change is still being saved.')
     }
     const refused = await write(command, value.revision)

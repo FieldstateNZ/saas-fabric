@@ -6,11 +6,12 @@
 #[path = "pass_tests.rs"]
 mod pass_tests;
 
-use fabric_runtime_publication::{DocumentOutcome, PublicationReport, PublishedRevisions};
+use fabric_runtime_publication::PublishedRevisions;
 
 use crate::publication::outcome::{PassOutcome, WaitingReason};
 use crate::publication::protocol::publish_with_retry;
 use crate::publication::publish_error::outcome_from_publish_error;
+use crate::publication::report_outcome::outcome_from_report;
 use crate::publication::snapshot::compose;
 use crate::publication::RuntimePublisher;
 use crate::SafeDiagnostic;
@@ -33,30 +34,6 @@ impl Halt {
             Self::Refused(reason) => PassOutcome::Refused { reason },
             Self::Failed(detail) => PassOutcome::Failed { detail },
             Self::Waiting(reason) => PassOutcome::Waiting { reason },
-        }
-    }
-}
-
-/// `Unchanged` if every document settled unchanged, `Published` with the
-/// report's own outcomes otherwise.
-fn outcome_from_report(report: PublicationReport, revisions: PublishedRevisions) -> PassOutcome {
-    let PublicationReport {
-        tenants,
-        data_sources,
-        catalog,
-    } = report;
-
-    if tenants == DocumentOutcome::Unchanged
-        && data_sources == DocumentOutcome::Unchanged
-        && catalog == DocumentOutcome::Unchanged
-    {
-        PassOutcome::Unchanged { revisions }
-    } else {
-        PassOutcome::Published {
-            tenants,
-            data_sources,
-            catalog,
-            revisions,
         }
     }
 }
@@ -107,6 +84,7 @@ impl RuntimePublisher {
         match publish_with_retry(self.target.as_ref(), snapshot).await {
             Ok((report, snapshot)) => outcome_from_report(
                 report,
+                &held,
                 PublishedRevisions {
                     tenants: Some(snapshot.tenants.revision),
                     data_sources: Some(snapshot.data_sources.revision),

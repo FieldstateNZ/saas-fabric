@@ -551,3 +551,41 @@ async fn the_guard_releases_when_the_pass_is_cancelled_mid_flight() {
         "the guard must be released after cancellation, not left AlreadyRunning forever"
     );
 }
+
+#[tokio::test]
+async fn a_pass_interrupted_part_way_is_completed_in_the_same_pass_and_reports_every_write() {
+    // Gap G3: the first offer writes data sources and the catalogue, then
+    // fails on tenants. The same pass re-offers the snapshot, and its outcome
+    // still names the two documents the interrupted offer wrote, although the
+    // offer that completed found them already held.
+    let target = Arc::new(FakePublication::new());
+    target.script_interrupted(fabric_runtime_publication::DocumentKind::Tenants);
+    let publisher = publisher(
+        Arc::new(FakePlatform::ready(
+            vec![declaration("shared-a")],
+            vec![placement("acme", "shared-a")],
+        )),
+        Arc::new(FakeCatalogue(Ok(catalog_with_one_resource()))),
+        Arc::clone(&target) as Arc<dyn RuntimePublication>,
+    );
+
+    let result = publisher.publish_once(&PublicationState::new()).await;
+
+    let PassResult::Ran {
+        outcome:
+            PassOutcome::Published {
+                tenants,
+                data_sources,
+                catalog,
+                ..
+            },
+        ..
+    } = result
+    else {
+        panic!("{result:?}");
+    };
+    assert_eq!(tenants, fabric_runtime_publication::DocumentOutcome::Written);
+    assert_eq!(data_sources, fabric_runtime_publication::DocumentOutcome::Written);
+    assert_eq!(catalog, fabric_runtime_publication::DocumentOutcome::Written);
+    assert_eq!(target.publish_attempts(), 2);
+}

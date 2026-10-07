@@ -29,6 +29,7 @@ mod protocol;
 mod publish_error;
 mod publisher;
 mod reads;
+mod report_outcome;
 mod snapshot;
 mod state;
 

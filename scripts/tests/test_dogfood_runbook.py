@@ -87,6 +87,7 @@ class Runbook(unittest.TestCase):
         self.assertIn(f"`{self.profile.redirect_uri}`", forwarding)
         self.assertIn("PermitListen none", forwarding)
         self.assertIn("AllowTcpForwarding local", forwarding)
+        self.assertIn("**must** carry", forwarding)
 
     def test_protected_shared_services_are_listed_with_their_protection(self):
         rows = table_rows(section("Protected shared services"))

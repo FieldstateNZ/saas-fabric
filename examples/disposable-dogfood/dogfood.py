@@ -1154,6 +1154,10 @@ CANARY_PROBE_LIMITS = (("--memory", "64m"), ("--cpus", "0.25"), ("--pids-limit",
 # dns. A refusal is a reset from the far end, so the packet arrived: for a
 # host port that is the gate failing, never a pass.
 BLOCKED_OUTCOMES = frozenset({"timeout", "unreachable", "dns"})
+# The public URL is a name: only "dns" proves the embedded resolver did not
+# forward the query out of the internal network. A resolved name that then
+# times out still leaked a lookup, so it fails.
+NAME_BLOCKED_OUTCOMES = frozenset({"dns"})
 ANSWERED_OUTCOME = "status:200"
 
 CANARY_PROBE_JS = (
@@ -1182,6 +1186,10 @@ class CanaryTarget:
     port: int
     path: str
     expect: str
+
+    @property
+    def blocked_outcomes(self) -> frozenset[str]:
+        return NAME_BLOCKED_OUTCOMES if self.kind == "url" else BLOCKED_OUTCOMES
 
     def wire(self) -> dict[str, Any]:
         if self.kind == "url":
@@ -1234,6 +1242,9 @@ def canary_pre_targets(profile: Profile, gateway: str, listeners: list[tuple[str
     bound = set()
     for address, port in listeners:
         ip = ipaddress.ip_address(address)
+        # The sandbox network has IPv6 disabled (validated on the inspect), so
+        # the probe has no IPv6 address or route; IPv6 listeners are covered by
+        # their port on the IPv4 gateway.
         if ip.version == 4 and not ip.is_unspecified and not ip.is_loopback and ip not in subnet:
             bound.add((address, port))
     targets += [CanaryTarget(f"host:{address}:{port}", "tcp", address, port, "", "blocked") for address, port in sorted(bound)]
@@ -1269,9 +1280,9 @@ def evaluate_canary_results(targets: list[CanaryTarget], output: str) -> tuple[l
             if verdict == "fail":
                 findings.append(f"{target.id}: positive control answered {outcome!r}, expected {ANSWERED_OUTCOME}; the negatives prove nothing")
         else:
-            verdict = "pass" if outcome in BLOCKED_OUTCOMES else "fail"
+            verdict = "pass" if outcome in target.blocked_outcomes else "fail"
             if verdict == "fail":
-                findings.append(f"{target.id}: {outcome!r} from inside the sandbox; must be one of {sorted(BLOCKED_OUTCOMES)}")
+                findings.append(f"{target.id}: {outcome!r} from inside the sandbox; must be one of {sorted(target.blocked_outcomes)}")
         rows.append({"id": target.id, "expect": target.expect, "outcome": outcome, "verdict": verdict})
     return rows, findings
 
@@ -2540,7 +2551,7 @@ def packet_text(profile: Profile, lock: Lock, rendered: Rendered) -> str:
         f"- network: {NETWORK_NAME}, bridge {BRIDGE_NAME}, subnet {profile.subnet}, internal, IPv6 off, no masquerade",
         f"- SSH key options: {ssh_forward_options(profile)}",
         f"- SSH forward: {ssh_forward_command(profile)}",
-        "- sshd for the forwarding user only: AllowTcpForwarding local, PermitListen none, X11Forwarding no, PermitTTY no",
+        "- sshd for the forwarding user only (required; OpenSSH 7.8 or newer): AllowTcpForwarding local, PermitListen none, X11Forwarding no, PermitTTY no",
         "",
         "## Host firewall gate (applied by the operator before activate; activate and canaries refuse without it)",
         "",
@@ -2572,7 +2583,7 @@ def packet_text(profile: Profile, lock: Lock, rendered: Rendered) -> str:
         "- must be blocked (timeout, unreachable or dns; a refusal fails): the bridge gateway on every host listening port",
         f"  observed in /proc/net/tcp and tcp6 plus {', '.join(str(p) for p in profile.protected_host_ports)}",
         f"  and {profile.console_port}, {profile.oidc_port}; every host listener bound to a specific address;",
-        f"  {CANARY_PUBLIC_TCP[0]}:{CANARY_PUBLIC_TCP[1]}; {CANARY_PUBLIC_URL}",
+        f"  {CANARY_PUBLIC_TCP[0]}:{CANARY_PUBLIC_TCP[1]}; {CANARY_PUBLIC_URL} (which must fail name resolution: a resolved name leaked a lookup)",
         "",
         "Post (`canaries --phase post`, after reset and the REMOVE lines): no container, network or volume carries",
         f"com.docker.compose.project={profile.project_name}; no container or network has this profile's names;",

@@ -53,7 +53,7 @@ def full_ruleset(profile: dogfood.Profile, **variant) -> str:
 
 
 def outcomes_for(targets, **overrides) -> str:
-    results = {t.id: ("status:200" if t.expect == "answers" else "timeout") for t in targets}
+    results = {t.id: ("status:200" if t.expect == "answers" else "dns" if t.kind == "url" else "timeout") for t in targets}
     results.update(overrides)
     return json.dumps({"results": results}) + "\n"
 
@@ -202,7 +202,9 @@ class Canaries(unittest.TestCase):
                      "no-new-privileges:true", "--user", "1000:1000", "--memory", "--pids-limit", dogfood.PROBE_IMAGE):
             self.assertIn(flag, run)
         self.assertIn(f"{dogfood.COMPOSE_PROJECT_LABEL}={self.profile.project_name}", run)
-        self.assertNotIn("--privileged", run)
+        for widening in ("--privileged", "--cap-add", "--device", "--sysctl", "--volume", "-v", "--mount", "--publish", "-p",
+                         "--pid", "--ipc", "--uts", "--userns", "--add-host", "--dns", "--security-opt=seccomp=unconfined", "--entrypoint"):
+            self.assertNotIn(widening, run)
         self.assertNotIn("host", run[run.index("--network") + 1])
         self.assertEqual({c[0] for c in self.docker.calls}, {"info", "container", "network", "image", "run"})
         self.assertTrue(all(c[1] == "inspect" for c in self.docker.calls if c[0] in ("container", "network", "image")), "only reads besides the one probe")
@@ -229,6 +231,7 @@ class Canaries(unittest.TestCase):
             "public address connected": {"public:1.1.1.1:53": "connected"},
             "public url answered": {"public:url": "status:200"},
             "tls error means the far end was reached": {"public:url": "error:CERT_HAS_EXPIRED"},
+            "public name resolved then timed out: the lookup leaked": {"public:url": "timeout"},
             "positive control silent": {"control:keycloak": "timeout"},
             "positive control wrong status": {"control:console": "status:502"},
         }

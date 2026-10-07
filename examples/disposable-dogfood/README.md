@@ -65,9 +65,13 @@ shared Keycloak, OpenBao, Git or anything else on the host);
 `command="/bin/false"` refuses any shell or command, which `ssh -N` never
 asks for. `port-forwarding` also re-enables remote (`-R`) forwarding, which
 `authorized_keys` cannot narrow on every OpenSSH version, so the host's
-`sshd_config` should carry, for the forwarding user only, `Match User
+`sshd_config` **must** carry, for the forwarding user only, `Match User
 <forwarding-user>` with `AllowTcpForwarding local`, `PermitListen none`,
-`X11Forwarding no` and `PermitTTY no`. From the workstation:
+`X11Forwarding no` and `PermitTTY no`. Without it the key holder could open
+a remote forward and listen on the execution host, including on a loopback
+port this trial publishes. `restrict` needs OpenSSH 7.2 or newer and
+`PermitListen` 7.8 or newer; on an older server, stop and report rather than
+loosen. From the workstation:
 
 ```
 ssh -N -o ExitOnForwardFailure=yes -L 127.0.0.1:18780:127.0.0.1:18780 -L 127.0.0.1:18781:127.0.0.1:18781 <forwarding-user>@<execution-host>
@@ -409,8 +413,12 @@ contain it is not written.
    bridge gateway on every observed host listening port, every port in
    `protected_host_ports`, and the two published ports; every host listener
    bound to a specific non-loopback address, at that address; `1.1.1.1:53`;
-   and `https://example.com/`. Blocked means a timeout, no route or no name.
-   A refusal means the host answered with a reset, so the packet arrived: it
+   and `https://example.com/`. Blocked means a timeout, no route or no name;
+   for the public URL it must be no name, because a name that resolved means
+   the embedded resolver forwarded the lookup out of the internal network.
+   IPv6 host listeners are probed by port on the IPv4 gateway: the sandbox
+   network has IPv6 disabled, so the probe has no IPv6 route to try. A
+   refusal means the host answered with a reset, so the packet arrived: it
    fails. A TLS error from the public URL means the far end was reached: it
    fails. A missing, extra or unparseable result fails.
 4. A lingering probe is removed only if its name, image and both labels

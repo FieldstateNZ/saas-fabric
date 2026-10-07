@@ -27,7 +27,7 @@ Rendered artefacts (sha256; `check` refuses any other bytes):
 - network: fabric-dogfood-internal, bridge fabric-dogfood0, subnet 10.213.7.0/24, internal, IPv6 off, no masquerade
 - SSH key options: restrict,port-forwarding,permitopen="127.0.0.1:18780",permitopen="127.0.0.1:18781",command="/bin/false"
 - SSH forward: ssh -N -o ExitOnForwardFailure=yes -L 127.0.0.1:18780:127.0.0.1:18780 -L 127.0.0.1:18781:127.0.0.1:18781 <forwarding-user>@<execution-host>
-- sshd for the forwarding user only: AllowTcpForwarding local, PermitListen none, X11Forwarding no, PermitTTY no
+- sshd for the forwarding user only (required; OpenSSH 7.8 or newer): AllowTcpForwarding local, PermitListen none, X11Forwarding no, PermitTTY no
 
 ## Host firewall gate (applied by the operator before activate; activate and canaries refuse without it)
 
@@ -67,7 +67,7 @@ with `iptables -S` and the network inspect under .canaries/:
 - must be blocked (timeout, unreachable or dns; a refusal fails): the bridge gateway on every host listening port
   observed in /proc/net/tcp and tcp6 plus 22, 53, 80, 443, 2379, 3000, 5432, 6443, 8080, 8200, 8443, 9000, 10250
   and 18780, 18781; every host listener bound to a specific address;
-  1.1.1.1:53; https://example.com/
+  1.1.1.1:53; https://example.com/ (which must fail name resolution: a resolved name leaked a lookup)
 
 Post (`canaries --phase post`, after reset and the REMOVE lines): no container, network or volume carries
 com.docker.compose.project=fabric-dogfood-disposable; no container or network has this profile's names;
@@ -97,4 +97,4 @@ Rollback and cleanup are the same steps, from any point after step 1:
 
 If activate fails part way it removes only containers and the network it can prove it owns and deletes the
 credential; continue from cleanup step 2. Nothing in this trial is persisted, so there is nothing to restore.
-packet-sha256: a828b52106fe28b7df91a2ba4c176a0848646810beef4a53cc7164dc6fc3aedc
+packet-sha256: 6d9db3de52da1e46b820e15ee5a80cb0f3d68e387cec6fc25995b36b496ca41e

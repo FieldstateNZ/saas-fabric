@@ -128,6 +128,11 @@ TMPFS_SPECS: dict[str, dict[str, int]] = {
 # other two images never execute anything from a writable path.
 TMPFS_EXEC_ALLOWED = {SERVICE_CP: False, SERVICE_CONSOLE: False, SERVICE_KEYCLOAK: True}
 LOGGING = {"driver": "json-file", "options": {"max-size": "5m", "max-file": "2"}}
+RESOURCE_LIMITS: dict[str, dict[str, Any]] = {
+    SERVICE_CP: {"mem_limit": "512m", "cpus": 1.0, "pids_limit": 256},
+    SERVICE_CONSOLE: {"mem_limit": "128m", "cpus": 0.5, "pids_limit": 64},
+    SERVICE_KEYCLOAK: {"mem_limit": "1536m", "cpus": 2.0, "pids_limit": 512},
+}
 
 ALLOWED_BIND_SOURCES = {f"./{CP_CONFIG_NAME}", f"./{CONSOLE_CONF_NAME}"}
 FORBIDDEN_SERVICE_KEYS = {
@@ -426,7 +431,7 @@ def parse_tmpfs_entry(entry: str) -> tuple[str, dict[str, str], set[str]]:
 def compose_document(profile: Profile, lock: Lock) -> dict[str, Any]:
     """The compose file, as JSON (a YAML subset `docker compose -f` reads)."""
 
-    def service(name: str, mem: str, cpus: float, pids: int) -> dict[str, Any]:
+    def service(name: str) -> dict[str, Any]:
         return {
             "image": lock.image_for(name),
             "container_name": CONTAINER_NAMES[name],
@@ -436,9 +441,7 @@ def compose_document(profile: Profile, lock: Lock) -> dict[str, Any]:
             "security_opt": ["no-new-privileges:true"],
             "pull_policy": "never",
             "restart": "no",
-            "mem_limit": mem,
-            "cpus": cpus,
-            "pids_limit": pids,
+            **RESOURCE_LIMITS[name],
             "logging": LOGGING,
             "networks": [NETWORK_NAME],
             "tmpfs": [
@@ -446,12 +449,12 @@ def compose_document(profile: Profile, lock: Lock) -> dict[str, Any]:
             ],
         }
 
-    cp = service(SERVICE_CP, "512m", 1.0, 256)
+    cp = service(SERVICE_CP)
     cp["command"] = [CP_CONFIG_PATH]
     cp["environment"] = {"RUST_LOG": "info"}
     cp["volumes"] = [bind_ro(f"./{CP_CONFIG_NAME}", CP_CONFIG_PATH)]
 
-    console = service(SERVICE_CONSOLE, "128m", 0.5, 64)
+    console = service(SERVICE_CONSOLE)
     console["environment"] = {}
     console["volumes"] = [bind_ro(f"./{CONSOLE_CONF_NAME}", CONSOLE_CONF_PATH)]
     console["ports"] = [
@@ -459,7 +462,7 @@ def compose_document(profile: Profile, lock: Lock) -> dict[str, Any]:
     ]
     console["depends_on"] = [SERVICE_CP]
 
-    keycloak = service(SERVICE_KEYCLOAK, "1536m", 2.0, 512)
+    keycloak = service(SERVICE_KEYCLOAK)
     keycloak["command"] = ["start-dev"]
     keycloak["env_file"] = [{"path": f"./{EPHEMERAL_DIR_NAME}/{EPHEMERAL_ENV_NAME}", "required": True}]
     keycloak["environment"] = {
@@ -794,10 +797,9 @@ def validate_compose(document: Any, profile: Profile, lock: Lock, raw_text: str 
             findings.append(f"{where}.pull_policy must be never")
         if svc.get("restart") != "no":
             findings.append(f"{where}.restart must be no")
-        if not isinstance(svc.get("pids_limit"), int) or svc["pids_limit"] <= 0:
-            findings.append(f"{where}.pids_limit must be a positive integer")
-        if not svc.get("mem_limit") or not svc.get("cpus"):
-            findings.append(f"{where}: mem_limit and cpus are required")
+        for key, ceiling in RESOURCE_LIMITS[name].items():
+            if svc.get(key) != ceiling or isinstance(svc.get(key), bool):
+                findings.append(f"{where}.{key} must be exactly the ceiling {ceiling!r}")
         if svc.get("logging") != LOGGING:
             findings.append(f"{where}.logging must cap log size")
         if svc.get("networks") != [NETWORK_NAME]:
@@ -1053,6 +1055,26 @@ def enforcement_text(profile: Profile) -> str:
         "# anyone uses the console interactively. None has been run.",
     ]
     return "\n".join(lines)
+
+
+def ssh_forward_options(profile: Profile) -> str:
+    """authorized_keys options for the operator's forwarding-only key on the execution host.
+
+    `restrict` turns off every forwarding, agent, X11 and PTY feature;
+    `port-forwarding` re-enables only `-L`/`-R`, and `permitopen` narrows `-L`
+    to the two published loopback ports. `command="/bin/false"` refuses any
+    session the client asks for; `ssh -N` opens none, so forwarding still works.
+    """
+    opens = ",".join(f'permitopen="{profile.bind_address}:{port}"' for port in (profile.console_port, profile.oidc_port))
+    return f'restrict,port-forwarding,{opens},command="/bin/false"'
+
+
+def ssh_forward_command(profile: Profile) -> str:
+    """The workstation side. Local ports equal the remote ones, or the browser's origin would not be the issuer's."""
+    forwards = " ".join(
+        f"-L {profile.bind_address}:{port}:{profile.bind_address}:{port}" for port in (profile.console_port, profile.oidc_port)
+    )
+    return f"ssh -N -o ExitOnForwardFailure=yes {forwards} <forwarding-user>@<execution-host>"
 
 
 def normalize_rule(line: str) -> list[str]:

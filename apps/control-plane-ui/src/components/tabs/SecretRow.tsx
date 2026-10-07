@@ -2,9 +2,13 @@ import { useState } from 'react'
 
 import type { Secrets } from '../../hooks/useSecrets'
 import { describe } from '../../hooks/useClients'
+import { SecretMetadata } from './SecretMetadata'
 
 /**
  * One secret: its path, and what an operator can do to it.
+ *
+ * Its version is read separately and on demand (see {@link SecretMetadata}),
+ * so a listing stays one request however many secrets it shows.
  *
  * # A value is on screen only while somebody is looking at it
  *
@@ -93,6 +97,8 @@ export function SecretRow({
         >
           Delete
         </button>
+
+        <SecretMetadata path={path} read={secrets.metadata} />
       </td>
     </tr>
   )

@@ -1,0 +1,43 @@
+# Inputs for the disposable internal dogfood profile. Every key is allowlisted
+# by dogfood.py; an unknown key, a public bind address, a low port, a public
+# subnet, a realm named `master`, a Keycloak tag instead of a digest, or a
+# commit other than the pin is refused with a message naming the key.
+
+# Compose project name. `activate` refuses if anything already carries this
+# label; `reset` removes only the exact container and network IDs activation
+# recorded, after re-checking they still carry it.
+project_name = "fabric-dogfood-disposable"
+
+# The only interface anything is published on. Must be 127.0.0.1.
+bind_address = "127.0.0.1"
+
+# Console (and, through its nginx, the control-plane API) on the host loopback.
+console_port = 18780
+
+# The disposable Keycloak on the host loopback: the browser's issuer.
+oidc_port = 18781
+
+# The throwaway realm created at activation. Never `master`.
+realm = "fabric-dogfood"
+
+# The internal bridge's fixed /24, so the enforcement gate can name it.
+subnet = "10.213.7.0/24"
+
+# The public Keycloak image, pinned by digest. Keycloak 26.7.2, digest resolved
+# out of band by Codex against the unauthenticated quay.io registry. `build`
+# pulls exactly this digest and derives a local image from it (see README);
+# the running container uses the derived image's local ID, recorded in the lock.
+keycloak_image = "quay.io/keycloak/keycloak@sha256:9d1f1b2b7261ff53c66cb1092dfcdc34a5fb77e81f9e6a6e75b8b6a795de8067"
+
+# The source commit the control-plane and console images are built from.
+source_commit = "bb864f4cb5204d176c511a83b540fb7e90c66c16"
+
+# Host TCP ports the sandbox must never reach, probed on the bridge gateway by
+# `canaries --phase pre` in addition to every port the host is observed
+# listening on (/proc/net/tcp and tcp6) when the canary runs. This list is a
+# floor that holds even if a shared service is down at that moment: SSH (22),
+# DNS (53), the ingress that fronts the shared Keycloak, OpenBao and Git
+# services (80, 443), etcd (2379), a Git web host (3000), Postgres (5432), the
+# Kubernetes API (6443), Keycloak (8080, 8443, management 9000), OpenBao
+# (8200) and the kubelet (10250).
+protected_host_ports = [22, 53, 80, 443, 2379, 3000, 5432, 6443, 8080, 8200, 8443, 9000, 10250]

@@ -1,0 +1,127 @@
+name: Disposable dogfood (build only by default)
+
+# examples/disposable-dogfood on a GitHub-hosted runner that is destroyed when
+# the job ends. Nothing here touches LucentRoot: ci_smoke.py refuses that
+# daemon by ID and by name, and refuses to run anywhere GITHUB_ACTIONS is not
+# "true".
+#
+# Two triggers, one gate:
+#
+#   push to codex/disposable-dogfood   -> BUILD ONLY, always. The script builds
+#       the pinned images, saves them, renders and validates the profile, and
+#       writes a redacted manifest. No iptables rule, no network, no container,
+#       no realm, no credential, no browser.
+#
+#   workflow_dispatch with runtime_trial=true -> the --runtime path, which is a
+#       separately approved host/network change on the runner (iptables, compose
+#       up, realm bootstrap, Playwright sign-in, connectivity probes). The input
+#       defaults to false, so a dispatch without it is also build only. GitHub
+#       only offers workflow_dispatch for a workflow file that exists on the
+#       default branch; until this file is on main the dispatch form will not
+#       list it, and the only runnable trigger is the branch push. No runtime
+#       trial has been executed by the author of these files.
+#
+# No tags, no main, no pull_request (a fork's PR must not be able to run this
+# with a changed script), no schedule.
+#
+# What leaves the runner: three compressed image archives built from
+# `git archive bb864f4…` and the derived Keycloak image, plus a redacted
+# result manifest. No credential, container data, HTTP body, log or
+# subprocess stderr is written to the artifact directory; the script owns that
+# directory and writes only those files. Nothing is pushed to any registry.
+# There is no registry login and no repository secret.
+on:
+  push:
+    branches: [codex/disposable-dogfood]
+  workflow_dispatch:
+    inputs:
+      runtime_trial:
+        description: 'Run the --runtime path (iptables, containers, realm, sign-in, probes) on the runner. Requires separate approval.'
+        type: boolean
+        default: false
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: disposable-dogfood-trial
+  cancel-in-progress: false
+
+jobs:
+  trial:
+    name: build (and, only when dispatched with runtime_trial, run) the disposable profile
+    runs-on: ubuntu-24.04
+    # The Rust release build of the control plane from an empty cache is the
+    # long pole; everything else is minutes. A hang anywhere ends as a
+    # timeout with this job's name on it, and the script's `finally` has
+    # already been given its chance by the step timeout below.
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The script builds from `git archive <pinned commit>`, which must
+          # be reachable from this branch's history.
+          fetch-depth: 0
+          # No token is left in .git/config: nothing in this job pushes,
+          # tags, publishes or talks to a registry with a credential.
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # The offline tests first. They prove the generator and validator
+      # refuse what they must, and that ci_smoke.py's default mode cannot
+      # reach any runtime, security or credential function.
+      - name: Offline unit tests
+        run: python3 -m unittest discover -s scripts/tests -v
+
+      # ---------------------------------------------------------------
+      # Default: build only. Runs on every push to the branch and on any
+      # dispatch where runtime_trial is not true.
+      # ---------------------------------------------------------------
+      - name: Build, save, render and validate (no runtime)
+        if: ${{ !(github.event_name == 'workflow_dispatch' && github.event.inputs.runtime_trial == 'true') }}
+        timeout-minutes: 30
+        run: |
+          mkdir -p "$RUNNER_TEMP/dogfood-artifacts"
+          python3 examples/disposable-dogfood/ci_smoke.py --artifact-dir "$RUNNER_TEMP/dogfood-artifacts"
+
+      # ---------------------------------------------------------------
+      # Runtime trial: ONLY a manual dispatch with runtime_trial=true.
+      # Playwright drives the real console sign-in (authorization code +
+      # PKCE through the actual Keycloak login page). It is installed into a
+      # throwaway virtualenv under RUNNER_TEMP, pinned, never into the
+      # repository or the console's lockfile, and only for this path.
+      # ---------------------------------------------------------------
+      - name: Install pinned Playwright into a temporary virtualenv (runtime trial only)
+        if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.runtime_trial == 'true' }}
+        run: |
+          python3 -m venv "$RUNNER_TEMP/pw-venv"
+          "$RUNNER_TEMP/pw-venv/bin/python" -m pip install --no-cache-dir playwright==1.52.0
+          "$RUNNER_TEMP/pw-venv/bin/python" -m playwright install --with-deps chromium
+
+      # One process, so that its `finally` removes exactly the containers,
+      # network and iptables rules it created, by recorded ID and exact
+      # rule, whatever happened. Step timeout under the job's so cleanup
+      # runs before the job is killed.
+      - name: Runtime trial (workflow_dispatch with runtime_trial=true only)
+        if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.runtime_trial == 'true' }}
+        timeout-minutes: 30
+        run: |
+          mkdir -p "$RUNNER_TEMP/dogfood-artifacts"
+          "$RUNNER_TEMP/pw-venv/bin/python" examples/disposable-dogfood/ci_smoke.py --artifact-dir "$RUNNER_TEMP/dogfood-artifacts" --runtime
+
+      # Image archives and the redacted manifest only. `if: always()` so a
+      # failed run still ships what it built and the manifest naming the
+      # assertion that failed. One day: this is evidence for a review, not a
+      # distribution channel.
+      - name: Upload image archives and result manifest
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: disposable-dogfood-${{ github.sha }}
+          path: ${{ runner.temp }}/dogfood-artifacts/
+          if-no-files-found: warn
+          retention-days: 1

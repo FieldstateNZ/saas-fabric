@@ -1,0 +1,7 @@
+# Rendered artefacts, the image-ID lock recorded by `build`, and the ephemeral
+# Keycloak bootstrap credential written only by `activate`. None of it is ever
+# committed; `reset` deletes the directory.
+.out/
+__pycache__/
+# Redacted canary receipts: evidence for the authorizer, kept across `reset`.
+.canaries/

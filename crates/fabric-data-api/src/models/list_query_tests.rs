@@ -108,3 +108,16 @@ fn a_field_name_that_is_not_a_valid_identifier_is_rejected() {
 fn a_non_numeric_limit_is_rejected() {
     assert!(ListQuery::parse("limit=lots", &open_resource()).is_err());
 }
+
+#[test]
+fn a_nul_in_a_filter_value_or_name_is_refused() {
+    for raw in ["status=a%00b", "sta%00tus=active"] {
+        assert!(
+            matches!(
+                ListQuery::parse(raw, &open_resource()),
+                Err(DataApiError::BadRequest(_))
+            ),
+            "{raw}"
+        );
+    }
+}

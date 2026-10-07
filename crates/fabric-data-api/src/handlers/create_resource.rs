@@ -8,6 +8,7 @@ use serde_json::{Map, Value};
 
 use crate::extraction::BoundedJson;
 use crate::handlers::parse_resource;
+use crate::request_text::refuse_nul_in_json;
 use crate::{DataApiError, DataApiState, WriteResponse};
 
 /// Creates one or more records.
@@ -27,6 +28,7 @@ pub(crate) async fn create_resource(
     BoundedJson(body): BoundedJson<Value>,
 ) -> Result<(StatusCode, Json<WriteResponse>), DataApiError> {
     let resource = parse_resource(&resource)?;
+    refuse_nul_in_json(&body)?;
     let rows = to_rows(body)?;
 
     let response = state.service.create(&identity, &resource, rows).await?;

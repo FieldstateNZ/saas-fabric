@@ -10,7 +10,9 @@ use crate::publication::outcome::PassOutcome;
 /// The report is the last offer's. When an earlier offer in the same pass
 /// was interrupted part-way, documents it already wrote settle as unchanged
 /// on the offer that completed; comparing against what was held when the
-/// pass began is what still reports them as written by this pass.
+/// pass began is what still reports them as written by this pass. With a
+/// second writer that published the same revision in between, that writer's
+/// document is reported as this pass's; ADR 0018 assumes one writer.
 pub(super) fn outcome_from_report(
     report: PublicationReport,
     held: &PublishedRevisions,

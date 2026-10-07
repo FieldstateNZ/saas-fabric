@@ -36,7 +36,11 @@ use crate::PublicationError;
 /// It is an advisory lock (`flock` on Unix, `LockFileEx` on Windows): a
 /// process that writes the files without taking it is not stopped, and on a
 /// network filesystem whether it holds across hosts depends on that
-/// filesystem.
+/// filesystem. It is keyed on the tenants path alone, so two adapters
+/// configured with different tenants paths do not exclude each other even
+/// if they share another document. It is taken before anything is read, so
+/// a tenants directory the lock file cannot be created in reports
+/// `Unwritable` ahead of any refusal the plan would have made.
 pub(super) struct PublicationLock {
     _file: File,
 }

@@ -1,5 +1,8 @@
 //! What [`FakePublication`](super::FakePublication) currently holds, and
 //! the one-shot script that overrides its next verdict.
+//!
+//! In the 121-150 line band (docs/architecture/file-size-policy.md): test
+//! only; the script and the state it overrides are read together.
 
 use fabric_runtime_publication::{
     DocumentKind, DocumentOutcome, DocumentRevision, PublicationError, PublishedRevisions,

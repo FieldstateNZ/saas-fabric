@@ -394,3 +394,60 @@ async fn a_refused_prime_keeps_answering_retryably_rather_than_denying_the_tenan
         "a replica that never primed must answer 503 runtime_unavailable, not deny the tenant: {error:?}"
     );
 }
+
+/// A DataSource source that answers its first load and never answers again.
+struct HangsAfterPrimeSource {
+    loads: Mutex<usize>,
+}
+
+#[async_trait]
+impl ResourceSource<DataSource> for HangsAfterPrimeSource {
+    async fn load(&self) -> Result<Vec<DataSource>, SourceError> {
+        let first = {
+            let mut loads = self.loads.lock().unwrap_or_else(PoisonError::into_inner);
+            *loads += 1;
+            *loads == 1
+        };
+        if !first {
+            std::future::pending::<()>().await;
+        }
+        Ok(vec![data_source("shared-01", 1)])
+    }
+
+    fn describe(&self) -> String {
+        "hangs-after-prime".to_owned()
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_hung_data_source_load_does_not_hold_back_tenant_refreshes() {
+    // One loop reloads both registries in turn, so a DataSource source that
+    // never answers would otherwise stop tenant refreshes for good,
+    // deprovisioning included. Each reload is abandoned after one interval.
+    let config = RuntimeConfig {
+        refresh_interval_seconds: 1,
+        fail_fast_on_prime: true,
+    };
+    let tenants = Arc::new(InMemorySource::new(vec![tenant_binding("acme", 1, "shared-01")]));
+    let (resolver, handles) = build_runtime(
+        &config,
+        Arc::clone(&tenants) as Arc<dyn ResourceSource<TenantRuntimeBinding>>,
+        Arc::new(HangsAfterPrimeSource { loads: Mutex::new(0) }),
+    )
+    .await
+    .unwrap();
+
+    tenants.set(vec![tenant_binding("acme", 2, "shared-01")]);
+    tokio::time::sleep(Duration::from_secs(INTERVALS_TO_OUTLAST) + Duration::from_millis(500)).await;
+
+    assert_eq!(
+        resolver
+            .tenants()
+            .lookup(&TenantId::try_new("acme").unwrap())
+            .unwrap()
+            .revision,
+        BindingRevision::new(2),
+        "the tenant refresh never ran behind a hung DataSource load"
+    );
+    handles.shutdown().await.unwrap();
+}

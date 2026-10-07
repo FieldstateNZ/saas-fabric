@@ -38,7 +38,10 @@ const MAX_RETRIES: u8 = 3;
 /// more, because a failure that survives three offers back to back is not a
 /// blip -- a refused credential or a full disk -- and the next pass is the
 /// right place to try again. No delay between offers: this crate takes no
-/// timers from the runtime (see its `Cargo.toml`).
+/// timers from the runtime (see its `Cargo.toml`). `Unwritable` also covers
+/// refusals that wrote nothing -- a filesystem publication lock held by
+/// another publisher, or a Kubernetes object that moved after it was read --
+/// and the same re-offer is right for those: it re-reads and re-plans.
 const MAX_INTERRUPTED_RETRIES: u8 = 2;
 
 /// Offers `snapshot` to `target`, and on [`PublicationError::DivergentPayload`]
@@ -74,11 +77,11 @@ pub(super) async fn publish_with_retry(
             Err(error @ PublicationError::Unwritable { .. }) if interrupted < MAX_INTERRUPTED_RETRIES => {
                 interrupted += 1;
                 tracing::warn!(
-                    event = "control_plane.publication.interrupted",
+                    event = "control_plane.publication.reoffered",
                     target = target.describe(),
                     attempt = interrupted,
                     reason = %SafeDiagnostic::sanitise(&error.to_string()),
-                    "a publication was interrupted part-way; offering it again now"
+                    "a publication did not complete; offering it again now"
                 );
             }
             Err(other) => return Err(other),

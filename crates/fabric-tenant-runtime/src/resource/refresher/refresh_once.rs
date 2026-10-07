@@ -1,14 +1,27 @@
 //! One reload of one registry, shared by every refresh loop.
 
+use std::time::Duration;
+
 use crate::logging;
 use crate::resource::{RegistryResource, ResourceRegistry, ResourceSource};
 
-/// Reloads one registry from its source, once.
+/// Reloads one registry from its source, once, giving up after `timeout`.
+///
+/// The timeout exists because one loop can reload several registries in
+/// turn: without it, a source that never answers would stop every registry
+/// after it from refreshing, deprovisioning included. A reload that times out
+/// leaves the registry untouched, like one that fails.
 pub(super) async fn refresh_once<T: RegistryResource>(
     registry: &ResourceRegistry<T>,
     source: &dyn ResourceSource<T>,
+    timeout: Duration,
 ) {
-    match source.load().await {
+    let Ok(loaded) = tokio::time::timeout(timeout, source.load()).await else {
+        logging::refresh_timed_out::<T>(&source.describe(), timeout.as_secs());
+        return;
+    };
+
+    match loaded {
         Ok(resources) => {
             if let Err(refused) = registry.apply_all(resources) {
                 // Only reachable while the registry has never loaded — a prime

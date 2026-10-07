@@ -1,5 +1,9 @@
 //! An in-memory fake [`RuntimePublication`], for tests that need a real
 //! offer-and-advance conversation without a filesystem.
+//!
+//! In the 121-150 line band (docs/architecture/file-size-policy.md): a
+//! test-only fake whose one `impl RuntimePublication` must script every
+//! refusal the protocol retries, so it stays one file.
 
 mod held;
 

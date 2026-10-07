@@ -1,10 +1,8 @@
 //! Keeping a registry current, in the background.
 //!
-//! In the 121-150 line band (docs/architecture/file-size-policy.md):
-//! [`ResourceRefresher`] is one type, and its three entry points -- prime
-//! once, refresh one registry, refresh two in order -- share one contract
-//! about what a failed load leaves serving. The loop and the single reload
-//! they share already live in `refresh_loop` and `refresh_once`.
+//! In the 121-150 line band (docs/architecture/file-size-policy.md): one
+//! type whose three entry points share one contract about what a failed load
+//! leaves serving; the shared loop and reload live in submodules.
 
 mod refresh_handle;
 mod refresh_loop;
@@ -88,10 +86,10 @@ impl ResourceRefresher {
 
         refresh_loop::spawn(
             config,
-            move || {
+            move |timeout| {
                 let registry = Arc::clone(&registry);
                 let source = Arc::clone(&source);
-                async move { refresh_once(&registry, source.as_ref()).await }
+                async move { refresh_once(&registry, source.as_ref(), timeout).await }
             },
             move || logging::refresher_stopped::<T>(&description),
         )
@@ -106,15 +104,18 @@ impl ResourceRefresher {
     /// resolves to `MissingDataSource`, a 500. The publisher writes data
     /// sources before tenants for exactly that reason, and two independent
     /// loops threw the order away: either could fire first. One loop that
-    /// reads `first` before `then` carries the publisher's order to the
-    /// reader whenever both documents are already on disk, which is the
-    /// filesystem layout. It cannot help when `then` is newer on disk than
-    /// `first` -- a kubelet projecting one `ConfigMap` volume ahead of
-    /// another -- because no order of reads makes a file arrive sooner.
+    /// reads `first` before `then` carries the publisher's order to the reader
+    /// for any publication that finished before the pass began. It cannot help
+    /// when `then` is newer on disk than `first` -- a kubelet projecting one
+    /// `ConfigMap` volume ahead of another, or a publication landing between
+    /// the two reads of one pass -- because no order of reads makes a file
+    /// arrive sooner (gap G1b, `docs/roadmap/m2-publication-gap-report.md`).
     ///
-    /// A failed load of `first` does not skip `then`. Each keeps its own last
-    /// good snapshot, exactly as two loops did, so an unreadable data-sources
-    /// document never holds back a tenant change such as a deprovisioning.
+    /// A failed load of `first` does not skip `then`, and a hung one is
+    /// abandoned after one interval, so a bad data-sources document never
+    /// holds back a tenant change such as a deprovisioning. A *panic* in
+    /// either reload ends the loop for both; [`RefreshHandle::shutdown`]
+    /// reports it.
     #[must_use]
     pub fn spawn_in_order<A: RegistryResource, B: RegistryResource>(
         first: Arc<ResourceRegistry<A>>,
@@ -130,12 +131,12 @@ impl ResourceRefresher {
 
         refresh_loop::spawn(
             config,
-            move || {
+            move |timeout| {
                 let (first, first_source) = (Arc::clone(&first), Arc::clone(&first_source));
                 let (then, then_source) = (Arc::clone(&then), Arc::clone(&then_source));
                 async move {
-                    refresh_once(&first, first_source.as_ref()).await;
-                    refresh_once(&then, then_source.as_ref()).await;
+                    refresh_once(&first, first_source.as_ref(), timeout).await;
+                    refresh_once(&then, then_source.as_ref(), timeout).await;
                 }
             },
             move || {

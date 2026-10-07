@@ -10,7 +10,8 @@ use super::RefreshHandle;
 use crate::RuntimeConfig;
 
 /// Runs `pass` every interval, or sooner when triggered, until shut down,
-/// then runs `stopped` once.
+/// then runs `stopped` once. `pass` is handed the interval as the longest
+/// any one reload in it may take.
 ///
 /// What a pass reloads is the caller's business: one registry, or several in
 /// a fixed order. Keeping the loop itself in one place means the poll, the
@@ -22,7 +23,7 @@ pub(super) fn spawn<P, F>(
     stopped: impl FnOnce() + Send + 'static,
 ) -> RefreshHandle
 where
-    P: Fn() -> F + Send + 'static,
+    P: Fn(Duration) -> F + Send + 'static,
     F: Future<Output = ()> + Send,
 {
     let interval = Duration::from_secs(config.refresh_interval_seconds);
@@ -40,7 +41,7 @@ where
                 () = task_shutdown.notified() => break,
             }
 
-            pass().await;
+            pass(interval).await;
         }
 
         stopped();

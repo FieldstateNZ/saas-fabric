@@ -5,6 +5,7 @@ use axum::Json;
 use fabric_identity::TenantIdentity;
 
 use crate::handlers::parse_resource;
+use crate::request_text::refuse_nul;
 use crate::{DataApiError, DataApiState, RowResponse};
 
 /// Reads one record by key.
@@ -22,6 +23,7 @@ pub(crate) async fn read_resource(
 ) -> Result<Json<RowResponse>, DataApiError> {
     let resource = parse_resource(&resource)?;
 
+    refuse_nul(&key)?;
     let record = state.service.read(&identity, &resource, &key).await?;
 
     Ok(Json(record))

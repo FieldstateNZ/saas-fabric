@@ -27,15 +27,18 @@
 
 mod support;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+use std::time::Duration;
 
+use axum::body::Body;
 use fabric_connector::ConnectorId;
 use fabric_connector_ndc::{
     build_ndc_connector, CollectionProcedures, NdcConnectorConfig, PayloadShape, ProcedureBinding,
 };
-use http::StatusCode;
+use fabric_runtime_publication::{DocumentInput, DocumentRevision};
+use http::{Request, StatusCode};
 use serde_json::Value;
-use support::compose::compose;
+use support::compose::{compose, compose_published, Composed};
 use support::connector::ConnectorMode;
 use support::gate::docker_available_or_skip;
 use support::impostor::Impostor;
@@ -710,6 +713,62 @@ async fn a_keyed_update_changes_only_this_tenants_row() {
 }
 
 #[tokio::test]
+async fn re_keying_a_row_moves_only_this_tenants_row_and_leaves_the_shared_key_with_the_other() {
+    let test_name = "re_keying_a_row_moves_only_this_tenants_row_and_leaves_the_shared_key_with_the_other";
+    if !docker_available_or_skip(test_name) {
+        return;
+    }
+
+    let stack = Stack::up(ConnectorMode::Static);
+    let connector = build_ndc_connector(writable_config(stack.connector_base_url.clone()), None)
+        .await
+        .expect("the connector's schema should accept the keyed update mapping");
+    let composed = compose(connector, &fixtures::writable_snapshot()).await;
+
+    // The catalogue exposes `id` for writing, so a well-formed PATCH may
+    // change it. It is not malformed input; what must hold is that it moves
+    // this tenant's row and nobody else's.
+    let response = answer(
+        &composed,
+        requests::patch_raw("/articles/1", &requests::claims_for("acme"), r#"{"id":"2"}"#),
+    )
+    .await;
+    assert_eq!(response.status, StatusCode::OK, "{}", response.text);
+    assert_eq!(response.json()["affected"], 1, "{}", response.text);
+
+    assert_eq!(
+        stack.query_scalar(&format!(
+            "SELECT id FROM articles WHERE tenant_key = '{}';",
+            fixtures::ACME_DISCRIMINATOR_VALUE
+        )),
+        "2"
+    );
+    assert_eq!(
+        stack.query_scalar(&format!(
+            "SELECT id || ':' || title FROM articles WHERE tenant_key = '{}';",
+            fixtures::GLOBEX_DISCRIMINATOR_VALUE
+        )),
+        "1:Globex Playbook"
+    );
+    assert_eq!(
+        get_as(&composed, "acme", "/articles/1").await.status,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        get_as(&composed, "acme", "/articles/2").await.status,
+        StatusCode::OK
+    );
+    assert_eq!(
+        get_as(&composed, "globex", "/articles/2").await.status,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        get_as(&composed, "globex", "/articles/1").await.json()["title"],
+        "Globex Playbook"
+    );
+}
+
+#[tokio::test]
 async fn no_write_response_names_the_key_arguments_or_the_procedure() {
     let test_name = "no_write_response_names_the_key_arguments_or_the_procedure";
     if !docker_available_or_skip(test_name) {
@@ -791,4 +850,638 @@ async fn no_write_response_names_the_key_arguments_or_the_procedure() {
             assert!(!text.contains(forbidden), "{forbidden} leaked in {text}");
         }
     }
+}
+
+/// What one request through the composed router answered, read in full.
+struct Answer {
+    status: StatusCode,
+    retry_after: Option<String>,
+    text: String,
+}
+
+impl Answer {
+    fn json(&self) -> Value {
+        serde_json::from_str(&self.text).unwrap_or(Value::Null)
+    }
+
+    fn error_code(&self) -> Value {
+        self.json().pointer("/error/code").cloned().unwrap_or(Value::Null)
+    }
+
+    fn titles(&self) -> Vec<String> {
+        self.json()
+            .get("data")
+            .and_then(Value::as_array)
+            .unwrap_or_else(|| panic!("not a list response: {}", self.text))
+            .iter()
+            .map(|row| row["title"].as_str().unwrap().to_owned())
+            .collect()
+    }
+}
+
+/// How long any single request is allowed to take before the test calls the
+/// failure unbounded. Well above the 10s connector timeouts configured here.
+const REQUEST_DEADLINE: Duration = Duration::from_secs(30);
+
+async fn answer(composed: &Composed, request: Request<Body>) -> Answer {
+    let response = tokio::time::timeout(REQUEST_DEADLINE, composed.app.clone().oneshot(request))
+        .await
+        .expect("the request never answered: a failure must be bounded")
+        .unwrap();
+
+    let status = response.status();
+    let retry_after = response
+        .headers()
+        .get("retry-after")
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_owned);
+    Answer {
+        status,
+        retry_after,
+        text: requests::body_text(response).await,
+    }
+}
+
+async fn get_as(composed: &Composed, tenant: &str, uri: &str) -> Answer {
+    answer(composed, requests::get(uri, &requests::claims_for(tenant))).await
+}
+
+async fn create_as(composed: &Composed, tenant: &str, rows: &Value) {
+    let response = answer(
+        composed,
+        requests::post("/articles", &requests::claims_for(tenant), rows),
+    )
+    .await;
+    assert_eq!(
+        response.status,
+        StatusCode::CREATED,
+        "{tenant}: {}",
+        response.text
+    );
+}
+
+/// Everything a failure body must never carry: the platform's wiring, and any
+/// row either tenant owns.
+const NEVER_IN_A_FAILURE: [&str; 6] = [
+    fixtures::CONNECTOR_ID,
+    fixtures::DATA_SOURCE_ID,
+    "Acme Handbook",
+    "Globex Playbook",
+    "ndc",
+    "procedure",
+];
+
+fn assert_names_nothing_internal(text: &str) {
+    for forbidden in NEVER_IN_A_FAILURE {
+        assert!(!text.contains(forbidden), "{forbidden} leaked in {text}");
+    }
+}
+
+#[tokio::test]
+async fn a_restarted_connector_serves_each_tenant_its_own_rows_again() {
+    let test_name = "a_restarted_connector_serves_each_tenant_its_own_rows_again";
+    if !docker_available_or_skip(test_name) {
+        return;
+    }
+
+    let mut stack = Stack::up_restartable(ConnectorMode::Static);
+    let connector = build_ndc_connector(writable_config(stack.connector_base_url.clone()), None)
+        .await
+        .expect("the connector's schema should accept the write mappings");
+    let composed = compose(connector, &fixtures::writable_snapshot()).await;
+
+    for (tenant, title) in [("acme", "Acme Handbook"), ("globex", "Globex Playbook")] {
+        let before = get_as(&composed, tenant, "/articles/1").await;
+        assert_eq!(before.status, StatusCode::OK, "{tenant}: {}", before.text);
+        assert_eq!(before.json()["title"], title);
+    }
+
+    stack.stop_connector();
+
+    for tenant in ["acme", "globex"] {
+        let outage = get_as(&composed, tenant, "/articles/1").await;
+        assert_eq!(outage.status, StatusCode::SERVICE_UNAVAILABLE, "{tenant}");
+        assert_eq!(outage.retry_after.as_deref(), Some("5"), "{tenant}");
+        assert_eq!(outage.error_code(), "connector_unavailable", "{tenant}");
+        assert_names_nothing_internal(&outage.text);
+    }
+
+    let write_during_outage = answer(
+        &composed,
+        requests::post(
+            "/articles",
+            &requests::claims_for("acme"),
+            &serde_json::json!({"id": "7", "title": "Written during the outage"}),
+        ),
+    )
+    .await;
+    assert_eq!(write_during_outage.status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(
+        stack.query_scalar("SELECT count(*) FROM articles WHERE id = '7';"),
+        "0",
+        "a write refused as undelivered must not have landed"
+    );
+
+    stack.start_connector();
+
+    // The connector reports healthy before the client's pooled connections to
+    // its previous incarnation are gone, so the first requests may still fail;
+    // what matters is that each failure is the bounded, retryable kind and
+    // that the service comes back well inside the deadline.
+    let recovered = tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            let attempt = get_as(&composed, "acme", "/articles/1").await;
+            if attempt.status == StatusCode::OK {
+                return attempt;
+            }
+            assert_eq!(
+                attempt.status,
+                StatusCode::SERVICE_UNAVAILABLE,
+                "{}",
+                attempt.text
+            );
+            assert_eq!(attempt.error_code(), "connector_unavailable");
+            assert_names_nothing_internal(&attempt.text);
+            tokio::time::sleep(Duration::from_millis(250)).await;
+        }
+    })
+    .await
+    .expect("requests did not succeed again within 30s of the connector restarting");
+    assert_eq!(recovered.json()["title"], "Acme Handbook");
+
+    for (tenant, title, other) in [
+        ("acme", "Acme Handbook", "Globex Playbook"),
+        ("globex", "Globex Playbook", "Acme Handbook"),
+    ] {
+        let one = get_as(&composed, tenant, "/articles/1").await;
+        assert_eq!(one.status, StatusCode::OK, "{tenant}: {}", one.text);
+        assert_eq!(one.json()["title"], title, "{tenant}");
+
+        let list = get_as(&composed, tenant, "/articles").await;
+        assert_eq!(list.status, StatusCode::OK, "{tenant}: {}", list.text);
+        assert_eq!(list.titles(), vec![title.to_owned()], "{tenant}");
+        assert!(!list.text.contains(other), "{tenant} saw {other}: {}", list.text);
+    }
+
+    // Writes recover too, and still land under the writer's own tenant.
+    create_as(
+        &composed,
+        "acme",
+        &serde_json::json!({"id": "8", "title": "Acme After Restart"}),
+    )
+    .await;
+    assert_eq!(
+        get_as(&composed, "acme", "/articles/8").await.status,
+        StatusCode::OK
+    );
+    assert_eq!(
+        get_as(&composed, "globex", "/articles/8").await.status,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        stack.query_scalar("SELECT tenant_key FROM articles WHERE id = '8';"),
+        fixtures::ACME_DISCRIMINATOR_VALUE
+    );
+}
+
+/// Walking every page of a descending list yields each tenant exactly its own
+/// rows once, none of the other's.
+async fn assert_each_tenant_pages_only_its_own_rows(composed: &Composed) {
+    for (tenant, own, foreign, total) in [("acme", "Acme", "Globex", 5), ("globex", "Globex", "Acme", 4)] {
+        let mut seen = Vec::new();
+        for offset in (0..total).step_by(3) {
+            let page = get_as(
+                composed,
+                tenant,
+                &format!("/articles?sort=-id&limit=3&offset={offset}"),
+            )
+            .await;
+            assert_eq!(page.status, StatusCode::OK, "{tenant}: {}", page.text);
+            seen.extend(page.titles());
+        }
+        assert_eq!(seen.len(), total, "{tenant}: {seen:?}");
+        assert!(
+            seen.iter().all(|title| title.starts_with(own)),
+            "{tenant}: {seen:?}"
+        );
+        assert!(
+            seen.iter().all(|title| !title.starts_with(foreign)),
+            "{tenant}: {seen:?}"
+        );
+        let distinct: BTreeSet<&String> = seen.iter().collect();
+        assert_eq!(distinct.len(), total, "{tenant} saw a row twice: {seen:?}");
+    }
+}
+
+#[tokio::test]
+async fn filters_and_pages_over_a_shared_key_never_cross_tenants() {
+    let test_name = "filters_and_pages_over_a_shared_key_never_cross_tenants";
+    if !docker_available_or_skip(test_name) {
+        return;
+    }
+
+    let stack = Stack::up(ConnectorMode::Static);
+    let connector = build_ndc_connector(writable_config(stack.connector_base_url.clone()), None)
+        .await
+        .expect("the connector's schema should accept the write mappings");
+    let composed = compose(connector, &fixtures::writable_snapshot()).await;
+
+    // acme ends up with ids 1-5, globex with 1-4: every key globex has, acme
+    // has too, and acme alone has `5`.
+    let acme_rows: Vec<Value> = (2..=5)
+        .map(|n| serde_json::json!({"id": n.to_string(), "title": format!("Acme Article {n}")}))
+        .collect();
+    let globex_rows: Vec<Value> = (2..=4)
+        .map(|n| serde_json::json!({"id": n.to_string(), "title": format!("Globex Article {n}")}))
+        .collect();
+    create_as(&composed, "acme", &Value::Array(acme_rows)).await;
+    create_as(&composed, "globex", &Value::Array(globex_rows)).await;
+
+    assert_eq!(
+        stack.query_scalar(&format!(
+            "SELECT count(*) FROM articles WHERE tenant_key = '{}';",
+            fixtures::ACME_DISCRIMINATOR_VALUE
+        )),
+        "5"
+    );
+    assert_eq!(
+        stack.query_scalar(&format!(
+            "SELECT count(*) FROM articles WHERE tenant_key = '{}';",
+            fixtures::GLOBEX_DISCRIMINATOR_VALUE
+        )),
+        "4"
+    );
+
+    // Equality filters: the same key finds each tenant's own row, a key only
+    // acme holds finds nothing for globex, and another tenant's title is not
+    // a value this tenant can find by asking for it.
+    for (tenant, title) in [("acme", "Acme Article 3"), ("globex", "Globex Article 3")] {
+        let by_key = get_as(&composed, tenant, "/articles?id=3").await;
+        assert_eq!(by_key.status, StatusCode::OK, "{tenant}: {}", by_key.text);
+        assert_eq!(by_key.titles(), vec![title.to_owned()], "{tenant}");
+    }
+    assert!(get_as(&composed, "globex", "/articles?id=5")
+        .await
+        .titles()
+        .is_empty());
+    assert_eq!(
+        get_as(&composed, "acme", "/articles?id=5").await.titles(),
+        vec!["Acme Article 5".to_owned()]
+    );
+    assert!(get_as(&composed, "acme", "/articles?title=Globex+Article+3")
+        .await
+        .titles()
+        .is_empty());
+    assert_eq!(
+        get_as(&composed, "globex", "/articles?id=2&title=Globex+Article+2")
+            .await
+            .titles(),
+        vec!["Globex Article 2".to_owned()]
+    );
+    assert!(get_as(&composed, "globex", "/articles?id=2&title=Acme+Article+2")
+        .await
+        .titles()
+        .is_empty());
+
+    // Pagination: acme's five rows in pages of two.
+    for (offset, expected, has_more) in [
+        (0, vec!["Acme Handbook", "Acme Article 2"], true),
+        (2, vec!["Acme Article 3", "Acme Article 4"], true),
+        (4, vec!["Acme Article 5"], false),
+        (5, vec![], false),
+    ] {
+        let page = get_as(
+            &composed,
+            "acme",
+            &format!("/articles?sort=id&limit=2&offset={offset}"),
+        )
+        .await;
+        assert_eq!(page.status, StatusCode::OK, "offset {offset}: {}", page.text);
+        assert_eq!(page.titles(), expected, "offset {offset}");
+        assert_eq!(page.json()["paging"]["has_more"], has_more, "offset {offset}");
+        assert_eq!(
+            page.json()["paging"]["returned"],
+            expected.len(),
+            "offset {offset}"
+        );
+    }
+
+    // globex's four rows are exactly two full pages: the second page is full
+    // and still reports nothing more, rather than borrowing acme's fifth row.
+    let first = get_as(&composed, "globex", "/articles?sort=id&limit=2&offset=0").await;
+    assert_eq!(first.titles(), vec!["Globex Playbook", "Globex Article 2"]);
+    assert_eq!(first.json()["paging"]["has_more"], true);
+    let second = get_as(&composed, "globex", "/articles?sort=id&limit=2&offset=2").await;
+    assert_eq!(second.titles(), vec!["Globex Article 3", "Globex Article 4"]);
+    assert_eq!(second.json()["paging"]["has_more"], false);
+
+    assert_each_tenant_pages_only_its_own_rows(&composed).await;
+}
+
+#[tokio::test]
+async fn a_catalogue_naming_a_data_source_no_tenant_binds_fails_bounded_and_names_nothing() {
+    let test_name = "a_catalogue_naming_a_data_source_no_tenant_binds_fails_bounded_and_names_nothing";
+    if !docker_available_or_skip(test_name) {
+        return;
+    }
+
+    let stack = Stack::up(ConnectorMode::Static);
+    let connector = build_ndc_connector(read_only_config(stack.connector_base_url.clone()), None)
+        .await
+        .expect("the static connector should negotiate with no routing configured");
+
+    // The catalogue moves to revision 2 and names `audit`; the tenants and
+    // data-sources documents stay at revision 1 and know no such name.
+    let mut skewed = fixtures::read_only_snapshot();
+    skewed.catalog = DocumentInput::new(
+        DocumentRevision::new(2),
+        fixtures::articles_catalog_on("audit", &["read", "list"]),
+    );
+    let composed = compose_published(connector, &[fixtures::read_only_snapshot(), skewed]).await;
+
+    for tenant in ["acme", "globex"] {
+        for uri in ["/articles", "/articles/1"] {
+            let response = get_as(&composed, tenant, uri).await;
+            assert_eq!(
+                response.status,
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "{tenant} {uri}"
+            );
+            assert_eq!(response.error_code(), "internal", "{tenant} {uri}");
+            assert_eq!(
+                response.retry_after, None,
+                "{tenant} {uri}: not a retryable failure"
+            );
+            assert_eq!(
+                response.json()["error"]["message"],
+                "internal error",
+                "{tenant} {uri}"
+            );
+            assert_names_nothing_internal(&response.text);
+            for forbidden in [
+                "audit",
+                "primary",
+                "acme",
+                "globex",
+                fixtures::DISCRIMINATOR_COLUMN,
+            ] {
+                assert!(
+                    !response.text.contains(forbidden),
+                    "{forbidden} leaked in {}",
+                    response.text
+                );
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_binding_published_for_one_tenant_only_fails_the_other_tenant_and_nobody_else() {
+    let test_name = "a_binding_published_for_one_tenant_only_fails_the_other_tenant_and_nobody_else";
+    if !docker_available_or_skip(test_name) {
+        return;
+    }
+
+    let stack = Stack::up(ConnectorMode::Static);
+    let connector = build_ndc_connector(read_only_config(stack.connector_base_url.clone()), None)
+        .await
+        .expect("the static connector should negotiate with no routing configured");
+
+    // Tenants and catalogue both move to revision 2, but only acme gains the
+    // `audit` binding the catalogue now reads through.
+    let mut skewed = fixtures::read_only_snapshot();
+    skewed.tenants = DocumentInput::new(
+        DocumentRevision::new(2),
+        vec![
+            fixtures::tenant_binding_on("acme", fixtures::ACME_DISCRIMINATOR_VALUE, &["primary", "audit"]),
+            fixtures::tenant_binding("globex", fixtures::GLOBEX_DISCRIMINATOR_VALUE),
+        ],
+    );
+    skewed.catalog = DocumentInput::new(
+        DocumentRevision::new(2),
+        fixtures::articles_catalog_on("audit", &["read", "list"]),
+    );
+    let composed = compose_published(connector, &[fixtures::read_only_snapshot(), skewed]).await;
+
+    let acme = get_as(&composed, "acme", "/articles").await;
+    assert_eq!(acme.status, StatusCode::OK, "{}", acme.text);
+    assert_eq!(acme.titles(), vec!["Acme Handbook".to_owned()]);
+
+    let globex = get_as(&composed, "globex", "/articles").await;
+    assert_eq!(
+        globex.status,
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "{}",
+        globex.text
+    );
+    assert_eq!(globex.error_code(), "internal");
+    assert_names_nothing_internal(&globex.text);
+    assert!(!globex.text.contains("audit"), "{}", globex.text);
+}
+
+#[tokio::test]
+async fn malformed_list_requests_are_refused_before_they_reach_the_connector() {
+    let test_name = "malformed_list_requests_are_refused_before_they_reach_the_connector";
+    if !docker_available_or_skip(test_name) {
+        return;
+    }
+
+    let stack = Stack::up(ConnectorMode::Static);
+    let connector = build_ndc_connector(read_only_config(stack.connector_base_url.clone()), None)
+        .await
+        .expect("the static connector should negotiate with no routing configured");
+    let composed = compose(connector, &fixtures::read_only_snapshot()).await;
+
+    for query in [
+        "limit=abc",
+        "limit=-1",
+        "limit=1.5",
+        "offset=-3",
+        "offset=",
+        "sort=nonexistent",
+        "sort=-tenant_key",
+        "select=nonexistent",
+        "select=tenant_key",
+        "nonexistent=1",
+        "tenant_key=tenant-globex-915",
+        "TENANT_KEY=tenant-globex-915",
+        "id=1&id%20=2&drop%20table=1",
+        "id=a%00b",
+        "title=%00",
+        "ti%00tle=x",
+    ] {
+        let response = get_as(&composed, "acme", &format!("/articles?{query}")).await;
+        assert_eq!(
+            response.status,
+            StatusCode::BAD_REQUEST,
+            "{query}: {}",
+            response.text
+        );
+        assert_eq!(response.error_code(), "bad_request", "{query}");
+        assert_names_nothing_internal(&response.text);
+    }
+
+    // A key built to escape a quoted SQL literal is just a key nobody holds.
+    for key in ["1'%20OR%20'1'='1", "1%3B%20DROP%20TABLE%20articles", "%25"] {
+        let response = get_as(&composed, "acme", &format!("/articles/{key}")).await;
+        assert_eq!(response.status, StatusCode::NOT_FOUND, "{key}: {}", response.text);
+        assert_names_nothing_internal(&response.text);
+    }
+
+    // PostgreSQL cannot hold a NUL; that is the caller's malformed key, not a
+    // platform fault.
+    for key in ["%00", "1%00"] {
+        let response = get_as(&composed, "acme", &format!("/articles/{key}")).await;
+        assert_eq!(
+            response.status,
+            StatusCode::BAD_REQUEST,
+            "{key}: {}",
+            response.text
+        );
+        assert_eq!(response.error_code(), "bad_request", "{key}");
+        assert_names_nothing_internal(&response.text);
+    }
+
+    let unknown = get_as(&composed, "acme", "/nonexistent").await;
+    assert_eq!(unknown.status, StatusCode::NOT_FOUND, "{}", unknown.text);
+    assert_eq!(unknown.error_code(), "unknown_resource");
+
+    assert_eq!(stack.query_scalar("SELECT count(*) FROM articles;"), "2");
+}
+
+#[tokio::test]
+async fn malformed_write_bodies_are_rejected_cleanly_and_change_nothing() {
+    let test_name = "malformed_write_bodies_are_rejected_cleanly_and_change_nothing";
+    if !docker_available_or_skip(test_name) {
+        return;
+    }
+
+    let stack = Stack::up(ConnectorMode::Static);
+    let connector = build_ndc_connector(writable_config(stack.connector_base_url.clone()), None)
+        .await
+        .expect("the connector's schema should accept the write mappings");
+    let composed = compose(connector, &fixtures::writable_snapshot()).await;
+    let acme = requests::claims_for("acme");
+
+    let oversized = format!(r#"{{"id":"9","title":"{}"}}"#, "x".repeat(1024 * 1024 + 1));
+    let create_bodies = [
+        "{not json",
+        "",
+        "   ",
+        r#"{"id":"9","title":"unterminated"#,
+        "null",
+        "42",
+        r#""a string""#,
+        "[]]",
+        r#"[{"id":"9","title":"fine"}, 42]"#,
+        r#"{"id":"9","title":"x","nonexistent":1}"#,
+        r#"{"id":"9","title":"x","tenant_key":"tenant-globex-915"}"#,
+        r#"{"id":"9","title":"x","TENANT_KEY":"tenant-globex-915"}"#,
+        r#"{"id":"9","title":"a\u0000b"}"#,
+        r#"[{"id":"9","title":"x"},{"id":"9","title":"y","tenant_key":"tenant-globex-915"}]"#,
+        oversized.as_str(),
+    ];
+    for body in create_bodies {
+        let label: String = body.chars().take(60).collect();
+        let response = answer(&composed, requests::post_raw("/articles", &acme, body)).await;
+        assert_eq!(
+            response.status,
+            StatusCode::BAD_REQUEST,
+            "POST {label:?}: {}",
+            response.text
+        );
+        assert_eq!(response.error_code(), "bad_request", "POST {label:?}");
+        assert_names_nothing_internal(&response.text);
+    }
+
+    let patch_bodies = [
+        "{not json",
+        "",
+        "null",
+        r#""a string""#,
+        r#"[{"title":"x"}]"#,
+        r#"{"nonexistent":1}"#,
+        r#"{"tenant_key":"tenant-globex-915"}"#,
+        r#"{"title":"a\u0000b"}"#,
+    ];
+    for body in patch_bodies {
+        let response = answer(&composed, requests::patch_raw("/articles/1", &acme, body)).await;
+        assert_eq!(
+            response.status,
+            StatusCode::BAD_REQUEST,
+            "PATCH {body:?}: {}",
+            response.text
+        );
+        assert_eq!(response.error_code(), "bad_request", "PATCH {body:?}");
+        assert_names_nothing_internal(&response.text);
+    }
+
+    // Nothing above reached a row: both tenants' seed rows are as seeded, and
+    // no row was created, in either tenant's name.
+    assert_eq!(stack.query_scalar("SELECT count(*) FROM articles;"), "2");
+    assert_eq!(
+        stack.query_scalar("SELECT string_agg(id || ':' || title, ',' ORDER BY tenant_key) FROM articles;"),
+        "1:Acme Handbook,1:Globex Playbook"
+    );
+}
+
+#[tokio::test]
+async fn a_write_the_database_refuses_fails_without_naming_the_database() {
+    let test_name = "a_write_the_database_refuses_fails_without_naming_the_database";
+    if !docker_available_or_skip(test_name) {
+        return;
+    }
+
+    let stack = Stack::up(ConnectorMode::Static);
+    let connector = build_ndc_connector(writable_config(stack.connector_base_url.clone()), None)
+        .await
+        .expect("the connector's schema should accept the write mappings");
+    let composed = compose(connector, &fixtures::writable_snapshot()).await;
+
+    // `title` is NOT NULL and a second `(1, acme)` row breaks the primary key:
+    // well-formed requests the database, not the Data API, turns down.
+    for body in [
+        serde_json::json!({"id": "9"}),
+        serde_json::json!({"id": "1", "title": "Acme Duplicate"}),
+    ] {
+        let response = answer(
+            &composed,
+            requests::post("/articles", &requests::claims_for("acme"), &body),
+        )
+        .await;
+        assert!(
+            response.status.is_client_error() || response.status.is_server_error(),
+            "{body}: {} {}",
+            response.status,
+            response.text
+        );
+        assert_ne!(
+            response.error_code(),
+            "write_outcome_unknown",
+            "{body}: {}",
+            response.text
+        );
+        assert_names_nothing_internal(&response.text);
+        for forbidden in [
+            "violates",
+            "constraint",
+            "not-null",
+            "null value",
+            "duplicate key",
+            "SQL",
+            "pkey",
+        ] {
+            assert!(
+                !response.text.contains(forbidden),
+                "{forbidden} leaked in {}",
+                response.text
+            );
+        }
+    }
+
+    assert_eq!(stack.query_scalar("SELECT count(*) FROM articles;"), "2");
+    assert_eq!(
+        stack.query_scalar("SELECT title FROM articles WHERE id = '1' AND tenant_key = 'tenant-acme-482';"),
+        "Acme Handbook"
+    );
 }

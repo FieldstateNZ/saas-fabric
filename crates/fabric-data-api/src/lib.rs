@@ -59,6 +59,7 @@ mod logging;
 mod models;
 mod registration;
 mod request_id;
+mod request_text;
 mod routes;
 mod state;
 

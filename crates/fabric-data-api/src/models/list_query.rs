@@ -6,6 +6,7 @@ use fabric_connector::{ComparisonOperator, FieldName, Filter, SortDirection, Sor
 use serde_json::Value;
 
 use crate::models::{field_reference, query_string};
+use crate::request_text::refuse_nul;
 use crate::{DataApiError, ResourceDefinition};
 
 /// A parsed list request.
@@ -57,6 +58,8 @@ impl ListQuery {
         let mut query = Self::default();
 
         for (key, value) in query_string::parse_pairs(raw) {
+            refuse_nul(&key)?;
+            refuse_nul(&value)?;
             match key.as_str() {
                 "limit" => query.limit = Some(parse_number(&value, "limit")?),
                 "offset" => query.offset = Some(parse_number(&value, "offset")?),

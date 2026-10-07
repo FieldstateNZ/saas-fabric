@@ -7,6 +7,7 @@ use serde_json::{Map, Value};
 
 use crate::extraction::BoundedJson;
 use crate::handlers::parse_resource;
+use crate::request_text::{refuse_nul, refuse_nul_in_json};
 use crate::{DataApiError, DataApiState, WriteResponse};
 
 /// Updates the given fields of one record.
@@ -23,6 +24,8 @@ pub(crate) async fn update_resource(
     BoundedJson(body): BoundedJson<Value>,
 ) -> Result<Json<WriteResponse>, DataApiError> {
     let resource = parse_resource(&resource)?;
+    refuse_nul(&key)?;
+    refuse_nul_in_json(&body)?;
     let changes = to_changes(body)?;
 
     let response = state.service.update(&identity, &resource, &key, &changes).await?;

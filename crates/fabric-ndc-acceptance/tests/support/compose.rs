@@ -67,13 +67,22 @@ pub struct Composed {
 /// failure is exactly what several tests in this suite need to observe
 /// directly, which composing it away here would hide.
 pub async fn compose(connector: Arc<NdcConnector>, snapshot: &RuntimeSnapshot) -> Composed {
+    compose_published(connector, std::slice::from_ref(snapshot)).await
+}
+
+/// [`compose`] over several publications made in order, the runtime built
+/// over whatever the last one left on disk -- the way a catalogue published
+/// ahead of the tenants document it depends on reaches a consumer.
+pub async fn compose_published(connector: Arc<NdcConnector>, snapshots: &[RuntimeSnapshot]) -> Composed {
     let tempdir = TempDir::new();
     let publisher = FilesystemRuntimePublication::new(
         tempdir.tenants_path(),
         tempdir.data_sources_path(),
         tempdir.catalog_path(),
     );
-    publisher.publish(snapshot).await.unwrap();
+    for snapshot in snapshots {
+        publisher.publish(snapshot).await.unwrap();
+    }
 
     let (resolver, _handles) = build_runtime(
         &runtime_config(),

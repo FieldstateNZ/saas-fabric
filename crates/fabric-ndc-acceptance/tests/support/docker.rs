@@ -48,8 +48,8 @@ mod polling;
 mod process;
 
 pub use containers::{
-    container_summaries_with_prefix, exec, exec_with_stdin, logs, port, rm, rm_by_name, run, stop, Container,
-    RunSpec,
+    container_summaries_with_prefix, exec, exec_with_stdin, logs, port, rm, rm_by_name, run, start, stop,
+    Container, RunSpec,
 };
 pub use networks::{network_create, network_rm, network_summaries_with_prefix};
 pub use polling::poll_until;

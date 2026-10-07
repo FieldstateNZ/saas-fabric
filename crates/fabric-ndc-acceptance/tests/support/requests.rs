@@ -85,6 +85,29 @@ pub fn post(uri: &str, claims: &Value, body: &Value) -> Request<Body> {
         .unwrap()
 }
 
+/// A POST request carrying a bearer token and `body` exactly as given -- for
+/// the bytes `serde_json` would never produce.
+pub fn post_raw(uri: &str, claims: &Value, body: &str) -> Request<Body> {
+    Request::builder()
+        .method("POST")
+        .uri(versioned(uri))
+        .header("authorization", format!("Bearer {}", token_for(claims)))
+        .header("content-type", "application/json")
+        .body(Body::from(body.to_owned()))
+        .unwrap()
+}
+
+/// A PATCH request carrying `body` exactly as given.
+pub fn patch_raw(uri: &str, claims: &Value, body: &str) -> Request<Body> {
+    Request::builder()
+        .method("PATCH")
+        .uri(versioned(uri))
+        .header("authorization", format!("Bearer {}", token_for(claims)))
+        .header("content-type", "application/json")
+        .body(Body::from(body.to_owned()))
+        .unwrap()
+}
+
 /// A PATCH request carrying a bearer token and a JSON body -- the fields to
 /// change, not the whole record (`PATCH /v1/data/{resource}/{key}`).
 pub fn patch(uri: &str, claims: &Value, body: &Value) -> Request<Body> {

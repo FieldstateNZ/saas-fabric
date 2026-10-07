@@ -40,7 +40,8 @@ from test_disposable_dogfood import (  # noqa: E402
     real_lock_json,
 )
 
-SYNTHETIC_ADMIN_PASSWORD = "synthetic-bootstrap-admin-password-not-real"
+# Stands in for whatever activation wrote to .ephemeral/keycloak.env: every value there is redacted from receipts.
+EPHEMERAL_SENTINEL = "ephemeral-sentinel-7c1e9a"
 GATEWAY = "10.213.7.1"
 LISTENERS = [("0.0.0.0", 22), ("127.0.0.1", 18780), ("127.0.0.1", 18781), ("192.168.50.10", 6443), ("::", 443)]
 PROBE_ID = "8" * 64
@@ -133,7 +134,7 @@ class Canaries(unittest.TestCase):
         }
         (out / dogfood.RECEIPT_NAME).write_text(json.dumps(receipt))
         (out / ".ephemeral").mkdir()
-        (out / ".ephemeral" / "keycloak.env").write_text(f"KC_BOOTSTRAP_ADMIN_USERNAME=bootstrap-synthetic\nKC_BOOTSTRAP_ADMIN_PASSWORD={SYNTHETIC_ADMIN_PASSWORD}\n")
+        (out / ".ephemeral" / "keycloak.env").write_text(f"KC_BOOTSTRAP_ADMIN_USERNAME={EPHEMERAL_SENTINEL}\n")
 
     def script_activation(self, probe_output=None, network=None, probe_digests=None, probe_exit=None, lingering=None, state_running=True):
         project = self.profile.project_name
@@ -194,7 +195,7 @@ class Canaries(unittest.TestCase):
         self.assertNotIn("host:127.0.0.1:18780", ids, "loopback listeners are probed through the gateway, not as their own address")
         path = next((self.dir / dogfood.CANARY_DIR_NAME).glob("canary-pre-*.json"))
         self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o600)
-        self.assertNotIn(SYNTHETIC_ADMIN_PASSWORD, path.read_text())
+        self.assertNotIn(EPHEMERAL_SENTINEL, path.read_text())
 
         [run] = self.probe_runs()
         for flag in ("--rm", "--read-only", "--pull", "never", "--network", dogfood.NETWORK_NAME, "--cap-drop", "ALL",
@@ -207,14 +208,14 @@ class Canaries(unittest.TestCase):
         self.assertTrue(all(c[1] == "inspect" for c in self.docker.calls if c[0] in ("container", "network", "image")), "only reads besides the one probe")
         self.assertEqual(self.http_calls, [f"{self.profile.console_origin}/healthz", f"{self.profile.issuer}/.well-known/openid-configuration"])
 
-    def test_pre_redacts_a_credential_that_reaches_the_evidence(self):
+    def test_pre_redacts_an_ephemeral_value_that_reaches_the_evidence(self):
         self.activate_on_disk()
-        self.ruleset = full_ruleset(self.profile).replace("-P FORWARD DROP", f"-P FORWARD DROP\n-N X{SYNTHETIC_ADMIN_PASSWORD}")
+        self.ruleset = full_ruleset(self.profile).replace("-P FORWARD DROP", f"-P FORWARD DROP\n-N X{EPHEMERAL_SENTINEL}")
         self.script_activation()
         code, _, err = self.run_main(["canaries", "--phase", "pre", "--yes"])
         self.assertEqual(code, 0, err)
         text = next((self.dir / dogfood.CANARY_DIR_NAME).glob("canary-pre-*.json")).read_text()
-        self.assertNotIn(SYNTHETIC_ADMIN_PASSWORD, text)
+        self.assertNotIn(EPHEMERAL_SENTINEL, text)
         self.assertIn("[redacted]", text)
 
     # -- pre: fail ---------------------------------------------------------

@@ -50,6 +50,7 @@ GOOD_PROFILE = {
     "subnet": "10.213.7.0/24",
     "keycloak_image": PINNED_KEYCLOAK,
     "source_commit": dogfood.PINNED_COMMIT,
+    "protected_host_ports": [22, 443, 8200],
 }
 
 # SYNTHETIC "real" lock: well-formed, non-synthetic-looking IDs that no daemon has ever produced.

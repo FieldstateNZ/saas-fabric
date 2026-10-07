@@ -31,3 +31,13 @@ keycloak_image = "quay.io/keycloak/keycloak@sha256:9d1f1b2b7261ff53c66cb1092dfcd
 
 # The source commit the control-plane and console images are built from.
 source_commit = "bb864f4cb5204d176c511a83b540fb7e90c66c16"
+
+# Host TCP ports the sandbox must never reach, probed on the bridge gateway by
+# `canaries --phase pre` in addition to every port the host is observed
+# listening on (/proc/net/tcp and tcp6) when the canary runs. This list is a
+# floor that holds even if a shared service is down at that moment: SSH (22),
+# DNS (53), the ingress that fronts the shared Keycloak, OpenBao and Git
+# services (80, 443), etcd (2379), a Git web host (3000), Postgres (5432), the
+# Kubernetes API (6443), Keycloak (8080, 8443, management 9000), OpenBao
+# (8200) and the kubelet (10250).
+protected_host_ports = [22, 53, 80, 443, 2379, 3000, 5432, 6443, 8080, 8200, 8443, 9000, 10250]

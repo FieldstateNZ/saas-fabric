@@ -126,6 +126,16 @@ class Runbook(unittest.TestCase):
         self.assertIn(f"`git archive {self.profile.source_commit}`", rows[f"`{dogfood.CONTAINER_NAMES[dogfood.SERVICE_CP]}`"][0])
         self.assertIn(f"`FROM {self.profile.keycloak_image}`", rows[f"`{dogfood.CONTAINER_NAMES[dogfood.SERVICE_KEYCLOAK]}`"][0])
 
+        probe_identity, probe_ceiling, probe_owned, probe_cleanup = rows[f"`{dogfood.CANARY_PROBE_NAME}`"]
+        self.assertIn(f"`{dogfood.PROBE_IMAGE}`", probe_identity)
+        self.assertIn(f"user `{dogfood.CANARY_PROBE_USER}`", probe_identity)
+        limits = dict(dogfood.CANARY_PROBE_LIMITS)
+        self.assertIn(f"mem `{limits['--memory']}`, cpus `{limits['--cpus']}`, pids `{limits['--pids-limit']}`", probe_ceiling)
+        self.assertIn(f"`{dogfood.NETWORK_NAME}` only", probe_owned)
+        self.assertIn("`docker run --rm`", probe_cleanup)
+        self.assertIn(f"`{dogfood.CANARY_DIR_NAME}/canary-pre-<UTC>.json`", rows["canary receipts"][0])
+        self.assertIn(f"`{dogfood.PROBE_IMAGE}`", rows["images"][2])
+
         network = rows[f"`{dogfood.NETWORK_NAME}`"]
         self.assertIn(f"`{dogfood.BRIDGE_NAME}`", network[0])
         self.assertIn(f"`{self.profile.subnet}`", network[0])
@@ -140,11 +150,23 @@ class Runbook(unittest.TestCase):
         self.assertIn(f"`.out/{dogfood.EPHEMERAL_DIR_NAME}/{dogfood.EPHEMERAL_ENV_NAME}`", local)
         self.assertIn(f"`{self.profile.keycloak_image}`", rows["images"][2])
 
+    def test_canary_section_names_the_tool_values(self):
+        text = section("Network restriction: what is and is not proven")
+        self.assertIn("`canaries --phase pre --yes`", text)
+        self.assertIn("`canaries --phase post`", text)
+        self.assertIn(f"`{dogfood.CANARY_PUBLIC_TCP[0]}:{dogfood.CANARY_PUBLIC_TCP[1]}`", text)
+        self.assertIn(f"`{dogfood.CANARY_PUBLIC_URL}`", text)
+        self.assertIn(f"`{dogfood.CANARY_PROBE_NAME}`", text)
+        for outcome in ("timeout", "no route", "no name"):
+            self.assertIn(outcome, text)
+        self.assertEqual(dogfood.BLOCKED_OUTCOMES, {"timeout", "unreachable", "dns"})
+
     def test_every_pinned_value_in_the_readme_is_the_current_one(self):
         commits = set(re.findall(r"\b[0-9a-f]{40}\b", README))
         self.assertEqual(commits, {self.profile.source_commit})
         digests = set(re.findall(r"quay\.io/keycloak/keycloak@sha256:[0-9a-f]{64}", README))
         self.assertEqual(digests, {self.profile.keycloak_image})
+        self.assertEqual(set(re.findall(r"node:22-bookworm-slim@sha256:[0-9a-f]{64}", README)), {dogfood.PROBE_IMAGE})
         self.assertEqual(self.profile.source_commit, dogfood.PINNED_COMMIT)
 
 

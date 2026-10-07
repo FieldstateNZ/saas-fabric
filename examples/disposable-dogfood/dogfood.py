@@ -12,7 +12,9 @@ require `--yes`, verify the exact daemon they expect, and are never the default.
     python3 dogfood.py build --yes     # git-archive the pinned commit; docker build; pull Keycloak by digest; derive it
     python3 dogfood.py activate --yes  # fail closed unless the firewall gate is observed; prompt for the operator password; compose up; bootstrap
     python3 dogfood.py status          # loopback HTTP readiness evidence
+    python3 dogfood.py canaries --phase pre --yes   # probe from the sandbox: host and public unreachable, loopback answers
     python3 dogfood.py reset --yes     # remove ONLY the containers and network recorded by activation
+    python3 dogfood.py canaries --phase post        # nothing this profile owned remains
 
 Python 3.11 or newer (tomllib). No third-party packages.
 
@@ -153,8 +155,9 @@ RESERVED_REALMS = {"master"}
 
 PROFILE_KEYS = {
     "project_name", "bind_address", "console_port", "oidc_port", "realm", "subnet", "keycloak_image",
-    "source_commit",
+    "source_commit", "protected_host_ports",
 }
+MAX_PROTECTED_HOST_PORTS = 64
 
 
 class ProfileError(Exception):
@@ -176,6 +179,7 @@ class Profile:
     subnet: str
     keycloak_image: str
     source_commit: str
+    protected_host_ports: tuple[int, ...]
 
     @property
     def console_origin(self) -> str:
@@ -250,10 +254,21 @@ def parse_profile(data: dict[str, Any]) -> Profile:
     source_commit = text("source_commit")
     if source_commit != PINNED_COMMIT:
         problems.append(f"source_commit must be the pinned commit {PINNED_COMMIT}")
+    raw_ports = data["protected_host_ports"]
+    protected_host_ports: tuple[int, ...] = ()
+    if (
+        not isinstance(raw_ports, list)
+        or not 0 < len(raw_ports) <= MAX_PROTECTED_HOST_PORTS
+        or any(isinstance(p, bool) or not isinstance(p, int) or not 1 <= p <= 65535 for p in raw_ports)
+        or len(set(raw_ports)) != len(raw_ports)
+    ):
+        problems.append(f"protected_host_ports must be 1-{MAX_PROTECTED_HOST_PORTS} distinct TCP ports (1-65535)")
+    else:
+        protected_host_ports = tuple(sorted(raw_ports))
 
     if problems:
         raise ProfileError("; ".join(problems))
-    return Profile(project_name, bind_address, console_port, oidc_port, realm, subnet, keycloak_image, source_commit)
+    return Profile(project_name, bind_address, console_port, oidc_port, realm, subnet, keycloak_image, source_commit, protected_host_ports)
 
 
 def load_profile(path: Path) -> Profile:
@@ -1115,6 +1130,222 @@ def evaluate_iptables(listings: dict[str, str], profile: Profile) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
+# Canaries: connectivity and cleanup evidence (pure evaluation)
+# ---------------------------------------------------------------------------
+
+# The node base the pinned console Dockerfile builds from, pulled by digest in
+# `build`. It is the only image the canary probe ever runs.
+PROBE_IMAGE_DIGEST = "sha256:83f487e0a63425e5b4d146fb5e5be574bcbe1b7b843d3ebafdd95eaf7767a7e5"
+PROBE_IMAGE = f"node:22-bookworm-slim@{PROBE_IMAGE_DIGEST}"
+PROBE_REPO_DIGEST = f"node@{PROBE_IMAGE_DIGEST}"
+CANARY_PROBE_NAME = "fabric-dogfood-canary"
+CANARY_LABEL = "nz.fieldstate.fabric.dogfood.canary"
+CANARY_DIR_NAME = ".canaries"
+CANARY_PHASES = ("pre", "post")
+CANARY_BUDGET_MS = 8000
+CANARY_MAX_TARGETS = 512
+CANARY_PUBLIC_TCP = ("1.1.1.1", 53)
+CANARY_PUBLIC_URL = "https://example.com/"
+CANARY_PROBE_USER = "1000:1000"
+CANARY_PROBE_LIMITS = (("--memory", "64m"), ("--cpus", "0.25"), ("--pids-limit", "32"))
+# A gate drop is observed as a timeout; no route or no name as unreachable or
+# dns. A refusal is a reset from the far end, so the packet arrived: for a
+# host port that is the gate failing, never a pass.
+BLOCKED_OUTCOMES = frozenset({"timeout", "unreachable", "dns"})
+ANSWERED_OUTCOME = "status:200"
+
+CANARY_PROBE_JS = (
+    "const net=require('net'),http=require('http'),https=require('https');"
+    "const T=JSON.parse(process.env.CANARY_TARGETS),out={};let left=T.length;"
+    "const finish=()=>{process.stdout.write(JSON.stringify({results:out})+'\\n');process.exit(0)};"
+    "const done=(id,v)=>{if(Object.prototype.hasOwnProperty.call(out,id))return;out[id]=v;if(--left===0)finish()};"
+    "const classify=e=>{const c=(e&&e.code)||'';"
+    "if(c==='ECONNREFUSED')return 'refused';if(c==='ETIMEDOUT')return 'timeout';"
+    "if(c==='ENETUNREACH'||c==='EHOSTUNREACH')return 'unreachable';"
+    "if(c==='ENOTFOUND'||c==='EAI_AGAIN')return 'dns';return 'error:'+(c||'unknown')};"
+    "setTimeout(()=>{for(const t of T)done(t.id,'timeout')},+process.env.CANARY_BUDGET_MS);"
+    "for(const t of T){"
+    "if(t.kind==='tcp'){const s=net.connect({host:t.host,port:t.port});"
+    "s.on('connect',()=>{s.destroy();done(t.id,'connected')});s.on('error',e=>done(t.id,classify(e)));}"
+    "else{const r=t.kind==='url'?https.get(t.url):http.get({host:t.host,port:t.port,path:t.path});"
+    "r.on('response',res=>{res.resume();done(t.id,'status:'+res.statusCode)});r.on('error',e=>done(t.id,classify(e)));}}"
+)
+
+
+@dataclass(frozen=True)
+class CanaryTarget:
+    id: str
+    kind: str
+    host: str
+    port: int
+    path: str
+    expect: str
+
+    def wire(self) -> dict[str, Any]:
+        if self.kind == "url":
+            return {"id": self.id, "kind": "url", "url": self.path}
+        return {"id": self.id, "kind": self.kind, "host": self.host, "port": self.port, "path": self.path}
+
+
+def parse_proc_net_tcp(text: str, ipv6: bool) -> list[tuple[str, int]]:
+    """Listening sockets in /proc/net/tcp or tcp6 as (address, port). Addresses are host-order 32-bit words."""
+    listeners: list[tuple[str, int]] = []
+    for line in text.splitlines()[1:]:
+        fields = line.split()
+        if len(fields) < 4 or fields[3] != "0A":
+            continue
+        address_hex, _, port_hex = fields[1].partition(":")
+        try:
+            port = int(port_hex, 16)
+            raw = b"".join(bytes.fromhex(address_hex[i:i + 8])[::-1] for i in range(0, len(address_hex), 8))
+            address = str(ipaddress.IPv6Address(raw) if ipv6 else ipaddress.IPv4Address(raw))
+        except ValueError as error:
+            raise ProfileError(f"unparseable listening socket entry {fields[1]!r}") from error
+        listeners.append((address, port))
+    return listeners
+
+
+def network_gateway(document: Any, profile: Profile) -> str | None:
+    """The bridge gateway Docker reports for the profile subnet, or None when it is absent or outside the subnet."""
+    if not isinstance(document, dict):
+        return None
+    subnet = ipaddress.ip_network(profile.subnet)
+    for config in (document.get("IPAM") or {}).get("Config") or []:
+        gateway = config.get("Gateway") if isinstance(config, dict) else None
+        try:
+            if gateway and ipaddress.ip_address(gateway) in subnet:
+                return gateway
+        except ValueError:
+            return None
+    return None
+
+
+def canary_pre_targets(profile: Profile, gateway: str, listeners: list[tuple[str, int]]) -> list[CanaryTarget]:
+    """Two positive controls inside the sandbox, then every host and public destination that must be blocked."""
+    subnet = ipaddress.ip_network(profile.subnet)
+    targets = [
+        CanaryTarget("control:console", "http", SERVICE_CONSOLE, CONSOLE_PORT, "/healthz", "answers"),
+        CanaryTarget("control:keycloak", "http", SERVICE_KEYCLOAK, KEYCLOAK_PORT, f"/realms/{profile.realm}/.well-known/openid-configuration", "answers"),
+    ]
+    ports = set(profile.protected_host_ports) | {port for _, port in listeners} | {profile.console_port, profile.oidc_port}
+    targets += [CanaryTarget(f"gateway:{port}", "tcp", gateway, port, "", "blocked") for port in sorted(ports)]
+    bound = set()
+    for address, port in listeners:
+        ip = ipaddress.ip_address(address)
+        if ip.version == 4 and not ip.is_unspecified and not ip.is_loopback and ip not in subnet:
+            bound.add((address, port))
+    targets += [CanaryTarget(f"host:{address}:{port}", "tcp", address, port, "", "blocked") for address, port in sorted(bound)]
+    host, port = CANARY_PUBLIC_TCP
+    targets.append(CanaryTarget(f"public:{host}:{port}", "tcp", host, port, "", "blocked"))
+    targets.append(CanaryTarget("public:url", "url", "", 0, CANARY_PUBLIC_URL, "blocked"))
+    if len(targets) > CANARY_MAX_TARGETS:
+        raise ProfileError(f"{len(targets)} canary targets exceed the bound of {CANARY_MAX_TARGETS}; refusing rather than sampling")
+    return targets
+
+
+def evaluate_canary_results(targets: list[CanaryTarget], output: str) -> tuple[list[dict[str, Any]], list[str]]:
+    """Every target needs exactly its expected class of outcome. Absent, extra or malformed evidence is a failure."""
+    findings: list[str] = []
+    try:
+        document = json.loads(output.strip().splitlines()[-1]) if output.strip() else None
+    except json.JSONDecodeError:
+        document = None
+    results = document.get("results") if isinstance(document, dict) else None
+    if not isinstance(results, dict):
+        return [], ["probe produced no parseable results; no connectivity evidence"]
+    expected = {target.id for target in targets}
+    for unknown in sorted(set(results) - expected):
+        findings.append(f"probe reported an unrequested target {unknown!r}")
+    rows = []
+    for target in targets:
+        outcome = results.get(target.id)
+        if not isinstance(outcome, str):
+            findings.append(f"{target.id}: no outcome recorded (missing evidence)")
+            verdict = "missing"
+        elif target.expect == "answers":
+            verdict = "pass" if outcome == ANSWERED_OUTCOME else "fail"
+            if verdict == "fail":
+                findings.append(f"{target.id}: positive control answered {outcome!r}, expected {ANSWERED_OUTCOME}; the negatives prove nothing")
+        else:
+            verdict = "pass" if outcome in BLOCKED_OUTCOMES else "fail"
+            if verdict == "fail":
+                findings.append(f"{target.id}: {outcome!r} from inside the sandbox; must be one of {sorted(BLOCKED_OUTCOMES)}")
+        rows.append({"id": target.id, "expect": target.expect, "outcome": outcome, "verdict": verdict})
+    return rows, findings
+
+
+def split_iptables_ruleset(text: str) -> dict[str, str]:
+    """`iptables -S` output grouped into the per-chain listings `evaluate_iptables` reads."""
+    chains: dict[str, list[str]] = {}
+    for line in text.splitlines():
+        tokens = line.split()
+        if len(tokens) >= 2 and tokens[0] in ("-P", "-N", "-A"):
+            chains.setdefault(tokens[1], []).append(line)
+    return {chain: "\n".join(lines) + "\n" for chain, lines in chains.items()}
+
+
+def evaluate_gate_absent(ruleset: str, profile: Profile) -> list[str]:
+    """After cleanup no rule may still name this sandbox's bridge or subnet."""
+    subnet = str(ipaddress.ip_network(profile.subnet))
+    left = [line for line in ruleset.splitlines() if BRIDGE_NAME in line.split() or subnet in line.split()]
+    return [f"host rule still present: {line}" for line in left]
+
+
+def redact_network_inspect(document: Any) -> Any:
+    """Only the fields that prove isolation and ownership; endpoint and MAC identifiers are dropped."""
+    if not isinstance(document, dict):
+        return None
+    return {
+        "Id": document.get("Id"),
+        "Name": document.get("Name"),
+        "Driver": document.get("Driver"),
+        "Internal": document.get("Internal"),
+        "EnableIPv6": document.get("EnableIPv6"),
+        "Options": document.get("Options"),
+        "IPAM": {"Config": (document.get("IPAM") or {}).get("Config")},
+        "Labels": document.get("Labels"),
+        "Containers": sorted(
+            ({"Name": c.get("Name"), "IPv4Address": c.get("IPv4Address")} for c in (document.get("Containers") or {}).values()),
+            key=lambda c: str(c["Name"]),
+        ),
+    }
+
+
+def redact_text(text: str, secrets_to_hide: list[str]) -> str:
+    for value in sorted(secrets_to_hide, key=len, reverse=True):
+        if value:
+            text = text.replace(value, "[redacted]")
+    return text
+
+
+def canary_probe_argv(profile: Profile, phase: str, targets: list[CanaryTarget]) -> list[str]:
+    limits = [token for flag, value in CANARY_PROBE_LIMITS for token in (flag, value)]
+    return [
+        "run", "--rm", "--name", CANARY_PROBE_NAME, "--network", NETWORK_NAME, "--pull", "never",
+        "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges:true", "--user", CANARY_PROBE_USER,
+        *limits, "--log-driver", "none",
+        "--label", f"{COMPOSE_PROJECT_LABEL}={profile.project_name}", "--label", f"{CANARY_LABEL}={phase}",
+        "--env", f"CANARY_TARGETS={json.dumps([t.wire() for t in targets], separators=(',', ':'))}",
+        "--env", f"CANARY_BUDGET_MS={CANARY_BUDGET_MS}",
+        PROBE_IMAGE, "node", "-e", CANARY_PROBE_JS,
+    ]
+
+
+def is_owned_probe(document: Any, profile: Profile) -> bool:
+    if not isinstance(document, dict):
+        return False
+    config = document.get("Config") or {}
+    labels = config.get("Labels") or {}
+    return (
+        document.get("Name") == f"/{CANARY_PROBE_NAME}"
+        and config.get("Image") == PROBE_IMAGE
+        and labels.get(COMPOSE_PROJECT_LABEL) == profile.project_name
+        and labels.get(CANARY_LABEL) in CANARY_PHASES
+        and bool(CONTAINER_ID_PATTERN.match(str(document.get("Id", ""))))
+    )
+
+
+# ---------------------------------------------------------------------------
 # Filesystem state
 # ---------------------------------------------------------------------------
 
@@ -1376,6 +1607,38 @@ def read_iptables(chain: str) -> str:
         raise ProfileError(f"could not read iptables chain {chain}: {error}") from error
 
 
+def read_iptables_ruleset() -> str:
+    """Read-only `iptables -S` (every chain of the filter table). Any failure raises."""
+    try:
+        return run_bound(locate(IPTABLES_BIN_CANDIDATES, "iptables"), ["-S"], capture=True).decode("utf-8", "replace")
+    except (subprocess.CalledProcessError, OSError) as error:
+        raise ProfileError(f"could not read the iptables ruleset: {error}") from error
+
+
+def read_host_listeners() -> list[tuple[str, int]]:
+    """Every listening TCP socket in the host network namespace, from /proc. Unreadable is a refusal, never empty."""
+    listeners: list[tuple[str, int]] = []
+    for name, ipv6 in (("tcp", False), ("tcp6", True)):
+        try:
+            text = Path(f"/proc/net/{name}").read_text(encoding="ascii")
+        except FileNotFoundError:
+            if ipv6:
+                continue
+            raise ProfileError("/proc/net/tcp is missing; host listeners cannot be enumerated") from None
+        except (OSError, UnicodeDecodeError) as error:
+            raise ProfileError(f"could not read /proc/net/{name}: {error}") from error
+        listeners += parse_proc_net_tcp(text, ipv6)
+    return listeners
+
+
+def bridge_interface_present() -> bool:
+    return os.path.lexists(f"/sys/class/net/{BRIDGE_NAME}")
+
+
+def utc_stamp() -> str:
+    return time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+
+
 def run_git(args: list[str]) -> bytes:
     return run_bound(locate(GIT_BIN_CANDIDATES, "git"), ["-C", str(REPO_ROOT), *args], capture=True)
 
@@ -1577,6 +1840,16 @@ def cmd_build(paths: Paths, yes: bool) -> int:
                 raise ProfileError(f"{name} is not an allowlisted build-context file")
             write_regular_file(kc_context / name, text, 0o644, exclusive=True)
         kc_id = docker_build(kc_context, kc_context / "Dockerfile", None)
+
+        if f"FROM {PROBE_IMAGE} AS builder" not in (source / "apps/control-plane-ui/Dockerfile").read_text(encoding="utf-8").splitlines():
+            print("the pinned console Dockerfile no longer builds from the canary probe image; refusing", file=sys.stderr)
+            return 1
+        print(f"pulling {PROBE_IMAGE} (the canary probe, by digest)")
+        run_docker(["pull", PROBE_IMAGE])
+        probe_digests = run_docker(["image", "inspect", "--format", "{{json .RepoDigests}}", PROBE_IMAGE], capture=True)
+        if PROBE_REPO_DIGEST not in json.loads(probe_digests):
+            print("pulled probe image does not report the pinned digest", file=sys.stderr)
+            return 1
     finally:
         _remove_private_dir(work)
 
@@ -1971,7 +2244,7 @@ def cmd_activate(paths: Paths, yes: bool) -> int:
     findings = evaluate_discovery(discovery, profile)
     findings += cmd_status(paths, quiet=True)
     print(f"\nactivated. Sign in at {profile.console_origin} as operator username: {operator} with the password you typed (ephemeral; gone on reset).")
-    print("Before interactive use: run the negative connectivity canaries in README.md; none has been run by this tool.")
+    print("Before interactive use: `canaries --phase pre --yes` must pass; nobody signs in until it does.")
     if findings:
         print("readiness findings:", file=sys.stderr)
         for finding in findings:
@@ -2040,6 +2313,177 @@ def cmd_reset(paths: Paths, yes: bool) -> int:
     return 1 if leftovers else 0
 
 
+# ---------------------------------------------------------------------------
+# canaries: fail-closed evidence before interactive use and after cleanup
+# ---------------------------------------------------------------------------
+
+
+def ephemeral_secret_values(paths: Paths) -> list[str]:
+    """The bootstrap admin values, so a receipt can be proven free of them. Unreadable means nothing to hide."""
+    try:
+        refuse_symlink(paths.ephemeral_env)
+        text = paths.ephemeral_env.read_text(encoding="utf-8")
+    except (OSError, ProfileError):
+        return []
+    return [line.split("=", 1)[1] for line in text.splitlines() if "=" in line]
+
+
+def write_canary_receipt(paths: Paths, phase: str, receipt: dict[str, Any], hide: list[str]) -> Path:
+    directory = real_child_dir(paths.profile_dir, CANARY_DIR_NAME)
+    directory.mkdir(mode=0o700, exist_ok=True)
+    text = redact_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n", hide)
+    if any(value and value in text for value in hide):
+        raise ProfileError("receipt still contains a credential after redaction; not written")
+    target = directory / f"canary-{phase}-{receipt['taken_at']}.json"
+    write_regular_file(target, text, 0o600, exclusive=True)
+    return target
+
+
+def remove_owned_probe(profile: Profile) -> str:
+    document = docker_inspect("container", CANARY_PROBE_NAME)
+    if document is None:
+        return "no probe container remains"
+    if not is_owned_probe(document, profile):
+        raise ProfileError(f"a container named {CANARY_PROBE_NAME} exists that this tool did not start; not removed")
+    run_docker(["rm", "--force", document["Id"]])
+    return f"removed lingering probe {document['Id'][:12]}"
+
+
+def canaries_pre(paths: Paths, profile: Profile, evidence: dict[str, Any]) -> list[str]:
+    """Read-only evidence first; the probe starts only if every precondition held. Returns findings."""
+    evidence["daemon"] = verify_daemon()
+    lock = read_lock(paths, profile)
+    if lock is None or lock.synthetic:
+        return ["no real pins.lock.json: there is no activation to test"]
+    receipt = read_receipt(paths, profile, lock)
+    if receipt is None:
+        return ["no ownership receipt: nothing is activated, so there is nothing to test"]
+    findings: list[str] = []
+    for service, entry in receipt["containers"].items():
+        document = docker_inspect("container", entry["id"])
+        if document is None:
+            findings.append(f"{service}: recorded container {entry['id'][:12]} is gone")
+            continue
+        findings += evaluate_owned_container(document, service, profile, lock)
+        if (document.get("State") or {}).get("Running") is not True:
+            findings.append(f"{service}: recorded container is not running")
+    network = docker_inspect("network", receipt["network"]["id"])
+    evidence["network_inspect"] = redact_network_inspect(network)
+    if network is None:
+        return findings + ["recorded network is gone; no network evidence"]
+    findings += evaluate_owned_network(network, profile)
+    findings += evaluate_network_inspect(network, profile)
+    if network.get("Id") != receipt["network"]["id"]:
+        findings.append("network: daemon returned a different ID than recorded")
+    gateway = network_gateway(network, profile)
+    evidence["gateway"] = gateway
+    if gateway is None:
+        findings.append("network inspect reports no gateway inside the profile subnet; the host-side negatives cannot be aimed")
+
+    ruleset = read_iptables_ruleset()
+    evidence["iptables_S"] = ruleset
+    findings += evaluate_iptables(split_iptables_ruleset(ruleset), profile)
+
+    listeners = read_host_listeners()
+    evidence["host_listeners"] = sorted({f"{address}:{port}" for address, port in listeners})
+
+    loopback: dict[str, Any] = {}
+    try:
+        status, _, _ = http_json(f"{profile.console_origin}/healthz", profile)
+        loopback["console_healthz"] = status
+        if status != 200:
+            findings.append(f"loopback console /healthz answered {status}")
+        status, discovery, _ = http_json(f"{profile.issuer}/.well-known/openid-configuration", profile)
+        loopback["keycloak_discovery"] = status
+        findings += [f"loopback issuer discovery answered {status}"] if status != 200 else evaluate_discovery(discovery, profile)
+    except (urllib.error.URLError, OSError, ProfileError) as error:
+        findings.append(f"loopback ports not answering: {error.__class__.__name__}")
+    evidence["loopback"] = loopback
+    if findings:
+        return findings + ["probe not started: a precondition failed"]
+
+    digests = json.loads(run_docker(["image", "inspect", "--format", "{{json .RepoDigests}}", PROBE_IMAGE], capture=True) or "null")
+    if not isinstance(digests, list) or PROBE_REPO_DIGEST not in digests:
+        return [f"probe image {PROBE_IMAGE} is not present by its digest; `build` pulls it"]
+    if docker_inspect("container", CANARY_PROBE_NAME) is not None:
+        return [f"a container named {CANARY_PROBE_NAME} already exists; refusing to adopt or replace it"]
+
+    targets = canary_pre_targets(profile, gateway, listeners)  # type: ignore[arg-type]
+    evidence["probe"] = {"image": PROBE_IMAGE, "user": CANARY_PROBE_USER, "limits": dict(CANARY_PROBE_LIMITS), "network": NETWORK_NAME}
+    try:
+        output = run_docker(canary_probe_argv(profile, "pre", targets), capture=True)
+    except subprocess.CalledProcessError as error:
+        output = ""
+        findings.append(f"probe container did not complete (docker exit {error.returncode}); this is not evidence of a blocked network")
+    finally:
+        evidence["probe"]["cleanup"] = remove_owned_probe(profile)
+    rows, result_findings = evaluate_canary_results(targets, output)
+    evidence["targets"] = [dict(row, host=t.host, port=t.port, kind=t.kind) for row, t in zip(rows, targets)] if rows else []
+    return findings + result_findings
+
+
+def canaries_post(paths: Paths, profile: Profile, evidence: dict[str, Any]) -> list[str]:
+    """After reset and the gate's REMOVE lines: nothing this profile owned may remain anywhere."""
+    evidence["daemon"] = verify_daemon()
+    findings: list[str] = []
+    label = f"label={COMPOSE_PROJECT_LABEL}={profile.project_name}"
+    remaining = {
+        "containers": run_docker(["ps", "--all", "--quiet", "--no-trunc", "--filter", label], capture=True).split(),
+        "networks": run_docker(["network", "ls", "--quiet", "--no-trunc", "--filter", label], capture=True).split(),
+        "volumes": run_docker(["volume", "ls", "--quiet", "--filter", label], capture=True).split(),
+    }
+    evidence["labelled"] = remaining
+    for kind, identifiers in remaining.items():
+        if identifiers:
+            findings.append(f"{len(identifiers)} {kind} still carry the project label {profile.project_name}")
+    names = set(run_docker(["ps", "--all", "--format", "{{.Names}}"], capture=True).split())
+    for name in sorted(names & {*CONTAINER_NAMES.values(), CANARY_PROBE_NAME}):
+        findings.append(f"container {name} still exists")
+    if NETWORK_NAME in set(run_docker(["network", "ls", "--format", "{{.Name}}"], capture=True).split()):
+        findings.append(f"network {NETWORK_NAME} still exists")
+    if bridge_interface_present():
+        findings.append(f"host interface {BRIDGE_NAME} still exists")
+    ruleset = read_iptables_ruleset()
+    evidence["iptables_S"] = ruleset
+    findings += evaluate_gate_absent(ruleset, profile)
+    out = paths.profile_dir / OUT_DIR_NAME
+    if os.path.lexists(out):
+        findings.append(f"{out} still exists; reset deletes it")
+    return findings
+
+
+def cmd_canaries(paths: Paths, phase: str, yes: bool) -> int:
+    if phase == "pre" and not yes:
+        print("canaries --phase pre starts a throwaway probe container on the sandbox network; it needs --yes", file=sys.stderr)
+        return 2
+    profile = load_profile(paths.profile_file)
+    hide = ephemeral_secret_values(paths)
+    evidence: dict[str, Any] = {}
+    try:
+        findings = (canaries_pre if phase == "pre" else canaries_post)(paths, profile, evidence)
+    except ProfileError as error:
+        findings = [f"refused: {error}"]
+    except subprocess.CalledProcessError as error:
+        findings = [f"a read-only command failed with status {error.returncode}; no evidence"]
+    receipt = {
+        "phase": phase,
+        "result": "pass" if not findings else "fail",
+        "findings": findings,
+        "taken_at": utc_stamp(),
+        "source_commit": profile.source_commit,
+        "project_name": profile.project_name,
+        "network": NETWORK_NAME,
+        "bridge": BRIDGE_NAME,
+        "subnet": profile.subnet,
+        "evidence": evidence,
+    }
+    path = write_canary_receipt(paths, phase, receipt, hide)
+    print(f"canaries {phase}: {'PASS' if not findings else 'FAIL'}; receipt {path}")
+    for finding in findings:
+        print(f"  - {redact_text(finding, hide)}", file=sys.stderr)
+    return 0 if not findings else 1
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--profile-dir", default=str(HERE), help="directory holding profile.toml (default: this directory)")
@@ -2055,6 +2499,9 @@ def main(argv: list[str] | None = None) -> int:
     reset = sub.add_parser("reset", help="remove only the recorded containers and network; delete rendered and ephemeral state")
     reset.add_argument("--yes", action="store_true")
     sub.add_parser("enforcement", help="print the host firewall gate and its exact inverse (never applied here)")
+    canaries = sub.add_parser("canaries", help="fail-closed isolation evidence: pre (probe from the sandbox) or post (nothing owned remains)")
+    canaries.add_argument("--phase", choices=CANARY_PHASES, required=True)
+    canaries.add_argument("--yes", action="store_true")
     args = parser.parse_args(argv)
 
     paths = Paths(Path(args.profile_dir).resolve())
@@ -2071,6 +2518,8 @@ def main(argv: list[str] | None = None) -> int:
             return 0 if not cmd_status(paths) else 1
         if args.command == "reset":
             return cmd_reset(paths, args.yes)
+        if args.command == "canaries":
+            return cmd_canaries(paths, args.phase, args.yes)
         if args.command == "enforcement":
             print(enforcement_text(load_profile(paths.profile_file)))
             return 0

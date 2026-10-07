@@ -95,11 +95,11 @@ read, write or reconfigure.
 
 | Shared service | How this profile is protected from it |
 |---|---|
-| **Keycloak** (the host's shared identity provider: `master` and every client realm) | The control plane's issuer is the disposable Keycloak on `127.0.0.1:18781` and its backend endpoint is the internal `keycloak` service; no other identity address appears in any rendered file (the validator refuses one). `identity_provider = in_memory`, so reconciliation writes to no Keycloak at all. The realm name `master` is refused by the profile. The disposable Keycloak has its own in-memory database (`KC_DB=dev-mem`) on tmpfs. The sandbox network is `internal`, and the host gate drops every new connection from the bridge to the host and to any other network; `canaries --phase pre` proves the host ports are unreachable before anyone signs in. |
+| **Keycloak** (the host's shared identity provider: `master` and every client realm) | The control plane's issuer is the disposable Keycloak on `127.0.0.1:18781` and its backend endpoint is the internal `keycloak` service; no other identity address appears in any rendered file (the validator refuses one). `identity_provider = in_memory`, so reconciliation writes to no Keycloak at all. The realm name `master` is refused by the profile. The disposable Keycloak has its own in-memory database (`KC_DB=dev-mem`) on tmpfs. The sandbox network is `internal`, and the host gate drops every new connection from the bridge to the host and to any other network; `canaries --phase pre` must show the host ports unreachable before anyone signs in. |
 | **OpenBao** | `secret_store = in_memory`. No OpenBao or Vault address, token or variable exists in any rendered file or container environment (`FABRIC_*` overrides are refused, environment values must be literals, and the CI posture check refuses OpenBao/Vault variables by key). Unreachable by the same network gate and canary. |
 | **Git** (the GitHub desired-state and platform repositories, the GitHub App, any Git host) | `desired_state = local_directory` on a tmpfs inside the control-plane container. `[git_host]` and `[platform_management]` are refused by the validator, and `public_base_url` must be absent, so no GitHub App connection can be started from the console. No token exists anywhere in the profile, and the workflow checks out with `persist-credentials: false`. Egress is blocked by the gate and proven by the public-address canaries. |
 | **The execution host's Docker daemon and other containers** | Every Docker call verifies the daemon's ID, name and version first. Activation refuses to adopt any existing resource with this profile's names or project label. Cleanup removes only the recorded container and network IDs after re-verifying name, label and image. No prune, no `compose down`, no volume. `DOCKER-USER` drops forwarding from this bridge to every other bridge. |
-| **Host listening ports** (SSH, ingress, cluster API and anything else listening) | `INPUT` drops every new connection arriving on `fabric-dogfood0`. `canaries --phase pre` probes the bridge gateway on every port the host is observed listening on plus the declared protected ports, and requires a timeout (a refusal means the host answered and fails the canary). |
+| **Host listening ports** (SSH, ingress, cluster API and anything else listening) | `INPUT` drops every new connection arriving on `fabric-dogfood0`. `canaries --phase pre` probes the bridge gateway on every port the host is observed listening on plus the declared protected ports, and requires a timeout, no route or no name (a refusal means the host answered, and fails the canary). |
 
 ## Resources, ports, digests and owned cleanup
 
@@ -114,12 +114,14 @@ checks every value here against `profile.toml` and `dogfood.py`.
 | `fabric-dogfood-cp` | control-plane image ID recorded in `pins.lock.json`, built from `git archive bb864f4cb5204d176c511a83b540fb7e90c66c16` target `control-plane-api`; user `65532:65532` | mem `512m`, cpus `1.0`, pids `256`; tmpfs `/var/lib/fabric/state` 16 MiB, `/tmp` 16 MiB; logs 2 × `5m` | none published (internal `8081`) | `reset`: `docker rm --force <recorded id>` after re-verifying name, label and locked image |
 | `fabric-dogfood-console` | console image ID recorded in `pins.lock.json`, built from the same archive, target `console`; user `101:101` | mem `128m`, cpus `0.5`, pids `64`; tmpfs `/tmp` 32 MiB; logs 2 × `5m` | `127.0.0.1:18780` → `8080/tcp` | `reset`: `docker rm --force <recorded id>`, as above |
 | `fabric-dogfood-keycloak` | derived image ID recorded in `pins.lock.json`, `FROM quay.io/keycloak/keycloak@sha256:9d1f1b2b7261ff53c66cb1092dfcdc34a5fb77e81f9e6a6e75b8b6a795de8067`; user `1000:1000` | mem `1536m`, cpus `2.0`, pids `512`; tmpfs `/opt/keycloak/data` 64 MiB, `/opt/keycloak/lib/quarkus` 256 MiB, `/tmp` 64 MiB; logs 2 × `5m` | `127.0.0.1:18781` → `8080/tcp` | `reset`: `docker rm --force <recorded id>`, as above |
+| `fabric-dogfood-canary` | transient probe started only by `canaries --phase pre`: `node:22-bookworm-slim@sha256:83f487e0a63425e5b4d146fb5e5be574bcbe1b7b843d3ebafdd95eaf7767a7e5` (the pinned console builder base, pulled by digest in `build`); user `1000:1000`; project and canary labels | mem `64m`, cpus `0.25`, pids `32`; read-only root, no capabilities, logging off | none published; `fabric-dogfood-internal` only | `docker run --rm`; a lingering one is removed only if name, image and both labels match; `canaries --phase post` fails while one remains |
 | `fabric-dogfood-internal` | bridge network, interface `fabric-dogfood0`, subnet `10.213.7.0/24`, `internal`, IPv6 off, no masquerade | one /24 | no host port | `reset`: `docker network rm <recorded id>` after re-verifying name and label and that no foreign container is attached |
 | host firewall gate | the five rules printed by `enforcement`, scoped to `fabric-dogfood0` and `10.213.7.0/24` | five rules, two chains | none | the operator runs the 5 `iptables -D` REMOVE lines printed by `enforcement`, one rule at a time; no flush, no policy change |
 | SSH forwarding key | the `authorized_keys` line above, on the forwarding user | two `permitopen` destinations | workstation `127.0.0.1:18780` and `127.0.0.1:18781` | the operator deletes that one key line (and the `Match User` block if it was added for this trial) |
 | realm `fabric-dogfood` | realm, `saas-fabric-console` public PKCE client, `fabric-operator` role, one synthetic operator, one bootstrap admin | Keycloak's tmpfs | none | destroyed with the Keycloak container; nothing persists |
 | local state | `.out/control-plane.toml`, `.out/console.nginx.conf`, `.out/compose.json`, `.out/pins.lock.json`, `.out/ownership.json`, `.out/.ephemeral/keycloak.env` | a few KiB | none | `reset`: unlinked by exact name, never through a symlink, never a tree delete |
-| images | the three locked image IDs and the pulled Keycloak base digest | disk only | `quay.io/keycloak/keycloak@sha256:9d1f1b2b7261ff53c66cb1092dfcdc34a5fb77e81f9e6a6e75b8b6a795de8067` | kept by `reset` (no prune); optional manual `docker image rm <locked id>` per image |
+| canary receipts | `.canaries/canary-pre-<UTC>.json`, `.canaries/canary-post-<UTC>.json` | a few KiB each | none | kept on purpose as activation evidence; `reset` never touches them |
+| images | the three locked image IDs, the pulled Keycloak base digest and the probe digest | disk only | `quay.io/keycloak/keycloak@sha256:9d1f1b2b7261ff53c66cb1092dfcdc34a5fb77e81f9e6a6e75b8b6a795de8067`, `node:22-bookworm-slim@sha256:83f487e0a63425e5b4d146fb5e5be574bcbe1b7b843d3ebafdd95eaf7767a7e5` | kept by `reset` (no prune); optional manual `docker image rm <locked id>` per image |
 
 ## Where this runs
 
@@ -208,7 +210,9 @@ python3 examples/disposable-dogfood/dogfood.py enforcement     # print the host 
 python3 examples/disposable-dogfood/dogfood.py build --yes     # git archive of the pin; docker build x2; pull Keycloak by digest; derive it
 python3 examples/disposable-dogfood/dogfood.py activate --yes  # fail closed unless daemon + firewall gate verify; compose up; bootstrap
 python3 examples/disposable-dogfood/dogfood.py status
+python3 examples/disposable-dogfood/dogfood.py canaries --phase pre --yes   # throwaway probe on the sandbox network; fail closed; redacted receipt
 python3 examples/disposable-dogfood/dogfood.py reset --yes     # remove only the recorded container/network IDs; delete local state
+python3 examples/disposable-dogfood/dogfood.py canaries --phase post        # read-only: nothing this profile owned remains
 python3 -m unittest discover -s scripts/tests -v
 ```
 
@@ -253,11 +257,14 @@ files (including `.out/`, credentials or anything else) cannot enter an image.
 Archive members that are not plain files or directories are refused. If the
 working tree's `apps/control-plane-ui/nginx.conf` differs from the pinned one
 the build refuses, because the rendered console configuration was derived from
-it. Then it pulls the Keycloak digest (the one approved outbound fetch),
-checks the pulled image reports that digest, writes the two generated derived
-image files into a second private context and builds the derived image. The
-lock records the commit, three local image IDs, the base digest and the daemon
-identity. Nothing is pushed anywhere.
+it. Then it pulls the Keycloak digest, checks the pulled image reports that
+digest, writes the two generated derived image files into a second private
+context and builds the derived image. Last it pulls the canary probe image,
+`node:22-bookworm-slim` by the digest the pinned console Dockerfile already
+builds from (refusing if that Dockerfile names another), and checks it reports
+that digest. These two pulls are the only outbound fetches. The lock records
+the commit, three local image IDs, the base digest and the daemon identity.
+Nothing is pushed anywhere.
 
 **activate.** In order, each step a refusal if it fails: a controlling
 terminal exists and is a terminal (`/dev/tty` opens read-write and
@@ -353,22 +360,62 @@ person. The preflight reads the chains and requires the five rules to be the
 first rules of their chains; it fails closed if `iptables` is missing,
 unreadable, or shows anything else above them.
 
-**Runtime negative canaries, required before interactive use.** None of the
-above proves isolation. Before anyone signs in, run from a probe attached to
-`fabric-dogfood-internal` (the Keycloak image does have a shell; a separate
-throwaway probe container is cleaner) and confirm each FAILS: a TCP connect
-to the host's bridge gateway address on any listening port; a connect to any
-shared service port on the host (Keycloak, OpenBao, Git); a connect to
-`1.1.1.1:53` and an HTTP fetch of a public URL. Confirm the console and
-Keycloak ports still answer from the host's loopback. Record the output beside
-`iptables -S INPUT`, `iptables -S DOCKER-USER` and
-`docker network inspect fabric-dogfood-internal`. The tool does not run these
-and nothing in this directory claims they would pass.
+**Canaries, required before interactive use and after cleanup.** None of
+the above proves isolation; `dogfood.py canaries` gathers the evidence and
+fails closed. Every run writes a receipt to
+`.canaries/canary-<phase>-<UTC>.json` (`0600`, exclusive create, kept across
+`reset`) holding the verdict, every finding, the full `iptables -S`, and the
+network inspect reduced to identity, isolation and attachment fields. The
+bootstrap admin credential is redacted from it, and a receipt that would still
+contain it is not written.
+
+`canaries --phase pre --yes` (after `activate`, before anyone signs in):
+
+1. Read-only preconditions, any failure ending the run before a probe
+   starts: the daemon is the expected one; the lock is real and the
+   ownership receipt validates; the three recorded containers are this
+   profile's and running; the recorded network is this profile's, internal,
+   IPv6 off, with a gateway inside `10.213.7.0/24`; the five gate rules are
+   the first rules of `INPUT` and `DOCKER-USER` in `iptables -S`; every
+   listening TCP socket on the host is read from `/proc/net/tcp` and
+   `/proc/net/tcp6` (unreadable is a failure, never "none"); the console
+   `/healthz` and the issuer discovery answer 200 on the two loopback ports
+   from the host.
+2. One throwaway probe, `fabric-dogfood-canary`: the pinned `node` image by
+   digest, `--rm`, `--pull never`, on `fabric-dogfood-internal` only,
+   read-only root, `--cap-drop ALL`, `no-new-privileges`, user `1000:1000`,
+   64 MiB, 0.25 CPU, 32 pids, logging off, labelled with the project and a
+   canary label. A container already holding that name is refused, never
+   replaced.
+3. From the probe, positive controls first: `console:8080/healthz` and the
+   disposable realm's discovery on `keycloak:8080` must answer 200, or the
+   negatives prove nothing. Then every destination that must be blocked: the
+   bridge gateway on every observed host listening port, every port in
+   `protected_host_ports`, and the two published ports; every host listener
+   bound to a specific non-loopback address, at that address; `1.1.1.1:53`;
+   and `https://example.com/`. Blocked means a timeout, no route or no name.
+   A refusal means the host answered with a reset, so the packet arrived: it
+   fails. A TLS error from the public URL means the far end was reached: it
+   fails. A missing, extra or unparseable result fails.
+4. A lingering probe is removed only if its name, image and both labels
+   match; anything else with that name is reported and left alone.
+
+`canaries --phase post` (read-only; after `reset` and the five REMOVE lines):
+no container, network or volume carries the project label; no container is
+named `fabric-dogfood-cp`, `fabric-dogfood-console`, `fabric-dogfood-keycloak`
+or `fabric-dogfood-canary`; no network is named `fabric-dogfood-internal`;
+the host interface `fabric-dogfood0` is gone; no `iptables -S` rule names
+`fabric-dogfood0` or `10.213.7.0/24`; `.out/` is gone.
+
+Neither phase has been run against any host. The unit tests drive both with
+scripted Docker, iptables, `/proc`, `/sys` and loopback fakes, covering pass,
+fail and missing-evidence cases; they prove the canaries refuse on bad or
+absent evidence, not that a real host is isolated.
 
 Registries an operator registers in the console are read at public addresses;
 on this network every such read should fail, which is the intended outcome.
-Fetching this organisation's public GHCR images is not enabled here. The
-Keycloak pull in `build` happens before the network exists.
+Fetching this organisation's public GHCR images is not enabled here. Both
+pulls in `build` happen before the network exists.
 
 ## Tests
 

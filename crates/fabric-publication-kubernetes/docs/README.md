@@ -62,11 +62,22 @@ the label `app.kubernetes.io/managed-by: saas-fabric`.
    document that would take its object past the API server's one-mebibyte
    cap refuses the whole publication (`Unwritable`) rather than leaving the
    cluster half-updated. Nothing is ever split across objects.
-4. For each `Written` document, in order: `PUT` the whole object with both
+4. If anything is to be written, `GET` again every object the plan read but
+   will not write, and refuse with `Unwritable` naming the first whose
+   `resourceVersion` moved (`confirm.rs`). The plan relied on those objects
+   -- the held tenants behind the retirement guard, the held data sources
+   behind a new binding -- and nothing else checks them again. Two writers
+   each valid against what they read could otherwise together publish a
+   binding to a DataSource that is gone. This narrows that window to the
+   moments between the check and the writes; it cannot close it, because
+   the API has no transaction across objects (gap G4,
+   `docs/roadmap/m2-publication-gap-report.md`).
+5. For each `Written` document, in order: `PUT` the whole object with both
    keys and the remembered `resourceVersion` when it existed, or `POST` to
    create it when it did not. The API server refuses a replace over a
    version this adapter did not read with `409`, which is reported as
-   `Unwritable` naming the document; the next pass re-reads.
+   `Unwritable` naming the document; the controller re-offers at once, and
+   the re-offer re-reads.
 
 `current()` is step 1 alone, reported as `PublishedRevisions`.
 

@@ -1,12 +1,14 @@
-//! Two publishers over one directory, interleaved deterministically.
+//! Two publishers over one directory.
 //!
 //! `FilesystemRuntimePublication::publish` reads what is held, plans, then
-//! writes, with no lock across the three steps (`adapter.rs:62-70`). Two
-//! calls that overlap therefore both plan against the same held state. These
-//! tests run exactly that interleaving through the adapter's own `read_held`,
-//! `plan_publication` and `write_if_needed`, so the outcome does not depend
-//! on thread timing. ADR 0018 answers concurrency with "exactly one writer";
-//! these pin what happens when that assumption does not hold.
+//! writes. Two calls that overlap would both plan against the same held
+//! state; `publish` now holds a lock across the three steps
+//! (`lock.rs`), so a second publisher is refused while the first runs. The
+//! tests named `current_behaviour_*` still run the overlapping interleaving
+//! through the adapter's own `read_held`, `plan_publication` and
+//! `write_if_needed`, without the lock, so the outcome does not depend on
+//! thread timing: they pin what a writer that bypasses the lock can still
+//! do, which is why ADR 0018's "exactly one writer" still matters.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use std::collections::BTreeMap;
@@ -16,6 +18,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use fabric_core::{BindingRevision, DataSourceId, LogicalDataSourceName, LogicalResourceName, TenantId};
 
 use super::held::read_held;
+use super::lock::PublicationLock;
 use super::paths::DocumentPaths;
 use super::write::write_if_needed;
 use crate::{
@@ -157,7 +160,81 @@ async fn seeded() -> Dir {
     dir
 }
 
-/// Gap G4 (write skew). Writer A retires `pg-2`, which is legal because the
+/// Gap G4 (write skew), fixed for publishers that go through this adapter.
+/// Writer A holds the publication lock, as `publish` does from its read to
+/// its last write. Writer B's `publish` is refused at once with nothing
+/// written. Once A has retired `pg-2` and released the lock, B's offer is
+/// planned against what A left and refused, rather than publishing a binding
+/// to a DataSource that is gone.
+#[tokio::test]
+async fn a_second_publisher_is_refused_while_the_first_holds_the_lock() {
+    let dir = seeded().await;
+    let rebind = snapshot(
+        (2, vec![tenant("acme", "pg-2", 2)]),
+        (1, vec![data_source("pg-1"), data_source("pg-2")]),
+    );
+    let tenants_before = dir.read("tenants.json");
+
+    let lock = PublicationLock::acquire(&dir.paths(DocumentKind::Tenants)).unwrap();
+    let error = dir.adapter().publish(&rebind).await.unwrap_err();
+    assert!(
+        matches!(
+            error,
+            PublicationError::Unwritable {
+                document: DocumentKind::Tenants,
+                ..
+            }
+        ),
+        "{error}"
+    );
+    assert!(
+        error.to_string().contains("another publication is in progress"),
+        "{error}"
+    );
+    assert_eq!(dir.read("tenants.json"), tenants_before);
+
+    let held = read_held(
+        &dir.paths(DocumentKind::Tenants),
+        &dir.paths(DocumentKind::DataSources),
+        &dir.paths(DocumentKind::Catalog),
+    )
+    .unwrap();
+    let retire = snapshot(
+        (1, vec![tenant("acme", "pg-1", 1)]),
+        (2, vec![data_source("pg-1")]),
+    );
+    let a = plan_publication(&retire, &held).unwrap();
+    dir.write(DocumentKind::DataSources, &a.data_sources);
+    drop(lock);
+
+    let error = dir.adapter().publish(&rebind).await.unwrap_err();
+    assert!(matches!(error, PublicationError::StaleRevision { .. }), "{error}");
+    assert!(!dir.read("tenants.json").contains("pg-2"));
+    assert!(!dir.read("data-sources.json").contains("pg-2"));
+}
+
+/// The lock is released when a publication finishes, whether it wrote or
+/// was refused, so the next one is not refused for a lock nobody holds.
+#[tokio::test]
+async fn the_lock_is_released_after_every_publication() {
+    let dir = seeded().await;
+    let stale = snapshot(
+        (1, vec![tenant("acme", "pg-1", 1)]),
+        (0, vec![data_source("pg-1"), data_source("pg-2")]),
+    );
+    let error = dir.adapter().publish(&stale).await.unwrap_err();
+    assert!(matches!(error, PublicationError::StaleRevision { .. }), "{error}");
+
+    let next = snapshot(
+        (2, vec![tenant("acme", "pg-1", 1), tenant("globex", "pg-2", 1)]),
+        (1, vec![data_source("pg-1"), data_source("pg-2")]),
+    );
+    let report = dir.adapter().publish(&next).await.unwrap();
+    assert_eq!(report.tenants, DocumentOutcome::Written);
+    drop(PublicationLock::acquire(&dir.paths(DocumentKind::Tenants)).unwrap());
+}
+
+/// Gap G4 (write skew), residual: a writer that bypasses the lock. Writer A retires `pg-2`, which is legal because the
 /// held tenants document binds nothing to it. Writer B moves acme onto
 /// `pg-2`, which is legal because the held data-sources document has it.
 /// Each plan is valid against what it read; neither re-checks the document
@@ -165,7 +242,7 @@ async fn seeded() -> Dir {
 /// DataSource that is no longer published: the `DanglingDataSource` state
 /// the plan exists to refuse, reached without either plan refusing it.
 #[tokio::test]
-async fn current_behaviour_two_overlapping_publishers_can_publish_a_dangling_binding() {
+async fn current_behaviour_two_publishers_that_bypass_the_lock_can_publish_a_dangling_binding() {
     let dir = seeded().await;
     let held = read_held(
         &dir.paths(DocumentKind::Tenants),
@@ -216,14 +293,16 @@ async fn current_behaviour_two_overlapping_publishers_can_publish_a_dangling_bin
     );
 }
 
-/// Gap G4 (lost update within one document). Two writers that both plan the
+/// Gap G4 (lost update within one document), residual: writers that bypass
+/// the lock. Two writers that both plan the
 /// same next revision from the same held state each get `Write`; the second
 /// rename silently replaces the first. Neither call reports an error, and the
 /// surviving payload carries a revision that two different payloads were
 /// published under. The divergence guard (ADR 0018 part 6) only sees writers
 /// that run one after the other.
 #[tokio::test]
-async fn current_behaviour_two_overlapping_publishers_at_one_revision_both_succeed_and_the_last_wins() {
+async fn current_behaviour_two_publishers_that_bypass_the_lock_at_one_revision_both_succeed_and_the_last_wins(
+) {
     let dir = seeded().await;
     let held = read_held(
         &dir.paths(DocumentKind::Tenants),

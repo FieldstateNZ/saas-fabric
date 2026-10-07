@@ -181,7 +181,10 @@ not build.
   for all three documents, computed before any write), `write` (`write_if_needed`: payload
   then manifest, skipped entirely on `Verdict::Unchanged`), `atomic_write` (temp-file +
   `fsync` + `rename` + a directory `fsync` to make the rename itself durable, sibling to
-  the target, removed on every failure path), and `adapter`
+  the target, removed on every failure path), `lock` (`PublicationLock`: an
+  exclusive advisory `try_lock` on `.{tenants file}.lock`, held by `publish`
+  from `read_held` to the last write; a second publication is `Unwritable`
+  for tenants, nothing written — gap G4), and `adapter`
   (`FilesystemRuntimePublication`'s `impl RuntimePublication`).
 
 ## Identifier reuse map

@@ -90,3 +90,7 @@ fn write_and_sync(path: &Path, bytes: &[u8]) -> io::Result<()> {
     file.write_all(bytes)?;
     file.sync_all()
 }
+
+#[cfg(test)]
+#[path = "atomic_write_tests.rs"]
+mod tests;

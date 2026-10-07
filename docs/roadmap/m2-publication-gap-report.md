@@ -17,12 +17,17 @@
 
 ## Summary
 
-Each document is replaced atomically. The three documents together are not.
+With a single writer, each document is replaced atomically. The three documents
+together are not atomic, even with a single writer.
 
-- **Within one document**, a reader never sees a torn write. The filesystem adapter
-  renames a fully synced sibling file over the target. The Kubernetes adapter
-  writes the payload and its manifest as one `ConfigMap` in one request, and the
-  kubelet swaps a mounted volume with one symlink rename.
+- **Within one document, with exactly one writer**, a reader never sees a torn write.
+  - The filesystem adapter renames a fully synced sibling file over the target.
+  - The Kubernetes adapter writes the payload and its manifest as one `ConfigMap`
+    in one request, and the kubelet swaps a mounted volume with one symlink rename.
+  - The Kubernetes write is atomic at the API server whatever the number of writers.
+  - The filesystem adapter's is not. Two overlapping writers of one document share
+    one staging file, and they can publish an empty or interleaved, non-JSON
+    document (G4a). Nothing enforces the single writer (G4).
 - **Across documents**, the publisher's write order (data sources, then catalogue,
   then tenants) holds only at the API server or on the directory it writes to.
   Nothing carries that order to the reader. The runtime reloads tenants and data
@@ -43,18 +48,19 @@ Each document is replaced atomically. The three documents together are not.
 - **The single writer is assumed, not enforced.** Two overlapping publishers can
   each pass every guard and together publish a binding to a DataSource that no
   longer exists. The `resourceVersion` check in the Kubernetes adapter covers only
-  the objects a publication writes.
+  the objects a publication writes. In the filesystem adapter, two overlapping
+  writers of one document can also publish an empty or non-JSON file (G4a).
 - **Last-known-good behaviour lives only in a running reader's memory.** A reader
   started afterwards cannot recover it. A held tenants or data-sources document the
   publisher cannot parse blocks every later publication until an operator repairs it.
 - **Reader compatibility is a refusal, not a negotiation.** `contract_version` is
-  written and never read. An unknown field stops every new reader from priming.
+  written, and no runtime consumer reads it. An unknown field stops every new reader from priming.
 
 Against #112's acceptance criteria:
 
 | Acceptance criterion | Status | Gaps |
 |---|---|---|
-| Published tenant, data-source and catalogue revisions form a consistent contract | **Not met** across documents; met within one | G1, G2, G4, G7, G8 |
+| Published tenant, data-source and catalogue revisions form a consistent contract | **Not met** across documents. Met within one document only while there is a single writer (G4a) | G1, G2, G4, G4a, G7, G8 |
 | Compatible readers precede schema activation | **Not met.** No mechanism and no version handshake | G6 |
 | Interrupted publication cannot expose mixed revisions | **Not met.** It can, and so can uninterrupted publication | G1, G3 |
 | Last-known-good and failure behaviour are explicit | **Partly met.** The reader side is explicit in code; restart, publisher and rollback behaviour are not | G5 |
@@ -64,9 +70,9 @@ Against #112's acceptance criteria:
 
 | Layer | Mechanism | Evidence |
 |---|---|---|
-| Filesystem adapter, one file | Writes a sibling temp file, `fsync`s it, renames it over the target, then `fsync`s the directory | `fabric-runtime-publication/src/filesystem/atomic_write.rs:38-54` |
+| Filesystem adapter, one file, **one writer only** | Writes a sibling temp file, `fsync`s it, renames it over the target, then `fsync`s the directory. The temp path is fixed per target, so this holds only while one writer stages that file; see G4a. The function's rustdoc ("nothing in between, on every platform", `:11-15`) states it without that condition | `fabric-runtime-publication/src/filesystem/atomic_write.rs:38-54`, `:80-85` |
 | Filesystem adapter, one document | Payload is renamed before the manifest; two renames, not one | `filesystem/write.rs:23-30` |
-| Kubernetes adapter, one document | Payload and manifest are two `data` keys of one `ConfigMap`, written in one `PUT` or `POST` | `fabric-publication-kubernetes/src/object.rs:69-105`, `src/publish.rs:44-60`; ADR 0018 amendment `:696-703` |
+| Kubernetes adapter, one document | Payload and manifest are two `data` keys of one `ConfigMap`, written in one `PUT` or `POST`, so the API server replaces the object whole whatever the number of writers | `fabric-publication-kubernetes/src/object.rs:69-105`, `src/publish.rs:44-60`; ADR 0018 amendment `:696-703` |
 | Kubernetes adapter, one object, one writer at a time | A `PUT` carries the `resourceVersion` it read; a 409 becomes `Unwritable` | `src/client.rs:64-107`, `src/publish.rs:53-58`; test `concurrency_tests.rs::a_second_writer_of_the_same_object_is_refused_by_its_resource_version` |
 | Kubelet projection, one volume | The `..data` symlink swap is atomic per `ConfigMap` volume | ADR 0018 `:692-693`. This is Kubernetes behaviour and cannot be checked in this repository |
 | Reader, one document | `JsonFileSource` reads one path in one call. A torn or partial read fails to parse, and the registry is not touched | `fabric-tenant-runtime/src/resource/sources/json_file.rs:49-66`, `resource/refresher.rs:109-114` |
@@ -182,8 +188,10 @@ engineering once the rule says so. The G1a reader fix also narrows this window.
   (`errors.rs:19-20`; `report.rs:34-50`). Both adapters behave this way:
   `filesystem/adapter.rs:68-70` and `fabric-publication-kubernetes/src/publish.rs:90-95`,
   where a 409 or 5xx on a later object aborts after earlier objects are replaced.
-- **Recovery** is the next pass. Republishing the same snapshot finishes the job
-  (existing test `filesystem_runtime_publication.rs::a_publication_that_failed_between_documents_is_completed_by_the_next_one`,
+- **Recovery** is the next pass, provided the held tenants and data-sources
+  documents still parse. A held document that does not parse, for example one
+  corrupted by G4a, refuses every pass (G5). Republishing the same snapshot
+  finishes the job (existing test `filesystem_runtime_publication.rs::a_publication_that_failed_between_documents_is_completed_by_the_next_one`,
   :663). The controller's schedule provides that next pass
   (`fabric-control-plane-api/src/startup/platform/publishing.rs`).
 - **Between the failure and the next pass:**
@@ -234,9 +242,8 @@ engineering once the rule says so. The G1a reader fix also narrows this window.
   - Holds no lock between `read_held` and the writes (`filesystem/adapter.rs:62-70`).
   - Stages every write of a given file through one fixed sibling path,
     `.{file}.tmp` (`filesystem/atomic_write.rs:80-85`). Two overlapping writers of
-    the same document truncate and rename the same temp file.
-  - The overlapping-writer tests below do not exercise this temp-path collision.
-    It is stated from the code.
+    the same document truncate and rename the same temp file. See G4a for the
+    published corruption this causes.
 - **Within one document**, the divergence guard (ADR 0018 part 6, `verdict.rs:96-107`)
   only sees writers that run one after the other. Two writers planning the same
   next revision both get `Write`.
@@ -280,6 +287,53 @@ assumes. Options:
 
 **Needs D01-1 only** if the decision is to support multiple writers rather than
 enforce one.
+
+#### G4a. Overlapping filesystem writers can publish an empty or non-JSON document
+
+**Evidence**
+
+- `atomic_write` stages through `sibling_temp_path(target)`, which is the same path
+  for every writer of that target (`filesystem/atomic_write.rs:80-85`).
+- `write_and_sync` starts with `File::create` (`:88-91`). That call truncates
+  whatever inode is at the staging path, even another writer's staged bytes.
+- The rename (`:42`) moves that inode over the target. A writer that still holds
+  an open handle to it then writes into the published file.
+- This breaks the per-document atomicity that `atomic_write`'s rustdoc promises
+  (`:11-15`) and that ADR 0018 part 5 (`:219-223`) relies on.
+- The result is not a stale or mixed document but an invalid one:
+  - every runtime reader refuses it (`json_file.rs:62-65`) and keeps its last good
+    snapshot;
+  - a reader that starts afterwards fails to prime (G5);
+  - the publisher's next pass is refused as `Unreadable` (`plan.rs:60-69`) until an
+    operator repairs the file.
+- The Kubernetes adapter does not have this failure mode. The API server replaces
+  one object whole.
+
+**Tests** (both in `fabric-runtime-publication/src/filesystem/atomic_write_tests.rs`;
+deterministic: writer A's steps are the literal statements of `write_and_sync` and
+`atomic_write` run one at a time, and writer B is the real `atomic_write`)
+
+- `::current_behaviour_overlapping_writers_of_one_document_can_publish_interleaved_bytes`
+  (:59):
+  - Writer A opens the staging file.
+  - Writer B completes a whole `atomic_write`.
+  - A's write lands in the now-published inode, and A's rename fails.
+  - B reported success. The published file is A's bytes followed by the tail of
+    B's, which is not JSON.
+- `::current_behaviour_overlapping_writers_of_one_document_can_publish_an_empty_file`
+  (:86):
+  - Writer A finishes staging.
+  - Writer B's `File::create` truncates A's staged bytes.
+  - A's rename publishes an empty file. It stays empty if writer B stops at that
+    point.
+
+**Classification: engineering.** ADR 0018 part 5 requires a *sibling* temporary
+file in the same directory; it does not require a fixed name. Either of these fits
+the existing text:
+
+- a unique staging name per write, created with `create_new`;
+- an exclusive lock held across `read_held` and the writes, which also closes the
+  skew in G4.
 
 ### G5. Last-known-good is in-memory, one-sided and lost on restart
 
@@ -428,16 +482,18 @@ this shape.
 
 ## What this branch adds
 
-**Tests:** ten new tests. All run by default; none is ignored. Nine are named
+**Tests:** twelve new tests. All run by default; none is ignored. Eleven are named
 `current_behaviour_*` and pin a gap above. One is a positive control.
 
 | File | Tests |
 |---|---|
 | `crates/fabric-runtime-publication/tests/publication_atomicity.rs` | 5 (G1, G2, G3, G5, G6), driven through the real `FilesystemRuntimePublication`, `build_runtime` and `JsonFileSource` |
 | `crates/fabric-runtime-publication/src/filesystem/concurrency_tests.rs` | 2 (G4), a deterministic interleaving of two plans through the adapter's own read, plan and write steps |
+| `crates/fabric-runtime-publication/src/filesystem/atomic_write_tests.rs` | 2 (G4a), a deterministic interleaving of two writers' staging of one document |
 | `crates/fabric-publication-kubernetes/src/concurrency_tests.rs` | 3 (G3, G4, plus the positive `resourceVersion` control), against a stateful fake API server that enforces `resourceVersion` and can hold one writer mid-publication |
 
-**Production code:** none changed.
+**Production code:** none changed. The only non-test edits are three `#[cfg(test)]`
+module declarations.
 
 ## Not covered here
 

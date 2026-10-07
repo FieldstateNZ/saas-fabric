@@ -34,4 +34,6 @@ pub use config::PublicationTarget;
 pub use publish::KubernetesRuntimePublication;
 
 #[cfg(test)]
+mod concurrency_tests;
+#[cfg(test)]
 mod testing;

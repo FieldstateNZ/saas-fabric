@@ -20,4 +20,7 @@ mod held;
 mod paths;
 mod write;
 
+#[cfg(test)]
+mod concurrency_tests;
+
 pub use adapter::FilesystemRuntimePublication;

@@ -173,9 +173,9 @@ fn answer(
     versions: &AtomicU64,
 ) -> (u16, String) {
     let target = path.rsplit('/').next().unwrap();
-    let hold = {
+    let paused = {
         let mut state = state.lock().unwrap();
-        let held = state.hold.as_ref().is_some_and(|hold| {
+        let matches = state.hold.as_ref().is_some_and(|hold| {
             hold.bearer == bearer
                 && match (&hold.read_of, method) {
                     (None, "GET") => false,
@@ -184,15 +184,15 @@ fn answer(
                     (Some(_), _) => false,
                 }
         });
-        if held {
+        if matches {
             state.hold.take()
         } else {
             None
         }
     };
-    if let Some(hold) = hold {
-        let _ = hold.reached.send(());
-        hold.release.recv().unwrap();
+    if let Some(paused) = paused {
+        let _ = paused.reached.send(());
+        paused.release.recv().unwrap();
     }
 
     let mut state = state.lock().unwrap();

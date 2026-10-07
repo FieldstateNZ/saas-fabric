@@ -5,6 +5,10 @@
   production code, accepts no contract and decides nothing for D01-1 or D01-2.
 - **Base:** `origin/main` at the commit this branch forks from. Every `file:line`
   below refers to that tree. Paths are under `crates/` unless they say otherwise.
+- **Since then:** the engineering-only parts of G1, G3 and G4 are fixed. Test
+  names in the gap sections are as first written; see
+  [Engineering fixes](#engineering-fixes) for what changed and what each test
+  is now called.
 - **Code read:** `fabric-runtime-publication` (`plan.rs`, `validate.rs`,
   `published_revisions.rs`, the filesystem adapter), `fabric-publication-kubernetes`,
   and the `fabric-tenant-runtime` reader. The catalogue reader in `fabric-api` and
@@ -438,6 +442,37 @@ this shape.
 | `crates/fabric-publication-kubernetes/src/concurrency_tests.rs` | 3 (G3, G4, plus the positive `resourceVersion` control), against a stateful fake API server that enforces `resourceVersion` and can hold one writer mid-publication |
 
 **Production code:** none changed.
+
+## Engineering fixes
+
+The parts classified **engineering** above, needing no change to ADR 0018 or
+ADR 0023 text and no RBAC change, are fixed. Everything classified D01-1 or
+D01-2 is untouched.
+
+| Gap | Fix | Fixed-behaviour tests | Residual `current_behaviour_*` test |
+|---|---|---|---|
+| G1a | One refresh loop reloads data sources, then tenants, on every pass (`fabric-tenant-runtime` `ResourceRefresher::spawn_in_order`). Option 1 of G1a; option 2 (defer a binding whose DataSource is not loaded) is not taken, because it would serve a binding the publisher has replaced instead of failing closed, which changes the reader behaviour ADR 0018 part 3 states | `publication_atomicity.rs::a_reader_applies_new_data_sources_before_the_tenants_that_name_them`; `registration_tests.rs::every_refresh_reloads_data_sources_before_tenant_bindings` | `publication_atomicity.rs::current_behaviour_a_reader_can_apply_tenants_that_reach_it_before_the_data_sources_they_name` (per-volume skew, G1b) |
+| G3 | The controller re-offers an `Unwritable` snapshot at once, up to twice, in the same pass (`fabric-platform-management` `protocol.rs`); the pass outcome still reports documents the interrupted offer wrote (`report_outcome.rs`) | `protocol_tests.rs::an_interrupted_publication_is_reoffered_at_once_and_completes`, `::an_interruption_that_persists_is_reported_after_the_retry_budget`, `::a_divergence_and_an_interruption_in_one_pass_each_use_their_own_budget`; `publisher_tests.rs::a_pass_interrupted_part_way_is_completed_in_the_same_pass_and_reports_every_write` | Both G3 tests unchanged: the adapters still leave mixed revisions until the re-offer |
+| G4 (filesystem) | `publish` holds an exclusive advisory lock on `.{tenants file}.lock` from `read_held` to the last write; a second publication is refused with `Unwritable`, nothing written (`filesystem/lock.rs`). Also removes the shared temp-path collision for publishers through the adapter | `filesystem/concurrency_tests.rs::a_second_publisher_is_refused_while_the_first_holds_the_lock`, `::the_lock_is_released_after_every_publication` | `::current_behaviour_two_publishers_that_bypass_the_lock_can_publish_a_dangling_binding`, `::current_behaviour_two_publishers_that_bypass_the_lock_at_one_revision_both_succeed_and_the_last_wins` |
+| G4 (Kubernetes) | Before the first write, re-read every object the plan read but will not write; refuse `Unwritable` if its `resourceVersion` moved (`fabric-publication-kubernetes` `confirm.rs`). Narrows the write-skew window; cannot close it | `concurrency_tests.rs::a_writer_whose_read_only_object_moved_before_it_writes_is_refused`; `publish_tests.rs::a_held_object_is_replaced_at_the_version_it_was_read_and_an_unchanged_one_is_left` (asserts the re-reads) | `concurrency_tests.rs::current_behaviour_writers_overlapping_after_their_checks_can_leave_a_dangling_binding_in_the_cluster` |
+
+G2's test now stands in an unprojected tenants volume by restoring the
+previous tenants bytes, since one refresh pass no longer applies data
+sources alone. G5 and G6 tests change only to the single refresh handle.
+
+Still deferred:
+
+- **D01-1:** G1b (a cross-document generation), G2 (retirement waits for
+  readers), G3's "interruption invisible to readers", G4's `Lease` (RBAC
+  text in ADR 0018 and ADR 0023) or support for multiple writers, G5's
+  rollback, failure and hold semantics, G6's versioning rule, G7's reader
+  revision reporting, G8's refusal or generation.
+- **D01-2:** G7's §5 gate (D01-18), and G5's hold against §5.
+- **Engineering, not in this change:** G3's "incomplete" on the platform
+  panel, G5's recovery command and `refresh_failed` counts, G6's per-row
+  matrix tests and CI check, G8's unbound pairs on the Data tab. Each needs
+  console or CI work beyond the publication path, or waits on a D01-1
+  decision as G5 says.
 
 ## Not covered here
 

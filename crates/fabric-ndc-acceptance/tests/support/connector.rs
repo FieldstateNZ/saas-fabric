@@ -59,6 +59,7 @@ pub fn start(
     network: &str,
     pg: &docker::Container,
     mode: ConnectorMode,
+    host_port: Option<u16>,
 ) -> (docker::Container, String, PathBuf) {
     let config_dir = write_config_dir(run_id, mode);
 
@@ -68,6 +69,7 @@ pub fn start(
         network: network.to_owned(),
         env: vec![("CONNECTION_URI".to_owned(), postgres::connection_uri(pg))],
         publish: Some(8080),
+        host_port,
         mount_ro: Some((config_dir.clone(), "/etc/connector".to_owned())),
         command: vec!["serve".to_owned()],
     })
@@ -75,10 +77,10 @@ pub fn start(
 
     wait_healthy(&container);
 
-    let host_port = docker::port(&container, 8080)
+    let published = docker::port(&container, 8080)
         .unwrap_or_else(|error| panic!("could not read the connector's published port: {error}"));
 
-    (container, format!("http://127.0.0.1:{host_port}"), config_dir)
+    (container, format!("http://127.0.0.1:{published}"), config_dir)
 }
 
 /// Writes the checked-in fixture for `mode` to a fresh directory as
@@ -107,7 +109,7 @@ fn write_config_dir(run_id: &RunId, mode: ConnectorMode) -> PathBuf {
 /// no-shell-required liveness probe the image ships for exactly this,
 /// since the image is distroless and has no `sh` a `docker exec ... sh -c`
 /// health poll could use.
-fn wait_healthy(container: &docker::Container) {
+pub fn wait_healthy(container: &docker::Container) {
     let healthy = docker::poll_until(HEALTHY_DEADLINE, || {
         docker::exec(
             container,

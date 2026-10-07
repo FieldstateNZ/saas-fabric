@@ -45,6 +45,7 @@ pub fn start(run_id: &RunId, network: &str) -> docker::Container {
             ("POSTGRES_DB".to_owned(), DB.to_owned()),
         ],
         publish: None,
+        host_port: None,
         mount_ro: None,
         command: Vec::new(),
     })

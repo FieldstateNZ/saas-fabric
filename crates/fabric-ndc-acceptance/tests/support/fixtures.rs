@@ -74,21 +74,34 @@ pub fn shared_data_source(writable: bool) -> DataSourceDocument {
 
 /// One tenant, discriminator-isolated on the shared DataSource.
 pub fn tenant_binding(tenant: &str, discriminator_value: &str) -> TenantBindingDocument {
-    serde_json::from_value(json!({
-        "tenant": tenant,
-        "revision": 1,
-        "data": {
-            LOGICAL_PRIMARY: {
-                "data_source": DATA_SOURCE_ID,
-                "isolation": {
-                    "kind": "discriminator",
-                    "column": DISCRIMINATOR_COLUMN,
-                    "value": discriminator_value,
-                },
-            },
-        },
-    }))
-    .unwrap()
+    tenant_binding_on(tenant, discriminator_value, &[LOGICAL_PRIMARY])
+}
+
+/// One tenant bound, on the same shared DataSource and discriminator, under
+/// every logical name in `logical_names`.
+pub fn tenant_binding_on(
+    tenant: &str,
+    discriminator_value: &str,
+    logical_names: &[&str],
+) -> TenantBindingDocument {
+    let data: serde_json::Map<String, serde_json::Value> = logical_names
+        .iter()
+        .map(|logical| {
+            (
+                (*logical).to_owned(),
+                json!({
+                    "data_source": DATA_SOURCE_ID,
+                    "isolation": {
+                        "kind": "discriminator",
+                        "column": DISCRIMINATOR_COLUMN,
+                        "value": discriminator_value,
+                    },
+                }),
+            )
+        })
+        .collect();
+
+    serde_json::from_value(json!({ "tenant": tenant, "revision": 1, "data": data })).unwrap()
 }
 
 /// The one-resource catalogue: `articles`, on the physical collection of the
@@ -97,9 +110,15 @@ pub fn tenant_binding(tenant: &str, discriminator_value: &str) -> TenantBindingD
 /// to set: the read-only tests pass `["read", "list"]`; the write test adds
 /// `"create"`.
 pub fn articles_catalog(operations: &[&str]) -> CatalogDocument {
+    articles_catalog_on(LOGICAL_PRIMARY, operations)
+}
+
+/// [`articles_catalog`], with `articles` reading from the logical data source
+/// `logical` -- a name the tenants may or may not bind.
+pub fn articles_catalog_on(logical: &str, operations: &[&str]) -> CatalogDocument {
     serde_json::from_value(json!({
         RESOURCE_NAME: {
-            "data_source": LOGICAL_PRIMARY,
+            "data_source": logical,
             "collection": RESOURCE_NAME,
             "key_field": "id",
             "operations": operations,

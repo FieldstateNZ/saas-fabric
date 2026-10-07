@@ -1696,7 +1696,9 @@ def docker_present(kind: str, reference: str) -> bool:
     except (subprocess.CalledProcessError, OSError) as error:
         raise ProfileError(f"could not list {kind}s ({error.__class__.__name__}); absence of {short_ref(reference)} is not proven") from None
     for line in listing.splitlines():
-        identifier, _, names = line.partition("\t")
+        identifier, tab, names = line.partition("\t")
+        if not tab or not CONTAINER_ID_PATTERN.match(identifier) or not names:
+            raise ProfileError(f"the {kind} listing is malformed; absence of {short_ref(reference)} is not proven")
         if reference == identifier or reference in names.split(","):
             return True
     return False

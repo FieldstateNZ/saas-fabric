@@ -1189,6 +1189,17 @@ class CommandLine(unittest.TestCase):
         self.docker.on(lambda a: a == dogfood.LISTING_ARGS["container"], subprocess.CalledProcessError(1, "docker"))
         self.assert_reset_failed_closed(out, "absence of 111111111111 is not proven")
 
+    def test_a_malformed_listing_is_never_read_as_absence(self):
+        for listing in ("1111111111111111", "fabric-dogfood-cp", f"{'1' * 64}\t", "short\tfabric-dogfood-cp"):
+            with self.subTest(listing=listing):
+                docker = FakeDocker().on(lambda a: True, listing)
+                with mock.patch.object(dogfood, "run_docker", docker), self.assertRaises(dogfood.ProfileError):
+                    dogfood.docker_present("container", "fabric-dogfood-cp")
+        with mock.patch.object(dogfood, "run_docker", FakeDocker().on(lambda a: True, "")):
+            self.assertFalse(dogfood.docker_present("container", "fabric-dogfood-cp"), "an empty successful listing is absence")
+        with mock.patch.object(dogfood, "run_docker", FakeDocker().on(lambda a: True, f"{'1' * 64}\tother,fabric-dogfood-cp")):
+            self.assertTrue(dogfood.docker_present("container", "fabric-dogfood-cp"))
+
     def test_reset_fails_closed_when_removal_is_not_verified(self):
         out = self.prepare_real()
         self.write_receipt(out)

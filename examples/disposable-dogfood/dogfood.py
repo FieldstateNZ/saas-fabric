@@ -2205,7 +2205,7 @@ def rollback_activation(paths: Paths, profile: Profile, lock: Lock) -> tuple[lis
         receipt = read_receipt(paths, profile, lock)
         removed = remove_recorded(receipt, profile, lock) if receipt is not None else remove_owned_by_name(profile, lock)
         problems = remaining_owned(receipt)
-    except (ProfileError, subprocess.CalledProcessError, OSError) as error:
+    except Exception as error:  # noqa: BLE001 - any failure here means removal is unverified, never success
         return [], [f"rollback stopped ({error.__class__.__name__}): {error}"]
     if problems:
         return removed, problems
@@ -2323,6 +2323,9 @@ def cmd_activate(paths: Paths, yes: bool, approved_packet: str | None) -> int:
         return 130
     except (ProfileError, subprocess.CalledProcessError, urllib.error.URLError, OSError) as error:
         return abandon(f"{error.__class__.__name__}: {error}")
+    except Exception as error:
+        abandon(f"unexpected {error.__class__.__name__}")
+        raise
 
 
 def start_and_bootstrap(

@@ -1086,6 +1086,17 @@ class CommandLine(unittest.TestCase):
         self.assertIn("activation failed: interrupted", err)
         self.assertIn("Rolled back and verified", err)
 
+    def test_an_unexpected_error_after_start_still_rolls_back_and_is_raised(self):
+        self.prepare_real()
+        self.script_started()
+        with mock.patch.object(dogfood, "wait_for", side_effect=KeyError("Id")):
+            out, err = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err), self.assertRaises(KeyError):
+                dogfood.main(["--profile-dir", str(self.dir), *self.activate_argv()])
+        self.assertIn("activation failed: unexpected KeyError", err.getvalue())
+        self.assertIn("Rolled back and verified", err.getvalue())
+        self.assertEqual(sorted(c[-1] for c in self.docker.calls_matching("rm")), sorted(FAKE_CONTAINER_IDS.values()))
+
     def test_readiness_findings_after_bootstrap_roll_back_instead_of_reporting_activated(self):
         self.prepare_real()
         self.script_started()

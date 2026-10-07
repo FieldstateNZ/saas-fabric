@@ -10,8 +10,14 @@
  */
 import { useCallback, useEffect, useState } from 'react'
 
-import { deleteSecret, listSecrets, revealSecret, writeSecret } from '../api/client'
-import type { SecretEntry } from '../api/types'
+import {
+  deleteSecret,
+  listSecrets,
+  revealSecret,
+  secretMetadata,
+  writeSecret,
+} from '../api/client'
+import type { SecretEntry, SecretMetadata } from '../api/types'
 import { describe } from './useClients'
 
 /** Where the listing stands. */
@@ -25,6 +31,13 @@ export interface Secrets {
   readonly state: SecretsState
   readonly reload: () => void
   readonly reveal: (path: string) => Promise<Readonly<Record<string, string>>>
+  /**
+   * What is known about one secret without revealing it: its current version.
+   *
+   * On demand only. The listing never asks for this, because one read per row
+   * would turn a cheap listing into N reads of the store.
+   */
+  readonly metadata: (path: string) => Promise<SecretMetadata>
   readonly write: (
     path: string,
     values: Record<string, string>,
@@ -69,6 +82,11 @@ export function useSecrets(client: string): Secrets {
     [client],
   )
 
+  const metadata = useCallback(
+    async (path: string) => secretMetadata(client, path),
+    [client],
+  )
+
   const write = useCallback(
     async (path: string, values: Record<string, string>, expectedVersion: number | null) => {
       await writeSecret(client, path, values, expectedVersion)
@@ -85,5 +103,5 @@ export function useSecrets(client: string): Secrets {
     [client],
   )
 
-  return { state, reload, reveal, write, remove }
+  return { state, reload, reveal, metadata, write, remove }
 }

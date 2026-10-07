@@ -1,18 +1,22 @@
 //! Keeping a registry current, in the background.
+//!
+//! In the 121-150 line band (docs/architecture/file-size-policy.md): one
+//! type whose three entry points share one contract about what a failed load
+//! leaves serving; the shared loop and reload live in submodules.
 
 mod refresh_handle;
+mod refresh_loop;
+mod refresh_once;
 #[cfg(test)]
 mod refresher_tests;
 
 use std::sync::Arc;
-use std::time::Duration;
-
-use tokio::sync::Notify;
 
 use crate::resource::{RegistryResource, ResourceRegistry, ResourceSource};
 use crate::{logging, RuntimeConfig, SourceError};
 
 pub use refresh_handle::RefreshHandle;
+use refresh_once::refresh_once;
 
 /// Loads resources into a registry, once at startup and then periodically.
 ///
@@ -70,54 +74,75 @@ impl ResourceRefresher {
         Ok(count)
     }
 
-    /// Starts the background refresh loop.
+    /// Starts a background loop that keeps one registry current.
     #[must_use]
     pub fn spawn<T: RegistryResource>(
         registry: Arc<ResourceRegistry<T>>,
         source: Arc<dyn ResourceSource<T>>,
         config: &RuntimeConfig,
     ) -> RefreshHandle {
-        let interval = Duration::from_secs(config.refresh_interval_seconds);
-        let trigger = Arc::new(Notify::new());
-        let shutdown = Arc::new(Notify::new());
-
-        let task_trigger = Arc::clone(&trigger);
-        let task_shutdown = Arc::clone(&shutdown);
         let description = source.describe();
-
         logging::refresher_started::<T>(&description, config.refresh_interval_seconds);
 
-        let task = tokio::spawn(async move {
-            loop {
-                tokio::select! {
-                    () = tokio::time::sleep(interval) => {}
-                    () = task_trigger.notified() => {}
-                    () = task_shutdown.notified() => break,
+        refresh_loop::spawn(
+            config,
+            move |timeout| {
+                let registry = Arc::clone(&registry);
+                let source = Arc::clone(&source);
+                async move { refresh_once(&registry, source.as_ref(), timeout).await }
+            },
+            move || logging::refresher_stopped::<T>(&description),
+        )
+    }
+
+    /// Starts one background loop that, on every pass, reloads `first` and
+    /// only then reloads `then`.
+    ///
+    /// # Why one loop rather than two
+    ///
+    /// A tenant binding naming a DataSource the registry has not loaded
+    /// resolves to `MissingDataSource`, a 500. The publisher writes data
+    /// sources before tenants for exactly that reason, and two independent
+    /// loops threw the order away: either could fire first. One loop that
+    /// reads `first` before `then` carries the publisher's order to the reader
+    /// for any publication that finished before the pass began. It cannot help
+    /// when `then` is newer on disk than `first` -- a kubelet projecting one
+    /// `ConfigMap` volume ahead of another, or a publication landing between
+    /// the two reads of one pass -- because no order of reads makes a file
+    /// arrive sooner (gap G1b, `docs/roadmap/m2-publication-gap-report.md`).
+    ///
+    /// A failed load of `first` does not skip `then`, and a hung one is
+    /// abandoned after one interval, so a bad data-sources document never
+    /// holds back a tenant change such as a deprovisioning. A *panic* in
+    /// either reload ends the loop for both; [`RefreshHandle::shutdown`]
+    /// reports it.
+    #[must_use]
+    pub fn spawn_in_order<A: RegistryResource, B: RegistryResource>(
+        first: Arc<ResourceRegistry<A>>,
+        first_source: Arc<dyn ResourceSource<A>>,
+        then: Arc<ResourceRegistry<B>>,
+        then_source: Arc<dyn ResourceSource<B>>,
+        config: &RuntimeConfig,
+    ) -> RefreshHandle {
+        let first_description = first_source.describe();
+        let then_description = then_source.describe();
+        logging::refresher_started::<A>(&first_description, config.refresh_interval_seconds);
+        logging::refresher_started::<B>(&then_description, config.refresh_interval_seconds);
+
+        refresh_loop::spawn(
+            config,
+            move |timeout| {
+                let (first, first_source) = (Arc::clone(&first), Arc::clone(&first_source));
+                let (then, then_source) = (Arc::clone(&then), Arc::clone(&then_source));
+                async move {
+                    refresh_once(&first, first_source.as_ref(), timeout).await;
+                    refresh_once(&then, then_source.as_ref(), timeout).await;
                 }
-
-                match source.load().await {
-                    Ok(resources) => {
-                        if let Err(refused) = registry.apply_all(resources) {
-                            // Only reachable while the registry has never
-                            // loaded — a prime that was refused, and a source
-                            // still publishing the payload that got it refused.
-                            // The registry stayed unprimed, which is the whole
-                            // point; this says so out loud.
-                            logging::first_load_refused::<T>(&source.describe(), &refused);
-                        }
-                    }
-                    Err(error) => {
-                        // Deliberately does not touch the registry. The last
-                        // good snapshot keeps serving; a momentarily unreadable
-                        // source must not deprovision everything.
-                        logging::refresh_failed::<T>(&source.describe(), &error);
-                    }
-                }
-            }
-
-            logging::refresher_stopped::<T>(&description);
-        });
-
-        RefreshHandle::new(trigger, shutdown, task)
+            },
+            move || {
+                logging::refresher_stopped::<A>(&first_description);
+                logging::refresher_stopped::<B>(&then_description);
+            },
+        )
     }
 }

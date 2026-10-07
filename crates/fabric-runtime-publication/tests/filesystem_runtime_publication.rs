@@ -713,9 +713,12 @@ async fn the_temp_file_never_survives_a_publish_call_success_or_failure() {
     // The obstruction itself is a directory named like a temp file; the
     // adapter's own bytes-based scan only counts *files*, so confirm
     // directly that nothing beyond that pre-existing obstruction was left.
+    // The publication lock file is not a temp file: it stays, by design,
+    // because removing a lock file another publisher may be opening races.
     let entries: Vec<_> = std::fs::read_dir(dir.path())
         .unwrap()
         .filter_map(Result::ok)
+        .filter(|entry| entry.file_name() != ".tenants.json.lock")
         .collect();
     assert_eq!(entries.len(), 2, "{entries:?}"); // data-sources.json + the obstruction
 }

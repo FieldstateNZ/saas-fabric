@@ -73,16 +73,17 @@ physical/provider concerns.
   `ChangeKind::{Added, Updated, Removed}`.
 - `ResourceSource<T>` (async trait) — `load()`, `describe()`.
   `InMemorySource<T>` (`set`, `fail_next`), `JsonFileSource<T>`.
-- `ResourceRefresher::prime()` / `::spawn()`, `RefreshHandle` (`refresh_now`,
-  `shutdown`).
+- `ResourceRefresher::prime()` / `::spawn()` / `::spawn_in_order()`,
+  `RefreshHandle` (`refresh_now`, `shutdown`).
 
 ### Wiring
 
 - `RuntimeConfig { refresh_interval_seconds (30), fail_fast_on_prime (true) }`.
 - `build_runtime(&config, tenant_source, data_source_source)
   -> Result<(Arc<RuntimeResolver>, RuntimeHandles), String>`.
-  **Primes DataSources first**, then tenants.
-- `RuntimeHandles { tenants, data_sources }`, `shutdown()`.
+  **Primes DataSources first**, then tenants, and every refresh pass keeps
+  that order (one loop, `spawn_in_order`).
+- `RuntimeHandles` — `refresh_now()`, `shutdown()`.
 
 ### Errors
 
@@ -104,7 +105,7 @@ physical/provider concerns.
 resource/          generic lifecycle
   resource_kind.rs registry.rs (+ apply_all, apply_one, tests)
   snapshot.rs change.rs apply_report.rs lookup_error.rs
-  source.rs refresher.rs (+ refresh_handle) sources/{in_memory,json_file}
+  source.rs refresher.rs (+ refresh_handle, refresh_loop, refresh_once) sources/{in_memory,json_file}
   registry/{apply,change,lookup,stale_revision,deletion,concurrency}_tests.rs
   registry/{validation,duplicate_key,first_load,writer_concurrency}_tests.rs
   registry/merged_snapshot.rs (holds the merge verdicts + the refusal rule)

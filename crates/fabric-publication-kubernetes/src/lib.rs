@@ -24,6 +24,7 @@
 
 mod client;
 mod config;
+mod confirm;
 mod errors;
 mod held;
 mod object;

@@ -148,3 +148,76 @@ async fn a_stale_revision_refusal_is_returned_immediately_not_retried() {
     );
     assert!(target.writes().is_empty(), "a stale refusal writes nothing");
 }
+
+#[tokio::test]
+async fn an_interrupted_publication_is_reoffered_at_once_and_completes() {
+    // Gap G3: an offer interrupted after the data-sources document is
+    // written and before the tenants document is leaves the target at mixed
+    // revisions. The protocol re-offers the same snapshot in the same call
+    // rather than leaving that state for the next pass to repair.
+    let target = FakePublication::new();
+    publish_with_retry(&target, snapshot(1, 1, 1))
+        .await
+        .expect("baseline");
+    let attempts_before = target.publish_attempts();
+    let writes_before = target.writes().len();
+
+    target.script_interrupted(DocumentKind::Tenants);
+    let (report, offered) = publish_with_retry(&target, snapshot(2, 2, 1))
+        .await
+        .expect("the second offer completes the first");
+
+    assert_eq!(target.publish_attempts() - attempts_before, 2);
+    assert_eq!(
+        target.writes()[writes_before..],
+        [DocumentKind::DataSources, DocumentKind::Tenants],
+        "data sources once, on the interrupted offer; tenants once, on the retry"
+    );
+    assert_eq!(report.data_sources, DocumentOutcome::Unchanged);
+    assert_eq!(report.tenants, DocumentOutcome::Written);
+    assert_eq!(offered.tenants.revision, DocumentRevision::new(2));
+    assert_eq!(offered.data_sources.revision, DocumentRevision::new(2));
+}
+
+#[tokio::test]
+async fn an_interruption_that_persists_is_reported_after_the_retry_budget() {
+    let target = FakePublication::new();
+    target.script_always_interrupted(DocumentKind::Catalog);
+
+    let failure = publish_with_retry(&target, snapshot(1, 1, 1))
+        .await
+        .expect_err("every offer is interrupted");
+
+    assert!(
+        matches!(
+            failure,
+            PublicationError::Unwritable {
+                document: DocumentKind::Catalog,
+                ..
+            }
+        ),
+        "{failure:?}"
+    );
+    // The original offer plus `MAX_INTERRUPTED_RETRIES`, then the next pass.
+    assert_eq!(target.publish_attempts(), 3);
+    assert_eq!(target.writes(), [DocumentKind::DataSources]);
+}
+
+#[tokio::test]
+async fn a_divergence_and_an_interruption_in_one_pass_each_use_their_own_budget() {
+    let target = FakePublication::new();
+    publish_with_retry(&target, snapshot(1, 1, 1))
+        .await
+        .expect("baseline");
+    let attempts_before = target.publish_attempts();
+
+    target.script_divergent(DocumentKind::DataSources);
+    target.script_interrupted(DocumentKind::Tenants);
+    let (report, offered) = publish_with_retry(&target, snapshot(2, 1, 1))
+        .await
+        .expect("one bump and one re-offer");
+
+    assert_eq!(target.publish_attempts() - attempts_before, 3);
+    assert_eq!(offered.data_sources.revision, DocumentRevision::new(2));
+    assert_eq!(report.tenants, DocumentOutcome::Written);
+}

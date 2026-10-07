@@ -42,7 +42,7 @@ impl Reads {
     }
 }
 
-async fn read_one(
+pub(crate) async fn read_one(
     client: &Client,
     namespace: &str,
     document: DocumentKind,

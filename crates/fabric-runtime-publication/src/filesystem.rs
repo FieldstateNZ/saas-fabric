@@ -17,6 +17,7 @@
 mod adapter;
 mod atomic_write;
 mod held;
+mod lock;
 mod paths;
 mod write;
 

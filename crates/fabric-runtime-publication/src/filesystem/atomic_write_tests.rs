@@ -1,21 +1,24 @@
 //! Two writers staging the same document through `atomic_write`.
 //!
 //! `atomic_write` stages every write of a target through one fixed sibling
-//! path (`sibling_temp_path`), so two overlapping writers of one document share
-//! one temporary inode. The rename makes one *completed* staging atomic. It
-//! does not stop a second writer truncating or overwriting the first writer's
-//! staging before or after that rename. These tests interleave the two writers
-//! deterministically: writer A's steps are the literal statements of
-//! `write_and_sync` and `atomic_write`, run one at a time, and writer B is the
-//! real `atomic_write`. No sleeps and no threads, so the interleaving is the
-//! same on every run. Gap G4a in `docs/roadmap/m2-publication-gap-report.md`.
+//! path (`sibling_temp_path`). It used to open it with a truncating create, so
+//! two overlapping writers of one document shared one temporary inode and
+//! could publish an empty or interleaved, non-JSON document (gap G4a in
+//! `docs/roadmap/m2-publication-gap-report.md`). It now opens it with
+//! `create_new`, so the second writer is refused and touches nothing. These
+//! tests interleave the two writers deterministically: writer A's steps are
+//! the literal statements of `atomic_write`, run one at a time, and writer B
+//! is the real `atomic_write` or its `create_staging` step. No
+//! sleeps and no threads, so the interleaving is the same on every run.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use super::{atomic_write, sibling_temp_path, write_and_sync};
+use super::{
+    atomic_write, atomic_write_with, create_staging, fill_and_sync, remove_stale_staging, sibling_temp_path,
+};
 
 struct Dir(PathBuf);
 
@@ -49,54 +52,128 @@ fn parses_as_json(path: &Path) -> bool {
 const WRITER_A: &[u8] = b"[\n  \"a\"\n]\n";
 const WRITER_B: &[u8] = b"[\n  \"bbbbbbbbbbbbbbbbbbbb\"\n]\n";
 
-/// Writer A opens the shared staging path; writer B then runs a whole
-/// `atomic_write`, which truncates that same inode, fills it and renames it
-/// over the target. Writer A's still-open handle now points at the published
-/// file, and its write lands on top of B's bytes. A's own rename then fails,
-/// so A reports an error and B reported success, but the published document
-/// is A's bytes followed by the tail of B's: not JSON.
+fn stage(path: &Path, bytes: &[u8]) {
+    fill_and_sync(create_staging(path).unwrap(), bytes).unwrap();
+}
+
+fn create_new(path: &Path) -> std::fs::File {
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .unwrap()
+}
+
+/// Writer A opens the staging path, as `create_staging` does; writer B then
+/// runs a whole `atomic_write`. B's exclusive create finds A's file there and
+/// is refused, so B neither truncates A's staging nor renames it into place.
+/// A finishes and publishes its own complete bytes. Before G4a was fixed, B
+/// published, A's write landed on top of B's bytes in the published inode,
+/// and the document was not JSON.
 #[test]
-fn current_behaviour_overlapping_writers_of_one_document_can_publish_interleaved_bytes() {
+fn a_second_writer_cannot_stage_over_the_first_and_one_whole_document_is_published() {
     let dir = Dir::new();
     let target = dir.target();
     atomic_write(&target, b"[]\n").unwrap();
     let staging = sibling_temp_path(&target);
 
-    let mut writer_a = std::fs::File::create(&staging).unwrap();
+    let mut writer_a = create_new(&staging);
 
-    atomic_write(&target, WRITER_B).unwrap();
-    assert_eq!(std::fs::read(&target).unwrap(), WRITER_B);
+    let error = atomic_write(&target, WRITER_B).unwrap_err();
+    assert_eq!(error.kind(), std::io::ErrorKind::AlreadyExists);
+    assert_eq!(std::fs::read(&target).unwrap(), b"[]\n");
 
     writer_a.write_all(WRITER_A).unwrap();
     writer_a.sync_all().unwrap();
-    assert!(std::fs::rename(&staging, &target).is_err());
+    std::fs::rename(&staging, &target).unwrap();
 
-    let published = std::fs::read(&target).unwrap();
-    assert_eq!(&published[..WRITER_A.len()], WRITER_A);
-    assert_eq!(published.len(), WRITER_B.len());
-    assert!(
-        !parses_as_json(&target),
-        "{}",
-        String::from_utf8_lossy(&published)
-    );
+    assert_eq!(std::fs::read(&target).unwrap(), WRITER_A);
+    assert!(parses_as_json(&target));
 }
 
-/// Writer A completes its staging; writer B's `write_and_sync` begins with
-/// `File::create` on the same path, which truncates A's staged bytes before B
-/// has written any of its own. A's rename then publishes the truncated inode.
-/// Until B's write lands, and for good if writer B stops there (a crash or a
-/// killed pod), the published document is empty: not JSON.
+/// Writer A completes its staging; writer B's `create_staging` is refused
+/// rather than truncating A's staged bytes, and A's rename publishes them
+/// whole. Before G4a was fixed, B's truncating create emptied A's staging and
+/// A published an empty file.
 #[test]
-fn current_behaviour_overlapping_writers_of_one_document_can_publish_an_empty_file() {
+fn a_second_writer_cannot_truncate_the_first_writers_staged_bytes() {
     let dir = Dir::new();
     let target = dir.target();
     atomic_write(&target, b"[]\n").unwrap();
     let staging = sibling_temp_path(&target);
 
-    write_and_sync(&staging, WRITER_A).unwrap();
-    let _writer_b = std::fs::File::create(&staging).unwrap();
+    stage(&staging, WRITER_A);
+    let error = create_staging(&staging).unwrap_err();
+    assert_eq!(error.kind(), std::io::ErrorKind::AlreadyExists);
     std::fs::rename(&staging, &target).unwrap();
 
-    assert!(std::fs::read(&target).unwrap().is_empty());
-    assert!(!parses_as_json(&target));
+    assert_eq!(std::fs::read(&target).unwrap(), WRITER_A);
+    assert!(parses_as_json(&target));
+}
+
+/// A refused writer leaves the other writer's staging file alone: the file
+/// it found is not its own to clean up.
+#[test]
+fn a_refused_writer_does_not_remove_the_staging_file_it_found() {
+    let dir = Dir::new();
+    let target = dir.target();
+    let staging = sibling_temp_path(&target);
+    stage(&staging, WRITER_A);
+
+    assert!(atomic_write(&target, WRITER_B).is_err());
+
+    assert_eq!(std::fs::read(&staging).unwrap(), WRITER_A);
+}
+
+/// What a crashed writer left at the staging path refuses every later write
+/// until it is removed; `remove_stale_staging`, which `publish` calls under
+/// the publication lock, removes it.
+#[test]
+fn a_staging_file_left_by_a_crashed_writer_is_cleared_by_remove_stale_staging() {
+    let dir = Dir::new();
+    let target = dir.target();
+    stage(&sibling_temp_path(&target), WRITER_A);
+    assert!(atomic_write(&target, WRITER_B).is_err());
+
+    remove_stale_staging(&target);
+    atomic_write(&target, WRITER_B).unwrap();
+
+    assert_eq!(std::fs::read(&target).unwrap(), WRITER_B);
+}
+
+/// A create that fails for a reason other than `AlreadyExists` -- here
+/// `EMFILE`, too many open files -- made nothing, so whatever is at the
+/// staging path is another writer's. It used to be removed, because any
+/// error but `AlreadyExists` was taken to mean "this call's file". Ownership
+/// is now decided by whether the create returned a file.
+#[test]
+fn a_failed_create_never_removes_a_staging_file_it_did_not_make() {
+    let dir = Dir::new();
+    let target = dir.target();
+    let staging = sibling_temp_path(&target);
+    stage(&staging, WRITER_A);
+
+    let error =
+        atomic_write_with(&target, WRITER_B, |_| Err(std::io::Error::from_raw_os_error(24))).unwrap_err();
+
+    assert_eq!(error.raw_os_error(), Some(24));
+    assert_eq!(std::fs::read(&staging).unwrap(), WRITER_A);
+    assert!(!target.exists());
+}
+
+/// A failure after this call created its staging file still cleans it up:
+/// the rename fails because the target is a non-empty directory, and the
+/// staging file this call made is removed.
+#[test]
+fn a_failure_after_a_successful_create_removes_the_staging_file() {
+    let dir = Dir::new();
+    let target = dir.target();
+    std::fs::create_dir(&target).unwrap();
+    std::fs::write(target.join("occupied"), b"x").unwrap();
+    let staging = sibling_temp_path(&target);
+
+    assert!(atomic_write(&target, WRITER_B).is_err());
+
+    assert!(!staging.exists());
+    assert!(target.join("occupied").exists());
 }

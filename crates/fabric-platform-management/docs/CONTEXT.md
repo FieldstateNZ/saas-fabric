@@ -403,7 +403,9 @@ own data-source sub-types rather than re-declared, so a hand-editable
   `describe_target() -> String`, `async fn publish_once(&self, state:
   &PublicationState) -> PassResult`. Offers at the held revision; on
   `DivergentPayload`, bumps *only* the named document and re-offers, up to
-  three times (one per document, `protocol.rs::MAX_RETRIES`). Guarded
+  three times (one per document, `protocol.rs::MAX_RETRIES`); on
+  `Unwritable`, re-offers the same snapshot at once, up to twice
+  (`MAX_INTERRUPTED_RETRIES`). Guarded
   against re-entry by `PublicationState`'s `RunningFlag` -- `running.try_enter()`
   (crate-wide `running_guard.rs` at the crate root) is the only way to claim
   it, handing back a `Drop`-released guard only on the call that wins --
@@ -545,7 +547,9 @@ own data-source sub-types rather than re-declared, so a hand-editable
   crate off `fabric-client-model`), `RuntimePublisher` (`publisher.rs`:
   `new`, `describe_target`, `publish_once`, the one thing here that touches
   a port), the offer-and-advance retry rule (`protocol.rs`, `MAX_RETRIES =
-  3`), `PublicationState` + `LastPass` (`state.rs`, `SweepState`'s
+  3`) and the immediate re-offer of an interrupted (`Unwritable`) snapshot
+  (`MAX_INTERRUPTED_RETRIES = 2`), `report_outcome.rs` (what a completed
+  offer means for the pass, counting documents an interrupted offer wrote), `PublicationState` + `LastPass` (`state.rs`, `SweepState`'s
   sibling), `PassOutcome` + `WaitingReason` + `PassResult` (`outcome.rs`,
   `WaitingReason::{NoResources, PlatformNotConnected}`). The re-entry guard
   `publish_once` takes is `PublicationState::running.try_enter()`, the

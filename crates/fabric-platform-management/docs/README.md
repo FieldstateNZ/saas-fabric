@@ -401,7 +401,13 @@ file under `publication/`.
 - **The offer-and-advance rule** (D3, `publication/protocol.rs`) -- offer at
   the held revision; on `DivergentPayload`, bump *only* the document the
   target named and re-offer the whole snapshot, up to three times (one per
-  document). What a fourth divergence, or any other refusal
+  document). On `Unwritable` -- the one refusal that can leave the target
+  part-written, with readers serving mixed revisions -- re-offer the same
+  snapshot at once, up to twice more, rather than waiting for the next pass
+  (gap G3, `docs/roadmap/m2-publication-gap-report.md`). Documents an
+  interrupted offer already wrote settle as unchanged on the retry;
+  `report_outcome.rs` still reports them as written by the pass. What a fourth divergence, an
+  interruption that survives its retries, or any other refusal
   `publish_with_retry` returns, becomes is
   `publish_error.rs::outcome_from_publish_error`'s own call -- the same
   classifier `run_pass` also routes its own `current()` read's error

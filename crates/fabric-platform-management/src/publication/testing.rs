@@ -1,5 +1,9 @@
 //! An in-memory fake [`RuntimePublication`], for tests that need a real
 //! offer-and-advance conversation without a filesystem.
+//!
+//! In the 121-150 line band (docs/architecture/file-size-policy.md): a
+//! test-only fake whose one `impl RuntimePublication` must script every
+//! refusal the protocol retries, so it stays one file.
 
 mod held;
 
@@ -14,7 +18,8 @@ use held::{Scripted, State};
 
 /// Records what it was asked to write, and can be told in advance to answer
 /// [`PublicationError::DivergentPayload`] or
-/// [`PublicationError::StaleRevision`] for a named document.
+/// [`PublicationError::StaleRevision`] for a named document, or to fail one
+/// document's write part-way with [`PublicationError::Unwritable`].
 #[derive(Default)]
 pub(crate) struct FakePublication {
     state: Mutex<State>,
@@ -39,6 +44,17 @@ impl FakePublication {
     /// [`Self::script_divergent`]'s sibling for `StaleRevision`.
     pub(crate) fn script_stale(&self, document: DocumentKind) {
         self.script(document, Scripted::Stale);
+    }
+
+    /// Fails the write of `document` once, after every document before it
+    /// in write order has been written.
+    pub(crate) fn script_interrupted(&self, document: DocumentKind) {
+        self.script(document, Scripted::Interrupted { persist: false });
+    }
+
+    /// [`Self::script_interrupted`], on every offer.
+    pub(crate) fn script_always_interrupted(&self, document: DocumentKind) {
+        self.script(document, Scripted::Interrupted { persist: true });
     }
 
     fn script(&self, document: DocumentKind, scripted: Scripted) {
@@ -93,10 +109,15 @@ impl RuntimePublication for FakePublication {
             }
         }
 
+        let data_sources =
+            state.settle_unless_interrupted(DocumentKind::DataSources, snapshot.data_sources.revision)?;
+        let catalog = state.settle_unless_interrupted(DocumentKind::Catalog, snapshot.catalog.revision)?;
+        let tenants = state.settle_unless_interrupted(DocumentKind::Tenants, snapshot.tenants.revision)?;
+
         Ok(PublicationReport {
-            data_sources: state.settle(DocumentKind::DataSources, snapshot.data_sources.revision),
-            catalog: state.settle(DocumentKind::Catalog, snapshot.catalog.revision),
-            tenants: state.settle(DocumentKind::Tenants, snapshot.tenants.revision),
+            tenants,
+            data_sources,
+            catalog,
         })
     }
 

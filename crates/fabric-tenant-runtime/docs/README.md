@@ -208,11 +208,20 @@ DataSource it names has the best chance of already being loaded — narrowing,
 though not eliminating, the startup window where a resolve would otherwise
 fail.
 
+**Every refresh keeps the same order.** One loop refreshes both registries
+(`ResourceRefresher::spawn_in_order`): each pass reloads DataSources and only
+then tenant bindings, so a tenant binding published alongside a new DataSource
+is never applied ahead of it when both files are already on disk. What no
+read order can fix is a tenants file that is newer on disk than the
+data-sources file — a kubelet projecting one `ConfigMap` volume before
+another. That window still fails closed as `MissingDataSource` until the next
+pass (`docs/roadmap/m2-publication-gap-report.md`, G1).
+
 **Dangling bindings fail closed, always.** Even with the priming order
 above, a tenant binding can still reference a DataSource the registry does
 not currently hold — a DataSource genuinely removed while tenants remain
-bound to it, reconciliation racing across the two resources' own refresh
-intervals after startup, or (despite the ordering) a very early request
+bound to it, one document reaching the disk ahead of the other after
+startup, or (despite the ordering) a very early request
 landing between the two primes. Every one of these resolves to
 `ResolveError::MissingDataSource`. There is no fallback to a different
 DataSource and no default — see `resolution/runtime_resolver_tests.rs` for
@@ -256,8 +265,8 @@ let resolved = runtime.resolve_data_source(identity.tenant(), &primary)?;
 if operation.is_write() && !resolved.is_writable() { /* refuse */ }
 ```
 
-Hold the `RuntimeHandles` until shutdown — dropping them orphans the background
-tasks.
+Hold the `RuntimeHandles` until shutdown — dropping it orphans the background
+task.
 
 ## Gotchas
 

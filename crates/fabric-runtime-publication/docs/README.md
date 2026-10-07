@@ -144,7 +144,9 @@ must land before anything can reference them; removals are made safe by the
 retirement check above, not by ordering.
 
 Each file is written to a sibling temporary file in the same directory,
-`fsync`ed, `rename`d over its target, and, **on Unix**, the containing
+created exclusively (`create_new`, so a second writer of the same document
+is refused rather than truncating or writing into the first's staging, gap
+G4a), `fsync`ed, `rename`d over its target, and, **on Unix**, the containing
 directory is `fsync`ed once more after the rename — the target path is
 therefore only ever created by that rename, never opened directly, on every
 platform, and the rename itself is durable rather than merely atomic on
@@ -158,6 +160,21 @@ writes; a republication at the held revision compares bytes against what the
 crash actually left on disk and is refused as divergent. Neither outcome is
 a data-loss risk — the consumer already survives a torn read — so what
 atomicity buys here is a clean failure mode, not a rescue from one.
+
+One publication at a time: `publish` takes an exclusive advisory lock on
+`.{tenants file}.lock`, beside the tenants payload, before it reads what is
+held and keeps it until the last write (`src/filesystem/lock.rs`). Two
+overlapping publications would otherwise both plan against the same held
+state and each write only its own documents — together able to publish a
+binding to a DataSource that is gone, or to replace one another's payload at
+the same revision (gap G4, `docs/roadmap/m2-publication-gap-report.md`) —
+and would stage the same document through the same temporary path. A second
+publication is refused at once with `Unwritable`, nothing written, rather
+than blocked. Under the lock, `publish` first removes any staging file a
+crashed writer left, which would otherwise refuse every later write of that
+document. The lock file stays after the call; removing it would race a
+publisher opening it. It is advisory: a process that writes the files
+without it is not stopped.
 
 Implemented with `std::fs`, not `tokio::fs`: this crate's `tokio` dependency
 does not carry the `fs` feature, and this adapter is called at most on a
@@ -183,7 +200,9 @@ same revisions resolves each already-written document to `Unchanged` (same
 revision, identical bytes) and each remaining one to `Write`, exactly as if
 nothing had gone wrong. A caller that always publishes at `current() + 1`
 converges the same way without ever needing to know a prior call was
-interrupted.
+interrupted. The controller in `fabric-platform-management` re-offers an
+`Unwritable` snapshot at once, in the same pass, rather than leaving the
+mixed set for its next pass.
 
 ## Gotchas
 

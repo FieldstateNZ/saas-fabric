@@ -17,8 +17,10 @@ crate, by workspace rule.
   - `current()` — three `GET`s → `HeldDocuments::revisions()`.
   - `publish(&RuntimeSnapshot)` — three `GET`s remembering `resourceVersion`
     → `plan_publication` → every object built and size-checked (1 MiB cap,
-    `Unwritable`) before any write → `PUT`/`POST` per `Written` document in
-    the order data sources, catalogue, tenants.
+    `Unwritable`) before any write → if anything is written, re-`GET` every
+    `Unchanged` object and refuse `Unwritable` if its `resourceVersion`
+    moved (`confirm.rs`, gap G4 write skew) → `PUT`/`POST` per `Written`
+    document in the order data sources, catalogue, tenants.
   - `describe()` — the namespace, nothing else.
   - `#[cfg(test)] with_client(Client, &str)`.
 
@@ -33,7 +35,11 @@ crate, by workspace rule.
 - `held.rs` — `Reads { tenants, data_sources, catalog: Read { held: HeldDocument, resource_version } }`,
   `Reads::fetch`, `Reads::held() -> HeldDocuments`; a manifest key that will
   not parse or names another document is `Unreadable`; a wrong object name
-  in the answer is `Unreadable`.
+  in the answer is `Unreadable`. `read_one` is shared with `confirm.rs`.
+- `confirm.rs` — `confirm_read_only_unmoved(client, ns, &PublicationPlan, &Reads)`:
+  before the first write, re-reads every object the plan will not write and
+  refuses `Unwritable` if its `resourceVersion` moved (G4 write skew; narrows,
+  cannot close).
 - `object.rs` — `Keys::of(kind)` (the two `data` keys from the wire's file
   constants), `name_of(kind)` (`fabric-runtime-tenants` / `-data-sources` /
   `-catalog`), `collection_of(ns)`, `path_of(ns, kind)`, `object_for(ns, kind, &DocumentPlan, resource_version)`

@@ -113,6 +113,19 @@ pub(crate) fn refresh_failed<T: RegistryResource>(source: &str, error: &dyn std:
     );
 }
 
+/// A reload outlasted the refresh interval and was abandoned; the last good
+/// snapshot keeps serving, as for [`refresh_failed`].
+pub(crate) fn refresh_timed_out<T: RegistryResource>(source: &str, timeout_seconds: u64) {
+    tracing::error!(
+        event = "runtime.refresh_timed_out",
+        event_id = event_id(DOMAIN_ID, EventType::Error, 5),
+        resource_kind = T::KIND,
+        source,
+        timeout_seconds,
+        "refresh did not finish within the refresh interval; continuing to serve the last good snapshot"
+    );
+}
+
 /// A background refresher started.
 pub(crate) fn refresher_started<T: RegistryResource>(source: &str, interval_seconds: u64) {
     tracing::info!(

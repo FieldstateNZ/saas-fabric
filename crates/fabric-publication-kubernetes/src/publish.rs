@@ -7,6 +7,7 @@ use fabric_runtime_publication::{
 };
 
 use crate::client::Client;
+use crate::confirm::confirm_read_only_unmoved;
 use crate::held::{Read, Reads};
 use crate::object::{collection_of, object_for, path_of};
 use crate::PublicationTarget;
@@ -84,6 +85,8 @@ impl RuntimePublication for KubernetesRuntimePublication {
         )?;
         object_for(&self.namespace, DocumentKind::Catalog, &plan.catalog, None)?;
         object_for(&self.namespace, DocumentKind::Tenants, &plan.tenants, None)?;
+
+        confirm_read_only_unmoved(&self.client, &self.namespace, &plan, &reads).await?;
 
         // ADR 0018 part 3's order: a data source before anything naming it,
         // and tenants last.

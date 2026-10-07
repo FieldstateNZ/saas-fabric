@@ -116,6 +116,8 @@ async fn a_held_object_is_replaced_at_the_version_it_was_read_and_an_unchanged_o
                 ],
             ),
         ),
+        (200, object("fabric-runtime-data-sources", "12", &[])),
+        (200, object("fabric-runtime-catalog", "13", &[])),
         (200, "{}".into()),
     ]);
     let adapter = KubernetesRuntimePublication::with_client(client, NS);
@@ -135,12 +137,22 @@ async fn a_held_object_is_replaced_at_the_version_it_was_read_and_an_unchanged_o
     assert_eq!(report.catalog, DocumentOutcome::Unchanged);
     assert_eq!(report.tenants, DocumentOutcome::Written);
     let seen = task.join().unwrap();
-    assert_eq!(seen.len(), 4);
+    assert_eq!(seen.len(), 6);
+    // The two objects the plan read and does not write are read again, at
+    // the version first read, before the one write (gap G4, `confirm.rs`).
     assert_eq!(
         seen[3].line,
+        "GET /api/v1/namespaces/platform-system/configmaps/fabric-runtime-data-sources HTTP/1.1"
+    );
+    assert_eq!(
+        seen[4].line,
+        "GET /api/v1/namespaces/platform-system/configmaps/fabric-runtime-catalog HTTP/1.1"
+    );
+    assert_eq!(
+        seen[5].line,
         "PUT /api/v1/namespaces/platform-system/configmaps/fabric-runtime-tenants HTTP/1.1"
     );
-    let body: serde_json::Value = serde_json::from_str(&seen[3].body).unwrap();
+    let body: serde_json::Value = serde_json::from_str(&seen[5].body).unwrap();
     assert_eq!(body["metadata"]["resourceVersion"], "11");
     assert_eq!(
         body["data"]["tenants.manifest.json"],

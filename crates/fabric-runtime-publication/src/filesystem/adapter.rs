@@ -6,13 +6,15 @@
 //! `publish` out of this `impl` block would separate the trait's methods
 //! from each other for no reason a reader could act on. The read, parse,
 //! validate, plan, and write steps each already have their own file
-//! (`held`, `parse`, `validate`, `plan`, `write`, `atomic_write`).
+//! (`lock`, `held`, `parse`, `validate`, `plan`, `write`, `atomic_write`).
 
 use std::path::PathBuf;
 
 use async_trait::async_trait;
 
+use super::atomic_write::remove_stale_staging;
 use super::held::read_held;
+use super::lock::PublicationLock;
 use super::paths::DocumentPaths;
 use super::write::write_if_needed;
 use crate::{
@@ -60,6 +62,11 @@ impl RuntimePublication for FilesystemRuntimePublication {
     }
 
     async fn publish(&self, snapshot: &RuntimeSnapshot) -> Result<PublicationReport, PublicationError> {
+        let _lock = PublicationLock::acquire(&self.tenants)?;
+        for paths in [&self.data_sources, &self.catalog, &self.tenants] {
+            remove_stale_staging(&paths.payload);
+            remove_stale_staging(&paths.manifest);
+        }
         let held = read_held(&self.tenants, &self.data_sources, &self.catalog)?;
         let plan = plan_publication(snapshot, &held)?;
 

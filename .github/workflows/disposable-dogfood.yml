@@ -25,7 +25,7 @@ name: Disposable dogfood (build only by default)
 # with a changed script), no schedule.
 #
 # What leaves the runner: three compressed image archives built from
-# `git archive 1f46788…` and the derived Keycloak image, plus a redacted
+# `git archive bb864f4…` and the derived Keycloak image, plus a redacted
 # result manifest. No credential, container data, HTTP body, log or
 # subprocess stderr is written to the artifact directory; the script owns that
 # directory and writes only those files. Nothing is pushed to any registry.

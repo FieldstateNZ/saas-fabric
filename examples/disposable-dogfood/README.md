@@ -5,7 +5,7 @@ console, with a disposable Keycloak for real OIDC sign-in, on one internal
 Docker network, published on `127.0.0.1` only. Everything an operator does in it
 is lost when it is reset. That is the point.
 
-Source commit: `1f46788ecd5c59af1a4937aae0e51cf59b8f8081`. Nothing here is
+Source commit: `bb864f4cb5204d176c511a83b540fb7e90c66c16`. Nothing here is
 production code; nothing here is merged, published or deployed. **No runtime
 behaviour has been verified by the author of these files.** Every claim below
 about containers starting, Keycloak minting a usable token, the console
@@ -111,14 +111,14 @@ require `--yes`. None of the Docker-touching commands has been run by the
 author.
 
 **Staging from a review branch.** `prepare` and `check` refuse unless the
-source checkout is at exactly the pinned commit `1f46788…`, because the
+source checkout is at exactly the pinned commit `bb864f4…`, because the
 console header comparison reads that tree's `nginx.conf`. The commands above
 therefore fail when run from the head of the PR branch that carries these
 files. Stage them like this instead (nothing below has been executed by the
 author):
 
 1. Make a detached checkout of the pin: `git worktree add --detach
-   <stage-dir> 1f46788ecd5c59af1a4937aae0e51cf59b8f8081`, and confirm
+   <stage-dir> bb864f4cb5204d176c511a83b540fb7e90c66c16`, and confirm
    `git -C <stage-dir> rev-parse HEAD` prints the full pinned commit.
 2. Overlay only the *tracked* files of this directory from the reviewed PR
    ref into that checkout: `git archive <reviewed-ref>
@@ -139,7 +139,7 @@ a `.out` or `.out/.ephemeral` that is a symlink or a file. Every file is
 written with `O_NOFOLLOW`.
 
 **build.** Verifies the daemon, then reads the source through
-`git archive 1f46788…` into a private `0700` temporary directory and builds
+`git archive bb864f4…` into a private `0700` temporary directory and builds
 from *that* context, never from the working tree, so modified or untracked
 files (including `.out/`, credentials or anything else) cannot enter an image.
 Archive members that are not plain files or directories are refused. If the
@@ -341,7 +341,7 @@ verifier (daemon, lock, ownership, receipt) runs unchanged. That is a test
 composition of a host-identity assertion, not an authentication bypass.
 
 1. Builds the control plane and console with `extract_pinned_source` and
-   `docker_build` from `git archive 1f46788…`, pulls the Keycloak digest,
+   `docker_build` from `git archive bb864f4…`, pulls the Keycloak digest,
    checks the pulled image reports it, and builds the derived image from
    `keycloak_derived_context`. `REPO_ROOT` is repointed at the extracted
    source so the console-header comparison reads the pinned `nginx.conf`.

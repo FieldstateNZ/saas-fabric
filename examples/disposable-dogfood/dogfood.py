@@ -60,7 +60,7 @@ TEMPLATES = HERE / "templates"
 # the tree through `git archive <commit>` into a private temporary directory,
 # never through the working tree, so modified or untracked files (including
 # anything under .out/) can never enter a build context.
-PINNED_COMMIT = "1f46788ecd5c59af1a4937aae0e51cf59b8f8081"
+PINNED_COMMIT = "bb864f4cb5204d176c511a83b540fb7e90c66c16"
 
 # The only Docker daemon this launcher may talk to, as observed READ-ONLY
 # (`docker info`) before this file was written. Every Docker-touching command

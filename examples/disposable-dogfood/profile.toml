@@ -30,4 +30,4 @@ subnet = "10.213.7.0/24"
 keycloak_image = "quay.io/keycloak/keycloak@sha256:9d1f1b2b7261ff53c66cb1092dfcdc34a5fb77e81f9e6a6e75b8b6a795de8067"
 
 # The source commit the control-plane and console images are built from.
-source_commit = "1f46788ecd5c59af1a4937aae0e51cf59b8f8081"
+source_commit = "bb864f4cb5204d176c511a83b540fb7e90c66c16"

@@ -12,6 +12,7 @@ use std::path::PathBuf;
 
 use async_trait::async_trait;
 
+use super::atomic_write::remove_stale_staging;
 use super::held::read_held;
 use super::lock::PublicationLock;
 use super::paths::DocumentPaths;
@@ -62,6 +63,10 @@ impl RuntimePublication for FilesystemRuntimePublication {
 
     async fn publish(&self, snapshot: &RuntimeSnapshot) -> Result<PublicationReport, PublicationError> {
         let _lock = PublicationLock::acquire(&self.tenants)?;
+        for paths in [&self.data_sources, &self.catalog, &self.tenants] {
+            remove_stale_staging(&paths.payload);
+            remove_stale_staging(&paths.manifest);
+        }
         let held = read_held(&self.tenants, &self.data_sources, &self.catalog)?;
         let plan = plan_publication(snapshot, &held)?;
 

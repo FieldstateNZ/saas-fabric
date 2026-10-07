@@ -26,9 +26,22 @@ use std::path::{Path, PathBuf};
 /// itself, not just the content it points at, survive a crash. See
 /// [`sync_directory`] for why this is a no-op off Unix.
 ///
-/// The temporary file never survives a call to this function: it becomes
-/// `target` on success, and is removed on any failure path, so it is gone
-/// afterwards regardless of which outcome this returns.
+/// # Why the temporary file is created exclusively
+///
+/// Every write of `target` stages through the same sibling path. Created
+/// with a truncating open, a second writer staging the same target emptied
+/// the first writer's staged bytes, or wrote into the inode the first had
+/// just renamed into place, and the published document came out empty or
+/// not JSON (gap G4a in `docs/roadmap/m2-publication-gap-report.md`). The
+/// temporary file is therefore opened with `create_new`: a second writer
+/// that finds one already there fails with `AlreadyExists` and touches
+/// nothing. The adapter's publication lock means no second writer gets this
+/// far through `publish`; this keeps `atomic_write` safe on its own terms,
+/// and [`remove_stale_staging`] clears what a crashed writer left.
+///
+/// A temporary file this call created never survives it: it becomes `target`
+/// on success, and is removed on any failure path. One it did not create --
+/// another writer's -- is never removed here.
 ///
 /// # Errors
 ///
@@ -38,19 +51,24 @@ use std::path::{Path, PathBuf};
 pub(super) fn atomic_write(target: &Path, bytes: &[u8]) -> io::Result<()> {
     let temp_path = sibling_temp_path(target);
 
-    let outcome = write_and_sync(&temp_path, bytes)
-        .and_then(|()| std::fs::rename(&temp_path, target))
-        .and_then(|()| sync_directory(target));
-
-    if outcome.is_err() {
-        // Best-effort: the temp file may not exist if `write_and_sync`
-        // itself never created it, or may already be gone if the rename
-        // itself succeeded and only the directory `fsync` afterwards failed
-        // — either way, this is already the error path.
-        let _ = std::fs::remove_file(&temp_path);
+    if let Err(error) = write_and_sync(&temp_path, bytes) {
+        // `AlreadyExists` means the file at `temp_path` is not this call's:
+        // another writer is staging `target`, or a crashed one left it.
+        if error.kind() != io::ErrorKind::AlreadyExists {
+            let _ = std::fs::remove_file(&temp_path);
+        }
+        return Err(error);
     }
 
-    outcome
+    if let Err(error) = std::fs::rename(&temp_path, target) {
+        let _ = std::fs::remove_file(&temp_path);
+        return Err(error);
+    }
+
+    // After the rename the temporary path is no longer this call's, so a
+    // failed directory `fsync` removes nothing: another writer may already
+    // be staging there.
+    sync_directory(target)
 }
 
 /// `fsync`s the directory containing `target`, making a preceding `rename`
@@ -84,9 +102,25 @@ fn sibling_temp_path(target: &Path) -> PathBuf {
     directory.join(format!(".{file_name}.tmp"))
 }
 
-/// Creates (or truncates) `path`, writes `bytes`, and `fsync`s the result.
+/// Removes the temporary file a writer of `target` left behind, if any.
+///
+/// Called only while the publication lock is held, when no writer that goes
+/// through the adapter can be staging `target`: whatever is there was left
+/// by a writer that crashed between creating it and renaming it, and would
+/// otherwise refuse every later write of `target` with `AlreadyExists`.
+/// Best-effort: anything that cannot be removed, such as a directory, is
+/// left for [`atomic_write`] to fail on and report.
+pub(super) fn remove_stale_staging(target: &Path) {
+    let _ = std::fs::remove_file(sibling_temp_path(target));
+}
+
+/// Creates `path`, which must not already exist, writes `bytes`, and
+/// `fsync`s the result.
 fn write_and_sync(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    let mut file = std::fs::File::create(path)?;
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)?;
     file.write_all(bytes)?;
     file.sync_all()
 }

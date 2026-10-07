@@ -144,7 +144,9 @@ must land before anything can reference them; removals are made safe by the
 retirement check above, not by ordering.
 
 Each file is written to a sibling temporary file in the same directory,
-`fsync`ed, `rename`d over its target, and, **on Unix**, the containing
+created exclusively (`create_new`, so a second writer of the same document
+is refused rather than truncating or writing into the first's staging, gap
+G4a), `fsync`ed, `rename`d over its target, and, **on Unix**, the containing
 directory is `fsync`ed once more after the rename — the target path is
 therefore only ever created by that rename, never opened directly, on every
 platform, and the rename itself is durable rather than merely atomic on
@@ -168,7 +170,9 @@ binding to a DataSource that is gone, or to replace one another's payload at
 the same revision (gap G4, `docs/roadmap/m2-publication-gap-report.md`) —
 and would stage the same document through the same temporary path. A second
 publication is refused at once with `Unwritable`, nothing written, rather
-than blocked. The lock file stays after the call; removing it would race a
+than blocked. Under the lock, `publish` first removes any staging file a
+crashed writer left, which would otherwise refuse every later write of that
+document. The lock file stays after the call; removing it would race a
 publisher opening it. It is advisory: a process that writes the files
 without it is not stopped.
 

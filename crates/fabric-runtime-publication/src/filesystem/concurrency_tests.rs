@@ -345,3 +345,23 @@ async fn current_behaviour_two_publishers_that_bypass_the_lock_at_one_revision_b
         "{error}"
     );
 }
+
+/// Gap G4a, through `publish`: a staging file a crashed writer left beside a
+/// document would refuse every later write of it (staging is created
+/// exclusively), so `publish` clears it while it holds the lock, when no
+/// writer through this adapter can own it.
+#[tokio::test]
+async fn a_staging_file_left_by_a_crashed_writer_does_not_block_the_next_publication() {
+    let dir = seeded().await;
+    std::fs::write(dir.0.join(".tenants.json.tmp"), b"[\n  \"torn").unwrap();
+
+    let next = snapshot(
+        (2, vec![tenant("acme", "pg-1", 1), tenant("globex", "pg-2", 1)]),
+        (1, vec![data_source("pg-1"), data_source("pg-2")]),
+    );
+    let report = dir.adapter().publish(&next).await.unwrap();
+
+    assert_eq!(report.tenants, DocumentOutcome::Written);
+    assert!(dir.read("tenants.json").contains("globex"));
+    assert!(!dir.0.join(".tenants.json.tmp").exists());
+}

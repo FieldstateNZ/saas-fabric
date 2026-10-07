@@ -179,7 +179,7 @@ not build.
   `HeldPayloadLost`; neither present is nothing held — see `PublicationError::HeldPayloadLost`),
   `plan` (`PublishPlan`: canonical bytes + resolved verdict
   for all three documents, computed before any write), `write` (`write_if_needed`: payload
-  then manifest, skipped entirely on `Verdict::Unchanged`), `atomic_write` (temp-file +
+  then manifest, skipped entirely on `Verdict::Unchanged`), `atomic_write` (temp-file created with `create_new` +
   `fsync` + `rename` + a directory `fsync` to make the rename itself durable, sibling to
   the target, removed on every failure path), `lock` (`PublicationLock`: an
   exclusive advisory `try_lock` on `.{tenants file}.lock`, held by `publish`
@@ -279,6 +279,10 @@ and `fabric-connector` alongside `fabric-tenant-runtime` and
 - `verdict` and `validate_snapshot` take no `Path`, open no file, and must
   stay that way — they are what makes the presence/revision tables and the
   emptying guard testable without a temporary directory.
+- `atomic_write`'s temporary file is created exclusively (`create_new`): a
+  writer that finds one already there fails with `AlreadyExists` and never
+  removes it (G4a); `publish` clears a crashed writer's leftover with
+  `remove_stale_staging` under the publication lock.
 - `atomic_write`'s temporary file is always a sibling of its target, in the
   same directory (`rename` is atomic only within a filesystem), and is
   always cleaned up on a failed create/write/`fsync`/rename/directory-`fsync`

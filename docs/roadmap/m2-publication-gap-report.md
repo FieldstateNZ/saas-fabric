@@ -308,8 +308,19 @@ enforce one.
   - every runtime reader refuses it (`json_file.rs:62-65`) and keeps its last good
     snapshot;
   - a reader that starts afterwards fails to prime (G5);
-  - the publisher's next pass is refused as `Unreadable` (`plan.rs:60-69`) until an
-    operator repairs the file.
+  - what the publisher does next depends on the document:
+    - **tenants or data sources:** every later pass is refused as `Unreadable`, even
+      at a higher revision, because the plan parses both held payloads before
+      anything else (`plan.rs:60-69`, `plan/parse.rs:42-50`). An operator must
+      repair or remove the file;
+    - **catalogue:** the plan never parses the held catalogue, only compares its
+      bytes. An ordinary publication at a higher revision replaces it; one at the
+      held revision is refused as `DivergentPayload`, and the controller then
+      re-offers at the next revision (`protocol.rs`).
+  - Since the G4a fix (see [Engineering fixes](#engineering-fixes)), overlapping
+    writers through the adapter can no longer produce such a file. A document
+    corrupted another way, by a hand edit or a writer that bypasses the adapter,
+    still recovers as above.
 - The Kubernetes adapter does not have this failure mode. The API server replaces
   one object whole.
 

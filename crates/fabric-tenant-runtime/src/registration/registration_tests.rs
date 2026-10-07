@@ -74,6 +74,47 @@ async fn data_sources_prime_before_tenant_bindings() {
     );
 }
 
+#[tokio::test(start_paused = true)]
+async fn every_refresh_reloads_data_sources_before_tenant_bindings() {
+    // Gap G1a in docs/roadmap/m2-publication-gap-report.md. With one loop per
+    // registry, either could fire first, so a refresh could apply a tenant
+    // binding naming a DataSource published alongside it before that
+    // DataSource was loaded, and serve `MissingDataSource` until the other
+    // loop caught up. The publisher writes data sources first; the reader now
+    // reads them first on every pass, not only at startup.
+    let order = Arc::new(Mutex::new(Vec::new()));
+    let data_source_source: Arc<OrderRecordingSource<DataSource>> = Arc::new(OrderRecordingSource {
+        resources: vec![data_source("shared-01", 1)],
+        order: Arc::clone(&order),
+        label: "data_sources",
+    });
+    let tenant_source: Arc<OrderRecordingSource<TenantRuntimeBinding>> = Arc::new(OrderRecordingSource {
+        resources: vec![tenant_binding("acme", 1, "shared-01")],
+        order: Arc::clone(&order),
+        label: "tenants",
+    });
+    let config = RuntimeConfig {
+        refresh_interval_seconds: 1,
+        fail_fast_on_prime: true,
+    };
+
+    let (_resolver, handles) = build_runtime(&config, tenant_source, data_source_source)
+        .await
+        .unwrap();
+    handles.refresh_now();
+    tokio::time::sleep(Duration::from_secs(2) + Duration::from_millis(500)).await;
+    handles.shutdown().await.unwrap();
+
+    let order = order.lock().unwrap_or_else(PoisonError::into_inner);
+    assert!(
+        order.len() >= 6,
+        "precondition: at least two refreshes after the prime, saw {order:?}"
+    );
+    for pair in order.chunks(2) {
+        assert_eq!(pair, ["data_sources", "tenants"], "{order:?}");
+    }
+}
+
 /// A binding with no data bindings — unusable, and unusable for a reason this
 /// crate genuinely acts on: every data request for it would fail.
 fn unusable_binding(name: &str) -> TenantRuntimeBinding {
@@ -287,12 +328,13 @@ impl ResourceSource<TenantRuntimeBinding> for PanicOnRefreshSource {
 }
 
 #[tokio::test(start_paused = true)]
-async fn a_panicking_refresher_does_not_leave_the_other_one_running() {
-    // The type's own doc says it "stops both refreshers and waits for them",
-    // and `?` on the first one meant it stopped one and *dropped* the other —
-    // which detaches the task rather than ending it. The DataSource source was
-    // observed going from one load to four across three intervals after
-    // `shutdown()` had already returned.
+async fn a_panicking_tenant_refresh_does_not_leave_data_sources_refreshing() {
+    // When each registry had its own loop, `?` on the first shutdown stopped
+    // one and *dropped* the other — which detaches the task rather than
+    // ending it. The DataSource source was observed going from one load to
+    // four across three intervals after `shutdown()` had already returned.
+    // One loop now refreshes both; this pins that a panic in the tenants half
+    // of a pass still leaves nothing polling once `shutdown` has returned.
     let config = RuntimeConfig {
         fail_fast_on_prime: false,
         refresh_interval_seconds: 1,

@@ -391,7 +391,7 @@ async fn a_failed_refresh_leaves_the_runtime_serving_the_last_good_snapshot() {
     // what actually re-reads the file.
     let loads_before = stack.tenant_loads.load(Ordering::SeqCst);
     stack.dir.write_raw("tenants.json", b"not json at all");
-    stack.handles.tenants.refresh_now();
+    stack.handles.refresh_now();
 
     // Wait for the load count to advance -- proof the refresher actually
     // reached the malformed bytes and ran the guard that refuses them, not
@@ -435,7 +435,7 @@ async fn a_malformed_published_document_does_not_deprovision_the_tenants_already
 
     let loads_before = stack.data_source_loads.load(Ordering::SeqCst);
     stack.dir.write_raw("data-sources.json", b"{not even an array}");
-    stack.handles.data_sources.refresh_now();
+    stack.handles.refresh_now();
 
     // Wait for the load count to advance -- proof the refresher actually
     // reached the malformed bytes and ran the guard that refuses them, not
@@ -514,7 +514,7 @@ async fn an_emptying_publication_is_refused_unless_it_is_intended() {
     let report = stack.dir.publisher().publish(&intended).await.unwrap();
     assert_eq!(report.tenants, DocumentOutcome::Written);
 
-    stack.handles.tenants.refresh_now();
+    stack.handles.refresh_now();
 
     // Proof that the guard was what stood between a bad sweep and a mass
     // deprovision: once the emptying publication is actually held and the

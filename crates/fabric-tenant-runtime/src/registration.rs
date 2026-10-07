@@ -8,47 +8,36 @@ use std::sync::Arc;
 use crate::resource::{RegistryResource, ResourceRefresher, ResourceRegistry, ResourceSource};
 use crate::{DataSource, RefreshHandle, RuntimeConfig, RuntimeResolver, TenantRuntimeBinding};
 
-/// The refresher handles the composition root must hold until shutdown.
+/// The refresher handle the composition root must hold until shutdown.
 ///
-/// Dropping either orphans its background task: the loop keeps polling with no
-/// way to stop it.
+/// One loop refreshes both registries, data sources first (see
+/// [`ResourceRefresher::spawn_in_order`]), so there is one handle. Dropping
+/// it orphans the background task: the loop keeps polling with no way to stop
+/// it.
 pub struct RuntimeHandles {
-    /// Controls the tenant binding refresher.
-    pub tenants: RefreshHandle,
-
-    /// Controls the DataSource refresher.
-    pub data_sources: RefreshHandle,
+    refresher: RefreshHandle,
 }
 
 impl RuntimeHandles {
-    /// Stops both refreshers and waits for them.
+    /// Asks for an immediate refresh of both registries, data sources first.
     ///
-    /// # Both, then the error
-    ///
-    /// The two shutdowns are sequenced before either result is inspected, and
-    /// that ordering is the whole of this method. Written as `?` on the first
-    /// one, a panicked tenant refresher returned early and *dropped* the
-    /// DataSource handle — which orphans rather than stops it, because a
-    /// dropped [`JoinHandle`](tokio::task::JoinHandle) detaches its task. The
-    /// loop went on polling after `shutdown` returned, which is precisely the
-    /// state this type exists to prevent, and it happened only on the path
-    /// where something had already gone wrong.
+    /// Returns immediately; see [`RefreshHandle::refresh_now`].
+    pub fn refresh_now(&self) {
+        self.refresher.refresh_now();
+    }
+
+    /// Stops the refresher and waits for it.
     ///
     /// # Errors
     ///
-    /// Returns the first join error if either background task panicked. The
-    /// tenant refresher's is reported in preference to the DataSource
-    /// refresher's; both tasks are stopped either way.
+    /// Returns the join error if the background task panicked.
     pub async fn shutdown(self) -> Result<(), tokio::task::JoinError> {
-        let tenants = self.tenants.shutdown().await;
-        let data_sources = self.data_sources.shutdown().await;
-
-        tenants.and(data_sources)
+        self.refresher.shutdown().await
     }
 }
 
-/// Validates configuration, primes both registries, and starts their
-/// refreshers.
+/// Validates configuration, primes both registries, and starts the refresher
+/// that keeps them current.
 ///
 /// The two sources are separate arguments because the two resources are
 /// reconciled independently — a DataSource change should not require
@@ -94,9 +83,15 @@ pub async fn build_runtime(
     let data_sources = prime(config, &data_source_source).await?;
     let tenants = prime(config, &tenant_source).await?;
 
+    // The same order on every refresh, for the same reason.
     let handles = RuntimeHandles {
-        data_sources: ResourceRefresher::spawn(Arc::clone(&data_sources), data_source_source, config),
-        tenants: ResourceRefresher::spawn(Arc::clone(&tenants), tenant_source, config),
+        refresher: ResourceRefresher::spawn_in_order(
+            Arc::clone(&data_sources),
+            data_source_source,
+            Arc::clone(&tenants),
+            tenant_source,
+            config,
+        ),
     };
 
     Ok((Arc::new(RuntimeResolver::new(tenants, data_sources)), handles))

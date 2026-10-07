@@ -2,15 +2,15 @@
 
 /// How the runtime keeps its reconciled state current.
 ///
-/// One setting pair for both registries. They have the same failure modes and
-/// the same staleness tolerance, and giving them separate knobs would invite a
-/// deployment where DataSources refresh every thirty seconds and tenants every
-/// hour — which produces exactly the window where a tenant binding references a
-/// DataSource the runtime has already forgotten.
+/// One setting pair for both registries. One loop refreshes them both, data
+/// sources first, so a tenant binding is never reloaded ahead of the
+/// DataSources published alongside it; separate knobs would reopen exactly
+/// the window where a tenant binding references a DataSource the runtime has
+/// not loaded or has already forgotten.
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct RuntimeConfig {
-    /// How often the background refreshers reload, in seconds.
+    /// How often the background refresher reloads, in seconds.
     ///
     /// A *safety net*, not the primary propagation mechanism. A reconciler that
     /// knows something changed should say so — through `apply_one` or by
@@ -46,7 +46,7 @@ impl RuntimeConfig {
     /// # Errors
     ///
     /// Returns a message if the refresh interval is zero, which would spin the
-    /// refreshers in a tight loop against their sources.
+    /// refresher in a tight loop against their sources.
     pub fn validate(&self) -> Result<(), String> {
         if self.refresh_interval_seconds == 0 {
             return Err("tenant_runtime.refresh_interval_seconds must be greater than zero".to_owned());

@@ -3,7 +3,7 @@
 //! # Why these are grouped
 //!
 //! Three tasks are spawned before [`build`](super::build) can know whether the
-//! rest of the graph will assemble: two registry refreshers and the connector
+//! rest of the graph will assemble: the registry refresher and the connector
 //! retry loop. Every handle's own docs say the same thing — dropping it
 //! *orphans* its task rather than stopping it — and `build` used to do exactly
 //! that on any later failure, returning `Err` from the catalogue load, the
@@ -50,7 +50,7 @@ impl BackgroundTasks {
     }
 }
 
-/// Stops both registry refreshers, logging a task that panicked.
+/// Stops the registry refresher, logging a task that panicked.
 pub(super) async fn stop_refreshers(refresh: RuntimeHandles) {
     if let Err(error) = refresh.shutdown().await {
         tracing::warn!(event = "fabric.refresher_shutdown_failed", reason = %error);

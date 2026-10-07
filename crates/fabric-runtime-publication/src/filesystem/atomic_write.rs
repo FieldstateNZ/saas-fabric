@@ -1,6 +1,11 @@
 //! Replaces one file's contents without ever exposing a partial write.
+//!
+//! In the 121-150 line band (docs/architecture/file-size-policy.md): one
+//! operation, whose create, fill, rename and cleanup steps share one rule
+//! about which temporary file is whose, so they stay together.
 
 use std::ffi::OsStr;
+use std::fs::File;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
@@ -21,7 +26,7 @@ use std::path::{Path, PathBuf};
 /// directory itself is `fsync`ed — a crash between the rename and that sync
 /// can leave the directory pointing at the old inode again after recovery,
 /// even though the new file's own bytes were already synced by
-/// [`write_and_sync`]. Opening the parent directory and calling
+/// [`fill_and_sync`]. Opening the parent directory and calling
 /// [`std::fs::File::sync_all`] on it is the standard way to make the rename
 /// itself, not just the content it points at, survive a crash. See
 /// [`sync_directory`] for why this is a no-op off Unix.
@@ -40,8 +45,9 @@ use std::path::{Path, PathBuf};
 /// and [`remove_stale_staging`] clears what a crashed writer left.
 ///
 /// A temporary file this call created never survives it: it becomes `target`
-/// on success, and is removed on any failure path. One it did not create --
-/// another writer's -- is never removed here.
+/// on success, and is removed on any failure after it was created. One it did
+/// not create -- another writer's, or whatever was at the path when the
+/// create failed for any reason -- is never removed here.
 ///
 /// # Errors
 ///
@@ -49,18 +55,28 @@ use std::path::{Path, PathBuf};
 /// written, `fsync`ed, renamed, or if the containing directory could not be
 /// opened or `fsync`ed after the rename.
 pub(super) fn atomic_write(target: &Path, bytes: &[u8]) -> io::Result<()> {
+    atomic_write_with(target, bytes, create_staging)
+}
+
+/// [`atomic_write`], with the step that creates the temporary file passed in
+/// so a test can make it fail the way the operating system can (`EMFILE`,
+/// `EACCES`, `ENOSPC`) without that being arranged on a real filesystem.
+///
+/// Ownership of the temporary path is decided by whether `create` returned
+/// a file, never by which error came back: a failed create made nothing, so
+/// whatever is at the path belongs to someone else.
+fn atomic_write_with(
+    target: &Path,
+    bytes: &[u8],
+    create: impl FnOnce(&Path) -> io::Result<File>,
+) -> io::Result<()> {
     let temp_path = sibling_temp_path(target);
+    let file = create(&temp_path)?;
 
-    if let Err(error) = write_and_sync(&temp_path, bytes) {
-        // `AlreadyExists` means the file at `temp_path` is not this call's:
-        // another writer is staging `target`, or a crashed one left it.
-        if error.kind() != io::ErrorKind::AlreadyExists {
-            let _ = std::fs::remove_file(&temp_path);
-        }
-        return Err(error);
-    }
-
-    if let Err(error) = std::fs::rename(&temp_path, target) {
+    if let Err(error) = fill_and_sync(file, bytes).and_then(|()| std::fs::rename(&temp_path, target)) {
+        // This call created the file and has not renamed it away, and the
+        // publication lock keeps every other adapter writer off this path
+        // (see `remove_stale_staging`), so the file is still this call's.
         let _ = std::fs::remove_file(&temp_path);
         return Err(error);
     }
@@ -114,13 +130,16 @@ pub(super) fn remove_stale_staging(target: &Path) {
     let _ = std::fs::remove_file(sibling_temp_path(target));
 }
 
-/// Creates `path`, which must not already exist, writes `bytes`, and
-/// `fsync`s the result.
-fn write_and_sync(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    let mut file = std::fs::OpenOptions::new()
+/// Creates the temporary file at `path`, which must not already exist.
+fn create_staging(path: &Path) -> io::Result<File> {
+    std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
-        .open(path)?;
+        .open(path)
+}
+
+/// Writes `bytes` to a freshly created temporary file and `fsync`s it.
+fn fill_and_sync(mut file: File, bytes: &[u8]) -> io::Result<()> {
     file.write_all(bytes)?;
     file.sync_all()
 }

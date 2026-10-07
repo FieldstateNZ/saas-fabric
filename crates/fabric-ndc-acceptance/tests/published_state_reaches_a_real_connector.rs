@@ -713,6 +713,62 @@ async fn a_keyed_update_changes_only_this_tenants_row() {
 }
 
 #[tokio::test]
+async fn re_keying_a_row_moves_only_this_tenants_row_and_leaves_the_shared_key_with_the_other() {
+    let test_name = "re_keying_a_row_moves_only_this_tenants_row_and_leaves_the_shared_key_with_the_other";
+    if !docker_available_or_skip(test_name) {
+        return;
+    }
+
+    let stack = Stack::up(ConnectorMode::Static);
+    let connector = build_ndc_connector(writable_config(stack.connector_base_url.clone()), None)
+        .await
+        .expect("the connector's schema should accept the keyed update mapping");
+    let composed = compose(connector, &fixtures::writable_snapshot()).await;
+
+    // The catalogue exposes `id` for writing, so a well-formed PATCH may
+    // change it. It is not malformed input; what must hold is that it moves
+    // this tenant's row and nobody else's.
+    let response = answer(
+        &composed,
+        requests::patch_raw("/articles/1", &requests::claims_for("acme"), r#"{"id":"2"}"#),
+    )
+    .await;
+    assert_eq!(response.status, StatusCode::OK, "{}", response.text);
+    assert_eq!(response.json()["affected"], 1, "{}", response.text);
+
+    assert_eq!(
+        stack.query_scalar(&format!(
+            "SELECT id FROM articles WHERE tenant_key = '{}';",
+            fixtures::ACME_DISCRIMINATOR_VALUE
+        )),
+        "2"
+    );
+    assert_eq!(
+        stack.query_scalar(&format!(
+            "SELECT id || ':' || title FROM articles WHERE tenant_key = '{}';",
+            fixtures::GLOBEX_DISCRIMINATOR_VALUE
+        )),
+        "1:Globex Playbook"
+    );
+    assert_eq!(
+        get_as(&composed, "acme", "/articles/1").await.status,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        get_as(&composed, "acme", "/articles/2").await.status,
+        StatusCode::OK
+    );
+    assert_eq!(
+        get_as(&composed, "globex", "/articles/2").await.status,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        get_as(&composed, "globex", "/articles/1").await.json()["title"],
+        "Globex Playbook"
+    );
+}
+
+#[tokio::test]
 async fn no_write_response_names_the_key_arguments_or_the_procedure() {
     let test_name = "no_write_response_names_the_key_arguments_or_the_procedure";
     if !docker_available_or_skip(test_name) {
@@ -1250,6 +1306,9 @@ async fn malformed_list_requests_are_refused_before_they_reach_the_connector() {
         "tenant_key=tenant-globex-915",
         "TENANT_KEY=tenant-globex-915",
         "id=1&id%20=2&drop%20table=1",
+        "id=a%00b",
+        "title=%00",
+        "ti%00tle=x",
     ] {
         let response = get_as(&composed, "acme", &format!("/articles?{query}")).await;
         assert_eq!(
@@ -1263,9 +1322,23 @@ async fn malformed_list_requests_are_refused_before_they_reach_the_connector() {
     }
 
     // A key built to escape a quoted SQL literal is just a key nobody holds.
-    for key in ["1'%20OR%20'1'='1", "1%3B%20DROP%20TABLE%20articles", "%00", "%25"] {
+    for key in ["1'%20OR%20'1'='1", "1%3B%20DROP%20TABLE%20articles", "%25"] {
         let response = get_as(&composed, "acme", &format!("/articles/{key}")).await;
         assert_eq!(response.status, StatusCode::NOT_FOUND, "{key}: {}", response.text);
+        assert_names_nothing_internal(&response.text);
+    }
+
+    // PostgreSQL cannot hold a NUL; that is the caller's malformed key, not a
+    // platform fault.
+    for key in ["%00", "1%00"] {
+        let response = get_as(&composed, "acme", &format!("/articles/{key}")).await;
+        assert_eq!(
+            response.status,
+            StatusCode::BAD_REQUEST,
+            "{key}: {}",
+            response.text
+        );
+        assert_eq!(response.error_code(), "bad_request", "{key}");
         assert_names_nothing_internal(&response.text);
     }
 
@@ -1304,6 +1377,7 @@ async fn malformed_write_bodies_are_rejected_cleanly_and_change_nothing() {
         r#"{"id":"9","title":"x","nonexistent":1}"#,
         r#"{"id":"9","title":"x","tenant_key":"tenant-globex-915"}"#,
         r#"{"id":"9","title":"x","TENANT_KEY":"tenant-globex-915"}"#,
+        r#"{"id":"9","title":"a\u0000b"}"#,
         r#"[{"id":"9","title":"x"},{"id":"9","title":"y","tenant_key":"tenant-globex-915"}]"#,
         oversized.as_str(),
     ];
@@ -1328,7 +1402,7 @@ async fn malformed_write_bodies_are_rejected_cleanly_and_change_nothing() {
         r#"[{"title":"x"}]"#,
         r#"{"nonexistent":1}"#,
         r#"{"tenant_key":"tenant-globex-915"}"#,
-        r#"{"id":"2"}"#,
+        r#"{"title":"a\u0000b"}"#,
     ];
     for body in patch_bodies {
         let response = answer(&composed, requests::patch_raw("/articles/1", &acme, body)).await;

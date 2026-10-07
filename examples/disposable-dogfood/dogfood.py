@@ -10,7 +10,8 @@ require `--yes`, verify the exact daemon they expect, and are never the default.
     python3 dogfood.py check           # validate what is on disk
     python3 dogfood.py enforcement     # print (never apply) the per-sandbox firewall gate and its exact inverse
     python3 dogfood.py build --yes     # git-archive the pinned commit; docker build; pull Keycloak by digest; derive it
-    python3 dogfood.py activate --yes  # fail closed unless the firewall gate is observed; prompt for the operator password; compose up; bootstrap
+    python3 dogfood.py packet          # the offline activation packet an authorizer approves; refused while check fails
+    python3 dogfood.py activate --yes --packet-sha256 <approved>  # fail closed unless the firewall gate is observed; prompt for the operator password; compose up; bootstrap
     python3 dogfood.py status          # loopback HTTP readiness evidence
     python3 dogfood.py canaries --phase pre --yes   # probe from the sandbox: host and public unreachable, loopback answers
     python3 dogfood.py reset --yes     # remove ONLY the containers and network recorded by activation
@@ -27,6 +28,7 @@ from __future__ import annotations
 
 import argparse
 import atexit
+import contextlib
 import hashlib
 import io
 import ipaddress
@@ -2146,7 +2148,7 @@ def delete_local_state(paths: Paths) -> list[str]:
     return leftovers
 
 
-def cmd_activate(paths: Paths, yes: bool) -> int:
+def cmd_activate(paths: Paths, yes: bool, approved_packet: str | None) -> int:
     if not yes:
         print("activate starts containers and creates ephemeral credentials; it needs --yes", file=sys.stderr)
         return 2
@@ -2161,6 +2163,12 @@ def cmd_activate(paths: Paths, yes: bool) -> int:
     lock = read_lock(paths, profile)
     if lock is None or lock.synthetic:
         print("refusing to activate: the lock holds synthetic image IDs; run build --yes", file=sys.stderr)
+        return 1
+    if approved_packet is None or not SHA256_PATTERN.match(approved_packet):
+        print("refusing to activate: --packet-sha256 must name the approved activation packet (`packet`)", file=sys.stderr)
+        return 2
+    if approved_packet != packet_digest(profile, lock):
+        print("refusing to activate: these artefacts do not produce the approved packet; print `packet` again and have it re-approved", file=sys.stderr)
         return 1
     if paths.ephemeral_env.exists() or paths.receipt.exists():
         print("an activation already exists (credentials or ownership receipt); reset first", file=sys.stderr)
@@ -2484,6 +2492,144 @@ def cmd_canaries(paths: Paths, phase: str, yes: bool) -> int:
     return 0 if not findings else 1
 
 
+# ---------------------------------------------------------------------------
+# packet: the one offline document an authorizer approves before activation
+# ---------------------------------------------------------------------------
+
+
+PACKET_DIGEST_PREFIX = "packet-sha256: "
+SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+
+
+def packet_text(profile: Profile, lock: Lock, rendered: Rendered) -> str:
+    """Deterministic: the same inputs always give the same bytes, so the approved packet can be compared later."""
+    gate = expected_iptables_rules(profile)
+    rows = []
+    for service, container in CONTAINER_NAMES.items():
+        limits = RESOURCE_LIMITS[service]
+        tmpfs = ", ".join(f"{path} {size // MIB} MiB" for path, size in TMPFS_SPECS[service].items())
+        rows.append(
+            f"| {container} | {lock.image_for(service)} | {USERS[service]} | {limits['mem_limit']} | {limits['cpus']} | "
+            f"{limits['pids_limit']} | {tmpfs} | {LOGGING['options']['max-file']} x {LOGGING['options']['max-size']} |"
+        )
+    probe = dict(CANARY_PROBE_LIMITS)
+    lines = [
+        "# Disposable dogfood activation packet",
+        "",
+        "Status: NOT AUTHORIZED until a named authorizer approves this exact packet (by its sha256 below) for one activation.",
+        "This profile is NOT WorkSpec, runtime or tenant acceptance. Off-host backup is not a gate for it.",
+        "",
+        "## Source and images",
+        "",
+        f"- source commit: {lock.source_commit}",
+        f"- control plane image: {lock.cp_image_id} (git archive of the commit, target control-plane-api)",
+        f"- console image: {lock.console_image_id} (git archive of the commit, target console)",
+        f"- keycloak image: {lock.keycloak_image_id} (derived FROM {lock.keycloak_base_image})",
+        f"- canary probe image: {PROBE_IMAGE}",
+        f"- daemon: ID {lock.daemon['ID']}, Name {lock.daemon['Name']}, ServerVersion {lock.daemon['ServerVersion']}",
+        "",
+        "Rendered artefacts (sha256; `check` refuses any other bytes):",
+        "",
+        *(f"- {name}: {sha256_text(text)}" for name, text in rendered.files().items()),
+        "",
+        "## Ports",
+        "",
+        f"- console: {profile.bind_address}:{profile.console_port} -> {SERVICE_CONSOLE}:{CONSOLE_PORT}/tcp",
+        f"- disposable keycloak (issuer {profile.issuer}): {profile.bind_address}:{profile.oidc_port} -> {SERVICE_KEYCLOAK}:{KEYCLOAK_PORT}/tcp",
+        f"- control plane: unpublished, {SERVICE_CP}:{CP_PORT} on {NETWORK_NAME} only",
+        f"- network: {NETWORK_NAME}, bridge {BRIDGE_NAME}, subnet {profile.subnet}, internal, IPv6 off, no masquerade",
+        f"- SSH key options: {ssh_forward_options(profile)}",
+        f"- SSH forward: {ssh_forward_command(profile)}",
+        "- sshd for the forwarding user only: AllowTcpForwarding local, PermitListen none, X11Forwarding no, PermitTTY no",
+        "",
+        "## Host firewall gate (applied by the operator before activate; activate and canaries refuse without it)",
+        "",
+        *enforcement_apply_commands(profile),
+        "",
+        "Exact inverse (after reset, one rule at a time; no flush, no policy change):",
+        "",
+        *enforcement_remove_commands(profile),
+        "",
+        f"Expected order: INPUT starts {len(gate['INPUT'])} rules, DOCKER-USER starts {len(gate['DOCKER-USER'])} rules, ESTABLISHED accepted first in each.",
+        "",
+        "## Resource ceilings",
+        "",
+        "| container | image | user | memory | cpus | pids | tmpfs | logs |",
+        "|---|---|---|---|---|---|---|---|",
+        *rows,
+        f"| {CANARY_PROBE_NAME} (transient, --rm) | {PROBE_IMAGE} | {CANARY_PROBE_USER} | {probe['--memory']} | {probe['--cpus']} | "
+        f"{probe['--pids-limit']} | none (read-only root) | none |",
+        "",
+        "## Canary plan",
+        "",
+        "Pre (`canaries --phase pre --yes`, after activate, before anyone signs in). Fails closed; writes a redacted receipt",
+        f"with `iptables -S` and the network inspect under {CANARY_DIR_NAME}/:",
+        "",
+        "- preconditions: daemon identity, ownership receipt, the three recorded containers running, the recorded network,",
+        "  the gate as the first rules of INPUT and DOCKER-USER, both loopback ports answering from the host",
+        f"- positive controls from the probe on {NETWORK_NAME}: {SERVICE_CONSOLE}:{CONSOLE_PORT}/healthz and "
+        f"{SERVICE_KEYCLOAK}:{KEYCLOAK_PORT} realm discovery must answer 200",
+        "- must be blocked (timeout, unreachable or dns; a refusal fails): the bridge gateway on every host listening port",
+        f"  observed in /proc/net/tcp and tcp6 plus {', '.join(str(p) for p in profile.protected_host_ports)}",
+        f"  and {profile.console_port}, {profile.oidc_port}; every host listener bound to a specific address;",
+        f"  {CANARY_PUBLIC_TCP[0]}:{CANARY_PUBLIC_TCP[1]}; {CANARY_PUBLIC_URL}",
+        "",
+        "Post (`canaries --phase post`, after reset and the REMOVE lines): no container, network or volume carries",
+        f"com.docker.compose.project={profile.project_name}; no container or network has this profile's names;",
+        f"interface {BRIDGE_NAME} is gone; no iptables rule names {BRIDGE_NAME} or {profile.subnet}; .out/ is gone.",
+        "",
+        "## Activation sequence",
+        "",
+        "Done before this packet could be printed: the reviewed files staged onto a detached checkout of the source",
+        "commit (README, staging), `build --yes` recording the image IDs above, `check` passing. After approval only:",
+        "",
+        "1. Install the SSH key line and sshd Match block above for the forwarding user.",
+        "2. Apply the five gate rules above.",
+        "3. `activate --yes --packet-sha256 <the sha256 below>`; it refuses if these artefacts no longer produce this",
+        "   packet. Type a new synthetic operator password at the controlling terminal.",
+        "4. `canaries --phase pre --yes`. Any failure: stop and roll back; nobody signs in.",
+        "5. Open the SSH forward; sign in at the console origin as the printed operator username.",
+        "",
+        "## Cleanup and rollback",
+        "",
+        "Rollback and cleanup are the same steps, from any point after step 1:",
+        "",
+        "1. `reset --yes`: docker rm --force each recorded container ID and docker network rm the recorded network ID,",
+        "   each re-verified first; delete .out/ by exact file name. No prune, no compose down, no volume. Images are kept.",
+        "2. The five REMOVE lines above.",
+        "3. Remove the SSH key line and the sshd Match block.",
+        "4. `canaries --phase post`; it must pass.",
+        "",
+        "If activate fails part way it removes only containers and the network it can prove it owns and deletes the",
+        "credential; continue from cleanup step 2. Nothing in this trial is persisted, so there is nothing to restore.",
+        "",
+    ]
+    body = "\n".join(lines)
+    return body + f"{PACKET_DIGEST_PREFIX}{sha256_text(body)}\n"
+
+
+def packet_digest(profile: Profile, lock: Lock) -> str:
+    return packet_text(profile, lock, render(profile, lock)).rsplit(PACKET_DIGEST_PREFIX, 1)[1].strip()
+
+
+def cmd_packet(paths: Paths) -> int:
+    with contextlib.redirect_stdout(sys.stderr):
+        checked = cmd_check(paths)
+    if checked != 0:
+        print("packet refused: `check` fails; an authorizer is never handed a packet for artefacts that do not validate", file=sys.stderr)
+        return 1
+    profile = load_profile(paths.profile_file)
+    lock = read_lock(paths, profile)
+    if lock is None or lock.synthetic:
+        print("packet refused: the lock holds synthetic image IDs; only images recorded by `build` can be authorized", file=sys.stderr)
+        return 1
+    if paths.receipt.exists() or paths.ephemeral_env.exists():
+        print("packet refused: an activation already exists; a packet is approved before activation, never after", file=sys.stderr)
+        return 1
+    sys.stdout.write(packet_text(profile, lock, render(profile, lock)))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--profile-dir", default=str(HERE), help="directory holding profile.toml (default: this directory)")
@@ -2495,10 +2641,12 @@ def main(argv: list[str] | None = None) -> int:
     build.add_argument("--yes", action="store_true")
     activate = sub.add_parser("activate", help="verify daemon + firewall gate, compose up, bootstrap the throwaway realm")
     activate.add_argument("--yes", action="store_true")
+    activate.add_argument("--packet-sha256", help="the sha256 printed at the end of the approved `packet`")
     sub.add_parser("status", help="loopback readiness evidence")
     reset = sub.add_parser("reset", help="remove only the recorded containers and network; delete rendered and ephemeral state")
     reset.add_argument("--yes", action="store_true")
     sub.add_parser("enforcement", help="print the host firewall gate and its exact inverse (never applied here)")
+    sub.add_parser("packet", help="print the offline activation packet for the authorizer; refused while check fails")
     canaries = sub.add_parser("canaries", help="fail-closed isolation evidence: pre (probe from the sandbox) or post (nothing owned remains)")
     canaries.add_argument("--phase", choices=CANARY_PHASES, required=True)
     canaries.add_argument("--yes", action="store_true")
@@ -2513,11 +2661,13 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "build":
             return cmd_build(paths, args.yes)
         if args.command == "activate":
-            return cmd_activate(paths, args.yes)
+            return cmd_activate(paths, args.yes, args.packet_sha256)
         if args.command == "status":
             return 0 if not cmd_status(paths) else 1
         if args.command == "reset":
             return cmd_reset(paths, args.yes)
+        if args.command == "packet":
+            return cmd_packet(paths)
         if args.command == "canaries":
             return cmd_canaries(paths, args.phase, args.yes)
         if args.command == "enforcement":

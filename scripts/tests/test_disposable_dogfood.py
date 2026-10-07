@@ -657,6 +657,18 @@ class CommandLine(unittest.TestCase):
         (ephemeral / "keycloak.env").write_text("KC_BOOTSTRAP_ADMIN_USERNAME=synthetic\n")
         return receipt
 
+    def activate_argv(self, digest: str | None = None) -> list[str]:
+        """`activate` with the approved packet's digest for whatever lock is on disk (a placeholder when there is none)."""
+        if digest is None:
+            digest = "0" * 64
+            try:
+                lock = dogfood.parse_lock(json.loads((self.dir / ".out" / dogfood.LOCK_NAME).read_text()), self.profile)
+                if not lock.synthetic:
+                    digest = dogfood.packet_digest(self.profile, lock)
+            except (OSError, ValueError, dogfood.ProfileError):
+                pass
+        return ["activate", "--yes", "--packet-sha256", digest]
+
     # -- no-Docker paths -------------------------------------------------
 
     def test_default_invocation_is_prepare_and_check_only(self):
@@ -748,16 +760,37 @@ class CommandLine(unittest.TestCase):
         self.prepare_real()
         self.docker.on(lambda a: a[0] == "info", GOOD_INFO)
         with mock.patch.object(dogfood, "read_iptables", lambda chain: iptables_listing(self.profile, drop_rule="DOCKER-USER")[chain]):
-            code, _, err = self.run_main(["activate", "--yes"])
+            code, _, err = self.run_main(self.activate_argv())
         self.assertEqual(code, 1)
         self.assertIn("enforcement gate not in place", err)
         self.assertEqual([c[0] for c in self.docker.calls], ["info"], "only the read-only daemon check may run before the gate is verified")
         self.assertFalse((self.dir / ".out" / ".ephemeral").exists())
 
+    def test_activate_refuses_without_the_approved_packet_digest_before_any_docker_call(self):
+        self.prepare_real()
+        for argv, expected in ((["activate", "--yes"], 2), (self.activate_argv("not-a-digest"), 2), (self.activate_argv("f" * 64), 1)):
+            with self.subTest(argv=argv):
+                code, _, err = self.run_main(argv)
+                self.assertEqual(code, expected)
+                self.assertIn("packet", err)
+        self.assertEqual(self.docker.calls, [])
+        self.assertFalse((self.dir / ".out" / ".ephemeral" / "keycloak.env").exists())
+
+    def test_activate_refuses_a_packet_approved_for_other_artefacts(self):
+        self.prepare_real()
+        approved = self.activate_argv()
+        lock_path = self.dir / ".out" / dogfood.LOCK_NAME
+        lock_path.write_text(lock_path.read_text().replace("a1" * 32, "d4" * 32))
+        self.assertEqual(self.run_main(["prepare"])[0], 0)
+        code, _, err = self.run_main(approved)
+        self.assertEqual(code, 1)
+        self.assertIn("do not produce the approved packet", err)
+        self.assertEqual(self.docker.calls, [])
+
     def test_activate_refuses_the_wrong_daemon(self):
         self.prepare_real()
         self.docker.on(lambda a: a[0] == "info", json.dumps(dict(dogfood.EXPECTED_DAEMON, Name="riley")))
-        code, _, err = self.run_main(["activate", "--yes"])
+        code, _, err = self.run_main(self.activate_argv())
         self.assertEqual(code, 1)
         self.assertIn("wrong Docker daemon", err)
         self.assertEqual(len(self.docker.calls), 1)
@@ -768,7 +801,7 @@ class CommandLine(unittest.TestCase):
         self.docker.on(lambda a: a[:2] == ["ps", "--all"] and "--format" in a, "someone-elses\nfabric-dogfood-keycloak\n")
         self.docker.on(lambda a: a[:2] == ["ps", "--all"] and "--filter" in a, "")
         self.docker.on(lambda a: a[:2] == ["network", "ls"], "bridge\nhost\nnone\n")
-        code, _, err = self.run_main(["activate", "--yes"])
+        code, _, err = self.run_main(self.activate_argv())
         self.assertEqual(code, 1)
         self.assertIn("fabric-dogfood-keycloak", err)
         self.assertEqual(self.docker.calls_matching("compose"), [], "compose up must not run on a collision")
@@ -790,7 +823,7 @@ class CommandLine(unittest.TestCase):
             dogfood.NETWORK_NAME: network_doc(project),
         })
         self.docker.on(lambda a: a[:2] == ["rm", "--force"] or a[:2] == ["network", "rm"], "")
-        code, _, err = self.run_main(["activate", "--yes"])
+        code, _, err = self.run_main(self.activate_argv())
         self.assertEqual(code, 1)
         self.assertIn("activation abandoned", err)
         up = self.docker.calls_matching("compose")
@@ -817,7 +850,7 @@ class CommandLine(unittest.TestCase):
             dogfood.NETWORK_NAME: network_doc(project),
         })
         with mock.patch.object(dogfood, "http_json", side_effect=AssertionError("no HTTP request may be made before the port is verified")):
-            code, _, err = self.run_main(["activate", "--yes"])
+            code, _, err = self.run_main(self.activate_argv())
         self.assertEqual(code, 1)
         self.assertIn("refusing to bootstrap", err)
         receipt = json.loads((self.dir / ".out" / dogfood.RECEIPT_NAME).read_text())
@@ -828,7 +861,7 @@ class CommandLine(unittest.TestCase):
     def test_activate_refuses_without_a_human_console(self):
         self.prepare_real()
         with mock.patch.object(dogfood, "human_console", lambda: None):
-            code, _, err = self.run_main(["activate", "--yes"])
+            code, _, err = self.run_main(self.activate_argv())
         self.assertEqual(code, 1)
         self.assertIn("/dev/tty", err)
         self.assertEqual(self.docker.calls, [])
@@ -839,7 +872,7 @@ class CommandLine(unittest.TestCase):
         tripwire = mock.Mock(side_effect=AssertionError("the human must not be asked for a password before every read-only check has passed"))
         with mock.patch.object(dogfood, "read_iptables", lambda chain: iptables_listing(self.profile, drop_rule="DOCKER-USER")[chain]), \
                 mock.patch.object(dogfood, "prompt_operator_password", tripwire):
-            code, _, err = self.run_main(["activate", "--yes"])
+            code, _, err = self.run_main(self.activate_argv())
         self.assertEqual(code, 1)
         self.assertIn("enforcement gate not in place", err)
         tripwire.assert_not_called()
@@ -852,7 +885,7 @@ class CommandLine(unittest.TestCase):
         prompt = mock.Mock(side_effect=dogfood.ProfileError("operator password rejected: the two entries differ"))
         with mock.patch.object(dogfood, "prompt_operator_password", prompt), \
                 mock.patch.object(dogfood, "http_json", side_effect=AssertionError("no HTTP request may follow a rejected password")):
-            code, out, err = self.run_main(["activate", "--yes"])
+            code, out, err = self.run_main(self.activate_argv())
         self.assertEqual(code, 1)
         self.assertIn("the two entries differ", err)
         self.assertIn("nothing was started", err)
@@ -871,7 +904,7 @@ class CommandLine(unittest.TestCase):
         self.docker.on(lambda a: a[:2] == ["network", "ls"], "bridge\n")
         consoles = iter([io.StringIO(), None])  # present for the availability check, gone at the prompt
         with mock.patch.object(dogfood, "human_console", lambda: next(consoles)):
-            code, _, err = self.run_main(["activate", "--yes"])
+            code, _, err = self.run_main(self.activate_argv())
         self.assertEqual(code, 1)
         self.assertIn("went away", err)
         self.assertEqual(self.docker.calls_matching("compose"), [])
@@ -896,7 +929,7 @@ class CommandLine(unittest.TestCase):
                 mock.patch.object(dogfood, "cmd_status", return_value=[]), \
                 mock.patch.object(dogfood, "evaluate_discovery", return_value=[]), \
                 mock.patch.object(dogfood, "wait_for", lambda description, probe, **_: True):
-            code, out, err = self.run_main(["activate", "--yes"])
+            code, out, err = self.run_main(self.activate_argv())
         self.assertEqual(code, 0, err)
         bootstrap.assert_called_once()
         self.assertEqual(bootstrap.call_args.args[3], SYNTHETIC_OPERATOR_PASSWORD, "the typed password is what the operator is created with")

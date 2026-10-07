@@ -208,7 +208,8 @@ python3 examples/disposable-dogfood/dogfood.py check
 python3 examples/disposable-dogfood/dogfood.py prepare --synthetic-pins   # review-only render with fake image IDs
 python3 examples/disposable-dogfood/dogfood.py enforcement     # print the host firewall gate and its exact inverse; never applied
 python3 examples/disposable-dogfood/dogfood.py build --yes     # git archive of the pin; docker build x2; pull Keycloak by digest; derive it
-python3 examples/disposable-dogfood/dogfood.py activate --yes  # fail closed unless daemon + firewall gate verify; compose up; bootstrap
+python3 examples/disposable-dogfood/dogfood.py packet          # offline activation packet for the authorizer; refused while check fails
+python3 examples/disposable-dogfood/dogfood.py activate --yes --packet-sha256 <approved>  # fail closed unless packet, daemon + firewall gate verify; compose up; bootstrap
 python3 examples/disposable-dogfood/dogfood.py status
 python3 examples/disposable-dogfood/dogfood.py canaries --phase pre --yes   # throwaway probe on the sandbox network; fail closed; redacted receipt
 python3 examples/disposable-dogfood/dogfood.py reset --yes     # remove only the recorded container/network IDs; delete local state
@@ -266,9 +267,24 @@ that digest. These two pulls are the only outbound fetches. The lock records
 the commit, three local image IDs, the base digest and the daemon identity.
 Nothing is pushed anywhere.
 
+**packet.** The one document an authorizer approves. Refused (nothing on
+stdout) while `check` fails, while the lock holds synthetic image IDs, or
+once an activation exists. Otherwise it prints, deterministically and without
+any Docker call: the source commit; the three locked image IDs, the Keycloak
+base digest, the probe image digest and the daemon identity; the SHA-256 of
+every rendered artefact; both published ports, the internal ports and the
+network; the SSH key options, forward command and `sshd` restrictions; the
+five gate rules and their exact inverse; the resource ceilings of every
+container including the probe; the canary plan for both phases; the
+activation sequence; cleanup and rollback; and the scope statement. Its last
+line is `packet-sha256: <hex>` over everything above it. The golden-output
+test in `scripts/tests/test_dogfood_packet.py` fixes those bytes.
+
 **activate.** In order, each step a refusal if it fails: a controlling
 terminal exists and is a terminal (`/dev/tty` opens read-write and
-`isatty`); `check`; lock is real, not synthetic; no credential or
+`isatty`); `check`; lock is real, not synthetic; `--packet-sha256` equals the
+digest of the packet these exact artefacts produce (so an approval cannot be
+carried over to a rebuilt image or a re-rendered file); no credential or
 ownership receipt exists; the daemon is the expected one; `iptables -S INPUT`
 and `iptables -S DOCKER-USER` are readable and contain the full gate as the
 first rules of each chain in order (unreadable, missing, reordered, or any

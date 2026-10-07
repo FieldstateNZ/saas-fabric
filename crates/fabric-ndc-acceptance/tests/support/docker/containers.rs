@@ -45,6 +45,11 @@ pub struct RunSpec {
     /// A container port to publish on an ephemeral `127.0.0.1` host port, if
     /// any -- read back afterwards with [`port`].
     pub publish: Option<u16>,
+    /// The host port to publish `publish` on, instead of an ephemeral one.
+    /// A container that is stopped and started again is given a fresh
+    /// ephemeral port by Docker, so a test that restarts the connector under
+    /// a client already holding its URL needs the port pinned.
+    pub host_port: Option<u16>,
     /// A host directory to bind-mount read-only, as `(host_dir, container_dir)`.
     pub mount_ro: Option<(std::path::PathBuf, String)>,
     /// Arguments appended after the image reference.
@@ -76,7 +81,10 @@ pub fn run(spec: &RunSpec) -> Result<Container, DockerError> {
     }
     if let Some(container_port) = spec.publish {
         args.push("-p".to_owned());
-        args.push(format!("127.0.0.1:0:{container_port}"));
+        args.push(format!(
+            "127.0.0.1:{}:{container_port}",
+            spec.host_port.unwrap_or(0)
+        ));
     }
     if let Some((host_dir, container_dir)) = &spec.mount_ro {
         args.push("-v".to_owned());
@@ -191,6 +199,16 @@ pub fn logs(container: &Container) -> Result<String, DockerError> {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     ))
+}
+
+/// Starts a stopped `container` again, keeping its name, configuration and
+/// published ports.
+///
+/// # Errors
+///
+/// A [`DockerError`] if `docker start` failed.
+pub fn start(container: &Container) -> Result<(), DockerError> {
+    process::run_checked(&["start".to_owned(), container.name.clone()]).map(|_| ())
 }
 
 /// Stops `container` without removing it.

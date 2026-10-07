@@ -80,6 +80,7 @@ impl Impostor {
             network: network.clone(),
             env: Vec::new(),
             publish: Some(80),
+            host_port: None,
             mount_ro: Some((config_dir.clone(), "/etc/nginx/conf.d".to_owned())),
             command: Vec::new(),
         })

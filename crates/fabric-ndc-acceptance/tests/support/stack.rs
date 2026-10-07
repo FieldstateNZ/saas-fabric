@@ -28,6 +28,18 @@ impl Stack {
     /// up a fresh network, seeded postgres, and the connector in `mode`.
     #[must_use]
     pub fn up(mode: ConnectorMode) -> Self {
+        Self::assemble(mode, None)
+    }
+
+    /// Like [`Stack::up`], but the connector is published on a host port
+    /// chosen up front, so [`Stack::start_connector`] brings it back at the
+    /// URL a client already negotiated against.
+    #[must_use]
+    pub fn up_restartable(mode: ConnectorMode) -> Self {
+        Self::assemble(mode, Some(free_host_port()))
+    }
+
+    fn assemble(mode: ConnectorMode, host_port: Option<u16>) -> Self {
         names::sweep_stale();
 
         let run_id = names::RunId::new();
@@ -37,7 +49,7 @@ impl Stack {
 
         let postgres = postgres::start(&run_id, &network);
         let (connector_container, connector_base_url, config_dir) =
-            connector::start(&run_id, &network, &postgres, mode);
+            connector::start(&run_id, &network, &postgres, mode, host_port);
 
         Self {
             connector_base_url,
@@ -56,6 +68,17 @@ impl Stack {
     pub fn stop_connector(&mut self) {
         if let Some(connector) = &self.connector {
             docker::stop(connector).unwrap_or_else(|error| panic!("could not stop the connector: {error}"));
+        }
+    }
+
+    /// Starts the connector again after [`Stack::stop_connector`] and waits
+    /// for it to report healthy. Postgres was never stopped, so the corpus is
+    /// whatever it was when the connector went away.
+    pub fn start_connector(&mut self) {
+        if let Some(connector) = &self.connector {
+            docker::start(connector)
+                .unwrap_or_else(|error| panic!("could not start the connector again: {error}"));
+            connector::wait_healthy(connector);
         }
     }
 
@@ -80,4 +103,16 @@ impl Drop for Stack {
         let _ = std::fs::remove_dir_all(&self.config_dir);
         let _ = docker::network_rm(&self.network);
     }
+}
+
+/// A host port nothing is bound to right now. Another process could take it
+/// before the connector does; the window is a few milliseconds, and the
+/// failure is a loud `docker run` error rather than a wrong answer.
+fn free_host_port() -> u16 {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap_or_else(|error| panic!("could not find a free host port: {error}"));
+    listener
+        .local_addr()
+        .unwrap_or_else(|error| panic!("could not read the free host port: {error}"))
+        .port()
 }

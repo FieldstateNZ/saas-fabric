@@ -36,7 +36,19 @@ export function IdentityPanel({ client }: { client: Client }) {
     return <p className="error">{identity.error ?? 'This client has no identity configuration.'}</p>
   }
 
-  const changed = roles.join(' ') !== current.roles.join(' ')
+  // Element by element, never by joining into one string. A space is legal
+  // inside a role name, so `['Billing', 'Approver']` and `['Billing Approver']`
+  // join to the same text -- and so do same-length lists such as
+  // `['Billing Approver', 'Auditor']` and `['Billing', 'Approver Auditor']`.
+  // No delimiter is safe, because any character may appear in a name.
+  //
+  // Order counts as a change, not just membership: the document keeps roles
+  // in order (`crates/fabric-client-model/src/identity.rs` holds an ordered
+  // `Vec` to preserve document order), so a reorder is a real edit to the
+  // file the operator is writing, and must be saveable.
+  const changed =
+    roles.length !== current.roles.length ||
+    roles.some((role, index) => role !== current.roles[index])
 
   return (
     <section className="identity">

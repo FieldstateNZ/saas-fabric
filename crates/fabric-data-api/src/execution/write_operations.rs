@@ -6,7 +6,7 @@ use fabric_identity::TenantIdentity;
 use serde_json::{Map, Value};
 
 use crate::execution::dispatch_write::dispatch;
-use crate::execution::row_mapping::{key_filter, to_row};
+use crate::execution::row_mapping::{key_filter, refuse_key_change, to_row};
 use crate::execution::write_integrity::RowBudget;
 use crate::{limits, DataApiError, DataApiService, OperationKind, WriteResponse};
 
@@ -55,7 +55,9 @@ impl DataApiService {
     ///
     /// # Errors
     ///
-    /// Any [`DataApiError`].
+    /// Any [`DataApiError`], including [`DataApiError::BadRequest`] if
+    /// `changes` names the resource's key field: a record's key is immutable
+    /// through an update, whether or not the value differs from `key`.
     pub async fn update(
         &self,
         identity: &TenantIdentity,
@@ -68,6 +70,8 @@ impl DataApiService {
         if changes.is_empty() {
             return Err(DataApiError::BadRequest("no fields to update".to_owned()));
         }
+
+        refuse_key_change(prepared.resource, changes)?;
 
         let spec = MutationSpec::Update {
             collection: prepared.resource.collection.clone(),

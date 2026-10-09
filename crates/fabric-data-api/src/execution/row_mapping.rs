@@ -19,6 +19,34 @@ pub(super) fn key_filter(resource: &ResourceDefinition, key: &str) -> Filter {
     }
 }
 
+/// Refuses a change set that names the resource's key field.
+///
+/// A record's key is its address: URLs, caches and references elsewhere hold
+/// it. Any mention of the key in a PATCH body is refused, even one equal to the
+/// path key, so the rule is "a PATCH body never contains the key" and a client
+/// cannot depend on a same-value key being tolerated. The comparison ignores
+/// ASCII case for the reason [`WritableFields`] gives for the discriminator:
+/// `FieldName` is case-sensitive, and the guarantee should not rest on how a
+/// backend collates column names.
+///
+/// # Errors
+///
+/// [`DataApiError::BadRequest`] if any field of `changes` is the key field.
+pub(super) fn refuse_key_change(
+    resource: &ResourceDefinition,
+    changes: &Map<String, Value>,
+) -> Result<(), DataApiError> {
+    let key_field = resource.key_field.as_str();
+
+    if changes.keys().any(|name| name.eq_ignore_ascii_case(key_field)) {
+        return Err(DataApiError::BadRequest(format!(
+            "the key field {key_field} cannot be changed by PATCH; delete the record and create it again to give it a new key"
+        )));
+    }
+
+    Ok(())
+}
+
 /// Converts a JSON object into a neutral row, validating every field name.
 ///
 /// Gated on [`WritableFields`] rather than on
@@ -160,5 +188,49 @@ mod tests {
         let writable = WritableFields::new(&open, &IsolationModel::Database);
 
         assert!(to_row(&object(r#"{"tenant_key":"anything"}"#), &writable).is_ok());
+    }
+
+    #[test]
+    fn a_change_set_naming_the_key_is_refused_whatever_its_value() {
+        let open = open();
+
+        for changes in [
+            serde_json::json!({"id": "2"}),
+            serde_json::json!({"id": "1", "name": "Alice"}),
+            serde_json::json!({"ID": "2"}),
+        ] {
+            let Value::Object(changes) = changes else {
+                unreachable!()
+            };
+            let error = refuse_key_change(&open, &changes).unwrap_err();
+
+            assert!(
+                matches!(&error, DataApiError::BadRequest(message) if message.contains("cannot be changed")),
+                "{error:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_change_set_without_the_key_is_accepted() {
+        let Value::Object(changes) = serde_json::json!({"name": "Alice", "identity": 1}) else {
+            unreachable!()
+        };
+
+        assert!(refuse_key_change(&open(), &changes).is_ok());
+    }
+
+    #[test]
+    fn the_key_is_the_resources_own_key_field_not_a_field_called_id() {
+        let keyed = resource(r#"{"data_source":"primary","collection":"customers","key_field":"sku"}"#);
+        let Value::Object(renames) = serde_json::json!({"sku": "b"}) else {
+            unreachable!()
+        };
+        let Value::Object(ordinary) = serde_json::json!({"id": 9}) else {
+            unreachable!()
+        };
+
+        assert!(refuse_key_change(&keyed, &renames).is_err());
+        assert!(refuse_key_change(&keyed, &ordinary).is_ok());
     }
 }

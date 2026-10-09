@@ -110,6 +110,11 @@ are unchanged, and no NDC vocabulary — `key_id`, `pre_check`, `_set`, a
 procedure name — appears in any response. The acceptance suite asserts that
 directly.
 
+Amended by the decision on #133 (recorded on #70): a `PATCH` whose body names
+the resource's key field is now refused with `400 bad_request`. Nothing about
+key arguments changes; the refusal happens in the Data API before any connector
+is reached.
+
 ## Consequences
 
 ### Good

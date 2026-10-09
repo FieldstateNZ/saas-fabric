@@ -240,6 +240,73 @@ async fn a_keyed_update_matching_nothing_is_not_a_partial_write() {
 }
 
 #[tokio::test]
+async fn a_patch_naming_the_key_field_is_refused_before_any_connector_is_reached() {
+    // A different value, the same value as the path key, and another casing:
+    // the rule is that a PATCH body never contains the key, not that it differs.
+    for body in [
+        json!({"id": 2}),
+        json!({"id": 1}),
+        json!({"id": "1", "name": "Renamed"}),
+        json!({"ID": 2}),
+    ] {
+        let connector = CountingConnector::reporting(1);
+
+        let response = app(&connector)
+            .oneshot(json_request("PATCH", "/customers/1", acme(), &body))
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{body}");
+        let error = body_json(response).await;
+        assert_eq!(error["error"]["code"], "bad_request", "{body}");
+        assert!(
+            error["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("cannot be changed"),
+            "{error}"
+        );
+        assert_eq!(connector.mutation_count(), 0, "{body}");
+    }
+}
+
+#[tokio::test]
+async fn an_ordinary_patch_without_the_key_still_reaches_the_connector() {
+    let connector = CountingConnector::reporting(1);
+
+    let response = app(&connector)
+        .oneshot(json_request(
+            "PATCH",
+            "/customers/1",
+            acme(),
+            &json!({"name": "Renamed"}),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(body_json(response).await["affected"], 1);
+    assert_eq!(connector.mutation_count(), 1);
+}
+
+#[tokio::test]
+async fn a_post_may_still_set_the_key_field() {
+    let connector = CountingConnector::reporting(1);
+
+    let response = app(&connector)
+        .oneshot(json_request(
+            "POST",
+            "/customers",
+            acme(),
+            &json!({"id": 9, "name": "Alice"}),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::CREATED);
+}
+
+#[tokio::test]
 async fn a_keyed_delete_claiming_several_records_is_refused() {
     // A delete addressed by key cannot honestly reach five rows. Under
     // discriminator isolation that is the shape of the worst failure there is,

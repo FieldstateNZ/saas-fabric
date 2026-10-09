@@ -187,6 +187,12 @@ each row carries and the at-most-once caveat.
    `returned_rows` alike. A control that refuses `?select=salary` and then
    returns `salary` is not a control. Do not re-add a `From<&Row>`.
 7. **Writes check `ResolvedDataSource::is_writable()` before dispatch.**
+7a. **A PATCH body never names the resource's `key_field`.**
+    `execution::row_mapping::refuse_key_change`, called from
+    `DataApiService::update` before `to_row`, answers 400 `bad_request` for any
+    case variant of the key field, equal to the path key or not. Do not narrow
+    it to "differs from the path key": that needs a read-then-write the
+    platform does not make. PATCH only; `create` still sets the key.
 7b. **A write reports success only if the backend's count agrees with what was
     sent.** `execution::write_integrity::ensure_consistent`, called from
     `dispatch_write` before the response is built. An insert of N rows must

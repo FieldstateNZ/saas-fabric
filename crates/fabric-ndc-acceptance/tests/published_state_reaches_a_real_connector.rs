@@ -713,8 +713,8 @@ async fn a_keyed_update_changes_only_this_tenants_row() {
 }
 
 #[tokio::test]
-async fn re_keying_a_row_moves_only_this_tenants_row_and_leaves_the_shared_key_with_the_other() {
-    let test_name = "re_keying_a_row_moves_only_this_tenants_row_and_leaves_the_shared_key_with_the_other";
+async fn patching_a_record_key_is_refused_and_leaves_both_tenants_rows_unchanged() {
+    let test_name = "patching_a_record_key_is_refused_and_leaves_both_tenants_rows_unchanged";
     if !docker_available_or_skip(test_name) {
         return;
     }
@@ -725,47 +725,72 @@ async fn re_keying_a_row_moves_only_this_tenants_row_and_leaves_the_shared_key_w
         .expect("the connector's schema should accept the keyed update mapping");
     let composed = compose(connector, &fixtures::writable_snapshot()).await;
 
-    // The catalogue exposes `id` for writing, so a well-formed PATCH may
-    // change it. It is not malformed input; what must hold is that it moves
-    // this tenant's row and nobody else's.
-    let response = answer(
-        &composed,
-        requests::patch_raw("/articles/1", &requests::claims_for("acme"), r#"{"id":"2"}"#),
-    )
-    .await;
-    assert_eq!(response.status, StatusCode::OK, "{}", response.text);
-    assert_eq!(response.json()["affected"], 1, "{}", response.text);
+    let acme_row = format!(
+        "SELECT id || ':' || title FROM articles WHERE tenant_key = '{}';",
+        fixtures::ACME_DISCRIMINATOR_VALUE
+    );
+    let globex_row = format!(
+        "SELECT id || ':' || title FROM articles WHERE tenant_key = '{}';",
+        fixtures::GLOBEX_DISCRIMINATOR_VALUE
+    );
+    let acme_before = stack.query_scalar(&acme_row);
+    let globex_before = stack.query_scalar(&globex_row);
+    assert_eq!(globex_before, "1:Globex Playbook");
 
-    assert_eq!(
-        stack.query_scalar(&format!(
-            "SELECT id FROM articles WHERE tenant_key = '{}';",
-            fixtures::ACME_DISCRIMINATOR_VALUE
-        )),
-        "2"
-    );
-    assert_eq!(
-        stack.query_scalar(&format!(
-            "SELECT id || ':' || title FROM articles WHERE tenant_key = '{}';",
-            fixtures::GLOBEX_DISCRIMINATOR_VALUE
-        )),
-        "1:Globex Playbook"
-    );
+    for body in [r#"{"id":"2"}"#, r#"{"id":"1","title":"Retitled"}"#] {
+        let response = answer(
+            &composed,
+            requests::patch_raw("/articles/1", &requests::claims_for("acme"), body),
+        )
+        .await;
+        assert_eq!(
+            response.status,
+            StatusCode::BAD_REQUEST,
+            "{body}: {}",
+            response.text
+        );
+        assert_eq!(
+            response.json()["error"]["code"],
+            "bad_request",
+            "{}",
+            response.text
+        );
+    }
+
+    assert_eq!(stack.query_scalar(&acme_row), acme_before);
+    assert_eq!(stack.query_scalar(&globex_row), globex_before);
     assert_eq!(
         get_as(&composed, "acme", "/articles/1").await.status,
-        StatusCode::NOT_FOUND
-    );
-    assert_eq!(
-        get_as(&composed, "acme", "/articles/2").await.status,
         StatusCode::OK
     );
     assert_eq!(
-        get_as(&composed, "globex", "/articles/2").await.status,
+        get_as(&composed, "acme", "/articles/2").await.status,
         StatusCode::NOT_FOUND
     );
     assert_eq!(
         get_as(&composed, "globex", "/articles/1").await.json()["title"],
         "Globex Playbook"
     );
+
+    let ordinary = answer(
+        &composed,
+        requests::patch_raw(
+            "/articles/1",
+            &requests::claims_for("acme"),
+            r#"{"title":"Acme Handbook, revised"}"#,
+        ),
+    )
+    .await;
+    assert_eq!(ordinary.status, StatusCode::OK, "{}", ordinary.text);
+    assert_eq!(ordinary.json()["affected"], 1, "{}", ordinary.text);
+    assert_eq!(
+        stack.query_scalar(&format!(
+            "SELECT title FROM articles WHERE id = '1' AND tenant_key = '{}';",
+            fixtures::ACME_DISCRIMINATOR_VALUE
+        )),
+        "Acme Handbook, revised"
+    );
+    assert_eq!(stack.query_scalar(&globex_row), globex_before);
 }
 
 #[tokio::test]

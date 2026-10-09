@@ -97,6 +97,19 @@ inherited from any one connector protocol or existing tool:
   means whole-record replacement; offering it here would mean a client that
   omits a field silently nulls it, which is a bad default for callers that
   may be working from a partial view of a record.
+- **A `PATCH` never changes a record's key.** The key is the resource's
+  `key_field` (`id` unless the catalogue says otherwise). A body that names it
+  is refused with `400 bad_request` before any connector is reached, and
+  nothing is written. This holds even when the value equals the path key: the
+  rule is "a `PATCH` body never contains the key field", so a client cannot
+  come to depend on a same-value key being tolerated, and the check needs no
+  comparison against the stored value (which a keyed update cannot read
+  atomically anyway). The field name is matched ignoring ASCII case. Stable
+  keys keep URLs, caches and references valid; to give a record a new key,
+  `DELETE` it and `POST` it again. `POST` and `DELETE` are unaffected. This
+  was decided on FieldstateNZ/saas-fabric#133 (direction recorded on #70) and
+  replaced an earlier behaviour in which `PATCH /articles/1` with
+  `{"id":"2"}` moved the caller's row to key `2`.
 - **No `PUT`-as-upsert either.** Create and update are distinct operations
   (`POST` vs `PATCH`) with distinct authorization scopes
   (`data:{resource}:write` governs both, but the catalogue's `operations`

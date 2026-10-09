@@ -459,6 +459,10 @@ the rest of that file uses:
 - `a_keyed_update_changes_only_this_tenants_row` — a `PATCH` from acme
   changes only acme's physical row under the shared key; `psql` shows
   globex's title unchanged, and globex's own read agrees.
+- `patching_a_record_key_is_refused_and_leaves_both_tenants_rows_unchanged` —
+  a `PATCH` from acme setting `id` is a `400 bad_request`; `psql` shows acme's
+  row still at its old key with its data, and globex's row under the same key
+  unchanged. An ordinary non-key `PATCH` in the same test still succeeds.
 - `no_write_response_names_the_key_arguments_or_the_procedure` — runs the
   cross-tenant delete, the update and the keyed delete in sequence and
   inspects every response body: no `key_id`, `key_tenant_key`, procedure

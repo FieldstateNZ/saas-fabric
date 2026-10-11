@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ClientProductResponse } from '../api/catalogue-types'
 import type { PlacementEntry, Placements } from '../api/placement-types'
 import { ClientDataTab } from './ClientDataTab'
+import { SAVED_INTENT } from '../api/lifecycle.fixture'
 
 function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -15,7 +16,7 @@ function jsonResponse(status: number, body: unknown): Response {
 
 function product(): ClientProductResponse {
   return {
-    client: { id: 'acme', displayName: 'Acme', hosts: [], realm: 'acme', revision: 'r1' },
+    client: { id: 'acme', displayName: 'Acme', hosts: [], realm: 'acme', revision: 'r1', lifecycle: SAVED_INTENT },
     product: {
       legalName: 'Acme Ltd',
       region: 'New Zealand',

@@ -14,9 +14,10 @@
 #[path = "publisher_tests.rs"]
 mod publisher_tests;
 
-use std::sync::Arc;
+use std::collections::BTreeMap;
+use std::sync::{Arc, Mutex};
 
-use fabric_core::Clock;
+use fabric_core::{BindingRevision, Clock, TenantId};
 use fabric_runtime_publication::RuntimePublication;
 
 use super::outcome::{PassOutcome, PassResult};
@@ -40,6 +41,10 @@ pub struct RuntimePublisher {
     pub(super) catalogue: Arc<dyn RuntimeCatalogueSource>,
     pub(super) target: Arc<dyn RuntimePublication>,
     pub(super) clock: Arc<dyn Clock>,
+    /// The tenants document the target accepted in the pass running now,
+    /// handed to [`PublicationState`] when it ends. Only one pass runs at a
+    /// time, so this is never shared between two.
+    pub(super) accepted: Mutex<Option<BTreeMap<TenantId, BindingRevision>>>,
 }
 
 impl RuntimePublisher {
@@ -59,6 +64,7 @@ impl RuntimePublisher {
             catalogue,
             target,
             clock,
+            accepted: Mutex::new(None),
         }
     }
 
@@ -88,10 +94,11 @@ impl RuntimePublisher {
         };
 
         let outcome = self.run_pass().await;
+        let published = self.take_accepted();
 
         self.log_pass(&outcome);
         let at_unix_seconds = self.clock.now_unix_seconds();
-        state.record(at_unix_seconds, outcome.clone());
+        state.record(at_unix_seconds, outcome.clone(), published);
 
         PassResult::Ran {
             at_unix_seconds,

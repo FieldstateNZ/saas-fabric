@@ -15,6 +15,7 @@
 //! Neither can read or change anything.
 
 mod change_catalogue;
+mod confirm_client_deletion;
 mod converge;
 mod create_client;
 mod get_catalogue;
@@ -35,8 +36,10 @@ mod secrets;
 mod secrets_path;
 mod select_component;
 mod session;
+mod tombstone_client;
 
 pub(crate) use change_catalogue::change_catalogue;
+pub(crate) use confirm_client_deletion::confirm_client_deletion;
 pub(crate) use converge::converge;
 pub(crate) use create_client::create_client;
 pub(crate) use get_catalogue::get_catalogue;
@@ -64,3 +67,4 @@ pub(crate) use registries::{
 };
 pub(crate) use secrets::{delete_secret, list_secrets, reveal_secret, secret_metadata, write_secret};
 pub(crate) use session::{redeem_session, session_config};
+pub(crate) use tombstone_client::tombstone_client;

@@ -22,6 +22,8 @@ mod client_product_response;
 mod client_response;
 mod identity_request;
 mod identity_response;
+mod lifecycle_request;
+mod lifecycle_response;
 mod operator_response;
 mod reconciliation_response;
 
@@ -30,5 +32,7 @@ pub(crate) use client_product_response::ClientProductResponse;
 pub(crate) use client_response::{ClientListResponse, ClientResponse};
 pub(crate) use identity_request::IdentityRequest;
 pub(crate) use identity_response::IdentityResponse;
+pub(crate) use lifecycle_request::{DeletionConfirmationRequest, TombstoneRequest};
+pub(crate) use lifecycle_response::LifecycleResponse;
 pub(crate) use operator_response::OperatorResponse;
 pub(crate) use reconciliation_response::ReconciliationResponse;

@@ -3,7 +3,7 @@
 
 use fabric_client_model::{
     catalogue::{ClientProductRequest, ProductActivity},
-    ClientId, ClientRevision, DesiredStateError,
+    ClientId, ClientRevision, DesiredStateError, LifecycleUse,
 };
 
 use crate::{audit, document_size, ChangeContext, ClientService, ControlPlaneError, Operator, StoredClient};
@@ -13,7 +13,8 @@ impl ClientService {
     ///
     /// # Errors
     ///
-    /// Requires the current revision; refuses destructive removal until
+    /// Requires the current revision; refuses a tombstoned client
+    /// ([`ControlPlaneError::Lifecycle`]), destructive removal until
     /// deprovisioning exists, and a document too large to store.
     pub async fn set_product(
         &self,
@@ -30,6 +31,7 @@ impl ClientService {
         if &current.revision != expected {
             return Err(ControlPlaneError::RevisionConflict);
         }
+        crate::lifecycle::require(&current.document, LifecycleUse::Edit)?;
         // `current` came from the repository, not from this request, so a
         // product section that will not parse is a stored document the
         // platform cannot read — the same failure `GET /api/clients` reports

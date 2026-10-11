@@ -5,7 +5,7 @@ use fabric_client_model::catalogue::{
 };
 use fabric_client_model::ClientId;
 
-use crate::models::{ClientResponse, ReconciliationResponse};
+use crate::models::{ClientResponse, LifecycleResponse, ReconciliationResponse};
 use crate::{ControlPlaneError, StoredClient};
 
 /// A client's product configuration, plus what each assignment resolves to.
@@ -50,6 +50,7 @@ impl ClientProductResponse {
     pub(crate) fn from_stored(
         stored: &StoredClient,
         reconciliation: ReconciliationResponse,
+        lifecycle: LifecycleResponse,
     ) -> Result<Self, ControlPlaneError> {
         let client_id = stored.document.client().id.clone();
         let product = stored
@@ -66,7 +67,7 @@ impl ClientProductResponse {
             .collect();
 
         Ok(Self {
-            client: ClientResponse::from_stored(stored),
+            client: ClientResponse::from_stored(stored, lifecycle),
             product,
             resolved,
             reconciliation,

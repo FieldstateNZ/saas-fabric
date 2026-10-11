@@ -463,10 +463,15 @@ Not yet built:
   and those services directly; what is missing is converging desired state
   *into* each one the way identity converges into Keycloak.
 - **Client deletion, and the rest of client creation.** The console creates a
-  client's document — realm, roles and product configuration — and nothing
-  else. Routing, data placement, a secret boundary and a database are still a
-  workflow nobody has designed. Deletion, and removing an application from a
-  client, need their own confirmation semantics (ADR 0008, ADR 0021).
+  client's document — realm, roles and product configuration — and shows it
+  as `incomplete` (saved intent) until provisioning, identity and publication
+  are met. A client can be tombstoned, which records retirement and retains
+  its state, and its deletion confirmed as a separate write. Both record
+  intent only: the tenant stays published, and withdrawing it from the
+  runtime is a separate operation not built yet (ADR 0021's 2026-10-11
+  amendment). Nothing deletes a
+  client's data; what deletion removes, after what retention, is not decided.
+  Removing an application from a client is still refused.
 - **Deploying what the product catalogue describes.** No controller deploys an
   application's components, issues their DNS names or certificates, or observes
   their health; the console reports all three as not observed.

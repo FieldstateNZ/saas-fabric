@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { saveProduct } from '../api/catalogue'
 import type { ClientProductResponse } from '../api/catalogue-types'
 import { useClientFormSubmit } from './useClientFormSubmit'
+import { SAVED_INTENT } from '../api/lifecycle.fixture'
 
 vi.mock('../api/catalogue', () => ({
   createClient: vi.fn(),
@@ -12,7 +13,7 @@ vi.mock('../api/catalogue', () => ({
 }))
 
 const existing: ClientProductResponse = {
-  client: { id: 'acme', displayName: 'Acme', hosts: [], realm: 'acme', revision: 'r1' },
+  client: { id: 'acme', displayName: 'Acme', hosts: [], realm: 'acme', revision: 'r1', lifecycle: SAVED_INTENT },
   product: {
     legalName: 'Acme Ltd',
     region: 'New Zealand',

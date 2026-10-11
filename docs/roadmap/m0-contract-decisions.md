@@ -546,6 +546,13 @@ Options:
 
 *Recommendation:* **A**, with retention set by #127. Owner: **Brett**.
 
+*Disposed 2026-10-11 (D01-14):* tombstone first, explicit retained state,
+confirmed deletion as a separate operation. Neither revokes the identity
+client nor deletes data, and no retention period is set. Both record intent
+only: the tenant stays published, and withdrawal from the runtime is
+deferred to its own reviewed operation. See
+[Dispositions recorded](#dispositions-recorded).
+
 **U4.2: private-network (`.internal`) clients** (**D01-15**). Sources: ADR 0021
 owed decision 4; #70 "Point 3".
 
@@ -597,6 +604,8 @@ ADR 0026.** Owner: **Brett**.
   - **B.** Creation waits for routing, data placement and a secret boundary.
   - **C.** Creation is shown with an explicit "incomplete" state.
   - *Recommendation:* **C**.
+  - *Disposed 2026-10-11:* **C**, derived from provisioning, identity and
+    publication evidence. See [Dispositions recorded](#dispositions-recorded).
 - **D01-19b: who owns a projected identity client** (ADR 0021 owed decision 5,
   `0021-…:626-628`). Evidence: §4's projection replaces entries by id
   (`0021-…:273-313`).
@@ -898,6 +907,31 @@ this document's ADR amendments act on. The comment holds the others.
 | D01-2 | Amend ADR 0023 before acceptance. Taking an already-declared compatible dedicated source is distinct from provisioning a new one, and no automatic provisioning is claimed. Platform wiring and control-plane data ownership are preserved, stale console documentation is fixed (`README.md`, `docs/architecture/control-plane.md`), and activation stays explicit and readiness-gated. #112's remaining gaps go to bounded PRs | ADR 0023 status, part 2, part 4, part 5, amendment, "Owed" |
 | D01-27 | Placements roll forward only. Referenced data sources change through revision-bumping writes. No blind placement revert or removal. Catalogue and client restoration keeps conditional writes and audit evidence. Break-glass Git effects are characterized in tests before they are claimed as rollback | ADR 0018 part 10; ADR 0023 amendment |
 | D01-19d | Reviewed amendments and acceptance go in order: 0023, then 0021, then 0026. Each owed item is reconciled with the disposition, and an unimplemented guarantee is never marked verified just because an ADR is accepted | ADR 0023 status |
+| D01-14 | Tombstone first, explicit retained state, confirmed deletion as a separate operation. No destructive action or retention period is approved. State machine and refusal tests; retention and customer-data choices surfaced separately. Withdrawal from the runtime is deferred | ADR 0021 amendment 2026-10-11 ("The rules", "Withdrawal is deferred", "Deferred, and how each is bounded") |
+| D01-19a | Explicit incomplete state until provisioning, identity and publication readiness is met; saved intent is distinguished from a usable client | ADR 0021 amendment 2026-10-11 ("The states") |
+
+**D01-14 and D01-19a: what stays open.** Built: the state machine, its
+refusals, the API and console state, and `lifecycle.withdrawal`, which reports
+a retired tenant as `pending`, `refused`, `unobserved` or `notPublished` from
+publication evidence only.
+
+**Withdrawal is deferred.** A tombstone does not take the tenant out of the
+runtime documents. Filtering it out before composition would remove a
+published binding without a revision bump, which #138's history guards
+refuse; in a multi-tenant environment that stalls publication with the
+retired binding still published. Withdrawal needs its own reviewed slice: a
+revision-bumping explicit retirement those guards can admit, with two-tenant
+and final-tenant proofs, restart and held-record tests, and reader-applied
+evidence before anything claims a tenant stopped being served.
+
+Engineering bounds for the rest come from
+[#108 comment 6113749198](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6113749198):
+no automatic deletion; a reversible-restore slice with CAS and retained
+history, not built here; no live identity, session or credential change; and
+two-step, revision-fenced, audited confirmation under existing authorization.
+Still user-only: the retention duration and export obligations, the scope and
+execution of eventual deletion, and any live identity or session change. ADR
+0021's amendment lists each under "Deferred, and how each is bounded".
 
 **Owed after acceptance.** These are not built at the base of the amendment.
 Each is tracked against [#112](https://github.com/FieldstateNZ/saas-fabric/issues/112).
@@ -937,11 +971,11 @@ IDs are not reused.
 | D01-10 | Authorization | Data-path enforcement: scopes only / OpenFGA check / layered; sub-choice 10a, deploying OpenFGA (formerly D01-11) | Layered; scopes only for the isolated M1 trial; OpenFGA enforced from M3, and for any tenant beyond the trial on every resource that declares relations |
 | D01-12 | Authorization | The administrator-role bypass and `require_scopes = false`; operator granularity | Remove the bypass, forbid disabling scopes outside tests; operators stay coarse |
 | D01-13 | Authorization | Where entitlements are enforced | Applications enforce; Fabric previews |
-| D01-14 | Lifecycle | What deprovisioning undoes (ADR 0021 owed 3; ADR 0008 Deletion) | Tombstone, retention, confirmed delete |
+| D01-14 | Lifecycle | What deprovisioning undoes (ADR 0021 owed 3; ADR 0008 Deletion) | **Disposed 2026-10-11:** tombstone first, retained state, confirmed deletion as a separate write; no destructive action or retention period. Built; retention and customer-data choices deferred. See [Dispositions recorded](#dispositions-recorded) |
 | D01-15 | Lifecycle | `.internal` private-network clients (ADR 0021 owed 4) | Follow the host kind |
 | D01-16 | Lifecycle | Client upgrades, and `automatic` for application components (ADR 0021 owed 7) | Operator save per client for the pilot |
 | D01-18 | Lifecycle | How the runtime is raised from `replicas: 0` (amends ADR 0023 §5) | Fabric reports a gate; a person flips it |
-| D01-19a | Lifecycle | What "client created" means (ADR 0021 owed 2) | Explicit "incomplete" state |
+| D01-19a | Lifecycle | What "client created" means (ADR 0021 owed 2) | **Disposed 2026-10-11:** explicit incomplete state until provisioning, identity and publication are met. Built. See [Dispositions recorded](#dispositions-recorded) |
 | D01-19b | Lifecycle | Who owns a projected identity client (ADR 0021 owed 5) | Owned by the product; hand edits refused |
 | D01-19c | Lifecycle | Activity and the size limit (ADR 0021 owed 6) | Durable audit store |
 | D01-19d | Lifecycle | Accept ADR 0021 and ADR 0026 (0026 has six owed decisions; it comes after D01-2) | **Disposed 2026-10-11:** in order 0023, 0021, 0026; owed items stay owed |

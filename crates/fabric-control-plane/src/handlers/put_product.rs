@@ -34,7 +34,7 @@ pub(crate) async fn put_product(
         .set_product(&operator, &id, request, &expected)
         .await?;
     let reconciliation = state.service.reconciliation(&stored);
-    let body = ClientProductResponse::from_stored(&stored, reconciliation)?;
+    let body = ClientProductResponse::from_stored(&stored, reconciliation, state.lifecycle(&stored).await)?;
 
     // Same reasoning as `create_client`: convergence follows the answered
     // write, and runs with this operator's own authority (ADR 0008, ADR

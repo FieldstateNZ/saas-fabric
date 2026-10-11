@@ -10,7 +10,6 @@ use fabric_runtime_publication::PublishedRevisions;
 
 use crate::publication::catalogue_hold::hold_unbound_catalogue;
 use crate::publication::outcome::{PassOutcome, WaitingReason};
-use crate::publication::protocol::publish_with_retry;
 use crate::publication::publish_error::outcome_from_publish_error;
 use crate::publication::report_outcome::outcome_from_report;
 use crate::publication::snapshot::compose;
@@ -89,7 +88,7 @@ impl RuntimePublisher {
 
         hold_unbound_catalogue(&mut snapshot, &published, &held);
 
-        match publish_with_retry(self.target.as_ref(), snapshot).await {
+        match self.offer(snapshot).await {
             Ok((report, snapshot)) => outcome_from_report(
                 report,
                 &held,

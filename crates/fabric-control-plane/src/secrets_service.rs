@@ -52,7 +52,19 @@ impl SecretsService {
         &self,
         client: &ClientId,
     ) -> Result<fabric_client_model::SecretNamespace, ControlPlaneError> {
+        self.boundary_permitting(client, None).await
+    }
+
+    /// The boundary, once the client's lifecycle permits `operation`.
+    async fn boundary_permitting(
+        &self,
+        client: &ClientId,
+        operation: Option<fabric_client_model::LifecycleUse>,
+    ) -> Result<fabric_client_model::SecretNamespace, ControlPlaneError> {
         let stored = self.clients.get(client).await?;
+        if let Some(operation) = operation {
+            crate::lifecycle::require(&stored.document, operation)?;
+        }
 
         stored
             .document

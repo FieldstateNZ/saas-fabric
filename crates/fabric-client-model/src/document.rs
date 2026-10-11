@@ -1,14 +1,14 @@
 //! The declarative document that carries a client's desired state.
 //!
-//! Over the 120-line advisory threshold. The reason is that this is one
-//! struct together with its impls: the two halves it holds, the accessors
-//! that read them, and the three operations — parse, edit, render — that
-//! produce and consume it. None of those would be reused or tested apart
-//! from the type they belong to.
+//! Over the 120-line advisory threshold: one struct with its impls — the two
+//! halves it holds, the accessors that read them, and the three operations
+//! (parse, edit, render) that produce and consume it. None of those would be
+//! reused or tested apart from the type they belong to.
 mod activity;
 mod application_identity;
 #[cfg(test)]
 mod document_tests;
+mod lifecycle;
 mod migration;
 mod parse;
 mod product;

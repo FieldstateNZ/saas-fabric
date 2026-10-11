@@ -95,17 +95,22 @@ impl SecretsService {
 
     /// Removes a secret and every version of it.
     ///
+    /// Refused for a tombstoned client, or one whose deletion is confirmed:
+    /// its state is retained, and removing a secret would not be (D01-14).
+    ///
     /// # Errors
     ///
     /// Returns [`ControlPlaneError`] if the client, boundary or secret is
-    /// absent, or the store could not be reached.
+    /// absent, the client is retired, or the store could not be reached.
     pub async fn delete(
         &self,
         operator: &Operator,
         client: &ClientId,
         path: &SecretPath,
     ) -> Result<(), ControlPlaneError> {
-        let boundary = self.boundary(client).await?;
+        let boundary = self
+            .boundary_permitting(client, Some(fabric_client_model::LifecycleUse::Remove))
+            .await?;
         let removed = self.store.delete(&boundary, path).await;
 
         audit::client_secret(

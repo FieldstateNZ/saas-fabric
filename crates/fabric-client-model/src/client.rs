@@ -5,7 +5,8 @@ use std::collections::BTreeMap;
 use fabric_core::LogicalDataSourceName;
 
 use crate::{
-    AuthorizationConfiguration, ClientId, DataIntent, Host, IdentityConfiguration, SecretsConfiguration,
+    AuthorizationConfiguration, ClientId, DataIntent, Host, IdentityConfiguration, LifecycleRecord,
+    SecretsConfiguration,
 };
 
 /// A client's desired state, as far as this increment models it.
@@ -71,4 +72,8 @@ pub struct Client {
     /// section, which reads as "this client asks for nothing" rather than
     /// an error — most documents written before this section existed.
     pub data: BTreeMap<LogicalDataSourceName, DataIntent>,
+
+    /// What desired state records about the client's lifecycle: nothing for
+    /// saved intent, a tombstone, or a tombstone and a deletion confirmation.
+    pub lifecycle: LifecycleRecord,
 }

@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { Client } from '../../api/types'
 import { Secrets } from './Secrets'
+import { SAVED_INTENT } from '../../api/lifecycle.fixture'
 
 const ACME: Client = {
   id: 'acme',
@@ -18,6 +19,7 @@ const ACME: Client = {
   hosts: [],
   realm: 'acme',
   revision: 'abc',
+  lifecycle: SAVED_INTENT,
 }
 
 const VALUE = 'a-value-that-must-not-persist'

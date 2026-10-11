@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { getIdentity } from '../api/client'
 import type { Client, Identity } from '../api/types'
 import { useInventory } from './useInventory'
+import { SAVED_INTENT } from '../api/lifecycle.fixture'
 
 vi.mock('../api/client', () => ({ getIdentity: vi.fn() }))
 
@@ -13,6 +14,7 @@ const clients: Client[] = Array.from({ length: 8 }, (_, index) => ({
   hosts: [],
   realm: `client-${String(index)}`,
   revision: 'r',
+  lifecycle: SAVED_INTENT,
 }))
 
 const identity: Identity = {

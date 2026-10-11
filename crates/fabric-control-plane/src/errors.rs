@@ -273,6 +273,13 @@ pub enum ControlPlaneError {
     #[error(transparent)]
     Selection(#[from] crate::SelectionRefusal),
 
+    /// The client's lifecycle refused the request (D01-14, D01-19a): it is
+    /// tombstoned or its deletion is confirmed, it is not ready, or a
+    /// tombstone or deletion confirmation does not follow the state machine.
+    /// See `errors::status_mapping::lifecycle`.
+    #[error(transparent)]
+    Lifecycle(#[from] fabric_client_model::LifecycleRefusal),
+
     /// This deployment converges no identity provider.
     #[error("this platform converges no identity provider")]
     ConvergenceUnavailable,

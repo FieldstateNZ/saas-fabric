@@ -121,6 +121,7 @@ export function ClientDirectory({
                 <th>Client</th>
                 <th>Domains</th>
                 <th>Realm</th>
+                <th>Lifecycle</th>
                 <th>Identity status</th>
                 <th>
                   <span className="sr-only">Open</span>

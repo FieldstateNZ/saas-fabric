@@ -1,6 +1,9 @@
 //! Whether a publication pass is running now, and what the last one did.
 
+use std::collections::BTreeMap;
 use std::sync::Mutex;
+
+use fabric_core::{BindingRevision, TenantId};
 
 use crate::publication::outcome::PassOutcome;
 use crate::running_guard::RunningFlag;
@@ -30,6 +33,11 @@ pub struct PublicationState {
 
     /// What the last completed pass found.
     last: Mutex<Option<LastPass>>,
+
+    /// The tenants the last pass that published or found nothing to change
+    /// left in the held tenants document. Kept across a later pass that
+    /// failed or was refused, because such a pass wrote nothing.
+    published: Mutex<Option<PublishedTenants>>,
 }
 
 impl PublicationState {
@@ -50,8 +58,27 @@ impl PublicationState {
         self.last.lock().ok().and_then(|last| last.clone())
     }
 
-    /// Records how a pass ended.
-    pub(super) fn record(&self, at_unix_seconds: u64, outcome: PassOutcome) {
+    /// The tenants the held tenants document carries, as of the last pass
+    /// that published or found nothing to change. `None` until one has, in
+    /// this process: the console then cannot show a tenant as published.
+    #[must_use]
+    pub fn published_tenants(&self) -> Option<PublishedTenants> {
+        self.published.lock().ok().and_then(|published| published.clone())
+    }
+
+    /// Records how a pass ended, and what it left published if it did.
+    pub(super) fn record(
+        &self,
+        at_unix_seconds: u64,
+        outcome: PassOutcome,
+        published: Option<BTreeMap<TenantId, BindingRevision>>,
+    ) {
+        if let (Some(tenants), Ok(mut held)) = (published, self.published.lock()) {
+            *held = Some(PublishedTenants {
+                at_unix_seconds,
+                tenants,
+            });
+        }
         if let Ok(mut last) = self.last.lock() {
             *last = Some(LastPass {
                 at_unix_seconds,
@@ -73,4 +100,15 @@ pub struct LastPass {
 
     /// What it found and did.
     pub outcome: PassOutcome,
+}
+
+/// The tenants a held tenants document carries, and when that was known.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PublishedTenants {
+    /// When the pass that established it finished, as seconds since the
+    /// Unix epoch.
+    pub at_unix_seconds: u64,
+
+    /// Each published tenant, at its binding revision.
+    pub tenants: BTreeMap<TenantId, BindingRevision>,
 }

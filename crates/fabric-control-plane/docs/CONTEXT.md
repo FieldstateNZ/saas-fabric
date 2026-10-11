@@ -120,6 +120,25 @@ this one's ports; only the composition root sees them.
   `GET /api/platform` component rows carry `images` (role → repository,
   `null` for a chart).
 
+## Client lifecycle (D01-14, D01-19a)
+
+States and rules are `fabric_client_model::lifecycle` (`ClientLifecycle::derive`,
+`::permits`, `LifecycleRecord::tombstone`/`::confirm_deletion`); this crate only
+gathers evidence and applies them. `lifecycle/evidence.rs` (pure) derives
+provisioning (placements cover `spec.data`), identity (reconciliation status) and
+publication (`PublicationState::published_tenants`); `ControlPlaneState::lifecycle`
+/ `::lifecycles` (`lifecycle/assess.rs`) feed every `ClientResponse.lifecycle`.
+`lifecycle::require(document, LifecycleUse)` guards `set_product` (`Edit`),
+`SecretsService::delete` (`Remove`) and the placement POST (`Place`); identity
+edits and secret writes are deliberately not guarded (remediation).
+`ClientService::tombstone` / `::confirm_deletion` (`service/retire.rs`) write
+`spec.lifecycle` plus an activity entry; routes in `routes/lifecycle.rs`; codes in
+`errors/status_mapping/lifecycle.rs`; audit S16/S17. Publication is **not** governed:
+a retired tenant stays published (withdrawal deferred). `lifecycle/withdrawal.rs`
+reports `withdrawal` (`pending`/`refused`/`unobserved`/`notPublished`) for retired
+clients from `PublicationState` evidence only; never "withdrawn". Nothing here deletes
+anything.
+
 ## Hard invariants — do not break
 
 1. **No handler may reach an identity provider.** `ControlPlaneState` holds

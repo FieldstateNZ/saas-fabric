@@ -3,6 +3,7 @@
 use http::StatusCode;
 
 mod codes;
+mod lifecycle;
 mod messages;
 mod platform;
 mod registry;
@@ -70,6 +71,9 @@ impl ControlPlaneError {
 
             // A selection's own refusals, next door for the same reason.
             Self::Selection(selection) => selection.status(),
+
+            // The lifecycle's own refusals, next door for the same reason.
+            Self::Lifecycle(refusal) => lifecycle::status(refusal),
 
             // 428, not 400. The request is well-formed; what is missing is the
             // precondition that makes it safe to apply, and 428 is the status

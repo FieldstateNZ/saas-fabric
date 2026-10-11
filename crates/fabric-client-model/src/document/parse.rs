@@ -38,6 +38,14 @@ pub(super) fn parse(text: &str) -> Result<ClientDocument, DesiredStateError> {
     let display_name = check_display_name(shape.spec.display_name)?;
     shape.spec.identity.validate()?;
     shape.spec.authorization.validate()?;
+    shape
+        .spec
+        .lifecycle
+        .check()
+        .map_err(|detail| DesiredStateError::InvalidField {
+            field: "spec.lifecycle",
+            detail: detail.to_owned(),
+        })?;
 
     let client = Client {
         id: shape.metadata.name,
@@ -47,6 +55,7 @@ pub(super) fn parse(text: &str) -> Result<ClientDocument, DesiredStateError> {
         authorization: shape.spec.authorization,
         secrets: shape.spec.secrets,
         data: shape.spec.data,
+        lifecycle: shape.spec.lifecycle,
     };
 
     Ok(ClientDocument::from_parts(raw, client))

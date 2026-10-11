@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { Catalogue, ClientProductResponse } from '../api/catalogue-types'
 import { ClientForm } from './ClientForm'
+import { SAVED_INTENT } from '../api/lifecycle.fixture'
 
 /**
  * A real `fetch` stub rather than mocked `api/catalogue` functions: the bugs
@@ -30,7 +31,7 @@ const catalogue: Catalogue = {
 }
 
 const existing: ClientProductResponse = {
-  client: { id: 'acme', displayName: 'Acme', hosts: ['acme.example.com'], realm: 'acme', revision: 'r1' },
+  client: { id: 'acme', displayName: 'Acme', hosts: ['acme.example.com'], realm: 'acme', revision: 'r1', lifecycle: SAVED_INTENT },
   product: {
     legalName: 'Acme Ltd',
     region: 'New Zealand',

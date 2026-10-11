@@ -18,7 +18,13 @@ pub(crate) async fn list_clients(
 ) -> Result<Json<ClientListResponse>, ControlPlaneError> {
     let clients = state.service.list().await?;
 
+    let lifecycles = state.lifecycles(&clients).await;
+
     Ok(Json(ClientListResponse {
-        clients: clients.iter().map(ClientResponse::from_stored).collect(),
+        clients: clients
+            .iter()
+            .zip(lifecycles)
+            .map(|(stored, lifecycle)| ClientResponse::from_stored(stored, lifecycle))
+            .collect(),
     }))
 }

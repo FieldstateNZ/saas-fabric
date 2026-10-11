@@ -391,6 +391,28 @@ async fn published_then_unchanged_on_an_identical_republish() {
         ),
         "{second:?}"
     );
+    assert_eq!(
+        state.published_tenants().expect("a pass published").tenants,
+        BTreeMap::from([(
+            fabric_core::TenantId::try_new("acme").unwrap(),
+            BindingRevision::new(1)
+        )]),
+        "what the accepted tenants document carries is recorded"
+    );
+}
+
+#[tokio::test]
+async fn nothing_is_recorded_as_published_until_a_pass_publishes() {
+    let publisher = publisher(
+        Arc::new(FakePlatform::ready(vec![], vec![])),
+        Arc::new(FakeCatalogue(Ok(CatalogDocument::new(BTreeMap::new())))),
+        Arc::new(FakePublication::new()),
+    );
+    let state = PublicationState::new();
+
+    publisher.publish_once(&state).await;
+
+    assert_eq!(state.published_tenants(), None);
 }
 
 #[tokio::test]

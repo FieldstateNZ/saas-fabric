@@ -10,6 +10,7 @@ import { Dashboard } from './Dashboard'
 import { clientHref, readRoute } from './navigation'
 import { Reconciliation } from './Reconciliation'
 import type { Inventory } from './useInventory'
+import { SAVED_INTENT } from '../api/lifecycle.fixture'
 
 // `converge` alone is mocked, not the whole module — the Console-level test
 // further down needs the real `request()` plumbing (`listClients`,
@@ -20,13 +21,14 @@ vi.mock('../api/client', async (importOriginal) => {
 })
 
 const clients: Client[] = [
-  { id: 'acme', displayName: 'Acme', hosts: ['acme.example.test'], realm: 'acme', revision: 'r1' },
+  { id: 'acme', displayName: 'Acme', hosts: ['acme.example.test'], realm: 'acme', revision: 'r1', lifecycle: SAVED_INTENT },
   {
     id: 'northstar',
     displayName: 'Northstar',
     hosts: ['north.example.test'],
     realm: 'northstar',
     revision: 'r1',
+    lifecycle: SAVED_INTENT,
   },
 ]
 
@@ -66,6 +68,13 @@ describe('phase-one console', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'Clear filters' }))
     expect(screen.getByRole('link', { name: 'Open Acme' })).toBeInTheDocument()
+  })
+
+  it('shows each client as saved intent rather than a usable client', () => {
+    render(<ClientDirectory clients={clients} inventory={inventory} />)
+
+    expect(screen.getByRole('columnheader', { name: 'Lifecycle' })).toBeInTheDocument()
+    expect(screen.getAllByText('Saved, not usable yet')).toHaveLength(clients.length)
   })
 
   it('never renders incomplete identity totals as zero or platform health as healthy', () => {

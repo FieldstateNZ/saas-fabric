@@ -136,6 +136,7 @@ fn snapshot(revision: u64, tenant_name: &str, data_source_id: &str) -> RuntimeSn
             vec![data_source(data_source_id, 1)],
         ),
         catalog: DocumentInput::new(DocumentRevision::new(revision), catalog()),
+        registry: None,
     }
 }
 
@@ -327,6 +328,7 @@ async fn a_publication_naming_a_data_source_it_does_not_publish_is_refused_befor
         tenants: DocumentInput::new(DocumentRevision::new(1), vec![tenant("acme", "missing-ds", 1)]),
         data_sources: DocumentInput::new(DocumentRevision::new(1), vec![]),
         catalog: DocumentInput::new(DocumentRevision::new(1), catalog()),
+        registry: None,
     };
 
     let error = adapter(&dir).publish(&snapshot).await.unwrap_err();
@@ -352,6 +354,7 @@ async fn retiring_a_data_source_the_held_tenants_still_bind_is_refused() {
         tenants: DocumentInput::new(DocumentRevision::new(2), vec![]).emptying_intended(),
         data_sources: DocumentInput::new(DocumentRevision::new(2), vec![]).emptying_intended(),
         catalog: DocumentInput::new(DocumentRevision::new(1), catalog()),
+        registry: None,
     };
 
     let error = publisher.publish(&retiring).await.unwrap_err();
@@ -427,6 +430,7 @@ async fn an_emptying_publication_is_refused_when_the_held_data_sources_payload_i
         tenants: DocumentInput::new(DocumentRevision::new(1), vec![tenant("acme", "sql-01", 1)]),
         data_sources: DocumentInput::new(DocumentRevision::new(1), vec![]).emptying_intended(),
         catalog: DocumentInput::new(DocumentRevision::new(1), catalog()),
+        registry: None,
     };
 
     let error = publisher.publish(&emptying).await.unwrap_err();
@@ -457,6 +461,7 @@ async fn an_emptying_publication_is_refused_when_the_held_tenants_payload_is_los
         tenants: DocumentInput::new(DocumentRevision::new(1), vec![]),
         data_sources: DocumentInput::new(DocumentRevision::new(1), vec![data_source("sql-01", 1)]),
         catalog: DocumentInput::new(DocumentRevision::new(1), catalog()),
+        registry: None,
     };
 
     let error = publisher.publish(&emptying).await.unwrap_err();
@@ -485,6 +490,7 @@ async fn retiring_a_data_source_is_refused_when_the_held_tenants_payload_is_lost
         tenants: DocumentInput::new(DocumentRevision::new(2), vec![]).emptying_intended(),
         data_sources: DocumentInput::new(DocumentRevision::new(2), vec![]).emptying_intended(),
         catalog: DocumentInput::new(DocumentRevision::new(1), catalog()),
+        registry: None,
     };
 
     let error = publisher.publish(&retiring).await.unwrap_err();
@@ -605,6 +611,7 @@ async fn a_populated_tenants_payload_with_no_manifest_still_guards_against_empty
         tenants: DocumentInput::new(DocumentRevision::new(1), vec![]),
         data_sources: DocumentInput::new(DocumentRevision::new(1), vec![data_source("sql-01", 1)]),
         catalog: DocumentInput::new(DocumentRevision::new(1), catalog()),
+        registry: None,
     };
 
     let error = adapter(&dir).publish(&refused).await.unwrap_err();

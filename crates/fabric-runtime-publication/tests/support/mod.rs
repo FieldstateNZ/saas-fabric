@@ -28,7 +28,7 @@ pub use fixtures::{
     articles_catalog, base_snapshot, data_source_id, shared_data_source, tenant_binding,
     ACME_DISCRIMINATOR_VALUE, CONNECTOR_ID, DATA_SOURCE_ID, DISCRIMINATOR_COLUMN, GLOBEX_DISCRIMINATOR_VALUE,
 };
-pub use requests::{body_json, claims_for, request, request_with_tenant_header};
+pub use requests::{body_json, claims_for, issuer_for, request, request_with_tenant_header, trusted_issuers};
 
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
@@ -273,6 +273,16 @@ pub async fn build_stack(snapshot: &RuntimeSnapshot) -> Stack {
 pub async fn build_stack_with(snapshot: &RuntimeSnapshot, reader: Reader) -> Stack {
     let dir = TempDir::new();
     dir.publisher().publish(snapshot).await.unwrap();
+    assemble(dir, reader, requests::trusted_issuers()).await
+}
+
+/// The stack over files already published into `dir`, its runtime trusting
+/// exactly `trusted_issuers`.
+pub async fn assemble(
+    dir: TempDir,
+    reader: Reader,
+    trusted_issuers: Vec<fabric_identity::TrustedIssuer>,
+) -> Stack {
     let (resolver, handles, loads) = build_reader(&dir, reader).await.unwrap();
 
     let catalog_bytes = std::fs::read(dir.catalog_path()).unwrap();
@@ -284,7 +294,7 @@ pub async fn build_stack_with(snapshot: &RuntimeSnapshot, reader: Reader) -> Sta
     // suite drives two tenants through one resolver, so each gets its own.
     let identity = build_identity(
         IdentityConfig {
-            trusted_issuers: requests::trusted_issuers(),
+            trusted_issuers,
             ..IdentityConfig::default()
         },
         Arc::new(TrustedIngressReader::new(Arc::new(FixedClock))),

@@ -40,7 +40,7 @@ would need the ban narrowed; it does not, and the ban stays whole.
 
 | ConfigMap | `data` keys |
 |---|---|
-| `fabric-runtime-tenants` | `tenants.json`, `tenants.manifest.json` |
+| `fabric-runtime-tenants` | `tenants.json`, `tenants.manifest.json`, `publication.json`, and `issuer-registry.json` once a registry is published |
 | `fabric-runtime-data-sources` | `data-sources.json`, `data-sources.manifest.json` |
 | `fabric-runtime-catalog` | `catalog.json`, `catalog.manifest.json` |
 
@@ -50,6 +50,12 @@ the two could disagree on. Only the namespace is configuration
 (`PublicationTarget`), validated as a DNS label before it can become a path
 segment. Nothing from a document ever reaches a path. Every object carries
 the label `app.kubernetes.io/managed-by: saas-fabric`.
+
+The tenants object carries the publication record and the issuer registry
+(D01-4) in the same write as the tenants payload. The object is replaced
+whole, so an unchanged registry is written back as held, never dropped
+(`tenants_object.rs`). The object is still one name, with the same verbs, so
+the RBAC is unchanged.
 
 ## How a publication goes
 

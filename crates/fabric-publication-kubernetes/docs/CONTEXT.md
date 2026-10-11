@@ -32,7 +32,11 @@ crate, by workspace rule.
   401/403 not permitted, 404 absent (reads only), 409 another writer, 422
   refused shape; 2 MiB response cap. Every error is `Unreadable`/`Unwritable`
   naming the document; never a body, URL or token.
-- `held.rs` — `Reads { tenants, data_sources, catalog: Read { held: HeldDocument, resource_version } }`,
+- `tenants_object.rs` — `tenants_object_plan` (the tenants object is written
+  when the tenants document, the record or the registry changed) and
+  `tenants_carried` (the record and, once published, `issuer-registry.json`,
+  which ride in the same object write).
+- `held.rs` — `Reads { tenants, data_sources, catalog: Read { held: HeldDocument, resource_version, record, registry } }`,
   `Reads::fetch`, `Reads::held() -> HeldDocuments`; a manifest key that will
   not parse or names another document is `Unreadable`; a wrong object name
   in the answer is `Unreadable`. `read_one` is shared with `confirm.rs`.
@@ -42,8 +46,8 @@ crate, by workspace rule.
   cannot close).
 - `object.rs` — `Keys::of(kind)` (the two `data` keys from the wire's file
   constants), `name_of(kind)` (`fabric-runtime-tenants` / `-data-sources` /
-  `-catalog`), `collection_of(ns)`, `path_of(ns, kind)`, `object_for(ns, kind, &DocumentPlan, resource_version)`
-  (both keys, `MANAGED_BY_LABEL`, the cap `OBJECT_CAP`).
+  `-catalog`), `collection_of(ns)`, `path_of(ns, kind)`, `object_for(ns, kind, &DocumentPlan, carried, resource_version)`
+  (both keys, any carried keys, `MANAGED_BY_LABEL`, the cap `OBJECT_CAP`).
 - `wire.rs` — `ConfigMap { metadata: Metadata, data }`, `Metadata { name, namespace, labels, resource_version }`
   (camelCase on the wire), `MANAGED_BY_LABEL`.
 - `errors.rs` — `Transport(String)`; `unreadable(kind, detail)`, `unwritable(kind, detail)`.

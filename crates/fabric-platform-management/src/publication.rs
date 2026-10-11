@@ -24,6 +24,8 @@
 mod catalogue_hold;
 mod catalogue_source;
 mod compose_error;
+mod exclusion;
+mod issuer_registry_source;
 mod outcome;
 mod pass;
 mod placement_history;
@@ -31,7 +33,11 @@ mod protocol;
 mod publish_error;
 mod published;
 mod publisher;
+mod readiness;
+mod readiness_evidence;
 mod reads;
+mod registry_application;
+mod registry_pass;
 mod report_outcome;
 mod snapshot;
 mod state;
@@ -41,7 +47,14 @@ pub(crate) mod testing;
 
 pub use catalogue_source::{CatalogueSourceError, RuntimeCatalogueSource};
 pub use compose_error::ComposeError;
+pub use exclusion::Exclusion;
+pub use issuer_registry_source::{
+    Excluded, IssuerRegistrySource, Registrations, RegistryEvidence, RegistrySourceError,
+};
 pub use outcome::{PassOutcome, PassResult, WaitingReason};
+pub use published::Accepted;
 pub use publisher::RuntimePublisher;
+pub use readiness::{GateStatus, ReadinessReport, RegistryApplication};
+pub use readiness_evidence::{ReadinessEvidence, RegistryEvidenceSummary};
 pub use snapshot::compose;
 pub use state::{LastPass, PublicationState, PublishedTenants};

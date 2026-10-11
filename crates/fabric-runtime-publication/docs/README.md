@@ -213,6 +213,32 @@ interrupted. The controller in `fabric-platform-management` re-offers an
 `Unwritable` snapshot at once, in the same pass, rather than leaving the
 mixed set for its next pass.
 
+## The issuer registry
+
+`registry.rs` is the D01-4 handoff: which issuer names which tenant, as one
+generation that Fabric produces and platform composition applies at the edge
+and in the runtime's `[identity].trusted_issuers`. It is carried with the
+tenants document, in `issuer-registry.json` beside `tenants.json`.
+`publication.json` names its `generation` and the sha256 of its bytes, so
+it and the tenants list it came from are one generation. See ADR 0018,
+"The issuer registry".
+
+- `RuntimeSnapshot.registry` is `None` when the caller produces no registry.
+  `Some` holds the registrations; the publisher stamps the generation.
+- The generation starts at 1 and advances only when the registrations
+  change. A catalogue change leaves it alone. No generation is stamped on
+  two different sets of bytes, committed or not (`registry/generation_choice.rs`),
+  and past `u64::MAX` a change is refused.
+- The publisher refuses (`PublicationError::Registry`):
+  - an issuer registered twice;
+  - a tenant the same snapshot's tenants document does not bind;
+  - a snapshot without a registry once one is published.
+- `IssuerOrigin::issuer(realm)` is the only way the control plane names an
+  issuer. Every issuer is exactly `https://<host>[:<port>]/realms/<realm>`.
+- `tests/issuer_registry_generation.rs` pins determinism, monotonicity, the
+  refusals, interruption recovery, and that the registry's issuers are the
+  runtime's `trusted_issuers` unchanged (ADR 0019 G4a).
+
 ## Gotchas
 
 - The crate is `fabric-runtime-publication` (hyphen), the Rust identifier is

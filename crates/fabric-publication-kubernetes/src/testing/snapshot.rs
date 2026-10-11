@@ -65,5 +65,6 @@ pub(crate) fn snapshot(revision: u64) -> RuntimeSnapshot {
         tenants: DocumentInput::new(DocumentRevision::new(revision), vec![tenant]),
         data_sources: DocumentInput::new(DocumentRevision::new(revision), vec![source]),
         catalog: DocumentInput::new(DocumentRevision::new(revision), CatalogDocument::new(resources)),
+        registry: None,
     }
 }

@@ -94,10 +94,14 @@ not build.
   is the resource revision, reused directly on `TenantBindingDocument.revision`
   and `DataSourceDocument.revision`. Do not conflate the two; see the type's
   own rustdoc.
-- `CONTRACT_VERSION: u32 = 2`. Raised from 1 with the release rollback floor
-  (D01-21, `compatibility.yaml`). Every record states it as
-  `minimum_publisher_contract`, so publishers built at 1 (#136 to #138)
-  refuse what this one writes. `rollback_floor::check_publisher_floor` reads
+- `CONTRACT_VERSION: u32 = 3`. Raised from 1 to 2 with the release rollback
+  floor (D01-21, `compatibility.yaml`), and from 2 to 3 for the record's
+  `registry` key (#140). Every record states it as
+  `minimum_publisher_contract`, so publishers built at 1 (#136 to #138) or 2
+  (#139) refuse what this one writes, by the floor. Held manifests keep the
+  contract they were written at until their document's next revision -- the
+  Kubernetes adapter included, when it rewrites the tenants object for a new
+  record or registry only. `rollback_floor::check_publisher_floor` reads
   only that floor, before the rest of a held record.
 - File name constants: `TENANTS_FILE`, `TENANTS_MANIFEST_FILE`,
   `DATA_SOURCES_FILE`, `DATA_SOURCES_MANIFEST_FILE`, `CATALOG_FILE`,
@@ -145,6 +149,36 @@ not build.
   `Unwritable { document, cause }`.
 - `FilesystemRuntimePublication` — the adapter. `new(tenants_path, data_sources_path,
   catalog_path)` (each `impl Into<PathBuf>`); implements `RuntimePublication`.
+
+## The issuer registry (D01-4)
+
+- `IssuerRegistryDocument` — `issuer-registry.json`:
+  `{schemaVersion, generation, issuers}`. These are the platform contract's
+  keys, hence the camel case. `new(generation, issuers)` sorts by issuer
+  and refuses a duplicate. `canonical_json`.
+- `IssuerRegistration { issuer: RegistryIssuer, tenant: TenantId }` —
+  `fabric_identity::TrustedIssuer`'s shape, field for field.
+- `RegistryIssuer` — exactly `https://<host>[:<port>]/realms/<realm>`.
+  `IssuerOrigin` is `https://<host>[:<port>]`, and its `issuer(realm)`
+  names a realm's issuer. `IssuerError`.
+- `RegistryGeneration` — `u64`, at least 1, with `FIRST` and `next() ->
+  Option<Self>` (no saturating fallback).
+- `RecordedRegistry { generation, sha256 }` — the record's optional
+  `registry` key, omitted while none is published.
+- `RegistryPlan` — `outcome`, `document`, `bytes`; `recorded()`.
+  `generation_choice::generation_for` keeps the committed generation while
+  the registrations render to the recorded digest and no uncommitted registry
+  is ahead of it, keeps an uncommitted on-disk generation only for exactly its
+  bytes, and otherwise takes one past the highest of the two; unparseable held
+  bytes are `Unreadable`, and overflow is `GenerationExhausted`.
+- `RegistryRefusal` — `DuplicateIssuer`, `TenantUnbound`, `GenerationExhausted`, `Withdrawn`;
+  carried as `PublicationError::Registry`.
+- `RuntimeSnapshot.registry: Option<Vec<IssuerRegistration>>`,
+  `HeldDocuments.registry` (held bytes), `PublicationPlan.registry`,
+  `PublicationReport.registry: Option<RegistryOutcome>` and
+  `PublishedRevisions.registry: Option<RegistryGeneration>`.
+- `ISSUER_REGISTRY_FILE = "issuer-registry.json"`. The filesystem adapter
+  writes it after `tenants.json` and before the record.
 
 ## Internal modules
 

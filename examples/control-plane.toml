@@ -217,6 +217,14 @@ mode = "in_memory"
 #     # working -- `POST /api/platform/publication` still publishes on
 #     # demand either way.
 #     interval_seconds = 60
+#
+#     # The identity provider's public origin. Stated, every pass also
+#     # publishes the issuer registry (D01-4): each client whose lifecycle
+#     # permits routing, registered as `<origin>/realms/<realm>`, for platform
+#     # composition to apply at the edge and in the runtime's trusted issuers.
+#     # Leave it unset until the live trust configuration is approved; once a
+#     # registry is published, dropping this setting refuses every pass.
+#     # issuer_origin = "https://identity.example.com"
 
 
 # ---------------------------------------------------------------------------

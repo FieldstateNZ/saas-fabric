@@ -2,7 +2,7 @@
 
 use crate::{
     DocumentKind, DocumentOutcome, DocumentPlan, PublicationError, PublicationRecord, RecordedDocument,
-    RecordedDocuments, ResourceHistory,
+    RecordedDocuments, RegistryPlan, ResourceHistory,
 };
 
 /// The record's decided fate: written whenever the generation it names
@@ -19,8 +19,8 @@ pub struct RecordPlan {
     pub bytes: Vec<u8>,
 }
 
-/// Names each planned document's bytes and revision, and the resource
-/// history including them, and advances the generation when that differs
+/// Names each planned document's bytes and revision, the resource history
+/// including them and the registry generation, and advances the generation when that differs
 /// from the held record.
 ///
 /// A held record left by an interrupted publication names documents that may
@@ -30,11 +30,11 @@ pub struct RecordPlan {
 /// starts at 1.
 pub(super) fn decide(
     held: Option<PublicationRecord>,
-    data_sources: &DocumentPlan,
-    catalog: &DocumentPlan,
-    tenants: &DocumentPlan,
+    [data_sources, catalog, tenants]: [&DocumentPlan; 3],
     resources: ResourceHistory,
+    registry: Option<&RegistryPlan>,
 ) -> Result<RecordPlan, PublicationError> {
+    let registry = registry.map(RegistryPlan::recorded);
     let documents = RecordedDocuments {
         tenants: RecordedDocument::of(tenants.revision, &tenants.bytes),
         data_sources: RecordedDocument::of(data_sources.revision, &data_sources.bytes),
@@ -43,17 +43,20 @@ pub(super) fn decide(
 
     let (outcome, record) = match held {
         Some(held)
-            if PublicationRecord::new(held.generation(), documents.clone(), resources.clone()) == held =>
+            if PublicationRecord::new(held.generation(), documents.clone(), resources.clone())
+                .with_registry(registry.clone())
+                == held =>
         {
             (DocumentOutcome::Unchanged, held)
         }
         Some(held) => (
             DocumentOutcome::Written,
-            PublicationRecord::new(held.generation().saturating_add(1), documents, resources),
+            PublicationRecord::new(held.generation().saturating_add(1), documents, resources)
+                .with_registry(registry),
         ),
         None => (
             DocumentOutcome::Written,
-            PublicationRecord::new(1, documents, resources),
+            PublicationRecord::new(1, documents, resources).with_registry(registry),
         ),
     };
 

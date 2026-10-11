@@ -128,5 +128,6 @@ pub fn base_snapshot(revision: u64) -> RuntimeSnapshot {
             vec![shared_data_source(revision)],
         ),
         catalog: DocumentInput::new(DocumentRevision::new(revision), articles_catalog()),
+        registry: None,
     }
 }

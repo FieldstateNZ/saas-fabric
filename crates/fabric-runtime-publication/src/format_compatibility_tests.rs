@@ -1,16 +1,17 @@
 //! Format and migration compatibility of the publication record across the
 //! publisher rollback floor (D01-21).
 //!
-//! Three formats are in play. Contract 1 without `resources` is what #136
-//! wrote, contract 1 with `resources` is what #138 wrote, and contract 2 is
-//! what this release writes. The older two are spelled out as JSON here, key
-//! for key, rather than produced by today's types. A fixture built by the
-//! code under test would move whenever that code moved.
+//! Four formats are in play. Contract 1 without `resources` is what #136
+//! wrote, contract 1 with `resources` is what #138 wrote, contract 2 is what
+//! #139 wrote, and contract 3 -- which may carry `registry` (#140) -- is
+//! what this release writes. The older three are spelled out as JSON here,
+//! key for key, rather than produced by today's types. A fixture built by
+//! the code under test would move whenever that code moved.
 //!
 //! An older binary is stood in for by
 //! [`check_publisher_floor`](crate::rollback_floor::check_publisher_floor)
-//! at contract 1. Every publisher since #136 runs that check, against its
-//! own constant, before it reads anything else in the record.
+//! at contract 1 or 2. Every publisher since #136 runs that check, against
+//! its own constant, before it reads anything else in the record.
 
 use fabric_core::{BindingRevision, DataSourceId};
 use serde_json::json;
@@ -30,6 +31,10 @@ const CATALOG_JSON: &str = include_str!("../../../examples/catalog.json");
 /// The contract every publisher from #136 to #138 was built at.
 const CONTRACT_ONE: u32 = 1;
 
+/// The contract #139's publisher was built at: it knows `resources`, and not
+/// `registry`.
+const CONTRACT_TWO: u32 = 2;
+
 fn snapshot() -> RuntimeSnapshot {
     let tenants: Vec<TenantBindingDocument> = serde_json::from_str(TENANTS_JSON).unwrap();
     let data_sources: Vec<DataSourceDocument> = serde_json::from_str(DATA_SOURCES_JSON).unwrap();
@@ -38,6 +43,7 @@ fn snapshot() -> RuntimeSnapshot {
         tenants: DocumentInput::new(DocumentRevision::new(4), tenants),
         data_sources: DocumentInput::new(DocumentRevision::new(4), data_sources),
         catalog: DocumentInput::new(DocumentRevision::new(4), catalog),
+        registry: None,
     }
 }
 
@@ -58,6 +64,7 @@ fn held_by_contract_one(published: &PublicationPlan, record: &serde_json::Value)
         data_sources: held("data-sources", &published.data_sources.bytes),
         catalog: held("catalog", &published.catalog.bytes),
         record: Some(serde_json::to_vec(record).unwrap()),
+        registry: None,
     }
 }
 
@@ -143,12 +150,13 @@ fn a_record_in_the_138_format_keeps_its_resource_history_across_the_floor_raise(
 }
 
 #[test]
-fn this_contract_is_above_the_one_the_136_to_138_publishers_were_built_at() {
+fn this_contract_is_above_the_ones_the_136_to_139_publishers_were_built_at() {
     assert_eq!(
         CONTRACT_VERSION,
-        CONTRACT_ONE + 1,
-        "the release floor raised the publisher contract by one"
+        CONTRACT_TWO + 1,
+        "the issuer registry raised the publisher contract by one"
     );
+    const { assert!(CONTRACT_TWO > CONTRACT_ONE) };
     assert_eq!(
         MINIMUM_READER_CONTRACT, 1,
         "readers from #136 on still serve what this writes"
@@ -217,4 +225,181 @@ fn a_contract_one_manifest_is_still_read_as_the_documents_revision() {
         DocumentKind::Tenants
     );
     assert_eq!(held.revisions().tenants, Some(DocumentRevision::new(4)));
+}
+
+/// [`snapshot`] carrying an issuer registry (D01-4) for its first tenant.
+fn snapshot_with_registry() -> RuntimeSnapshot {
+    let mut snapshot = snapshot();
+    let tenant = snapshot.tenants.payload[0].tenant.clone();
+    snapshot.registry = Some(vec![crate::IssuerRegistration {
+        issuer: crate::RegistryIssuer::parse(&format!("https://identity.example.invalid/realms/{tenant}"))
+            .unwrap(),
+        tenant,
+    }]);
+    snapshot
+}
+
+#[test]
+fn a_record_carrying_a_registry_keeps_this_contracts_floors_and_a_contract_one_publisher_refuses_it_by_its_floor(
+) {
+    let written = plan_publication(&snapshot_with_registry(), &HeldDocuments::default()).unwrap();
+    let record: serde_json::Value = serde_json::from_slice(&written.record.bytes).unwrap();
+
+    assert_eq!(record["contract_version"], CONTRACT_VERSION);
+    assert_eq!(record["minimum_publisher_contract"], CONTRACT_VERSION);
+    assert_eq!(record["minimum_reader_contract"], MINIMUM_READER_CONTRACT);
+    assert_eq!(record["registry"]["generation"], 1);
+    assert!(record["resources"].is_object(), "{record}");
+    assert_eq!(
+        PublicationRecord::parse_held(&written.record.bytes).unwrap(),
+        written.record.record
+    );
+    for old in [CONTRACT_ONE, CONTRACT_TWO] {
+        assert!(
+            matches!(
+                check_publisher_floor(&written.record.bytes, old),
+                Err(PublicationError::BelowRollbackFloor { floor, publisher })
+                    if floor == CONTRACT_VERSION && publisher == old
+            ),
+            "the registry key never reaches a contract-{old} publisher"
+        );
+    }
+}
+
+#[test]
+fn a_registry_added_over_a_138_format_record_keeps_its_history_and_raises_the_floor() {
+    let published = this_release();
+    let held = held_by_contract_one(&published, &record_138(&published));
+
+    let next = plan_publication(&snapshot_with_registry(), &held).unwrap();
+
+    assert_eq!(next.record.record.minimum_publisher_contract(), CONTRACT_VERSION);
+    assert_eq!(next.record.record.registry().unwrap().generation.get(), 1);
+    assert_eq!(
+        next.record
+            .record
+            .resources()
+            .data_source(&DataSourceId::try_new("retired-postgres").unwrap()),
+        Some(BindingRevision::new(5))
+    );
+}
+
+#[test]
+fn an_unchanged_republication_with_a_registry_rewrites_neither_the_registry_nor_the_record() {
+    let first = plan_publication(&snapshot_with_registry(), &HeldDocuments::default()).unwrap();
+    let held_document = |document: DocumentKind, plan: &crate::DocumentPlan| HeldDocument {
+        manifest: Some(DocumentManifest::new(document, plan.revision)),
+        payload: Some(plan.bytes.clone()),
+    };
+    let held = HeldDocuments {
+        tenants: held_document(DocumentKind::Tenants, &first.tenants),
+        data_sources: held_document(DocumentKind::DataSources, &first.data_sources),
+        catalog: held_document(DocumentKind::Catalog, &first.catalog),
+        record: Some(first.record.bytes.clone()),
+        registry: first.registry.as_ref().map(|registry| registry.bytes.clone()),
+    };
+
+    let next = plan_publication(&snapshot_with_registry(), &held).unwrap();
+
+    assert_eq!(next.record.outcome, DocumentOutcome::Unchanged);
+    assert_eq!(next.registry.unwrap().outcome, DocumentOutcome::Unchanged);
+}
+
+/// A manifest as a contract-2 publisher (#139) wrote it.
+fn contract_two_manifest(document: &str) -> DocumentManifest {
+    serde_json::from_value(json!({ "contract_version": 2, "document": document, "revision": 4 })).unwrap()
+}
+
+/// The record #139 wrote: contract 2, both floors as #139 set them,
+/// resource history, no registry.
+fn record_139(published: &PublicationPlan) -> serde_json::Value {
+    let mut record = record_138(published);
+    record["contract_version"] = json!(CONTRACT_TWO);
+    record["minimum_publisher_contract"] = json!(CONTRACT_TWO);
+    record
+}
+
+fn held_by_contract_two(published: &PublicationPlan) -> HeldDocuments {
+    let held = |document: &str, bytes: &[u8]| HeldDocument {
+        manifest: Some(contract_two_manifest(document)),
+        payload: Some(bytes.to_vec()),
+    };
+    HeldDocuments {
+        tenants: held("tenants", &published.tenants.bytes),
+        data_sources: held("data-sources", &published.data_sources.bytes),
+        catalog: held("catalog", &published.catalog.bytes),
+        record: Some(serde_json::to_vec(&record_139(published)).unwrap()),
+        registry: None,
+    }
+}
+
+#[test]
+fn the_contract_two_to_three_migration_rewrites_only_the_record_and_adds_the_registry() {
+    let published = this_release();
+    let held = held_by_contract_two(&published);
+
+    let next = plan_publication(&snapshot_with_registry(), &held).unwrap();
+
+    for document in [&next.tenants, &next.data_sources, &next.catalog] {
+        assert_eq!(
+            document.outcome,
+            DocumentOutcome::Unchanged,
+            "no payload and no contract-2 manifest is rewritten"
+        );
+    }
+    assert_eq!(next.tenants.bytes, published.tenants.bytes);
+    assert_eq!(next.record.outcome, DocumentOutcome::Written);
+    assert_eq!(next.record.record.generation(), 7);
+    assert_eq!(next.record.record.minimum_publisher_contract(), CONTRACT_VERSION);
+    assert_eq!(
+        next.record.record.minimum_reader_contract(),
+        MINIMUM_READER_CONTRACT
+    );
+    assert_eq!(next.record.record.registry().unwrap().generation.get(), 1);
+    assert_eq!(
+        next.record
+            .record
+            .resources()
+            .data_source(&DataSourceId::try_new("retired-postgres").unwrap()),
+        Some(BindingRevision::new(5)),
+        "#139's resource history survives the migration"
+    );
+}
+
+#[test]
+fn a_contract_two_record_without_a_registry_is_still_read_by_this_release() {
+    let published = this_release();
+    let record = serde_json::to_vec(&record_139(&published)).unwrap();
+
+    check_publisher_floor(&record, CONTRACT_VERSION).unwrap();
+    assert_eq!(
+        PublicationRecord::parse_held(&record)
+            .unwrap()
+            .minimum_publisher_contract(),
+        CONTRACT_TWO
+    );
+}
+
+#[test]
+fn a_contract_two_publisher_refuses_this_releases_registry_record_before_it_reads_the_registry() {
+    let written = plan_publication(&snapshot_with_registry(), &held_by_contract_two(&this_release()))
+        .unwrap()
+        .record
+        .bytes;
+    let mut unparsable_registry: serde_json::Value = serde_json::from_slice(&written).unwrap();
+    // A registry shape no publisher understands: the floor must refuse the
+    // record before anything tries to read it.
+    unparsable_registry["registry"] = json!("not a registry");
+
+    for record in [written, serde_json::to_vec(&unparsable_registry).unwrap()] {
+        let refused = check_publisher_floor(&record, CONTRACT_TWO).unwrap_err();
+        assert!(
+            matches!(
+                refused,
+                PublicationError::BelowRollbackFloor { floor, publisher }
+                    if floor == CONTRACT_VERSION && publisher == CONTRACT_TWO
+            ),
+            "{refused}"
+        );
+    }
 }

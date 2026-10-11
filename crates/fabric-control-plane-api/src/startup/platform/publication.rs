@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use fabric_control_plane::PublicationSink;
 use fabric_publication_kubernetes::{KubernetesRuntimePublication, PublicationTarget};
-use fabric_runtime_publication::RuntimePublication;
+use fabric_runtime_publication::{IssuerOrigin, RuntimePublication};
 
 use crate::config::PublicationConfig;
 
@@ -17,19 +17,27 @@ use crate::config::PublicationConfig;
 ///
 /// # Errors
 ///
-/// A message when the namespace is not a DNS label, or the cluster trust
-/// root cannot be read -- `KubernetesRuntimePublication::in_cluster`'s own
-/// two failures. Never a credential.
+/// A message when the issuer origin is not `https://<host>[:<port>]`, the
+/// namespace is not a DNS label, or the cluster trust root cannot be read --
+/// the last two `KubernetesRuntimePublication::in_cluster`'s own. Never a
+/// credential.
 pub(super) fn build_sink(config: Option<&PublicationConfig>) -> Result<Option<PublicationSink>, String> {
     let Some(config) = config else {
         return Ok(None);
     };
 
+    let issuer_origin = config
+        .issuer_origin
+        .as_deref()
+        .map(IssuerOrigin::parse)
+        .transpose()
+        .map_err(|error| format!("[platform_management.publication].issuer_origin: {error}"))?;
     let target = KubernetesRuntimePublication::in_cluster(PublicationTarget {
         namespace: config.namespace.clone(),
     })?;
 
     Ok(Some(PublicationSink {
         target: Arc::new(target) as Arc<dyn RuntimePublication>,
+        issuer_origin,
     }))
 }

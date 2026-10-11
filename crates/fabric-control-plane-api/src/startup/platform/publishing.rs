@@ -147,6 +147,7 @@ mod tests {
             publication: Some(PublicationConfig {
                 namespace: "platform-system".to_owned(),
                 interval_seconds,
+                issuer_origin: None,
             }),
         }
     }

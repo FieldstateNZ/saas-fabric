@@ -69,8 +69,10 @@ pub use placements::{
 };
 pub use policy::UpdatePolicy;
 pub use publication::{
-    compose, CatalogueSourceError, ComposeError, LastPass, PassOutcome, PassResult, PublicationState,
-    PublishedTenants, RuntimeCatalogueSource, RuntimePublisher, WaitingReason,
+    compose, Accepted, CatalogueSourceError, ComposeError, Excluded, Exclusion, GateStatus,
+    IssuerRegistrySource, LastPass, PassOutcome, PassResult, PublicationState, PublishedTenants,
+    ReadinessEvidence, ReadinessReport, Registrations, RegistryApplication, RegistryEvidence,
+    RegistryEvidenceSummary, RegistrySourceError, RuntimeCatalogueSource, RuntimePublisher, WaitingReason,
 };
 pub use registry::{Attached, AttachedDescriptor, Provenance, Registry, RegistryError, Resolved, Unusable};
 pub use rollback_floors::RollbackFloors;

@@ -61,7 +61,12 @@ pub(crate) async fn publish_runtime_state(
             // recorded this pass; minting a second, later timestamp here
             // would make this response disagree with what `GET
             // /api/platform` reports for the same pass).
-            Ok(Json(PublicationRow::at(publisher, at_unix_seconds, &outcome)))
+            Ok(Json(PublicationRow::at(
+                publisher,
+                &platform.publication,
+                at_unix_seconds,
+                &outcome,
+            )))
         }
     }
 }

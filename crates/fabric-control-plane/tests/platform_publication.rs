@@ -67,6 +67,7 @@ fn sink(dir: &TempDir) -> PublicationSink {
             dir.path().join("data-sources.json"),
             dir.path().join("catalog.json"),
         )),
+        issuer_origin: None,
     }
 }
 
@@ -530,6 +531,7 @@ async fn a_pass_already_running_answers_409_publication_running() {
         platform,
         PublicationSink {
             target: Arc::new(gated),
+            issuer_origin: None,
         },
     );
 

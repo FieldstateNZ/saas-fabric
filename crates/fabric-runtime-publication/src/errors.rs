@@ -1,11 +1,9 @@
-//! Why a publication was refused, or what is held could not be read.
-//!
-//! In the 121-150 line band: one enum, each variant naming the rule it
-//! enforces. At the ceiling: trim rustdoc or find a real second concept.
+//! Why a publication was refused. In the 121-150 band: one enum, each
+//! variant naming its rule; the registry's refusals are their own enum.
 
 use fabric_core::{BindingRevision, DataSourceId, LogicalDataSourceName, LogicalResourceName, TenantId};
 
-use crate::{DocumentKind, DocumentRevision};
+use crate::{DocumentKind, DocumentRevision, RegistryRefusal};
 
 /// Why a publication was refused, or what is held could not be read. Every
 /// variant but [`Self::Unwritable`] guarantees nothing was written.
@@ -46,8 +44,7 @@ pub enum PublicationError {
         data_source: DataSourceId,
     },
 
-    /// A DataSource the *held* tenants document binds is dropped: retiring
-    /// one takes two publications (ADR 0018 part 3).
+    /// A DataSource the *held* tenants document binds is dropped (part 3).
     #[error(
         "data source {data_source} was dropped, but the held tenants document still binds it to \
          tenant {tenant}"
@@ -70,14 +67,14 @@ pub enum PublicationError {
     #[error("the catalogue document has no entries")]
     EmptyCatalogue,
 
-    /// A tenant binding's `data` map is empty; the consumer drops it.
+    /// A tenant binding's `data` map is empty.
     #[error("tenant {tenant}'s data map has no entries, and would be dropped on arrival")]
     EmptyTenantData {
         /// The tenant whose binding has no data source bindings.
         tenant: TenantId,
     },
 
-    /// A held manifest's payload is gone, disarming the guards that read it.
+    /// A held manifest's payload is gone.
     #[error("{document:?}'s manifest is held, but its payload is gone -- restore the payload file or remove the manifest before publishing again")]
     HeldPayloadLost {
         /// The document whose payload is missing while its manifest remains.
@@ -85,8 +82,7 @@ pub enum PublicationError {
     },
 
     /// A tenant binding or DataSource offered older, changed at the same
-    /// revision, or declared again at or below the revision it was last
-    /// published at (O1, O3): a reader holding the higher one keeps it.
+    /// revision, or declared again at or below its last revision (O1, O3).
     #[error("{document:?} resource {resource} was published at revision {held} and is offered at {offered} without advancing")]
     ResourceRevisionNotAdvanced {
         /// The document the resource is in.
@@ -128,12 +124,16 @@ pub enum PublicationError {
         publisher: u32,
     },
 
+    /// The issuer registry was refused (D01-4).
+    #[error(transparent)]
+    Registry(#[from] RegistryRefusal),
+
     /// A document or its manifest could not be read.
     #[error("{document:?} could not be read: {cause}")]
     Unreadable {
         /// The document that could not be read.
         document: DocumentKind,
-        /// What went wrong. Never a credential — a filesystem or parse failure.
+        /// What went wrong. Never a credential.
         #[source]
         cause: Box<dyn std::error::Error + Send + Sync>,
     },

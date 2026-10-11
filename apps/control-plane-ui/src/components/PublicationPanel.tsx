@@ -6,6 +6,7 @@ import type { PassOutcome, Publication } from '../api/publication-types'
 import { Panel } from '../console/Panel'
 import { describe } from '../hooks/useClients'
 import { capitalise, PublicationRows } from './PublicationRows'
+import { ReadinessRows } from './ReadinessRows'
 
 /**
  * What the runtime-publication target holds, what the last pass did, and
@@ -109,6 +110,7 @@ function Configured({ publication }: { publication: Publication }) {
         )}
 
         <PublicationRows publication={display} />
+        <ReadinessRows readiness={display.readiness} />
 
         <p className="support-note">
           What the publication target holds and what the last pass did — not whether the runtime has

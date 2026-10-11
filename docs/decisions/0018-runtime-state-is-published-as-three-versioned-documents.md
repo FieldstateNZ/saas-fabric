@@ -655,6 +655,122 @@ document belong to one generation:
   it by its floor. Readers are not raised. See the gap report's
   [Release rollback floor](../roadmap/m2-publication-gap-report.md#release-rollback-floor-d01-21).
 
+### The issuer registry
+
+> **Amendment (2026-10-11, D01-4, [#108](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6109518415)).**
+> Fabric produces the issuer-to-tenant registry. Platform composition
+> applies it at the edge and in the runtime's `[identity].trusted_issuers`.
+
+**Carrier: with the tenants document, not a fourth document.** The registry
+is `issuer-registry.json`. The filesystem adapter writes it beside
+`tenants.json`. The Kubernetes adapter writes it as a fourth data key of
+`fabric-runtime-tenants`, in the same object write as the tenants payload and
+the record. `publication.json` names its generation and the sha256 of its
+exact bytes, under the same digest rule as the three documents. No object,
+mount or RBAC verb is added, and Fabric writes no gateway object.
+
+A fourth document was rejected. It would need its own ConfigMap, manifest,
+revision, mount and `resourceNames` entry. It could also land in a different
+kubelet projection from the tenants document it was generated from. G4a
+(ADR 0019) asks for one tenant list in one change. In the tenants object,
+the two are one write and one volume swap, and the record names both as one
+generation.
+
+```json
+{
+  "schemaVersion": 1,
+  "generation": 3,
+  "issuers": [
+    { "issuer": "https://identity.example.invalid/realms/acme", "tenant": "acme" }
+  ]
+}
+```
+
+- **Shape.** The keys are the platform contract's: `saas-fabric-platform`
+  `scripts/runtime_contract.py`, `REGISTRY_KEYS`. That is why
+  `schemaVersion` is camel case. Registrations are sorted by issuer, so one
+  set has exactly one rendering. Each issuer is exactly
+  `https://<host>[:<port>]/realms/<realm>`. Each element is
+  `fabric_identity::TrustedIssuer` field for field.
+- **Generation.** The registry has its own counter. It starts at 1 and
+  advances by one only when the registrations change. It is never lowered,
+  and a generation is never stamped on two different sets of bytes,
+  committed or not. A generation an interrupted publication left on disk
+  without its record is kept only for exactly its own bytes; any other
+  offer, including a return to the committed registrations, takes the next
+  generation above it. Held registry bytes that do not parse are refused,
+  because their generation is unknown. Past `u64::MAX`, changed
+  registrations are refused (`GenerationExhausted`), with no saturating
+  fallback. It is not the record's
+  `generation`, which also advances for a catalogue change. Tying the edge to
+  that number would make every document change an identity change. The
+  record's `registry` key is why the publisher contract is 3 (see Owed). The
+  record carries `"registry": {"generation", "sha256"}`. The key is absent
+  while no registry is published, so earlier records keep their bytes.
+- **Refusals** (`RegistryRefusal`), before anything is written:
+  - an issuer registered twice;
+  - a registration naming a tenant that the same publication's tenants
+    document does not bind;
+  - a publication without a registry once one is published. An issuer
+    leaves only through a later generation.
+- **Who is registered.** The control plane registers a client by its
+  realm's issuer, under `[platform_management.publication].issuer_origin`,
+  only while its lifecycle permits routing (#137, `LifecycleUse::Route`).
+  Readiness is judged against the tenants document the same pass offers.
+  A client that is not ready (`NotReady`) or is retired (`Retired`) is left
+  out of the generated registry and reported as excluded, by kind:
+  `notReady` (with each unmet condition), `retired`, `noClient` or
+  `invalidIssuer`. Identity evidence pending reconciliation, after a
+  control-plane restart or a client write, excludes the client too, fail
+  closed (#108 option (a)); the same issuer returns in a later generation
+  once it is reconciled, and an unchanged state stamps no new generation.
+  Exclusion is from the registry Fabric publishes. It is not route
+  withdrawal or access revocation: no runtime reads the registry, edge
+  application is not observed (`registryApplication: unobserved`), and a
+  tenant left out may still be served by trust configured elsewhere.
+  Without `issuer_origin`, no registry is
+  published. No deployment states one; doing so is part of the separately
+  gated live trust configuration.
+- **A tombstoned client** keeps its tenant binding published, because
+  withdrawal is deferred (ADR 0021). Its issuer leaves the registry in the
+  next generation, because routing is refused for a retired client. That
+  is not withdrawal evidence. The lifecycle keeps reporting withdrawal as
+  `pending` until reader-applied evidence exists.
+- **Readers.** The reader contract does not change. Readers ignore record
+  keys they do not know, and no runtime reads the registry. The runtime's
+  tenant binding is still `[identity].trusted_issuers`, rendered by the
+  platform from this registry. The platform's handoff check refuses an edge
+  or a runtime whose generation or registrations differ.
+- **Readiness.** `PublicationState::readiness` reports three gates:
+  `documents`, `identity` and `connectors`, as the platform contract names
+  them. It uses publisher evidence only. `connectors` is never met by
+  Fabric, because platform composition deploys connectors.
+
+**G4a, as far as Fabric can prove it.** The requirement: *the gateway's
+allow-list and the runtime's `[identity].trusted_issuers` are generated from
+the same tenant list, in the same change.* Fabric's half is proven by
+tests:
+
+1. The registry is decided from the tenants document of the same
+   publication. A registration that document does not bind is refused
+   (`issuer_registry_generation.rs`, and `fabric-control-plane`
+   `tests/issuer_registry.rs`).
+2. One record names both, as one generation.
+3. The registry's `issuers`, used unchanged as `trusted_issuers`, route each
+   issuer to its tenant through the real runtime. They admit no
+   unregistered issuer
+   (`the_registry_is_the_runtimes_trusted_issuers_and_routes_each_issuer_to_its_tenant_and_no_other`).
+4. The output is deterministic, and the generation is monotonic.
+
+Owed before activation:
+
+- The platform renders both artefacts from one registry generation and
+  refuses a mismatch. `runtime_contract.py` does this for synthetic
+  fixtures. It must accept this carrier and digest first; see "What
+  downstream work may rely on".
+- Applied-reader evidence that the edge and the runtime hold the same
+  generation. Not verified live.
+
 ---
 
 ## The input this decision does not have
@@ -752,7 +868,7 @@ runtime plane at all.
 
 | ConfigMap | Data keys | Mounted at |
 |---|---|---|
-| `fabric-runtime-tenants` | `tenants.json`, `tenants.manifest.json`, `publication.json` | the runtime's `tenants_path` directory |
+| `fabric-runtime-tenants` | `tenants.json`, `tenants.manifest.json`, `publication.json`, `issuer-registry.json` (when published) | the runtime's `tenants_path` directory |
 | `fabric-runtime-data-sources` | `data-sources.json`, `data-sources.manifest.json` | its `data_sources_path` directory |
 | `fabric-runtime-catalog` | `catalog.json`, `catalog.manifest.json` | its `catalog_path` directory |
 
@@ -834,7 +950,11 @@ runtime plane at all.
 2. Two data keys each: `<name>.json` and `<name>.manifest.json`. Both are UTF-8
    strings in `data`; `binaryData` is never used. **Amended (2026-10-11,
    #136):** `fabric-runtime-tenants` carries a third key, `publication.json`.
-   It is also UTF-8 in `data`.
+   It is also UTF-8 in `data`. **Amended (2026-10-11, D01-4):** once a
+   registry is published, it also carries `issuer-registry.json` (see
+   [The issuer registry](#the-issuer-registry)). The platform's
+   runtime-document contract must accept the fourth key, and the record's
+   `registry` key, before any deployment states an `issuer_origin`.
 3. The platform repo owns the ServiceAccount, Role, RoleBinding and volume
    mounts. It does **not** declare the ConfigMaps and must not add them to any
    Argo application.
@@ -1135,9 +1255,36 @@ ADR 0023's list and `docs/roadmap/m0-contract-decisions.md`.
 - **Release rollback floor (D01-21). Recorded and enforced in-product.**
   `compatibility.yaml` records `minimumRollableVersion: 0.3.0-preview.16`.
   Platform Management offers no rollback of Fabric below it and refuses one
-  as `422 below_rollback_floor`. The publication contract is 2, so
-  publishers from #136 to #138 refuse a record this publisher writes as
-  `BelowRollbackFloor`. Still owed: a break-glass edit of `components.yaml`
-  below the floor is not refused; the platform's runtime-document contract
-  must accept contract 2 before activation; and the release workflow does
+  as `422 below_rollback_floor`. The publication contract is 3 (raised from
+  2 for the issuer registry, #140), so publishers from #136 to #139 refuse
+  a record this publisher writes as `BelowRollbackFloor`. Still owed: a
+  break-glass edit of `components.yaml` below the floor is not refused; the
+  platform's runtime-document contract must accept publisher contract 3,
+  with manifests at contract 1, 2 or 3, before activation; and the release workflow does
   not yet read or attach the manifest (#124). Not verified live.
+- **O8. Implemented for the publisher's half, not verified live: the issuer
+  registry and the readiness gates (D01-4, D01-18).** See
+  [The issuer registry](#the-issuer-registry). Still owed:
+  - the platform contract accepts the carrier and the digest;
+  - the edge and runtime artefacts are rendered from one generation, with
+    applied-reader evidence;
+  - decided on [#108](https://github.com/FieldstateNZ/saas-fabric/issues/108)
+    (option (a)): an issuer leaves the registry while its client's identity
+    evidence is pending, including after a control-plane restart or a client
+    write, because reconciliation status is process memory. That is a
+    possible future routing interruption once an edge applies registry
+    generations. Durable, revision-bound identity evidence or a retained
+    registration rule would be a separately reviewed contract;
+  - decided on [#140](https://github.com/FieldstateNZ/saas-fabric/pull/140#issuecomment-6114792311):
+    the registry raises the publisher contract to 3. A contract-2 publisher
+    (#139) meets floor 2 but cannot parse `registry`; at 3 it refuses the
+    record as `BelowRollbackFloor` before interpreting the registry, and
+    writes nothing. The reader contract and floor stay 1. Proven by
+    `format_compatibility_tests.rs` (`the_contract_two_to_three_migration_*`,
+    `a_contract_two_publisher_refuses_*`),
+    `issuer_registry_generation.rs` (`a_contract_two_publication_migrates_*`,
+    `a_writer_below_a_registry_records_floor_*`) and the Kubernetes
+    adapter's `the_contract_two_to_three_migration_*`, which keeps a held
+    tenants manifest when only the record or registry changes. The platform
+    companion (#58) must accept publisher contract 3 and manifest versions
+    1-3.

@@ -25,6 +25,59 @@ export interface PublishedDocuments {
   readonly tenants: number | null
   readonly dataSources: number | null
   readonly catalog: number | null
+  /** The issuer registry's generation, carried with the tenants document. */
+  readonly registry: number | null
+}
+
+/**
+ * One readiness gate (D01-18). `met` is Fabric's own evidence only: the
+ * platform still decides what the edge and the runtime applied, and an
+ * operator still raises replicas deliberately.
+ */
+export interface Gate {
+  readonly met: boolean
+  readonly reasons: readonly string[]
+}
+
+/**
+ * Why a bound tenant is left out of the generated issuer registry. `notReady`
+ * includes identity evidence pending reconciliation, which is temporary;
+ * `retired` is a recorded retirement.
+ */
+export type ExclusionKind = 'notReady' | 'retired' | 'noClient' | 'invalidIssuer'
+
+/**
+ * A bound tenant left out of the issuer registry Fabric generated. This is
+ * exclusion from a published registry, not route withdrawal: no runtime reads
+ * the registry and edge application is not observed — see
+ * `RegistryApplication`.
+ */
+export interface ExcludedTenant {
+  readonly tenant: string
+  readonly kind: ExclusionKind
+  readonly detail: string
+}
+
+/**
+ * What Fabric knows about the registry being applied: always `unobserved`.
+ * A tenant left out of it may still be served by trust configured elsewhere.
+ */
+export interface RegistryApplication {
+  readonly state: 'unobserved'
+  readonly detail: string
+}
+
+/**
+ * The three gates the runtime is raised against, named as the platform
+ * contract names them. `connectors` is never met here: platform
+ * composition deploys them, and Fabric does not observe it.
+ */
+export interface Readiness {
+  readonly documents: Gate
+  readonly identity: Gate
+  readonly connectors: Gate
+  readonly excludedFromRegistry: readonly ExcludedTenant[]
+  readonly registryApplication: RegistryApplication
 }
 
 /**
@@ -53,4 +106,5 @@ export interface Publication {
   readonly target: string
   readonly documents: PublishedDocuments
   readonly lastPass: LastPass | null
+  readonly readiness: Readiness
 }

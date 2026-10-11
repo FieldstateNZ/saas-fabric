@@ -615,3 +615,143 @@ async fn a_pass_interrupted_part_way_is_completed_in_the_same_pass_and_reports_e
     assert_eq!(catalog, fabric_runtime_publication::DocumentOutcome::Written);
     assert_eq!(target.publish_attempts(), 2);
 }
+
+/// An [`crate::IssuerRegistrySource`] that registers every tenant the
+/// offered tenants document binds, except those it was told to withhold,
+/// and remembers the tenants it was shown.
+struct FakeRegistry {
+    withhold: Vec<&'static str>,
+    unavailable: bool,
+    shown: std::sync::Mutex<Vec<String>>,
+}
+
+impl FakeRegistry {
+    fn new(withhold: Vec<&'static str>) -> Self {
+        Self {
+            withhold,
+            unavailable: false,
+            shown: std::sync::Mutex::new(Vec::new()),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::IssuerRegistrySource for FakeRegistry {
+    async fn registrations(
+        &self,
+        generation: &crate::RegistryEvidence<'_>,
+    ) -> Result<crate::Registrations, crate::RegistrySourceError> {
+        if self.unavailable {
+            return Err(crate::RegistrySourceError::Unavailable(
+                "clients unreadable".to_owned(),
+            ));
+        }
+        let mut registrations = crate::Registrations::default();
+        for binding in generation.tenants {
+            self.shown.lock().unwrap().push(binding.tenant.to_string());
+            if self.withhold.contains(&binding.tenant.as_str()) {
+                registrations.excluded.push(crate::Excluded {
+                    tenant: binding.tenant.clone(),
+                    reason: crate::Exclusion::NotReady {
+                        unmet: vec!["identity: identity has not been applied at this revision yet".to_owned()],
+                    },
+                });
+            } else {
+                registrations
+                    .registered
+                    .push(fabric_runtime_publication::IssuerRegistration {
+                        issuer: fabric_runtime_publication::RegistryIssuer::parse(&format!(
+                            "https://identity.example.invalid/realms/{}",
+                            binding.tenant
+                        ))
+                        .unwrap(),
+                        tenant: binding.tenant.clone(),
+                    });
+            }
+        }
+        Ok(registrations)
+    }
+}
+
+#[tokio::test]
+async fn the_registry_is_decided_against_the_tenants_document_the_same_pass_offers() {
+    let registry = Arc::new(FakeRegistry::new(vec!["globex"]));
+    let publisher = publisher(
+        Arc::new(FakePlatform::ready(
+            vec![declaration("shared-a"), declaration("shared-b")],
+            vec![placement("acme", "shared-a"), placement("globex", "shared-b")],
+        )),
+        Arc::new(FakeCatalogue(Ok(catalog_with_one_resource()))),
+        Arc::new(FakePublication::new()),
+    )
+    .with_issuer_registry(Arc::clone(&registry) as Arc<dyn crate::IssuerRegistrySource>);
+    let state = PublicationState::new();
+
+    let result = publisher.publish_once(&state).await;
+
+    assert!(
+        matches!(&result, PassResult::Ran { outcome: PassOutcome::Published { revisions, .. }, .. }
+            if revisions.registry.is_some()),
+        "{result:?}"
+    );
+    assert_eq!(*registry.shown.lock().unwrap(), vec!["acme", "globex"]);
+    let report = state.readiness();
+    assert_eq!(report.documents, crate::GateStatus::Met);
+    assert_eq!(report.identity, crate::GateStatus::Met);
+    assert!(matches!(report.connectors, crate::GateStatus::Unmet { .. }));
+    assert_eq!(report.excluded.len(), 1);
+    assert_eq!(report.excluded[0].tenant.as_str(), "globex");
+}
+
+#[tokio::test]
+async fn a_registry_source_that_cannot_answer_fails_the_pass_before_anything_is_offered() {
+    let mut registry = FakeRegistry::new(vec![]);
+    registry.unavailable = true;
+    let target = Arc::new(FakePublication::new());
+    let publisher = publisher(
+        Arc::new(FakePlatform::ready(
+            vec![declaration("shared-a")],
+            vec![placement("acme", "shared-a")],
+        )),
+        Arc::new(FakeCatalogue(Ok(catalog_with_one_resource()))),
+        Arc::clone(&target) as Arc<dyn RuntimePublication>,
+    )
+    .with_issuer_registry(Arc::new(registry));
+
+    let result = publisher.publish_once(&PublicationState::new()).await;
+
+    assert!(
+        matches!(
+            result,
+            PassResult::Ran {
+                outcome: PassOutcome::Failed { .. },
+                ..
+            }
+        ),
+        "{result:?}"
+    );
+    assert_eq!(target.publish_attempts(), 0);
+}
+
+#[tokio::test]
+async fn without_a_registry_source_the_identity_gate_says_no_registry_is_published() {
+    let publisher = publisher(
+        Arc::new(FakePlatform::ready(
+            vec![declaration("shared-a")],
+            vec![placement("acme", "shared-a")],
+        )),
+        Arc::new(FakeCatalogue(Ok(catalog_with_one_resource()))),
+        Arc::new(FakePublication::new()),
+    );
+    let state = PublicationState::new();
+
+    publisher.publish_once(&state).await;
+
+    let report = state.readiness();
+    assert_eq!(report.documents, crate::GateStatus::Met);
+    assert!(
+        matches!(&report.identity, crate::GateStatus::Unmet { reasons } if reasons[0].contains("no issuer registry")),
+        "{:?}",
+        report.identity
+    );
+}

@@ -1,4 +1,7 @@
 //! Whether a publication pass is running now, and what the last one did.
+//!
+//! In the 121-150 band: one state type, whose three records (last pass,
+//! published tenants, readiness evidence) are written together by `record`.
 
 use std::collections::BTreeMap;
 use std::sync::Mutex;
@@ -6,6 +9,9 @@ use std::sync::Mutex;
 use fabric_core::{BindingRevision, TenantId};
 
 use crate::publication::outcome::PassOutcome;
+use crate::publication::published::Accepted;
+use crate::publication::readiness::ReadinessReport;
+use crate::publication::readiness_evidence::ReadinessEvidence;
 use crate::running_guard::RunningFlag;
 
 /// Guards against two publication passes at once, and remembers the last
@@ -38,6 +44,9 @@ pub struct PublicationState {
     /// left in the held tenants document. Kept across a later pass that
     /// failed or was refused, because such a pass wrote nothing.
     published: Mutex<Option<PublishedTenants>>,
+
+    /// What the readiness report reads, from the same pass as `published`.
+    evidence: Mutex<Option<ReadinessEvidence>>,
 }
 
 impl PublicationState {
@@ -66,18 +75,26 @@ impl PublicationState {
         self.published.lock().ok().and_then(|published| published.clone())
     }
 
+    /// The readiness gates (D01-18), as of the last pass that published or
+    /// found nothing to change. All three are unmet until one has.
+    #[must_use]
+    pub fn readiness(&self) -> ReadinessReport {
+        let evidence = self.evidence.lock().ok().and_then(|evidence| evidence.clone());
+        ReadinessReport::of(evidence.as_ref())
+    }
+
     /// Records how a pass ended, and what it left published if it did.
-    pub(super) fn record(
-        &self,
-        at_unix_seconds: u64,
-        outcome: PassOutcome,
-        published: Option<BTreeMap<TenantId, BindingRevision>>,
-    ) {
-        if let (Some(tenants), Ok(mut held)) = (published, self.published.lock()) {
-            *held = Some(PublishedTenants {
-                at_unix_seconds,
-                tenants,
-            });
+    pub(super) fn record(&self, at_unix_seconds: u64, outcome: PassOutcome, accepted: Option<Accepted>) {
+        if let Some(accepted) = accepted {
+            if let Ok(mut held) = self.published.lock() {
+                *held = Some(PublishedTenants {
+                    at_unix_seconds,
+                    tenants: accepted.tenants,
+                });
+            }
+            if let Ok(mut evidence) = self.evidence.lock() {
+                *evidence = Some(accepted.evidence);
+            }
         }
         if let Ok(mut last) = self.last.lock() {
             *last = Some(LastPass {

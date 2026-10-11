@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use fabric_runtime_publication::RuntimePublication;
+use fabric_runtime_publication::{IssuerOrigin, RuntimePublication};
 
 /// The publication target this deployment writes through.
 ///
@@ -18,4 +18,7 @@ use fabric_runtime_publication::RuntimePublication;
 pub struct PublicationSink {
     /// Where publication writes.
     pub target: Arc<dyn RuntimePublication>,
+    /// The identity provider's public origin, under which each client's
+    /// realm is its issuer. `None` publishes no issuer registry (D01-4).
+    pub issuer_origin: Option<IssuerOrigin>,
 }

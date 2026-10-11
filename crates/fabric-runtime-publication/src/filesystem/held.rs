@@ -10,20 +10,23 @@ use std::path::Path;
 use super::paths::DocumentPaths;
 use crate::{DocumentKind, DocumentManifest, HeldDocument, HeldDocuments, PublicationError};
 
-/// Reads every held manifest and payload, and the publication record, into
-/// the shape the plan decides against. A missing file is `None`, not an error; anything else unreadable
-/// is [`PublicationError::Unreadable`].
+/// Reads every held manifest and payload (tenants, data sources, catalogue),
+/// the publication record and the issuer registry into the shape the plan
+/// decides against. A missing file is `None`, not an error; anything else
+/// unreadable is [`PublicationError::Unreadable`].
 pub(super) fn read_held(
     tenants: &DocumentPaths,
     data_sources: &DocumentPaths,
     catalog: &DocumentPaths,
     record: &Path,
+    registry: &Path,
 ) -> Result<HeldDocuments, PublicationError> {
     Ok(HeldDocuments {
         tenants: read_document(tenants)?,
         data_sources: read_document(data_sources)?,
         catalog: read_document(catalog)?,
         record: read_optional(record, DocumentKind::Tenants)?,
+        registry: read_optional(registry, DocumentKind::Tenants)?,
     })
 }
 

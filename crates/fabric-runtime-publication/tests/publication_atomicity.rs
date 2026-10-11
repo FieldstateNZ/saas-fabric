@@ -108,6 +108,7 @@ fn acme_moves_to_second_data_source() -> RuntimeSnapshot {
             vec![support::shared_data_source(1), second_data_source(1)],
         ),
         catalog: DocumentInput::new(DocumentRevision::new(1), support::articles_catalog()),
+        registry: None,
     }
 }
 
@@ -422,6 +423,7 @@ async fn current_behaviour_an_interrupted_publication_leaves_the_published_set_a
             tenants: Some(DocumentRevision::new(1)),
             data_sources: Some(DocumentRevision::new(2)),
             catalog: Some(DocumentRevision::new(1)),
+            registry: None,
         }
     );
     let record: serde_json::Value =

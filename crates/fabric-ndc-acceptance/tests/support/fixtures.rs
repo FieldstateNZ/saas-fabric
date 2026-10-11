@@ -143,6 +143,7 @@ pub fn read_only_snapshot() -> RuntimeSnapshot {
         ),
         data_sources: DocumentInput::new(DocumentRevision::new(1), vec![shared_data_source(false)]),
         catalog: DocumentInput::new(DocumentRevision::new(1), articles_catalog(&["read", "list"])),
+        registry: None,
     }
 }
 
@@ -166,5 +167,6 @@ pub fn writable_snapshot() -> RuntimeSnapshot {
             DocumentRevision::new(1),
             articles_catalog(&["read", "list", "create", "update", "delete"]),
         ),
+        registry: None,
     }
 }

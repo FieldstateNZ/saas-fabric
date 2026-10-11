@@ -41,7 +41,8 @@ pub(super) fn outcome_from_publish_error(error: &PublicationError) -> PassOutcom
         | PublicationError::ResourceRevisionNotAdvanced { .. }
         | PublicationError::TenantRemoved { .. }
         | PublicationError::CatalogueEntryUnbound { .. }
-        | PublicationError::BelowRollbackFloor { .. } => PassOutcome::Refused {
+        | PublicationError::BelowRollbackFloor { .. }
+        | PublicationError::Registry(_) => PassOutcome::Refused {
             reason: SafeDiagnostic::sanitise(&error.to_string()),
         },
     }

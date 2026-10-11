@@ -31,6 +31,19 @@ pub struct PublicationConfig {
     /// losing `POST /api/platform/publication`.
     #[serde(default = "default_interval")]
     pub interval_seconds: u64,
+
+    /// The identity provider's public origin, `https://<host>[:<port>]`,
+    /// under which each client's realm is its issuer
+    /// (`<origin>/realms/<realm>`).
+    ///
+    /// Stated, Fabric publishes the issuer registry with every pass (D01-4):
+    /// each client whose lifecycle permits routing, registered by its
+    /// realm's issuer, for platform composition to apply at the edge and in
+    /// the runtime's `[identity].trusted_issuers`. Absent, no registry is
+    /// published. Validated at startup, so a malformed origin refuses to
+    /// start rather than publishing issuers no token will match.
+    #[serde(default)]
+    pub issuer_origin: Option<String>,
 }
 
 /// A minute — the same default the platform sweep uses, and for the same
@@ -55,6 +68,21 @@ mod tests {
 
         assert_eq!(config.namespace, "platform-system");
         assert_eq!(config.interval_seconds, 60);
+        assert_eq!(config.issuer_origin, None);
+    }
+
+    #[test]
+    fn an_issuer_origin_parses_when_stated() {
+        let config = parse(serde_json::json!({
+            "namespace": "platform-system",
+            "issuer_origin": "https://identity.example.invalid",
+        }))
+        .expect("an issuer origin must parse");
+
+        assert_eq!(
+            config.issuer_origin.as_deref(),
+            Some("https://identity.example.invalid")
+        );
     }
 
     #[test]

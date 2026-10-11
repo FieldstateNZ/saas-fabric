@@ -1,19 +1,21 @@
 //! The port implementation: read three objects, plan, write what changed.
 //!
 //! In the 121-150 line band (docs/architecture/file-size-policy.md): the
-//! port's methods, and the one rule about when the tenants object is
-//! written that both the size check and the writes must share.
+//! port's methods. What the tenants object carries, which the size check and
+//! the writes must share, is `tenants_object.rs`.
 
 use async_trait::async_trait;
 use fabric_runtime_publication::{
-    plan_publication, DocumentKind, DocumentOutcome, DocumentPlan, PublicationError, PublicationPlan,
-    PublicationReport, PublishedResources, PublishedRevisions, RuntimePublication, RuntimeSnapshot,
+    plan_publication, DocumentKind, DocumentManifest, DocumentOutcome, DocumentPlan, PublicationError,
+    PublicationReport, PublishedResources, PublishedRevisions, RegistryOutcome, RuntimePublication,
+    RuntimeSnapshot,
 };
 
 use crate::client::Client;
 use crate::confirm::confirm_read_only_unmoved;
 use crate::held::{Read, Reads};
 use crate::object::{collection_of, object_for, path_of};
+use crate::tenants_object::{objects, tenants_object_plan};
 use crate::PublicationTarget;
 
 /// Publishes the runtime's three documents as `ConfigMap`s in one namespace,
@@ -50,7 +52,8 @@ impl KubernetesRuntimePublication {
         &self,
         document: DocumentKind,
         plan: &DocumentPlan,
-        record: Option<&[u8]>,
+        manifest: &DocumentManifest,
+        carried: &[(&'static str, &[u8])],
         read: &Read,
     ) -> Result<(), PublicationError> {
         if plan.outcome == DocumentOutcome::Unchanged {
@@ -60,7 +63,8 @@ impl KubernetesRuntimePublication {
             &self.namespace,
             document,
             plan,
-            record,
+            manifest,
+            carried,
             read.resource_version.clone(),
         )?;
         let path = if read.resource_version.is_some() {
@@ -91,58 +95,37 @@ impl RuntimePublication for KubernetesRuntimePublication {
     async fn publish(&self, snapshot: &RuntimeSnapshot) -> Result<PublicationReport, PublicationError> {
         let reads = Reads::fetch(&self.client, &self.namespace).await?;
         let plan = plan_publication(snapshot, &reads.held())?;
-        let record = Some(plan.record.bytes.as_slice());
         let tenants = tenants_object_plan(&plan);
+        let objects = objects(&plan, &tenants, &reads);
 
         // Every object is built, so size-checked, before the first is written:
         // one too large refuses the whole publication, not half of it.
-        object_for(
-            &self.namespace,
-            DocumentKind::DataSources,
-            &plan.data_sources,
-            None,
-            None,
-        )?;
-        object_for(&self.namespace, DocumentKind::Catalog, &plan.catalog, None, None)?;
-        object_for(&self.namespace, DocumentKind::Tenants, &tenants, record, None)?;
+        for (document, plan, manifest, carried, _) in &objects {
+            object_for(&self.namespace, *document, plan, manifest, carried, None)?;
+        }
 
         confirm_read_only_unmoved(&self.client, &self.namespace, &plan, &reads).await?;
 
-        // ADR 0018 part 3's order; tenants last, carrying the record.
-        self.write(
-            DocumentKind::DataSources,
-            &plan.data_sources,
-            None,
-            &reads.data_sources,
-        )
-        .await?;
-        self.write(DocumentKind::Catalog, &plan.catalog, None, &reads.catalog)
-            .await?;
-        self.write(DocumentKind::Tenants, &tenants, record, &reads.tenants)
-            .await?;
+        // ADR 0018 part 3's order; tenants last, carrying the record and
+        // the registry, so all three land in one object write.
+        for (document, plan, manifest, carried, read) in &objects {
+            self.write(*document, plan, manifest, carried, read).await?;
+        }
 
         Ok(PublicationReport {
             tenants: plan.tenants.outcome,
             data_sources: plan.data_sources.outcome,
             catalog: plan.catalog.outcome,
+            registry: plan.registry.as_ref().map(|registry| RegistryOutcome {
+                outcome: registry.outcome,
+                generation: registry.document.generation(),
+            }),
         })
     }
 
     fn describe(&self) -> String {
         format!("kubernetes: three ConfigMaps in namespace {}", self.namespace)
     }
-}
-
-/// The tenants object's plan: written when the tenants document or only the
-/// record changed, since the record is projected in the tenants volume. An
-/// `Unchanged` plan carries the held bytes at the held revision, so the
-/// payload and manifest go back exactly as held.
-fn tenants_object_plan(plan: &PublicationPlan) -> DocumentPlan {
-    let mut tenants = plan.tenants.clone();
-    if plan.record.outcome == DocumentOutcome::Written {
-        tenants.outcome = DocumentOutcome::Written;
-    }
-    tenants
 }
 
 #[cfg(test)]

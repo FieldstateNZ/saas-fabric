@@ -395,3 +395,208 @@ async fn an_oversized_document_written_last_is_refused_before_the_first_is_writt
     );
     assert_eq!(task.join().unwrap().len(), 3, "three reads, and not one write");
 }
+
+fn with_registry(
+    mut snapshot: fabric_runtime_publication::RuntimeSnapshot,
+) -> fabric_runtime_publication::RuntimeSnapshot {
+    snapshot.registry = Some(vec![fabric_runtime_publication::IssuerRegistration {
+        issuer: fabric_runtime_publication::RegistryIssuer::parse(
+            "https://identity.example.invalid/realms/acme",
+        )
+        .unwrap(),
+        tenant: fabric_core::TenantId::try_new("acme").unwrap(),
+    }]);
+    snapshot
+}
+
+#[tokio::test]
+async fn the_registry_is_a_key_of_the_tenants_object_and_the_record_beside_it_names_it() {
+    let (client, _token, task) = fake(vec![
+        (404, "{}".into()),
+        (404, "{}".into()),
+        (404, "{}".into()),
+        (201, "{}".into()),
+        (201, "{}".into()),
+        (201, "{}".into()),
+    ]);
+    let adapter = KubernetesRuntimePublication::with_client(client, NS);
+
+    let report = adapter.publish(&with_registry(snapshot(1))).await.unwrap();
+
+    assert_eq!(report.registry.unwrap().generation.get(), 1);
+    let seen = task.join().unwrap();
+    let tenants: serde_json::Value = serde_json::from_str(&seen[5].body).unwrap();
+    assert_eq!(tenants["metadata"]["name"], "fabric-runtime-tenants");
+    let registry: serde_json::Value =
+        serde_json::from_str(tenants["data"]["issuer-registry.json"].as_str().unwrap()).unwrap();
+    assert_eq!(registry["generation"], 1);
+    assert_eq!(registry["issuers"][0]["tenant"], "acme");
+    let record: serde_json::Value =
+        serde_json::from_str(tenants["data"]["publication.json"].as_str().unwrap()).unwrap();
+    assert_eq!(record["registry"]["generation"], 1);
+}
+
+#[tokio::test]
+async fn a_rewritten_tenants_object_keeps_an_unchanged_registry_rather_than_dropping_it() {
+    let first = with_registry(snapshot(1));
+    let plan = fabric_runtime_publication::plan_publication(
+        &first,
+        &fabric_runtime_publication::HeldDocuments::default(),
+    )
+    .unwrap();
+    let text = |bytes: &[u8]| String::from_utf8(bytes.to_vec()).unwrap();
+    let registry = text(&plan.registry.as_ref().unwrap().bytes);
+    let (client, _token, task) = fake(vec![
+        (
+            200,
+            object(
+                "fabric-runtime-tenants",
+                "11",
+                &[
+                    ("tenants.json", &text(&plan.tenants.bytes)),
+                    ("tenants.manifest.json", &manifest(DocumentKind::Tenants, 1)),
+                    ("publication.json", &text(&plan.record.bytes)),
+                    ("issuer-registry.json", &registry),
+                ],
+            ),
+        ),
+        (
+            200,
+            object(
+                "fabric-runtime-data-sources",
+                "12",
+                &[
+                    ("data-sources.json", &text(&plan.data_sources.bytes)),
+                    (
+                        "data-sources.manifest.json",
+                        &manifest(DocumentKind::DataSources, 1),
+                    ),
+                ],
+            ),
+        ),
+        (
+            200,
+            object(
+                "fabric-runtime-catalog",
+                "13",
+                &[
+                    ("catalog.json", &text(&plan.catalog.bytes)),
+                    ("catalog.manifest.json", &manifest(DocumentKind::Catalog, 1)),
+                ],
+            ),
+        ),
+        (200, object("fabric-runtime-data-sources", "12", &[])),
+        (200, object("fabric-runtime-catalog", "13", &[])),
+        (200, "{}".into()),
+    ]);
+    let adapter = KubernetesRuntimePublication::with_client(client, NS);
+    let mut changed = with_registry(snapshot(2));
+    changed.data_sources = DocumentInput::new(
+        fabric_runtime_publication::DocumentRevision::new(1),
+        first.data_sources.payload.clone(),
+    );
+    changed.catalog = DocumentInput::new(
+        fabric_runtime_publication::DocumentRevision::new(1),
+        first.catalog.payload.clone(),
+    );
+
+    let report = adapter.publish(&changed).await.unwrap();
+
+    assert_eq!(report.tenants, DocumentOutcome::Written);
+    assert_eq!(report.registry.unwrap().outcome, DocumentOutcome::Unchanged);
+    let seen = task.join().unwrap();
+    let tenants: serde_json::Value = serde_json::from_str(&seen[5].body).unwrap();
+    assert_eq!(tenants["data"]["issuer-registry.json"], registry);
+    let record: serde_json::Value =
+        serde_json::from_str(tenants["data"]["publication.json"].as_str().unwrap()).unwrap();
+    assert_eq!(record["generation"], 2);
+    assert_eq!(record["registry"]["generation"], 1);
+}
+
+fn contract_two_manifest(document: &str, revision: u64) -> String {
+    format!(
+        "{{\n  \"contract_version\": 2,\n  \"document\": \"{document}\",\n  \"revision\": {revision}\n}}\n"
+    )
+}
+
+#[tokio::test]
+async fn the_contract_two_to_three_migration_keeps_every_payload_and_held_manifest_and_rewrites_only_the_record(
+) {
+    let held_plan = fabric_runtime_publication::plan_publication(
+        &snapshot(1),
+        &fabric_runtime_publication::HeldDocuments::default(),
+    )
+    .unwrap();
+    let text = |bytes: &[u8]| String::from_utf8(bytes.to_vec()).unwrap();
+    let mut record_139: serde_json::Value = serde_json::from_slice(&held_plan.record.bytes).unwrap();
+    record_139["contract_version"] = serde_json::json!(2);
+    record_139["minimum_publisher_contract"] = serde_json::json!(2);
+    let record_139 = serde_json::to_string(&record_139).unwrap();
+    let tenants_manifest = contract_two_manifest("tenants", 1);
+    let (client, _token, task) = fake(vec![
+        (
+            200,
+            object(
+                "fabric-runtime-tenants",
+                "11",
+                &[
+                    ("tenants.json", &text(&held_plan.tenants.bytes)),
+                    ("tenants.manifest.json", &tenants_manifest),
+                    ("publication.json", &record_139),
+                ],
+            ),
+        ),
+        (
+            200,
+            object(
+                "fabric-runtime-data-sources",
+                "12",
+                &[
+                    ("data-sources.json", &text(&held_plan.data_sources.bytes)),
+                    (
+                        "data-sources.manifest.json",
+                        &contract_two_manifest("data-sources", 1),
+                    ),
+                ],
+            ),
+        ),
+        (
+            200,
+            object(
+                "fabric-runtime-catalog",
+                "13",
+                &[
+                    ("catalog.json", &text(&held_plan.catalog.bytes)),
+                    ("catalog.manifest.json", &contract_two_manifest("catalog", 1)),
+                ],
+            ),
+        ),
+        (200, object("fabric-runtime-data-sources", "12", &[])),
+        (200, object("fabric-runtime-catalog", "13", &[])),
+        (200, object("fabric-runtime-tenants", "11", &[])),
+        (200, "{}".into()),
+    ]);
+    let adapter = KubernetesRuntimePublication::with_client(client, NS);
+
+    let report = adapter.publish(&with_registry(snapshot(1))).await.unwrap();
+
+    assert_eq!(report.tenants, DocumentOutcome::Unchanged);
+    assert_eq!(report.data_sources, DocumentOutcome::Unchanged);
+    assert_eq!(report.catalog, DocumentOutcome::Unchanged);
+    let seen = task.join().unwrap();
+    assert_eq!(seen.len(), 7, "only the tenants object is written");
+    assert!(seen[6].line.starts_with("PUT "), "{}", seen[6].line);
+    let written: serde_json::Value = serde_json::from_str(&seen[6].body).unwrap();
+    assert_eq!(written["data"]["tenants.json"], text(&held_plan.tenants.bytes));
+    assert_eq!(
+        written["data"]["tenants.manifest.json"], tenants_manifest,
+        "the held contract-2 manifest goes back as it was"
+    );
+    let record: serde_json::Value =
+        serde_json::from_str(written["data"]["publication.json"].as_str().unwrap()).unwrap();
+    assert_eq!(
+        record["minimum_publisher_contract"],
+        fabric_runtime_publication::CONTRACT_VERSION
+    );
+    assert_eq!(record["registry"]["generation"], 1);
+}

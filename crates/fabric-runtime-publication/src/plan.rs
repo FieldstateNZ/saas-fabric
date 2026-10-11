@@ -2,14 +2,13 @@
 //! is held and what is offered, which documents change, to which bytes, at
 //! which revision — and which offers are refused. Pure; no I/O.
 //!
-//! In the 121-150 line band: the one function every adapter's refusals are
-//! decided by, kept whole so its order of checks reads in one place.
+//! In the 121-150 band: the one function every adapter's refusals are
+//! decided by, whole so its order of checks reads in one place.
 //!
 //! An adapter reads what it holds into a [`HeldDocuments`], calls
 //! [`plan_publication`], and writes each [`DocumentPlan`] whose outcome is
 //! [`DocumentOutcome::Written`], in the order [`PublicationPlan`]'s fields
-//! are declared. The guards live here and nowhere else, so a second adapter
-//! cannot drift from the first by re-implementing them.
+//! are declared. The guards live here and nowhere else.
 
 mod held;
 mod parse;
@@ -21,7 +20,7 @@ pub use record::RecordPlan;
 use crate::verdict::{verdict, Held, Incoming};
 use crate::{
     data_sources_canonical_json, tenants_canonical_json, DocumentKind, DocumentOutcome, DocumentRevision,
-    PublicationError, PublicationRecord, RuntimeSnapshot,
+    PublicationError, PublicationRecord, RegistryPlan, RuntimeSnapshot,
 };
 
 /// One document's decided fate.
@@ -46,6 +45,8 @@ pub struct PublicationPlan {
     pub catalog: DocumentPlan,
     /// `tenants.json`.
     pub tenants: DocumentPlan,
+    /// `issuer-registry.json`, after the tenants it names, if offered.
+    pub registry: Option<RegistryPlan>,
     /// `publication.json`, written last.
     pub record: RecordPlan,
 }
@@ -57,11 +58,10 @@ pub struct PublicationPlan {
 /// Every refusal the port promises: a stale or divergent document, a
 /// dangling or still-bound data source, an unintended emptying, an empty
 /// catalogue or one naming a logical data source no tenant binds, a tenant
-/// with no data, a resource that does not advance past the revision it was
-/// last published at, a held tenant removed, a held payload gone missing,
-/// held bytes that will not parse, or a held record above this publisher's
-/// rollback floor. Nothing is decided partially: an error means no document
-/// may be written.
+/// with no data, a resource that does not advance past its last revision, a
+/// held tenant removed, a held payload gone missing, held bytes that will
+/// not parse, a held record above this publisher's rollback floor, or a
+/// [`crate::RegistryRefusal`]. An error means no document may be written.
 pub fn plan_publication(
     snapshot: &RuntimeSnapshot,
     held: &HeldDocuments,
@@ -100,12 +100,16 @@ pub fn plan_publication(
     let history = published
         .history
         .including(&snapshot.tenants.payload, &snapshot.data_sources.payload);
-    let record = record::decide(held_record, &data_sources, &catalog, &tenants, history)?;
+    let recorded = held_record.as_ref().and_then(PublicationRecord::registry);
+    let registry = crate::registry::decide(recorded, held.registry.as_deref(), snapshot)?;
+    let documents = [&data_sources, &catalog, &tenants];
+    let record = record::decide(held_record, documents, history, registry.as_ref())?;
 
     Ok(PublicationPlan {
         data_sources,
         catalog,
         tenants,
+        registry,
         record,
     })
 }

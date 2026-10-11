@@ -1,6 +1,8 @@
 //! Everything one call to [`crate::RuntimePublication::publish`] offers.
 
-use crate::{CatalogDocument, DataSourceDocument, DocumentRevision, TenantBindingDocument};
+use crate::{
+    CatalogDocument, DataSourceDocument, DocumentRevision, IssuerRegistration, TenantBindingDocument,
+};
 
 /// Whether a publication that would take a currently non-empty document to
 /// empty is intended, or should be refused.
@@ -91,4 +93,11 @@ pub struct RuntimeSnapshot {
     /// an empty catalogue through — decision 6 has no threshold and no
     /// override.
     pub catalog: DocumentInput<CatalogDocument>,
+    /// The issuer registry (D01-4), carried with the tenants document: every
+    /// issuer a ready client is reached by, and its tenant. `None` when this
+    /// publisher produces no registry, which is refused once one has been
+    /// published ([`crate::RegistryRefusal::Withdrawn`]); `Some` of an empty
+    /// list is a registry naming no issuer. The publisher stamps the
+    /// generation; the caller never states one.
+    pub registry: Option<Vec<IssuerRegistration>>,
 }

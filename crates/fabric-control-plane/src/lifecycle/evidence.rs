@@ -69,12 +69,13 @@ pub(crate) fn publication(client: &Client, facts: &PlatformFacts) -> Evidence {
         Publication::Observed {
             published: Some(published),
             ..
-        } => published,
+        } => &published.tenants,
+        Publication::Offered(tenants) => tenants,
     };
     let Ok(tenant) = TenantId::try_new(client.id.as_str()) else {
         return unmet("the client id is not a valid tenant id");
     };
-    let Some(held) = published.tenants.get(&tenant) else {
+    let Some(held) = published.get(&tenant) else {
         return unmet("the tenant is not in the published tenants document");
     };
     let expected: u64 = placements

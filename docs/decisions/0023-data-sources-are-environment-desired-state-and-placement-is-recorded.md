@@ -384,6 +384,26 @@ connector the declared data sources reference, or whether the issuer registry
 covers every placed tenant. A gate that reports all three is listed under
 [Owed](#owed-not-yet-built).
 
+> **Amendment (2026-10-11, D01-4, D01-18).** Fabric now reports all three
+> gates, named as the platform contract names them: `documents`, `identity`
+> and `connectors` (`PublicationState::readiness`, the `readiness` field of
+> the publication row). This is publisher evidence only.
+>
+> - `identity` is met when an issuer registry generation is published
+>   naming at least one issuer.
+> - With client lifecycles (D01-19a), "covers the placed tenants" means
+>   every placed tenant whose client permits routing. That holds by
+>   construction, because the registry is generated from exactly those
+>   clients. Placed tenants that are not ready or are retired are reported
+>   as excluded from the generated registry. That is not route withdrawal:
+>   no edge or runtime application of the registry is observed.
+> - `connectors` is never met by Fabric. Platform composition deploys the
+>   connectors, and Fabric observes neither them nor the runtime's
+>   `[[connectors]]`. The gate lists the connectors the published data
+>   sources name.
+>
+> Raising replicas stays a deliberate operator action.
+
 ## What is built first
 
 This decision is delivered in slices, each ending in something an operator
@@ -575,6 +595,6 @@ remains of O6 is listed in ADR 0018. None of this is verified live.
   of the catalogue or of client documents is still not characterized.
 - **O7. The controller does not attempt placement on each pass.** Placement
   happens only on an explicit request (part 2).
-- **O8. The readiness gate is incomplete.** Fabric reports the publication
-  row. It does not report connector coverage of the declared data sources or
-  issuer-registry coverage of the placed tenants (part 5, D01-18).
+- **O8. The readiness gate reports three gates, from publisher evidence
+  only (part 5, D01-18).** It does not observe connectors or what an edge or
+  a runtime applied. Those remain the platform's check. Not verified live.

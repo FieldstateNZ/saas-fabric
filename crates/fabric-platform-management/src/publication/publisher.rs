@@ -2,25 +2,22 @@
 //! from live platform state and offering it to a publication target, on
 //! demand.
 //!
-//! In the 121-150 line band (docs/architecture/file-size-policy.md):
-//! `RuntimePublisher`, its constructor, and `publish_once` are the type this
-//! whole module exists to name, and `log_pass` is not a second concept
-//! beside them -- it is the one place `PassOutcome`'s match must stay
-//! exhaustive against every variant `publish_once` can produce, so splitting
-//! it out would separate that exhaustiveness check from the only call site
-//! it guards.
+//! In the 121-150 band: `RuntimePublisher`, its constructors and
+//! `publish_once`, with `log_pass` -- the one place `PassOutcome`'s match
+//! must stay exhaustive against every variant `publish_once` produces.
 
 #[cfg(test)]
 #[path = "publisher_tests.rs"]
 mod publisher_tests;
 
-use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
-use fabric_core::{BindingRevision, Clock, TenantId};
+use fabric_core::Clock;
 use fabric_runtime_publication::RuntimePublication;
 
+use super::issuer_registry_source::IssuerRegistrySource;
 use super::outcome::{PassOutcome, PassResult};
+use super::published::Accepted;
 use super::state::PublicationState;
 use crate::PlatformRepository;
 use crate::RuntimeCatalogueSource;
@@ -32,19 +29,19 @@ use crate::RuntimeCatalogueSource;
 /// ([`RuntimeCatalogueSource`]), composes a complete
 /// [`RuntimeSnapshot`](fabric_runtime_publication::RuntimeSnapshot), and
 /// offers it to a [`RuntimePublication`] target -- a filesystem in tests, a
-/// Kubernetes `ConfigMap` set in production. Everything this struct needs
-/// is a port; nothing here knows whether the ports it is handed are backed
-/// by Git, a fake, or the real cluster.
+/// Kubernetes `ConfigMap` set in production. Everything it needs is a port.
 pub struct RuntimePublisher {
     pub(super) environment: String,
     pub(super) platform: Arc<dyn PlatformRepository>,
     pub(super) catalogue: Arc<dyn RuntimeCatalogueSource>,
     pub(super) target: Arc<dyn RuntimePublication>,
     pub(super) clock: Arc<dyn Clock>,
-    /// The tenants document the target accepted in the pass running now,
-    /// handed to [`PublicationState`] when it ends. Only one pass runs at a
-    /// time, so this is never shared between two.
-    pub(super) accepted: Mutex<Option<BTreeMap<TenantId, BindingRevision>>>,
+    /// Where the issuer registry comes from; `None` publishes none (D01-4).
+    pub(super) registry: Option<Arc<dyn IssuerRegistrySource>>,
+    /// What the target accepted in the pass running now, handed to
+    /// [`PublicationState`] when it ends. Only one pass runs at a time, so
+    /// this is never shared between two.
+    pub(super) accepted: Mutex<Option<Accepted>>,
 }
 
 impl RuntimePublisher {
@@ -64,7 +61,17 @@ impl RuntimePublisher {
             catalogue,
             target,
             clock,
+            registry: None,
             accepted: Mutex::new(None),
+        }
+    }
+
+    /// Also publishes the issuer registry `source` decides, with every pass.
+    #[must_use]
+    pub fn with_issuer_registry(self, source: Arc<dyn IssuerRegistrySource>) -> Self {
+        Self {
+            registry: Some(source),
+            ..self
         }
     }
 
@@ -79,26 +86,20 @@ impl RuntimePublisher {
     /// Runs one publication pass, guarded against a second pass starting
     /// while this one is still in flight.
     ///
-    /// `state.running.try_enter()` hands back a `RunningGuard` only to the
-    /// call that wins, released by its own `Drop`, not by a `store` written
-    /// after the pass returns. That distinction matters: a `store(false,
-    /// ...)` placed after `self.run_pass().await` is sequential code, and
-    /// sequential code after an `.await` is exactly what a panic unwinding
-    /// out of `run_pass` skips, and exactly what never runs when the caller
-    /// drops this future at that suspension point. `Drop` runs on both of
-    /// those paths as well as the ordinary one -- see `RunningGuard`'s own
-    /// rustdoc (`running_guard.rs`) for the full argument.
+    /// The guard is released by its own `Drop`, never by code after the
+    /// `.await`, which a panic or a dropped future would skip -- see
+    /// `RunningGuard`'s rustdoc (`running_guard.rs`).
     pub async fn publish_once(&self, state: &PublicationState) -> PassResult {
         let Some(_guard) = state.running.try_enter() else {
             return PassResult::AlreadyRunning;
         };
 
         let outcome = self.run_pass().await;
-        let published = self.take_accepted();
+        let accepted = self.take_accepted();
 
         self.log_pass(&outcome);
         let at_unix_seconds = self.clock.now_unix_seconds();
-        state.record(at_unix_seconds, outcome.clone(), published);
+        state.record(at_unix_seconds, outcome.clone(), accepted);
 
         PassResult::Ran {
             at_unix_seconds,

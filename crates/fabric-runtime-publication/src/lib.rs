@@ -67,6 +67,7 @@ mod record;
 #[cfg(test)]
 mod record_tests;
 mod recorded_documents;
+mod registry;
 mod report;
 mod resource_history;
 mod resource_revisions;
@@ -101,7 +102,12 @@ pub use published_resources::PublishedResources;
 pub use published_revisions::PublishedRevisions;
 pub use record::{PublicationRecord, MINIMUM_READER_CONTRACT, PUBLICATION_RECORD_FILE};
 pub use recorded_documents::{RecordedDocument, RecordedDocuments};
-pub use report::{DocumentOutcome, PublicationReport};
+pub use registry::{
+    IssuerError, IssuerOrigin, IssuerRegistration, IssuerRegistryDocument, RecordedRegistry,
+    RegistryGeneration, RegistryIssuer, RegistryPlan, RegistryRefusal, ISSUER_REGISTRY_FILE,
+    REGISTRY_SCHEMA_VERSION,
+};
+pub use report::{DocumentOutcome, PublicationReport, RegistryOutcome};
 pub use resource_history::ResourceHistory;
 pub use snapshot::{DocumentInput, Emptying, RuntimeSnapshot};
 

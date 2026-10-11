@@ -10,8 +10,8 @@ mod held;
 use std::sync::Mutex;
 
 use fabric_runtime_publication::{
-    DocumentKind, PublicationError, PublicationReport, PublishedResources, PublishedRevisions,
-    RuntimePublication, RuntimeSnapshot,
+    DocumentKind, DocumentOutcome, PublicationError, PublicationReport, PublishedResources,
+    PublishedRevisions, RegistryGeneration, RegistryOutcome, RuntimePublication, RuntimeSnapshot,
 };
 
 use held::{Scripted, State};
@@ -123,6 +123,10 @@ impl RuntimePublication for FakePublication {
             tenants,
             data_sources,
             catalog,
+            registry: snapshot.registry.as_ref().map(|_| RegistryOutcome {
+                outcome: DocumentOutcome::Written,
+                generation: RegistryGeneration::FIRST,
+            }),
         })
     }
 

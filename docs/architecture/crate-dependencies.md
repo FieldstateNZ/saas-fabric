@@ -106,6 +106,8 @@ fabric-control-plane-api → all of the above (composition root)
                                                      publication namespace)
                        → fabric-publication-kubernetes (builds the production
                                                         publication target)
+                       → fabric-component            (the rollback floor
+                                                      `--contracts` reports)
 ```
 
 Both verified as of the current tree; they match exactly.

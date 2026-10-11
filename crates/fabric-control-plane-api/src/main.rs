@@ -1,10 +1,20 @@
 //! The SaaS Fabric control plane host.
 
 use fabric_control_plane_api::config::{ControlPlaneAppConfig, CONFIG_PATH_VAR};
-use fabric_control_plane_api::{startup, telemetry};
+use fabric_control_plane_api::{contracts, startup, telemetry};
+use std::io::Write as _;
 
 #[tokio::main]
 async fn main() -> std::process::ExitCode {
+    // Before logging, configuration or anything that could touch the network:
+    // a release runs this on a bare image with no configuration mounted.
+    if contracts::requested(std::env::args().skip(1)) {
+        return match writeln!(std::io::stdout(), "{}", contracts::report()) {
+            Ok(()) => std::process::ExitCode::SUCCESS,
+            Err(_) => std::process::ExitCode::FAILURE,
+        };
+    }
+
     telemetry::init();
 
     let path = std::env::args()

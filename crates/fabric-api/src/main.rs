@@ -6,10 +6,20 @@
 //! own.
 
 use fabric_api::config::{AppConfig, CONFIG_PATH_VAR};
-use fabric_api::{startup, telemetry};
+use fabric_api::{contracts, startup, telemetry};
+use std::io::Write as _;
 
 #[tokio::main]
 async fn main() -> std::process::ExitCode {
+    // Before logging, configuration or anything that could touch the network:
+    // a release runs this on a bare image with no configuration mounted.
+    if contracts::requested(std::env::args().skip(1)) {
+        return match writeln!(std::io::stdout(), "{}", contracts::report()) {
+            Ok(()) => std::process::ExitCode::SUCCESS,
+            Err(_) => std::process::ExitCode::FAILURE,
+        };
+    }
+
     telemetry::init();
 
     // `CONFIG_PATH_VAR` rather than a literal: it names the file to load and is

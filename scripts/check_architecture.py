@@ -728,6 +728,9 @@ def check_dependency_direction(graph: Graph) -> list[Failure]:
             # the same "only the composition root binds an adapter" rule
             # `fabric-deployment-kubernetes` already follows.
             "fabric-publication-kubernetes",
+            # The rollback floor `--contracts` reports beside the publisher's
+            # contract. The host reads a constant, not a descriptor.
+            "fabric-component",
         },
     }
 

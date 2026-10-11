@@ -350,6 +350,7 @@ dependencies = [
  "axum",
  "fabric-client-git",
  "fabric-client-model",
+ "fabric-component",
  "fabric-control-plane",
  "fabric-core",
  "fabric-deployment-kubernetes",

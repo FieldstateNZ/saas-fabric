@@ -14,7 +14,7 @@ use std::sync::Arc;
 use axum::Router;
 use fabric_connector::{ConnectorRegistry, DataConnector};
 use fabric_connector_ndc::NdcConnector;
-use fabric_data_api::{build_data_api, DataApiConfig, ResourceCatalog, ResourcePermissions};
+use fabric_data_api::{build_data_api, DataApiConfig, DataAuthorization, ResourceCatalog};
 use fabric_identity::{build_identity, IdentityConfig};
 use fabric_runtime_publication::{
     CatalogDocument, FilesystemRuntimePublication, PublicationError, RuntimePublication as _, RuntimeSnapshot,
@@ -34,15 +34,6 @@ fn runtime_config() -> RuntimeConfig {
     RuntimeConfig {
         refresh_interval_seconds: 3600,
         fail_fast_on_prime: true,
-    }
-}
-
-/// Scope checks off -- every test here is about tenancy and connector
-/// behaviour, not authorization.
-fn open_permissions() -> ResourcePermissions {
-    ResourcePermissions {
-        require_scopes: false,
-        ..ResourcePermissions::default()
     }
 }
 
@@ -153,7 +144,7 @@ async fn compose_over(
     let app = build_data_api(
         &DataApiConfig::default(),
         catalog,
-        open_permissions(),
+        DataAuthorization::default(),
         resolver,
         ConnectorRegistry::new().with(connector as Arc<dyn DataConnector>),
         identity,

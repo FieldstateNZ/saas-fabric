@@ -63,7 +63,11 @@ mod request_text;
 mod routes;
 mod state;
 
-pub use authorization::{OperationKind, ResourcePermissions};
+pub use authorization::{
+    required_scope, AuthorizationCheck, Caller, CallerCredential, CheckDecision, CheckFailure, CheckObject,
+    CheckQuestion, DataAuthorization, NoCheckConfigured, OperationKind, TenantAuthorization, TenantPolicies,
+    TenantPosture,
+};
 pub use catalog::{ResourceCatalog, ResourceDefinition};
 pub use config::DataApiConfig;
 pub use errors::DataApiError;

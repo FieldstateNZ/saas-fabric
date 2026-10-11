@@ -59,9 +59,15 @@ pub fn trusted_issuers() -> Vec<fabric_identity::TrustedIssuer> {
 /// The claims a bearer token for `tenant` carries. The canonical `tenant_id`
 /// claim is the only thing that ever selects a tenant, and since ADR 0019 the
 /// runtime also requires the token's issuer to be the one registered for that
-/// tenant -- so every token here names it.
+/// tenant -- so every token here names it. Scope checks cannot be switched
+/// off (ADR 0027), so it also carries read and write on `articles`, the one
+/// resource these suites serve.
 pub fn claims_for(tenant: &str) -> Value {
-    serde_json::json!({ "tenant_id": tenant, "iss": issuer_for(tenant) })
+    serde_json::json!({
+        "tenant_id": tenant,
+        "iss": issuer_for(tenant),
+        "scope": "data:articles:read data:articles:write",
+    })
 }
 
 /// A GET request carrying a bearer token and no body.

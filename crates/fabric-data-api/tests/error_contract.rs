@@ -35,7 +35,7 @@ async fn a_server_error_carries_one_request_id_in_the_body_the_header_and_the_lo
     let app = support::app_with(
         support::resolver(bindings, support::data_sources()),
         connector,
-        support::open_permissions(),
+        support::scopes_only(),
     );
 
     let (response, events) =
@@ -98,7 +98,8 @@ async fn an_oversized_inbound_request_id_is_replaced_rather_than_echoed_or_trimm
 
     // Built by hand rather than through `request`, so the registered issuer
     // the resolver binds on has to be written out here.
-    let serde_json::Value::Object(claims) = json!({"iss": support::issuer_for("acme"), "tenant_id": "acme"})
+    let serde_json::Value::Object(claims) =
+        json!({"iss": support::issuer_for("acme"), "tenant_id": "acme", "scope": "data:customers:read"})
     else {
         unreachable!("claims are always an object")
     };
@@ -183,7 +184,7 @@ async fn an_unknown_tenant_and_a_scope_refusal_are_both_403_but_different_codes(
         let app = support::app_with(
             support::resolver(support::tenants(), support::data_sources()),
             connector,
-            fabric_data_api::ResourcePermissions::default(),
+            support::scopes_only(),
         );
         app.oneshot(request(
             "DELETE",
@@ -215,7 +216,7 @@ async fn a_missing_data_source_and_an_unprimed_runtime_are_both_500_and_503_resp
         let app = support::app_with(
             support::resolver(bindings, support::data_sources()),
             connector,
-            support::open_permissions(),
+            support::scopes_only(),
         );
         app.oneshot(request("GET", "/customers", json!({"tenant_id": "orphan"})))
             .await
@@ -228,7 +229,7 @@ async fn a_missing_data_source_and_an_unprimed_runtime_are_both_500_and_503_resp
             std::sync::Arc::new(fabric_tenant_runtime::TenantRegistry::new()),
             std::sync::Arc::new(fabric_tenant_runtime::DataSourceRegistry::new()),
         ));
-        let app = support::app_with(runtime, connector, support::open_permissions());
+        let app = support::app_with(runtime, connector, support::scopes_only());
         app.oneshot(request("GET", "/customers", json!({"tenant_id": "acme"})))
             .await
             .unwrap()
@@ -260,7 +261,7 @@ fn app_over(connector: std::sync::Arc<support::ScriptedConnector>) -> axum::Rout
     support::app_with_config(
         support::resolver(support::tenants(), support::data_sources()),
         connector,
-        support::open_permissions(),
+        support::scopes_only(),
         &fabric_data_api::DataApiConfig::default(),
     )
 }
@@ -404,7 +405,7 @@ async fn a_server_side_connector_failure_stays_on_the_existing_failure_event() {
     let app = support::app_with(
         support::resolver(bindings, support::data_sources()),
         support::RecordingConnector::new(vec![]),
-        support::open_permissions(),
+        support::scopes_only(),
     );
 
     let (response, events) =

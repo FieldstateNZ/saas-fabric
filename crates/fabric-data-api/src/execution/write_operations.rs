@@ -2,13 +2,12 @@
 
 use fabric_connector::MutationSpec;
 use fabric_core::LogicalResourceName;
-use fabric_identity::TenantIdentity;
 use serde_json::{Map, Value};
 
 use crate::execution::dispatch_write::dispatch;
 use crate::execution::row_mapping::{key_filter, refuse_key_change, to_row};
 use crate::execution::write_integrity::RowBudget;
-use crate::{limits, DataApiError, DataApiService, OperationKind, WriteResponse};
+use crate::{limits, Caller, DataApiError, DataApiService, OperationKind, WriteResponse};
 
 impl DataApiService {
     /// Creates records.
@@ -21,11 +20,13 @@ impl DataApiService {
     /// records than were sent.
     pub async fn create(
         &self,
-        identity: &TenantIdentity,
+        caller: &Caller,
         resource_name: &LogicalResourceName,
         rows: Vec<Map<String, Value>>,
     ) -> Result<WriteResponse, DataApiError> {
-        let prepared = self.prepare(identity, resource_name, OperationKind::Create)?;
+        let prepared = self
+            .prepare(caller, resource_name, OperationKind::Create, None)
+            .await?;
 
         if rows.is_empty() {
             return Err(DataApiError::BadRequest("no records to create".to_owned()));
@@ -60,12 +61,14 @@ impl DataApiService {
     /// through an update, whether or not the value differs from `key`.
     pub async fn update(
         &self,
-        identity: &TenantIdentity,
+        caller: &Caller,
         resource_name: &LogicalResourceName,
         key: &str,
         changes: &Map<String, Value>,
     ) -> Result<WriteResponse, DataApiError> {
-        let prepared = self.prepare(identity, resource_name, OperationKind::Update)?;
+        let prepared = self
+            .prepare(caller, resource_name, OperationKind::Update, Some(key))
+            .await?;
 
         if changes.is_empty() {
             return Err(DataApiError::BadRequest("no fields to update".to_owned()));
@@ -89,11 +92,13 @@ impl DataApiService {
     /// Any [`DataApiError`].
     pub async fn delete(
         &self,
-        identity: &TenantIdentity,
+        caller: &Caller,
         resource_name: &LogicalResourceName,
         key: &str,
     ) -> Result<WriteResponse, DataApiError> {
-        let prepared = self.prepare(identity, resource_name, OperationKind::Delete)?;
+        let prepared = self
+            .prepare(caller, resource_name, OperationKind::Delete, Some(key))
+            .await?;
 
         // Always keyed. The Data API exposes no unfiltered delete: a caller
         // cannot ask to empty a collection, whatever their scopes.

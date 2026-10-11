@@ -12,13 +12,17 @@ use crate::IdentityError;
 /// space — a token with stray whitespace is malformed and should fail
 /// verification rather than be silently repaired.
 ///
+/// Public so the Data API can carry the caller's own token to the
+/// authorization front (ADR 0016, ADR 0027) through this one parser rather
+/// than a second copy of the scheme rules.
+///
 /// # Errors
 ///
 /// - [`IdentityError::MissingAuthorization`] when the header is absent or is
 ///   not valid ASCII.
 /// - [`IdentityError::NotBearer`] when the header is present but is not a
 ///   non-empty bearer credential.
-pub(crate) fn extract_bearer(headers: &HeaderMap) -> Result<&str, IdentityError> {
+pub fn extract_bearer(headers: &HeaderMap) -> Result<&str, IdentityError> {
     let header = headers
         .get(http::header::AUTHORIZATION)
         .ok_or(IdentityError::MissingAuthorization)?

@@ -2,10 +2,9 @@
 
 use axum::extract::{Path, RawQuery, State};
 use axum::Json;
-use fabric_identity::TenantIdentity;
 
 use crate::handlers::parse_resource;
-use crate::{DataApiError, DataApiState, ListResponse};
+use crate::{Caller, DataApiError, DataApiState, ListResponse};
 
 /// Lists records of a logical resource.
 ///
@@ -22,10 +21,10 @@ use crate::{DataApiError, DataApiState, ListResponse};
 /// and this handler could not do it early even if someone tried: nothing on the
 /// service hands out a `ResourceDefinition`, so there is nothing to parse
 /// against until `prepare` has produced one.
-#[tracing::instrument(skip_all, fields(tenant_id = %identity.tenant(), logical_resource = %resource))]
+#[tracing::instrument(skip_all, fields(tenant_id = %caller.identity().tenant(), logical_resource = %resource))]
 pub(crate) async fn list_resource(
     State(state): State<DataApiState>,
-    identity: TenantIdentity,
+    caller: Caller,
     Path(resource): Path<String>,
     RawQuery(raw_query): RawQuery,
 ) -> Result<Json<ListResponse>, DataApiError> {
@@ -33,7 +32,7 @@ pub(crate) async fn list_resource(
 
     let response = state
         .service
-        .list(&identity, &resource, raw_query.as_deref().unwrap_or_default())
+        .list(&caller, &resource, raw_query.as_deref().unwrap_or_default())
         .await?;
 
     Ok(Json(response))

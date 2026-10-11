@@ -42,7 +42,7 @@ use fabric_api::health::{health_routes, HealthState};
 use fabric_api::startup::compose;
 use fabric_connector::{ConnectorRegistry, DataConnector};
 use fabric_core::SystemClock;
-use fabric_data_api::{build_data_api, API_PREFIX};
+use fabric_data_api::{build_data_api, DataAuthorization, API_PREFIX};
 use fabric_identity::{build_identity, TrustedIngressReader};
 use fabric_tenant_runtime::{DataSourceRegistry, RuntimeResolver, TenantRegistry};
 use http::{Request, StatusCode};
@@ -102,7 +102,7 @@ fn router_with(request_timeout: Duration, connector: Arc<dyn DataConnector>) -> 
     let data = build_data_api(
         &config.data_api,
         catalog(),
-        config.permissions.clone(),
+        DataAuthorization::default(),
         Arc::clone(&runtime),
         connectors.clone(),
         Arc::clone(&identity),
@@ -113,7 +113,7 @@ fn router_with(request_timeout: Duration, connector: Arc<dyn DataConnector>) -> 
         runtime,
         connectors,
         identity,
-        administrator_role: config.permissions.administrator_role.clone(),
+        administrator_role: config.health_detail_role.clone(),
     });
 
     compose(data, health, request_timeout)

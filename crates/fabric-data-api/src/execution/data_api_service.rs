@@ -5,7 +5,7 @@ use std::sync::Arc;
 use fabric_connector::ConnectorRegistry;
 use fabric_tenant_runtime::RuntimeResolver;
 
-use crate::{DataApiConfig, ResourceCatalog, ResourcePermissions};
+use crate::{DataApiConfig, DataAuthorization, ResourceCatalog};
 
 /// Executes Data API operations.
 ///
@@ -29,7 +29,7 @@ pub struct DataApiService {
     pub(super) runtime: Arc<RuntimeResolver>,
     pub(super) connectors: ConnectorRegistry,
     pub(super) catalog: ResourceCatalog,
-    pub(super) permissions: ResourcePermissions,
+    pub(super) authorization: DataAuthorization,
     pub(super) config: DataApiConfig,
 }
 
@@ -40,14 +40,14 @@ impl DataApiService {
         runtime: Arc<RuntimeResolver>,
         connectors: ConnectorRegistry,
         catalog: ResourceCatalog,
-        permissions: ResourcePermissions,
+        authorization: DataAuthorization,
         config: DataApiConfig,
     ) -> Self {
         Self {
             runtime,
             connectors,
             catalog,
-            permissions,
+            authorization,
             config,
         }
     }

@@ -243,11 +243,11 @@ fn an_empty_issuer_registry_is_not_this_checks_business() {
 }
 
 #[test]
-fn validate_runs_the_administrator_role_check() {
-    // The wiring, not the rule: `administrator_role` has its own tests for
+fn validate_runs_the_health_detail_role_check() {
+    // The wiring, not the rule: `health_detail_role` has its own tests for
     // what it rejects, and this pins that `validate` actually calls it.
     let mut config = config_with(vec![connector("postgres")]);
-    config.permissions.administrator_role = String::new();
+    config.health_detail_role = String::new();
 
     assert!(config.validate().is_err());
 }

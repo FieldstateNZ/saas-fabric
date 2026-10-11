@@ -2,11 +2,10 @@
 
 use axum::extract::{Path, State};
 use axum::Json;
-use fabric_identity::TenantIdentity;
 
 use crate::handlers::parse_resource;
 use crate::request_text::refuse_nul;
-use crate::{DataApiError, DataApiState, RowResponse};
+use crate::{Caller, DataApiError, DataApiState, RowResponse};
 
 /// Reads one record by key.
 ///
@@ -15,16 +14,16 @@ use crate::{DataApiError, DataApiState, RowResponse};
 /// as this request is concerned — and answering 403 would confirm that the key
 /// exists somewhere, which is a cross-tenant information leak dressed up as
 /// helpfulness.
-#[tracing::instrument(skip_all, fields(tenant_id = %identity.tenant(), logical_resource = %resource))]
+#[tracing::instrument(skip_all, fields(tenant_id = %caller.identity().tenant(), logical_resource = %resource))]
 pub(crate) async fn read_resource(
     State(state): State<DataApiState>,
-    identity: TenantIdentity,
+    caller: Caller,
     Path((resource, key)): Path<(String, String)>,
 ) -> Result<Json<RowResponse>, DataApiError> {
     let resource = parse_resource(&resource)?;
 
     refuse_nul(&key)?;
-    let record = state.service.read(&identity, &resource, &key).await?;
+    let record = state.service.read(&caller, &resource, &key).await?;
 
     Ok(Json(record))
 }

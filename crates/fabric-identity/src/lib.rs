@@ -88,6 +88,7 @@ mod resolver;
 mod resolver_tests;
 mod token_reader;
 
+pub use bearer::extract_bearer;
 pub use claims::TokenClaims;
 pub use config::IdentityConfig;
 pub use errors::IdentityError;

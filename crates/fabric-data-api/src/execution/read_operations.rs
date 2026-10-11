@@ -2,12 +2,12 @@
 
 use fabric_connector::{QueryOutcome, QuerySpec};
 use fabric_core::LogicalResourceName;
-use fabric_identity::TenantIdentity;
 
 use crate::execution::prepared::Prepared;
 use crate::execution::row_mapping::key_filter;
 use crate::{
-    limits, logging, DataApiError, DataApiService, ListQuery, ListResponse, OperationKind, RowResponse,
+    limits, logging, Caller, DataApiError, DataApiService, ListQuery, ListResponse, OperationKind,
+    RowResponse,
 };
 
 impl DataApiService {
@@ -30,11 +30,13 @@ impl DataApiService {
     /// complexity bound (§28).
     pub async fn list(
         &self,
-        identity: &TenantIdentity,
+        caller: &Caller,
         resource_name: &LogicalResourceName,
         raw_query: &str,
     ) -> Result<ListResponse, DataApiError> {
-        let prepared = self.prepare(identity, resource_name, OperationKind::List)?;
+        let prepared = self
+            .prepare(caller, resource_name, OperationKind::List, None)
+            .await?;
 
         // Shape, then complexity. Neither is authorization, so both wait until
         // the caller is known to be allowed here at all — and both finish
@@ -79,11 +81,13 @@ impl DataApiService {
     /// Any [`DataApiError`], including [`DataApiError::NotFound`].
     pub async fn read(
         &self,
-        identity: &TenantIdentity,
+        caller: &Caller,
         resource_name: &LogicalResourceName,
         key: &str,
     ) -> Result<RowResponse, DataApiError> {
-        let prepared = self.prepare(identity, resource_name, OperationKind::Read)?;
+        let prepared = self
+            .prepare(caller, resource_name, OperationKind::Read, Some(key))
+            .await?;
 
         // There is no `select` on this route, so the projection is entirely the
         // resource's. It used to be absent altogether, which meant a read by

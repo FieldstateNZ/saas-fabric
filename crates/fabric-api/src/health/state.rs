@@ -25,10 +25,10 @@ pub struct HealthState {
 
     /// The role that may see the probe's detail.
     ///
-    /// Taken from `ResourcePermissions::administrator_role`, the role that
-    /// already carries estate-wide authority over every tenant's data. A
-    /// deployment that trusts a role with that does not need a second,
-    /// narrower credential invented for a diagnostic body — and inventing one
-    /// would add a secret to distribute, rotate, and leak.
+    /// From `AppConfig::health_detail_role`. A coarse operator control kept
+    /// within its existing boundary (D01-12): it opens this body and grants
+    /// nothing on the data path. Reusing a role the operator's token already
+    /// carries avoids inventing a credential to distribute, rotate and leak
+    /// for a diagnostic body.
     pub administrator_role: String,
 }

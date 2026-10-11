@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use axum::Router;
 use fabric_connector::{ConnectorRegistry, SecretResolver};
-use fabric_data_api::{build_data_api, ResourceCatalog};
+use fabric_data_api::{build_data_api, DataAuthorization, ResourceCatalog};
 use fabric_identity::IdentityResolver;
 use fabric_tenant_runtime::RuntimeResolver;
 
@@ -64,22 +64,25 @@ fn router(
     identity: &Arc<IdentityResolver>,
     connectors: ConnectorRegistry,
 ) -> Result<Router, String> {
+    // Scopes for every tenant and no Check: no tenant policy is supplied and
+    // no authorization front is configured, because OpenFGA is not deployed
+    // (D01-10a). Supplying either is a separately reviewed change (ADR 0027).
     let data = build_data_api(
         &config.data_api,
         catalogue,
-        config.permissions.clone(),
+        DataAuthorization::default(),
         Arc::clone(runtime),
         connectors.clone(),
         Arc::clone(identity),
     )?;
 
-    // The probes read the same resolver and the same administrator role the
-    // Data API authorises against, rather than a second opinion about either.
+    // The probes read the same resolver the Data API authorises against,
+    // rather than a second opinion about what a token means.
     let health = health_routes(HealthState {
         runtime: Arc::clone(runtime),
         connectors,
         identity: Arc::clone(identity),
-        administrator_role: config.permissions.administrator_role.clone(),
+        administrator_role: config.health_detail_role.clone(),
     });
 
     Ok(compose(

@@ -450,6 +450,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "fabric-fga-check"
+version = "0.3.0"
+dependencies = [
+ "async-trait",
+ "axum",
+ "fabric-core",
+ "fabric-data-api",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "fabric-git-host"
 version = "0.3.0"
 dependencies = [

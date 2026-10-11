@@ -22,7 +22,7 @@ use fabric_tenant_runtime::RuntimeResolver;
 use http::StatusCode;
 use serde_json::{json, Value};
 use support::{
-    app_with_config, body_json, data_sources, json_request, open_permissions, request, resolver, tenants,
+    app_with_config, body_json, data_sources, json_request, request, resolver, scopes_only, tenants,
     wide_row, ScriptedConnector,
 };
 use tower::ServiceExt as _;
@@ -37,7 +37,7 @@ fn app() -> axum::Router {
     app_with_config(
         runtime(),
         ScriptedConnector::returning(vec![wide_row(1, "Alice")]),
-        open_permissions(),
+        scopes_only(),
         &fabric_data_api::DataApiConfig::default(),
     )
 }
@@ -187,7 +187,7 @@ async fn the_allowlist_reaches_the_connector_as_a_projection_too() {
     // recording connector is used here because the assertion is about what was
     // *sent*, not what came back.
     let connector = support::RecordingConnector::new(vec![]);
-    let app = support::app_with(runtime(), Arc::clone(&connector), open_permissions());
+    let app = support::app_with(runtime(), Arc::clone(&connector), scopes_only());
 
     app.oneshot(request("GET", "/restrictedCustomers", globex()))
         .await
@@ -207,7 +207,7 @@ async fn the_allowlist_reaches_the_connector_as_a_projection_too() {
 #[tokio::test]
 async fn an_unrestricted_resource_still_asks_for_the_connector_default_projection() {
     let connector = support::RecordingConnector::new(vec![]);
-    let app = support::app_with(runtime(), Arc::clone(&connector), open_permissions());
+    let app = support::app_with(runtime(), Arc::clone(&connector), scopes_only());
 
     app.oneshot(request("GET", "/customers", globex())).await.unwrap();
 

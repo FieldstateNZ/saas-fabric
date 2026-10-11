@@ -23,9 +23,8 @@ use fabric_data_api::DataApiConfig;
 use http::{Request, StatusCode};
 use serde_json::{json, Value};
 use support::{
-    app_with_config, body_json, data_sources, json_request, malformed_response, open_permissions,
-    outcome_unknown, rejected, rejected_outright, request, resolver, result_lost, tenants, unreachable,
-    ScriptedConnector,
+    app_with_config, body_json, data_sources, json_request, malformed_response, outcome_unknown, rejected,
+    rejected_outright, request, resolver, result_lost, scopes_only, tenants, unreachable, ScriptedConnector,
 };
 use tower::ServiceExt as _;
 
@@ -34,7 +33,7 @@ fn app(build: fn() -> ConnectorError) -> Router {
     app_with_config(
         resolver(tenants(), data_sources()),
         ScriptedConnector::failing(build),
-        open_permissions(),
+        scopes_only(),
         &DataApiConfig::default(),
     )
 }

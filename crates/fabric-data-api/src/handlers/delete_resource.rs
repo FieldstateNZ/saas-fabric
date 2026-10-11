@@ -2,11 +2,10 @@
 
 use axum::extract::{Path, State};
 use axum::Json;
-use fabric_identity::TenantIdentity;
 
 use crate::handlers::parse_resource;
 use crate::request_text::refuse_nul;
-use crate::{DataApiError, DataApiState, WriteResponse};
+use crate::{Caller, DataApiError, DataApiState, WriteResponse};
 
 /// Deletes one record by key.
 ///
@@ -19,16 +18,16 @@ use crate::{DataApiError, DataApiState, WriteResponse};
 /// because the scoped predicate matches nothing. It does not report an error,
 /// for the same reason a read returns 404: distinguishing "not yours" from
 /// "does not exist" tells the caller something about other tenants.
-#[tracing::instrument(skip_all, fields(tenant_id = %identity.tenant(), logical_resource = %resource))]
+#[tracing::instrument(skip_all, fields(tenant_id = %caller.identity().tenant(), logical_resource = %resource))]
 pub(crate) async fn delete_resource(
     State(state): State<DataApiState>,
-    identity: TenantIdentity,
+    caller: Caller,
     Path((resource, key)): Path<(String, String)>,
 ) -> Result<Json<WriteResponse>, DataApiError> {
     let resource = parse_resource(&resource)?;
 
     refuse_nul(&key)?;
-    let response = state.service.delete(&identity, &resource, &key).await?;
+    let response = state.service.delete(&caller, &resource, &key).await?;
 
     Ok(Json(response))
 }

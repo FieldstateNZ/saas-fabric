@@ -2,13 +2,12 @@
 
 use axum::extract::{Path, State};
 use axum::Json;
-use fabric_identity::TenantIdentity;
 use serde_json::{Map, Value};
 
 use crate::extraction::BoundedJson;
 use crate::handlers::parse_resource;
 use crate::request_text::{refuse_nul, refuse_nul_in_json};
-use crate::{DataApiError, DataApiState, WriteResponse};
+use crate::{Caller, DataApiError, DataApiState, WriteResponse};
 
 /// Updates the given fields of one record.
 ///
@@ -16,10 +15,10 @@ use crate::{DataApiError, DataApiState, WriteResponse};
 /// Whole-record replacement would mean a client that omits a field silently
 /// nulls it, which is a bad default for an API whose callers may be working
 /// from a partial view of the record.
-#[tracing::instrument(skip_all, fields(tenant_id = %identity.tenant(), logical_resource = %resource))]
+#[tracing::instrument(skip_all, fields(tenant_id = %caller.identity().tenant(), logical_resource = %resource))]
 pub(crate) async fn update_resource(
     State(state): State<DataApiState>,
-    identity: TenantIdentity,
+    caller: Caller,
     Path((resource, key)): Path<(String, String)>,
     BoundedJson(body): BoundedJson<Value>,
 ) -> Result<Json<WriteResponse>, DataApiError> {
@@ -28,7 +27,7 @@ pub(crate) async fn update_resource(
     refuse_nul_in_json(&body)?;
     let changes = to_changes(body)?;
 
-    let response = state.service.update(&identity, &resource, &key, &changes).await?;
+    let response = state.service.update(&caller, &resource, &key, &changes).await?;
 
     Ok(Json(response))
 }

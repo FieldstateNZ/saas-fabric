@@ -90,7 +90,7 @@ async fn an_internal_error_body_carries_no_physical_detail() {
     let app = support::app_with(
         support::resolver(bindings, support::data_sources()),
         std::sync::Arc::clone(&connector),
-        support::open_permissions(),
+        support::scopes_only(),
     );
 
     let response = app

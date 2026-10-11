@@ -2,14 +2,13 @@
 
 use axum::extract::{Path, State};
 use axum::Json;
-use fabric_identity::TenantIdentity;
 use http::StatusCode;
 use serde_json::{Map, Value};
 
 use crate::extraction::BoundedJson;
 use crate::handlers::parse_resource;
 use crate::request_text::refuse_nul_in_json;
-use crate::{DataApiError, DataApiState, WriteResponse};
+use crate::{Caller, DataApiError, DataApiState, WriteResponse};
 
 /// Creates one or more records.
 ///
@@ -20,10 +19,10 @@ use crate::{DataApiError, DataApiState, WriteResponse};
 /// the payload is overwritten downstream by
 /// [`MutationSpec::for_target`](fabric_connector::MutationSpec::for_target). A
 /// caller cannot create a record belonging to another tenant.
-#[tracing::instrument(skip_all, fields(tenant_id = %identity.tenant(), logical_resource = %resource))]
+#[tracing::instrument(skip_all, fields(tenant_id = %caller.identity().tenant(), logical_resource = %resource))]
 pub(crate) async fn create_resource(
     State(state): State<DataApiState>,
-    identity: TenantIdentity,
+    caller: Caller,
     Path(resource): Path<String>,
     BoundedJson(body): BoundedJson<Value>,
 ) -> Result<(StatusCode, Json<WriteResponse>), DataApiError> {
@@ -31,7 +30,7 @@ pub(crate) async fn create_resource(
     refuse_nul_in_json(&body)?;
     let rows = to_rows(body)?;
 
-    let response = state.service.create(&identity, &resource, rows).await?;
+    let response = state.service.create(&caller, &resource, rows).await?;
 
     Ok((StatusCode::CREATED, Json(response)))
 }

@@ -845,7 +845,7 @@ Options:
     claimed as a supported operational rollback.
 
   Recorded in ADR 0018 part 10 and ADR 0023's amendment. The owed items are
-  O1, O3, O4 and O5.
+  O1, O3, O4 and O5. O1 is implemented in #136.
 
 ---
 
@@ -899,15 +899,18 @@ this document's ADR amendments act on. The comment holds the others.
 
 **Owed after acceptance.** These are not built at the base of the amendment.
 Each is tracked against [#112](https://github.com/FieldstateNZ/saas-fabric/issues/112).
+[#136](https://github.com/FieldstateNZ/saas-fabric/pull/136) implements O1 and
+O2 and part of O6. Its rows below say what remains. None of it is verified
+live.
 
 | ID | Owed | Evidence |
 |---|---|---|
-| O1 | The publisher does not refuse a lower tenant or data-source `BindingRevision`, or a changed resource at the same revision, against the held document. Running readers ignore it, while a reader that starts later applies it | `fabric-runtime-publication/src/validate.rs` (no such rule); `fabric-tenant-runtime/src/resource/registry/merge.rs` |
-| O2 | When the held manifest is lost (out-of-band deletion), the document is treated as a first publication and offered at revision 1. Nothing refuses or reports this | `verdict.rs` (absent manifest → write); `publication/snapshot.rs::revision_or_first` |
+| O1 | **Implemented in #136.** The publisher now refuses a held tenant or data source offered at a lower `BindingRevision`, or changed at the same revision, as `ResourceRevisionNotAdvanced`. A resource absent from the held document is not compared (see O3, O4) | `fabric-runtime-publication/src/resource_revisions.rs`; `plan_tests.rs::a_held_tenant_offered_at_an_older_revision_is_refused`, `::a_held_data_source_changed_at_the_same_revision_is_refused` |
+| O2 | **Implemented in #136 while the publication record survives.** A lost manifest is held at the revision the record names, so an older offer is refused as `StaleRevision`. If the whole tenants `ConfigMap` is lost, the record goes with it, and the document is still treated as a first publication | `fabric-runtime-publication/src/plan/held.rs`; `plan_tests.rs::a_lost_manifest_is_held_at_the_revision_the_record_names_so_an_older_offer_is_refused` |
 | O3 | A data source that is removed and declared again under the same id restarts at revision 1 | `fabric-platform-management/src/data_sources/plan.rs` |
-| O4 | A removed or lowered placement record is not detected against the last published tenants document. A Git revert can deprovision a tenant or lower its revision | `publication/snapshot.rs::compose_tenants`; `validate.rs` guards only the whole document going empty |
+| O4 | A removed or lowered placement record is not detected against the last published tenants document. A Git revert can deprovision a tenant. A lowered tenant revision is now refused at the publisher (O1, #136) | `publication/snapshot.rs::compose_tenants`; `validate.rs` guards only the whole document going empty |
 | O5 | No test characterizes a Git revert of `placements.yaml`, `data-sources.yaml`, the catalogue or client documents | none exists |
-| O6 | #112 gaps G1b, G2, G3 (visible to readers; "incomplete" on the panel), G4 (`Lease`), G5 (hold, failure semantics, restart last-known-good, recovery command), G6 (versioning rule, dual-key, per-row tests), G7, G8 | [`m2-publication-gap-report.md`](m2-publication-gap-report.md) "Still deferred" |
+| O6 | #112 gaps. #136 makes each process resolve a request against one generation's tenants and data sources (G1b, with a deterministic isolation test), keeps readers off a retirement until its unbinding (G2) and off an interrupted publication (G3), and gives G6 a reader-floor handshake with N/N+1 tests. Still owed: G1b across replicas (G7) and for the catalogue (G8); G2's publisher waiting for readers; G3's "incomplete" on the panel; G4 (`Lease`); G5 (hold, failure semantics, restart last-known-good, recovery command); G6 (dual-key path, per-row tests, CI check on shape changes); G7; G8 | [`m2-publication-gap-report.md`](m2-publication-gap-report.md) "Still deferred" |
 | O7 | The controller does not attempt placement on each pass. Placement happens only on an explicit `POST` | `fabric-control-plane/src/handlers/placements/post.rs` is the only production caller of `Placements::place` |
 | O8 | The readiness gate reports publication only. It does not report connector coverage or issuer-registry coverage (D01-18) | no such check in `fabric-platform-management` or `fabric-control-plane` |
 
@@ -941,7 +944,7 @@ IDs are not reused.
 | D01-19c | Lifecycle | Activity and the size limit (ADR 0021 owed 6) | Durable audit store |
 | D01-19d | Lifecycle | Accept ADR 0021 and ADR 0026 (0026 has six owed decisions; it comes after D01-2) | **Disposed 2026-10-11:** in order 0023, 0021, 0026; owed items stay owed |
 | D01-20 | Rollback | Order updates as well as creation (`RollingSync`, platform #44) | Creation-only for the trial; `RollingSync` before the pilot |
-| D01-21 | Rollback | Rollback floor for Fabric's own component across format changes | Minimum rollable version in the release manifest |
+| D01-21 | Rollback | Rollback floor for Fabric's own component across format changes. #136 records and enforces a floor for the published state (`minimum_publisher_contract`); the release-level floor is still undecided | Minimum rollable version in the release manifest |
 | D01-23 | Rollback | Owner of tenant data backup, restore and migration | Platform, gated to M5 |
 | D01-25 | Secrets | Lifecycle and rollback of client secret versions (ADR 0017; PR105/106). Options: A roll forward only, B version read and restore, C retention and destroy | A now, with explicit retention; B when an older version must be read |
 | D01-26 | Identity | Who configures tenant end-user sessions for client instances. ADR 0024 already sets the policy (the gateway holds the session); this is engineering ownership, and Brett confirms only if it changes D01-3(b) (#114) | A, platform per-client composition, with D01-3(b) |

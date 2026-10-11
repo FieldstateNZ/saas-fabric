@@ -33,6 +33,35 @@ pub enum SourceError {
         detail: String,
     },
 
+    /// The documents read do not match the publication record they were
+    /// published under: a publication is in progress, was interrupted, or
+    /// reached this reader one volume at a time. Holding the generation
+    /// already served is the point -- applying either document alone would
+    /// serve a mix of two generations.
+    #[error("{document} in {origin} is not the one generation {generation} names; holding the last complete generation")]
+    IncompleteGeneration {
+        /// A description of the source, for logs.
+        origin: String,
+        /// The generation the record names.
+        generation: u64,
+        /// The first document whose bytes differ from the record's digest.
+        document: &'static str,
+    },
+
+    /// The publication record says this generation needs a newer reader.
+    /// The publisher raised its floor to activate a shape this reader does
+    /// not know; refusing it keeps the last complete generation serving
+    /// rather than misreading the new one.
+    #[error("{origin} requires reader contract {required}; this reader is {supported}")]
+    UnsupportedContract {
+        /// A description of the source, for logs.
+        origin: String,
+        /// The record's `minimum_reader_contract`.
+        required: u32,
+        /// This reader's own contract.
+        supported: u32,
+    },
+
     /// The source parsed, but **every** resource in it failed validation, so
     /// there was nothing to install.
     ///

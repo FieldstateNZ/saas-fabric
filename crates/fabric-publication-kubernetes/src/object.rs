@@ -4,7 +4,8 @@ use std::collections::BTreeMap;
 
 use fabric_runtime_publication::{
     DocumentKind, DocumentManifest, DocumentPlan, PublicationError, CATALOG_FILE, CATALOG_MANIFEST_FILE,
-    DATA_SOURCES_FILE, DATA_SOURCES_MANIFEST_FILE, TENANTS_FILE, TENANTS_MANIFEST_FILE,
+    DATA_SOURCES_FILE, DATA_SOURCES_MANIFEST_FILE, PUBLICATION_RECORD_FILE, TENANTS_FILE,
+    TENANTS_MANIFEST_FILE,
 };
 
 use crate::errors::unwritable;
@@ -59,8 +60,9 @@ pub(crate) fn path_of(namespace: &str, document: DocumentKind) -> String {
     format!("{}/{}", collection_of(namespace), name_of(document))
 }
 
-/// Builds the object a document's plan writes: both keys, the managing
-/// label, and — for a replace — the version it was read at.
+/// Builds the object a document's plan writes: both keys, the publication
+/// record when one is given (the tenants object only), the managing label,
+/// and — for a replace — the version it was read at.
 ///
 /// # Errors
 ///
@@ -70,6 +72,7 @@ pub(crate) fn object_for(
     namespace: &str,
     document: DocumentKind,
     plan: &DocumentPlan,
+    record: Option<&[u8]>,
     resource_version: Option<String>,
 ) -> Result<ConfigMap, PublicationError> {
     let keys = Keys::of(document);
@@ -81,7 +84,15 @@ pub(crate) fn object_for(
     let manifest =
         String::from_utf8(manifest).map_err(|_| unwritable(document, "the manifest is not UTF-8"))?;
 
-    if payload.len() + manifest.len() + keys.payload.len() + keys.manifest.len() > OBJECT_CAP {
+    let record = record
+        .map(|bytes| String::from_utf8(bytes.to_vec()))
+        .transpose()
+        .map_err(|_| unwritable(document, "the publication record is not UTF-8"))?;
+    let record_len = record
+        .as_ref()
+        .map_or(0, |text| text.len() + PUBLICATION_RECORD_FILE.len());
+
+    if payload.len() + manifest.len() + keys.payload.len() + keys.manifest.len() + record_len > OBJECT_CAP {
         return Err(unwritable(
             document,
             "the document would exceed the cluster's object size limit",
@@ -91,6 +102,9 @@ pub(crate) fn object_for(
     let mut data = BTreeMap::new();
     data.insert(keys.payload.to_owned(), payload);
     data.insert(keys.manifest.to_owned(), manifest);
+    if let Some(record) = record {
+        data.insert(PUBLICATION_RECORD_FILE.to_owned(), record);
+    }
     let mut labels = BTreeMap::new();
     labels.insert(MANAGED_BY_LABEL.0.to_owned(), MANAGED_BY_LABEL.1.to_owned());
 

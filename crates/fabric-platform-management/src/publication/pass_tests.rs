@@ -81,3 +81,31 @@ fn an_exhausted_divergent_payload_budget_is_refused_not_retried_again() {
 
     assert!(matches!(outcome, PassOutcome::Refused { .. }), "{outcome:?}");
 }
+
+#[test]
+fn a_resource_offered_without_advancing_its_revision_is_refused() {
+    // Re-reading changes nothing: the snapshot itself has to bump the
+    // resource's revision before any reader would apply it.
+    let error = PublicationError::ResourceRevisionNotAdvanced {
+        document: DocumentKind::Tenants,
+        resource: "acme".to_owned(),
+        held: fabric_core::BindingRevision::new(3),
+        offered: fabric_core::BindingRevision::new(2),
+    };
+
+    let outcome = outcome_from_publish_error(&error);
+
+    assert!(matches!(outcome, PassOutcome::Refused { .. }), "{outcome:?}");
+}
+
+#[test]
+fn a_held_record_above_the_rollback_floor_is_refused_until_the_publisher_rolls_forward() {
+    let error = PublicationError::BelowRollbackFloor {
+        floor: 2,
+        publisher: 1,
+    };
+
+    let outcome = outcome_from_publish_error(&error);
+
+    assert!(matches!(outcome, PassOutcome::Refused { .. }), "{outcome:?}");
+}

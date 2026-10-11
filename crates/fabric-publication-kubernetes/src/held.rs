@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 
 use fabric_runtime_publication::{
-    DocumentKind, DocumentManifest, HeldDocument, HeldDocuments, PublicationError,
+    DocumentKind, DocumentManifest, HeldDocument, HeldDocuments, PublicationError, PUBLICATION_RECORD_FILE,
 };
 
 use crate::client::{Client, Found};
@@ -15,6 +15,8 @@ use crate::object::{name_of, path_of, Keys};
 pub(crate) struct Read {
     pub(crate) held: HeldDocument,
     pub(crate) resource_version: Option<String>,
+    /// The publication record, which only the tenants object carries.
+    pub(crate) record: Option<Vec<u8>>,
 }
 
 /// All three, read once before a publication is planned.
@@ -38,6 +40,7 @@ impl Reads {
             tenants: self.tenants.held.clone(),
             data_sources: self.data_sources.held.clone(),
             catalog: self.catalog.held.clone(),
+            record: self.tenants.record.clone(),
         }
     }
 }
@@ -51,6 +54,7 @@ pub(crate) async fn read_one(
         Found::Absent => Ok(Read {
             held: HeldDocument::absent(),
             resource_version: None,
+            record: None,
         }),
         Found::Object(object) => {
             if object.metadata.name != name_of(document) {
@@ -59,9 +63,17 @@ pub(crate) async fn read_one(
                     "the cluster answered with a different object",
                 ));
             }
+            let record = match document {
+                DocumentKind::Tenants => object
+                    .data
+                    .get(PUBLICATION_RECORD_FILE)
+                    .map(|text| text.as_bytes().to_vec()),
+                DocumentKind::DataSources | DocumentKind::Catalog => None,
+            };
             Ok(Read {
                 held: held_of(&object.data, document)?,
                 resource_version: object.metadata.resource_version,
+                record,
             })
         }
     }

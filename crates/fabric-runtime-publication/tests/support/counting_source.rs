@@ -13,7 +13,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use fabric_tenant_runtime::{JsonFileSource, RegistryResource, ResourceSource, SourceError};
+use fabric_tenant_runtime::{
+    JsonFileSource, PublishedFiles, PublishedState, PublishedStateSource, RegistryResource, ResourceSource,
+    SourceError,
+};
 use serde::de::DeserializeOwned;
 
 /// Wraps a real [`JsonFileSource`], counting every `load()` once it has
@@ -45,6 +48,40 @@ where
     T: RegistryResource + DeserializeOwned,
 {
     async fn load(&self) -> Result<Vec<T>, SourceError> {
+        let result = self.inner.load().await;
+        self.loads.fetch_add(1, Ordering::SeqCst);
+        result
+    }
+
+    fn describe(&self) -> String {
+        self.inner.describe()
+    }
+}
+
+/// The production reader, [`PublishedFiles`], with the same completed-load
+/// counter: one count per read of both documents and their record.
+pub struct CountingPublished {
+    inner: PublishedFiles,
+    loads: Arc<AtomicUsize>,
+}
+
+impl CountingPublished {
+    /// Wraps the published files at these two paths, returning the reader
+    /// alongside the shared counter a test polls.
+    #[must_use]
+    pub fn new(tenants: impl AsRef<Path>, data_sources: impl AsRef<Path>) -> (Self, Arc<AtomicUsize>) {
+        let loads = Arc::new(AtomicUsize::new(0));
+        let source = Self {
+            inner: PublishedFiles::new(tenants, data_sources),
+            loads: Arc::clone(&loads),
+        };
+        (source, loads)
+    }
+}
+
+#[async_trait]
+impl PublishedStateSource for CountingPublished {
+    async fn load(&self) -> Result<PublishedState, SourceError> {
         let result = self.inner.load().await;
         self.loads.fetch_add(1, Ordering::SeqCst);
         result

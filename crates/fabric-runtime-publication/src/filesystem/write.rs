@@ -1,8 +1,12 @@
 //! Writes one document to disk, once its verdict says it must be.
 
+use std::path::Path;
+
 use super::atomic_write::atomic_write;
 use super::paths::DocumentPaths;
-use crate::{DocumentKind, DocumentManifest, DocumentOutcome, DocumentRevision, PublicationError};
+use crate::{
+    DocumentKind, DocumentManifest, DocumentOutcome, DocumentRevision, PublicationError, RecordPlan,
+};
 
 /// Writes one document's payload, then its manifest, unless its verdict says
 /// nothing changed.
@@ -28,6 +32,16 @@ pub(super) fn write_if_needed(
         .map_err(|cause| unwritable(paths.kind, cause))?;
 
     atomic_write(&paths.manifest, &manifest_bytes).map_err(|cause| unwritable(paths.kind, cause))
+}
+
+/// Writes the publication record, after every document, unless the plan
+/// left it unchanged. A failure is reported against the tenants document,
+/// which the record travels with.
+pub(super) fn write_record_if_needed(path: &Path, plan: &RecordPlan) -> Result<(), PublicationError> {
+    if plan.outcome == DocumentOutcome::Unchanged {
+        return Ok(());
+    }
+    atomic_write(path, &plan.bytes).map_err(|cause| unwritable(DocumentKind::Tenants, cause))
 }
 
 fn unwritable(

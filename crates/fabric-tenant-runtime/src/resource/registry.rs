@@ -8,6 +8,7 @@ mod apply_tests;
 mod change_tests;
 #[cfg(test)]
 mod concurrency_tests;
+mod current;
 #[cfg(test)]
 mod deletion_tests;
 #[cfg(test)]
@@ -18,7 +19,6 @@ mod first_load_tests;
 mod lookup_tests;
 mod merge;
 mod merged_snapshot;
-mod set_facts;
 #[cfg(test)]
 mod stale_revision_tests;
 #[cfg(test)]

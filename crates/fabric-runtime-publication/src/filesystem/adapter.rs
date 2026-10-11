@@ -16,10 +16,10 @@ use super::atomic_write::remove_stale_staging;
 use super::held::read_held;
 use super::lock::PublicationLock;
 use super::paths::DocumentPaths;
-use super::write::write_if_needed;
+use super::write::{write_if_needed, write_record_if_needed};
 use crate::{
     plan_publication, DocumentKind, DocumentPlan, PublicationError, PublicationReport, PublishedRevisions,
-    RuntimePublication, RuntimeSnapshot,
+    RuntimePublication, RuntimeSnapshot, PUBLICATION_RECORD_FILE,
 };
 
 /// Publishes the runtime's three documents to a local filesystem, matching
@@ -34,31 +34,41 @@ pub struct FilesystemRuntimePublication {
     tenants: DocumentPaths,
     data_sources: DocumentPaths,
     catalog: DocumentPaths,
+    record: PathBuf,
 }
 
 impl FilesystemRuntimePublication {
     /// Publishes to the three given payload paths — the runtime's own
     /// `tenants_path`, `data_sources_path`, and `catalog_path`. Each
     /// document's manifest is derived from its payload's parent directory
-    /// and this crate's own manifest file name for that document.
+    /// and this crate's own manifest file name for that document. The
+    /// publication record sits beside the tenants payload, where a reader
+    /// configured with only `tenants_path` finds it.
     #[must_use]
     pub fn new(
         tenants_path: impl Into<PathBuf>,
         data_sources_path: impl Into<PathBuf>,
         catalog_path: impl Into<PathBuf>,
     ) -> Self {
+        let tenants = DocumentPaths::new(DocumentKind::Tenants, tenants_path.into());
+        let record = tenants.manifest.with_file_name(PUBLICATION_RECORD_FILE);
         Self {
-            tenants: DocumentPaths::new(DocumentKind::Tenants, tenants_path.into()),
+            tenants,
             data_sources: DocumentPaths::new(DocumentKind::DataSources, data_sources_path.into()),
             catalog: DocumentPaths::new(DocumentKind::Catalog, catalog_path.into()),
+            record,
         }
+    }
+
+    fn read_held(&self) -> Result<crate::HeldDocuments, PublicationError> {
+        read_held(&self.tenants, &self.data_sources, &self.catalog, &self.record)
     }
 }
 
 #[async_trait]
 impl RuntimePublication for FilesystemRuntimePublication {
     async fn current(&self) -> Result<PublishedRevisions, PublicationError> {
-        Ok(read_held(&self.tenants, &self.data_sources, &self.catalog)?.revisions())
+        Ok(self.read_held()?.revisions())
     }
 
     async fn publish(&self, snapshot: &RuntimeSnapshot) -> Result<PublicationReport, PublicationError> {
@@ -67,14 +77,17 @@ impl RuntimePublication for FilesystemRuntimePublication {
             remove_stale_staging(&paths.payload);
             remove_stale_staging(&paths.manifest);
         }
-        let held = read_held(&self.tenants, &self.data_sources, &self.catalog)?;
+        remove_stale_staging(&self.record);
+        let held = self.read_held()?;
         let plan = plan_publication(snapshot, &held)?;
 
         // The order ADR 0018 part 3 requires: a data source before anything
-        // that names it, and tenants last.
+        // that names it, then tenants, then the record that makes the three
+        // one generation -- until it lands, readers keep the previous one.
         write(&self.data_sources, &plan.data_sources)?;
         write(&self.catalog, &plan.catalog)?;
         write(&self.tenants, &plan.tenants)?;
+        write_record_if_needed(&self.record, &plan.record)?;
 
         Ok(PublicationReport {
             tenants: plan.tenants.outcome,

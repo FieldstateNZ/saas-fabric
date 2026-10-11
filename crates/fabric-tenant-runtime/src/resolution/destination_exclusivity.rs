@@ -2,7 +2,7 @@
 
 use fabric_core::{DataSourceId, TenantId};
 
-use crate::{DataSourceRegistry, TenantRegistry};
+use crate::{CoTenancy, DestinationReuse};
 
 /// What the runtime has *observed* about how many tenants reach one
 /// DataSource's physical destination.
@@ -65,37 +65,31 @@ pub(super) enum Exclusivity {
     Shared,
 }
 
-/// Combines both registries' derived facts for one tenant and DataSource.
+/// Combines the two derived facts of one resolution view, for one tenant
+/// and DataSource.
 ///
-/// Unprimed registries report `Exclusive` because they have observed nothing.
+/// Both facts come from the same `ResolutionView` the binding and the
+/// DataSource were read from, so the verdict describes the pair actually
+/// being resolved.
+///
+/// An unprimed half reports `Exclusive` because it has observed nothing.
 /// That is safe rather than optimistic: resolution cannot reach this point
-/// without both lookups having succeeded, and an unprimed registry answers
-/// those with [`LookupError::Unavailable`](crate::LookupError) first.
+/// without both lookups having succeeded, and an unprimed half answers those
+/// with [`LookupError::Unavailable`](crate::LookupError) first.
 pub(super) fn observe(
-    tenants: &TenantRegistry,
-    data_sources: &DataSourceRegistry,
+    co_tenancy: Option<&CoTenancy>,
+    reuse: Option<&DestinationReuse>,
     tenant: &TenantId,
     data_source: &DataSourceId,
 ) -> Exclusivity {
-    // Both guards are held across the whole decision, so the two facts are
-    // read as one consistent pair rather than either being replaced halfway.
-    let shared = tenants.with_set_facts(|co_tenancy| {
-        let Some(co_tenancy) = co_tenancy else {
-            return false;
-        };
-
-        if co_tenancy.has_tenants_other_than(data_source, tenant) {
-            return true;
-        }
-
-        data_sources.with_set_facts(|reuse| {
-            reuse.is_some_and(|reuse| {
+    let shared = co_tenancy.is_some_and(|co_tenancy| {
+        co_tenancy.has_tenants_other_than(data_source, tenant)
+            || reuse.is_some_and(|reuse| {
                 reuse
                     .peers(data_source)
                     .iter()
                     .any(|peer| co_tenancy.has_tenants_other_than(peer, tenant))
             })
-        })
     });
 
     if shared {

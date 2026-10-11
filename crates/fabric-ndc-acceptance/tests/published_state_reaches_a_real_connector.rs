@@ -1273,12 +1273,22 @@ async fn a_binding_published_for_one_tenant_only_fails_the_other_tenant_and_nobo
         .expect("the static connector should negotiate with no routing configured");
 
     // Tenants and catalogue both move to revision 2, but only acme gains the
-    // `audit` binding the catalogue now reads through.
+    // `audit` binding the catalogue now reads through. acme's binding
+    // changed, so its own revision advances too: the publisher refuses a
+    // held resource changed at the revision it already holds.
+    let mut acme = serde_json::to_value(fixtures::tenant_binding_on(
+        "acme",
+        fixtures::ACME_DISCRIMINATOR_VALUE,
+        &["primary", "audit"],
+    ))
+    .unwrap();
+    acme["revision"] = serde_json::json!(2);
+    let acme = serde_json::from_value(acme).unwrap();
     let mut skewed = fixtures::read_only_snapshot();
     skewed.tenants = DocumentInput::new(
         DocumentRevision::new(2),
         vec![
-            fixtures::tenant_binding_on("acme", fixtures::ACME_DISCRIMINATOR_VALUE, &["primary", "audit"]),
+            acme,
             fixtures::tenant_binding("globex", fixtures::GLOBEX_DISCRIMINATOR_VALUE),
         ],
     );

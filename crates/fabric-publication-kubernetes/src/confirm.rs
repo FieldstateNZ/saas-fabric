@@ -10,6 +10,11 @@ use crate::held::{read_one, Read, Reads};
 /// Re-reads every object the plan relied on but will not write, when it
 /// will write anything at all, and refuses if any has moved.
 ///
+/// A tenants object rewritten only to carry a new publication record still
+/// counts as read-only here: the plan relied on its tenants payload, and the
+/// record write comes after the others, too late for its own
+/// `resourceVersion` to stop them.
+///
 /// A publication sends `resourceVersion` on every object it writes, so the
 /// API server refuses a write over a version it did not see. An object the
 /// plan only *read* -- the held tenants document behind the retirement
@@ -40,9 +45,10 @@ pub(crate) async fn confirm_read_only_unmoved(
         (DocumentKind::Catalog, plan.catalog.outcome, &reads.catalog),
         (DocumentKind::Tenants, plan.tenants.outcome, &reads.tenants),
     ];
-    if documents
-        .iter()
-        .all(|(_, outcome, _)| *outcome == DocumentOutcome::Unchanged)
+    if plan.record.outcome == DocumentOutcome::Unchanged
+        && documents
+            .iter()
+            .all(|(_, outcome, _)| *outcome == DocumentOutcome::Unchanged)
     {
         return Ok(());
     }

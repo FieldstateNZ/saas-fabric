@@ -23,7 +23,7 @@ mod fixtures;
 mod requests;
 
 pub use connector::RecordingConnector;
-pub use counting_source::CountingSource;
+pub use counting_source::{CountingPublished, CountingSource};
 pub use fixtures::{
     articles_catalog, base_snapshot, data_source_id, shared_data_source, tenant_binding,
     ACME_DISCRIMINATOR_VALUE, CONNECTOR_ID, DATA_SOURCE_ID, DISCRIMINATOR_COLUMN, GLOBEX_DISCRIMINATOR_VALUE,
@@ -43,8 +43,8 @@ use fabric_data_api::{build_data_api, DataApiConfig, ResourceCatalog, ResourcePe
 use fabric_identity::{build_identity, IdentityConfig, TrustedIngressReader};
 use fabric_runtime_publication::{FilesystemRuntimePublication, RuntimePublication as _, RuntimeSnapshot};
 use fabric_tenant_runtime::{
-    build_runtime, DataSource as RuntimeDataSource, RuntimeConfig, RuntimeHandles, RuntimeResolver,
-    TenantRuntimeBinding,
+    build_published_runtime, build_runtime, DataSource as RuntimeDataSource, RuntimeConfig, RuntimeHandles,
+    RuntimeResolver, TenantRuntimeBinding,
 };
 use http::Request;
 use tower::ServiceExt as _;
@@ -147,6 +147,38 @@ impl TempDir {
     pub fn write_raw(&self, name: &str, bytes: &[u8]) {
         std::fs::write(self.path.join(name), bytes).unwrap();
     }
+
+    /// The bytes of a file in this directory.
+    #[must_use]
+    pub fn read_raw(&self, name: &str) -> Vec<u8> {
+        std::fs::read(self.path.join(name)).unwrap()
+    }
+
+    /// Removes a file from this directory.
+    pub fn remove_raw(&self, name: &str) {
+        std::fs::remove_file(self.path.join(name)).unwrap();
+    }
+
+    /// Whether a file exists in this directory.
+    #[must_use]
+    pub fn has(&self, name: &str) -> bool {
+        self.path.join(name).exists()
+    }
+
+    /// The bytes of every named file, to put back later with
+    /// [`Self::restore`] -- how a test stands in for a Kubernetes volume the
+    /// kubelet has not yet projected.
+    #[must_use]
+    pub fn capture(&self, names: &[&'static str]) -> Vec<(&'static str, Vec<u8>)> {
+        names.iter().map(|name| (*name, self.read_raw(name))).collect()
+    }
+
+    /// Writes back what [`Self::capture`] took.
+    pub fn restore(&self, captured: &[(&'static str, Vec<u8>)]) {
+        for (name, bytes) in captured {
+            self.write_raw(name, bytes);
+        }
+    }
 }
 
 impl Default for TempDir {
@@ -199,12 +231,24 @@ pub struct Stack {
     pub handles: RuntimeHandles,
     pub connector: Arc<RecordingConnector>,
     pub dir: TempDir,
-    /// How many times the tenants source's `load()` has been called --
-    /// counted through [`CountingSource`], so a test can prove a refresh
-    /// actually ran rather than only that assertions held across a window.
-    pub tenant_loads: Arc<AtomicUsize>,
-    /// The data-sources twin of `tenant_loads`.
-    pub data_source_loads: Arc<AtomicUsize>,
+    /// How many refresh passes have finished reading -- counted through
+    /// [`CountingPublished`] (or, for [`Reader::PerDocument`], the tenants
+    /// [`CountingSource`], which a pass reads last), so a test can prove a
+    /// refresh actually ran rather than only that assertions held across a
+    /// window.
+    pub loads: Arc<AtomicUsize>,
+}
+
+/// Which reader a stack is built with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Reader {
+    /// The production reader: `build_published_runtime` over
+    /// `PublishedFiles`, which applies only a complete generation.
+    Generation,
+    /// The reader before the publication record existed -- reader contract
+    /// N in the compatibility tests: `build_runtime` over two independent
+    /// `JsonFileSource`s, which never reads the record.
+    PerDocument,
 }
 
 /// Publishes `snapshot` through the real [`FilesystemRuntimePublication`]
@@ -222,20 +266,14 @@ pub struct Stack {
 /// which is what pins the catalogue leg the way the compiler already pins
 /// the tenants and data-sources legs through `JsonFileSource`.
 pub async fn build_stack(snapshot: &RuntimeSnapshot) -> Stack {
+    build_stack_with(snapshot, Reader::Generation).await
+}
+
+/// [`build_stack`], with the reader chosen.
+pub async fn build_stack_with(snapshot: &RuntimeSnapshot, reader: Reader) -> Stack {
     let dir = TempDir::new();
     dir.publisher().publish(snapshot).await.unwrap();
-
-    let (tenant_source, tenant_loads) = CountingSource::<TenantRuntimeBinding>::new(dir.tenants_path());
-    let (data_source_source, data_source_loads) =
-        CountingSource::<RuntimeDataSource>::new(dir.data_sources_path());
-
-    let (resolver, handles) = build_runtime(
-        &runtime_config(),
-        Arc::new(tenant_source),
-        Arc::new(data_source_source),
-    )
-    .await
-    .unwrap();
+    let (resolver, handles, loads) = build_reader(&dir, reader).await.unwrap();
 
     let catalog_bytes = std::fs::read(dir.catalog_path()).unwrap();
     let catalog: ResourceCatalog = serde_json::from_slice(&catalog_bytes).unwrap();
@@ -270,8 +308,47 @@ pub async fn build_stack(snapshot: &RuntimeSnapshot) -> Stack {
         handles,
         connector,
         dir,
-        tenant_loads,
-        data_source_loads,
+        loads,
+    }
+}
+
+/// Builds `reader` over the files in `dir`, under [`runtime_config`], with
+/// its load counter.
+///
+/// # Errors
+///
+/// The reader's own refusal to start, as `build_runtime` and
+/// `build_published_runtime` word it.
+pub async fn build_reader(
+    dir: &TempDir,
+    reader: Reader,
+) -> Result<(Arc<RuntimeResolver>, RuntimeHandles, Arc<AtomicUsize>), String> {
+    build_reader_with(dir, reader, &runtime_config()).await
+}
+
+/// [`build_reader`] under `config`.
+///
+/// # Errors
+///
+/// As [`build_reader`].
+pub async fn build_reader_with(
+    dir: &TempDir,
+    reader: Reader,
+    config: &RuntimeConfig,
+) -> Result<(Arc<RuntimeResolver>, RuntimeHandles, Arc<AtomicUsize>), String> {
+    match reader {
+        Reader::Generation => {
+            let (source, loads) = CountingPublished::new(dir.tenants_path(), dir.data_sources_path());
+            let (resolver, handles) = build_published_runtime(config, Arc::new(source)).await?;
+            Ok((resolver, handles, loads))
+        }
+        Reader::PerDocument => {
+            let (tenants, loads) = CountingSource::<TenantRuntimeBinding>::new(dir.tenants_path());
+            let (data_sources, _) = CountingSource::<RuntimeDataSource>::new(dir.data_sources_path());
+            let (resolver, handles) =
+                build_runtime(config, Arc::new(tenants), Arc::new(data_sources)).await?;
+            Ok((resolver, handles, loads))
+        }
     }
 }
 

@@ -1,7 +1,10 @@
 //! Wiring for the runtime plane.
 
+mod build_published;
 #[cfg(test)]
 mod registration_tests;
+
+pub use build_published::build_published_runtime;
 
 use std::sync::Arc;
 

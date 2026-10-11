@@ -26,4 +26,5 @@ pub use lookup_error::LookupError;
 pub use refresher::{RefreshHandle, ResourceRefresher};
 pub use registry::ResourceRegistry;
 pub use resource_kind::RegistryResource;
+pub(crate) use snapshot::ResourceSnapshot;
 pub use source::ResourceSource;

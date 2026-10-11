@@ -16,6 +16,10 @@ mod resource_events;
 /// The registry and refresher's own lifecycle.
 mod lifecycle_events;
 
+/// Reading the published documents as one generation.
+mod generation_events;
+
+pub(crate) use generation_events::{generation_applied, generation_held, generation_timed_out};
 pub(crate) use lifecycle_events::{
     first_load_refused, primed, refresh_failed, refresh_timed_out, refresher_started, refresher_stopped,
     snapshot_applied,

@@ -1,7 +1,15 @@
 # ADR 0023 — Data sources are environment desired state, and placement is recorded rather than inferred
 
-- **Status:** Proposed
-- **Date:** 2026-09-18
+- **Status:** Accepted as amended (2026-10-11, under the D01-2 and D01-27
+  dispositions in [#108](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6109518415)).
+  Acceptance covers the decision as amended below. It does not verify the
+  items listed under [Owed](#owed-not-yet-built), which remain open under
+  [#112](https://github.com/FieldstateNZ/saas-fabric/issues/112).
+- **Acceptance order (D01-19d):** this ADR, then
+  [ADR 0021](0021-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md),
+  then [ADR 0026](0026-a-component-describes-itself-in-an-artifact-attached-to-its-image.md).
+  Each is accepted through its own reviewed amendment.
+- **Date:** 2026-09-18; amended 2026-10-11
 - **Applies to:** `fabric-platform-management`, `fabric-platform-git`,
   `fabric-control-plane`, `fabric-control-plane-api`, the console, the
   publication controller and its Kubernetes adapter, and `saas-fabric-platform`
@@ -85,7 +93,10 @@ id -- the file is parsed with the wire's own envelope type, and the wire's
 own published document is a list. An operator declares a data source on the
 console's Environments page; the control plane validates it and writes it.
 Editing the file by hand remains the break-glass path and is expected to
-keep working.
+keep working, under the same rule the control plane follows: a hand edit
+that changes a data source bumps its `revision`, and nothing restores an
+earlier entry by reverting the file (see
+[Amendment 2026-10-11](#amendment-2026-10-11-roll-forward-only-d01-27)).
 
 ```yaml
 schemaVersion: 1
@@ -219,32 +230,58 @@ placements document refuses two tenants with one value on one data source,
 and the value published is read from the record. For a tenant with no rows
 yet, a predicate that matches nothing is the correct answer.
 
-**Dedicated and schema placement are not placeable yet, and say so.** A
-`dedicated` data source is one tenant's database; placing a second tenant on
-it, or placing a tenant on a data source that does not exist yet, requires
-provisioning a database or a schema, which nothing in the platform does. The
-control plane refuses the placement with the reason, and the console shows
-the client as *not placed* with that reason, rather than binding a tenant to a
-database that was never made. Provisioning is the next decision, not this one.
+**A non-shared placement takes a dedicated source that is already declared.
+It never provisions one.** *(Amended 2026-10-11, D01-2. The text this
+replaces said dedicated placement was refused outright, which contradicted
+the next paragraph and the selector as built.)* Two acts are distinct here,
+and this decision makes only the first:
+
+- **Taking an already-declared, compatible dedicated source.** An operator
+  has declared a `dedicated`, `high_availability`, `regulated`, `development`
+  or `ephemeral` data source in `data-sources.yaml` (part 1), which states
+  that its database, connector process and named connection already exist in
+  the environment's composition. When it matches the intent's class and
+  region, accepts new tenants and is writable, and holds no placement, the
+  control plane may place one tenant on it, isolated as a whole database
+  (`{"kind": "database"}`). This is recording a fact about a database a human
+  declared, the same act as placing on a shared source.
+- **Provisioning a new database or schema.** Creating a database, a schema,
+  a role or a connector process because a client asked for one. **Nothing in
+  Fabric or the platform does this, and Fabric makes no claim that it
+  happens automatically.** Per D01-3, it will be platform composition per
+  client. Until then, a dedicated intent with no free declared source is
+  refused with the reason. The client's Data tab shows the refusal
+  (`PlacementRow`) rather than binding a tenant to a database that was never
+  made.
+
+`schema` isolation is never produced, because nothing creates a schema
+(`placements/select.rs`, rule 4).
 
 **Every non-shared class holds at most one tenant, and that is the whole
-rule -- not a separate check.** The selector considers a `dedicated`,
-`high_availability`, `regulated`, `development` or `ephemeral` data source a
-candidate only while it holds no placement at all; the first tenant to ask
-for that class takes it. A second tenant is refused, and the message says
-which of two things is true: nothing declared admits the class or region at
-all (the operator's next step is to declare one), or something does and
-every matching data source already has a tenant (the operator's next step
-is provisioning, which this decision does not build). Collapsing the two
-into one message would send an operator to declare a data source they
-already declared; keeping them apart costs one more refusal variant, named
-for what it is rather than folded into "nothing admits this".
+rule, not a separate check.** The selector considers a non-shared data source
+a candidate only while it holds no placement at all, and the lowest id among
+free candidates is taken (`placements/select.rs`, rule 4). A second tenant is
+refused, and the message says which of two things is true:
 
-**Placement runs when something changes and can be asked for.** A client
-creation, a change to `spec.data`, or a new data source that accepts tenants
-is what makes placement possible; the controller in part 4 attempts it on
-each pass and records only successes. An operator can also ask for it
-explicitly, and is told why when it is refused.
+- nothing declared admits the class or region at all. The operator's next
+  step is to declare a source (`NoDataSourceAdmits`);
+- something does, and every matching data source already has a tenant. The
+  operator's next step is to have a database provisioned through the
+  environment's composition and then declare it (`AllMatchingSourcesOccupied`).
+  This decision does not build that provisioning.
+
+Collapsing the two into one message would send an operator to declare a data
+source they already declared.
+
+**Placement can be asked for.** A client creation, a change to `spec.data`,
+or a new data source that accepts tenants is what makes placement possible.
+An operator asks for it explicitly through
+`POST /api/clients/{clientId}/placements/{logical}` and is told why when it
+is refused. `GET /api/clients/{clientId}/placements` previews the outcome
+without writing. The original text also had the part 4 controller attempt
+placement on each pass. **That is not built:** the publication pass reads
+placement records and never creates them. It is listed under
+[Owed](#owed-not-yet-built).
 
 ### 3. The runtime catalogue is derived from applications
 
@@ -298,6 +335,13 @@ runtime Deployment's three whole-volume mounts referencing the ConfigMaps by
 name. The ConfigMaps themselves are declared nowhere, so no Argo sync can
 revert a publication.
 
+**The ownership split stands as amended (D01-2).** The platform owns the
+wiring. The control plane owns the data: the published documents, and the
+`data-sources.yaml` and `placements.yaml` desired state they are composed
+from. This amendment changes no Role, RoleBinding, mount or credential. ADR 0018's
+"as built" RBAC amendment applies: `get`, `create` and `update` only; `get`
+and `update` are scoped by `resourceNames`, and `create` cannot be.
+
 > **As built.** The controller is `fabric-platform-management`'s
 > `publication` module (`compose`, `RuntimePublisher`, the offer-and-advance
 > retry in `protocol.rs`) plus `fabric-control-plane`'s
@@ -323,6 +367,22 @@ count is then a one-line platform change, as its README already says. It is
 not a step this decision automates, because a runtime that starts with a
 document missing fails closed at startup, and the platform should be told
 before that happens rather than discover it in a crash loop.
+
+**Activation stays explicit and readiness-gated (D01-2, D01-18).** Fabric
+reports the readiness gate. A deliberate operator action changes the replica
+count, and only once every input and its evidence is ready. `replicas: 0` is
+intentional, not a fault. Scaling up cannot make up for absent documents,
+issuer registration or connectors. Holding authority over a disposable
+environment does not excuse an unmet condition.
+
+As built, Fabric reports only the first of the three conditions: the
+publication row on the console's Environments page (`PublicationPanel`, from
+`GET /api/platform` and `POST /api/platform/publication`). It shows what the
+target holds and what the last pass did. It does not claim the runtime has
+reloaded. Fabric does not yet report whether `[[connectors]]` lists every
+connector the declared data sources reference, or whether the issuer registry
+covers every placed tenant. A gate that reports all three is listed under
+[Owed](#owed-not-yet-built).
 
 ## What is built first
 
@@ -367,9 +427,11 @@ sequenced last so that it lands with inputs to publish rather than dark.
   column never appears in a response, and the record is still the authority.
   If a deployment ever needs an opaque value, the record can hold one without
   a contract change.
-- **Placement on anything but a shared source is refused until provisioning
-  exists.** A dedicated tenant on LucentRoot waits for a decision this one
-  deliberately does not make.
+- **A non-shared tenant needs a declared, free source of its class.** A
+  dedicated tenant is placed only when an operator has declared a matching
+  dedicated source that the environment's composition already provides. With
+  none free, the tenant is refused until one is provisioned outside Fabric
+  and declared. Automatic provisioning does not exist (D01-3).
 - **The runtime's issuer registry is still configuration.** ADR 0019 G4a
   stands: `[identity].trusted_issuers` is not one of the three documents, and
   a placed tenant whose issuer the runtime does not list is refused at the
@@ -388,9 +450,11 @@ sequenced last so that it lands with inputs to publish rather than dark.
 
 ## What this does not decide
 
-**Provisioning a database or a schema.** Placing on a `dedicated` source, or
-creating a data source because a client asked for one, is provisioning, and
-this decision refuses rather than pretends.
+**Provisioning a database or a schema.** Creating a database, a schema or a
+data source because a client asked for one is provisioning, and this decision
+refuses rather than pretends. Placing one tenant on a dedicated source an
+operator already declared is not provisioning (part 2). D01-3 assigns
+provisioning to platform composition per client.
 
 **The connector deployment.** A data source names a connector id; that the
 runtime's `[[connectors]]` lists it, and that an `ndc-postgres` process exists
@@ -406,7 +470,10 @@ source a tenant may be placed on. Nothing here creates tables.
 
 **Deprovisioning.** Removing a placement, and what an empty tenants document
 means for a tenant's rows, is the deprovisioning question ADR 0021 already
-owes an answer to.
+owes an answer to. D01-14 gives its direction: tombstone first, retained
+state, then confirmed deletion as a separate operation. Until that exists, no
+placement is removed, whether by hand or by a revert (see the amendment
+below).
 
 **A resource on a logical data source a client never asked for.** A
 resource exists for every tenant, but a tenant whose `spec.data` declares no
@@ -422,3 +489,67 @@ repositories, and nothing here reconciles them.
 are its *effective* resources: the ones an operator authored and the ones its
 described components declare. The runtime catalogue and the publish-time
 cross-application check both read the effective set.
+
+## Amendment 2026-10-11: roll forward only (D01-27)
+
+Recorded from the D01-2 and D01-27 dispositions in
+[#108](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6109518415).
+ADR 0018's amendment of the same date covers the runtime documents. This
+section covers the two platform files this decision adds.
+
+- **Placements roll forward only.** A record is added by `Placements::place`
+  and nothing else. Fabric has no operation that edits, reverts or removes a
+  record. A break-glass edit that changes what a record says bumps that
+  record's `revision`, so the tenant's summed revision moves forward.
+- **No blind placement revert or removal.** Reverting `placements.yaml` in
+  Git, or deleting a record by hand, is not a supported rollback. Either can
+  drop a tenant from `tenants.json`, which the runtime treats as
+  deprovisioning, or lower the tenant's summed revision, which a running
+  runtime ignores. Removing a placement waits on deprovisioning (D01-14).
+- **A referenced data source changes only through a write that bumps its
+  revision.** The console's declaration (`DataSources::declare`) recomputes
+  the revision as held + 1 whenever any field differs, and ignores the
+  revision the request carries. A hand edit must do the same. Removing a data
+  source a placement still names is refused (`DataSources::remove`,
+  `DataSourceInUse`). Reverting `data-sources.yaml` is not a supported
+  rollback either. To restore an earlier connection, write it again as a new
+  revision.
+- **Any break-glass Git effect is characterized in tests before it is
+  claimed as an operational rollback.** None is claimed here.
+
+### Verified against the code (at the base of this amendment)
+
+| Claim | Where |
+|---|---|
+| A non-shared source is a candidate only while it holds no placement. The lowest id wins, and isolation is `database` | `crates/fabric-platform-management/src/placements/select.rs` (rule 4), `select/pick.rs::pick_exclusive`; `select_tests.rs::rule_4_a_dedicated_source_with_any_held_placement_is_not_a_candidate`, `::rule_4_a_free_dedicated_source_is_isolated_as_a_whole_database` |
+| Occupied and inadmissible are separate refusals | `placements/refusal.rs` (`AllMatchingSourcesOccupied`, `NoDataSourceAdmits`) |
+| Nothing provisions a database, schema or connector | No such code exists in `crates/`. Placement writes only `placements.yaml` |
+| Placement happens only on an explicit request | `crates/fabric-control-plane/src/handlers/placements/post.rs` is the only production caller of `Placements::place` |
+| Placement records are only ever added. Each starts at revision 1 | `placements/service.rs` (`place`, `for_client` only); `placements/record.rs` (`FIRST_REVISION`) |
+| A tenant's published revision is the sum of its records' revisions | `publication/snapshot.rs::compose_tenants`; `snapshot_tests.rs::a_tenants_revision_is_the_sum_of_its_records_own_revisions` |
+| A data source correction moves its revision to held + 1, and the incoming revision is ignored | `data_sources/plan.rs`; `plan_tests.rs::a_changed_field_moves_the_revision_forward_by_one`, `::an_incoming_revision_is_never_trusted` |
+| A data source a placement names cannot be removed | `data_sources/service/remove.rs` (`DataSourceInUse`) |
+| The console shows the publication row, with **Publish now** | `apps/control-plane-ui/src/components/PublicationPanel.tsx` (#81) |
+
+### Owed (not yet built)
+
+Accepting this decision does not make these true. Each is tracked against
+[#112](https://github.com/FieldstateNZ/saas-fabric/issues/112) for a bounded
+PR. The IDs match ADR 0018's list and `docs/roadmap/m0-contract-decisions.md`.
+
+- **O3. A data source that is removed and declared again restarts at
+  revision 1.** `data_sources/plan.rs` treats an id that is not held as new.
+  Declared resource revisions are therefore not monotonic across a remove
+  and re-declare of one id.
+- **O4. Nothing detects a placement record that was removed or lowered.**
+  `compose` sums whichever records are held now. Nothing compares the result
+  with the tenant set or tenant revisions last published. A Git revert of
+  `placements.yaml` can therefore deprovision a tenant (only taking the whole
+  document to empty is guarded) or publish a lower revision (O1).
+- **O5. No test characterizes a Git revert** of `placements.yaml` or
+  `data-sources.yaml` through the publisher and the runtime.
+- **O7. The controller does not attempt placement on each pass.** Placement
+  happens only on an explicit request (part 2).
+- **O8. The readiness gate is incomplete.** Fabric reports the publication
+  row. It does not report connector coverage of the declared data sources or
+  issuer-registry coverage of the placed tenants (part 5, D01-18).

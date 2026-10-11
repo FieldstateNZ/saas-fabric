@@ -125,6 +125,23 @@ Options:
 
 *Recommendation:* **B**. Owner: **Brett**.
 
+**Disposition (2026-10-11, [#108 comment](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6109518415)): B for both.**
+- **D01-1:** amend ADR 0018 to the verified contract, then accept it through
+  the reviewed change. Runtime documents roll forward only, so earlier
+  content becomes a new revision and never resets one. Tenant and resource
+  revisions stay monotonic, as well as document revisions.
+- **D01-2:** amend ADR 0023 before acceptance. Taking a compatible dedicated
+  source that is already declared is distinct from provisioning a new one,
+  and no automatic provisioning is claimed. Platform wiring and control-plane
+  data ownership are preserved, the stale console documentation is fixed,
+  and activation stays explicit and readiness-gated.
+- **Remaining gaps:** #112's reader-visible and atomicity gaps are
+  reconciled in bounded PRs, with compatibility and partial-publication
+  failure tests.
+- **Where it is recorded:** ADR 0018 part 10 and its "Owed" list, and ADR
+  0023's amendment and its "Owed" list. Acceptance does not verify the owed
+  items O1–O8 (see [Dispositions recorded](#dispositions-recorded)).
+
 ---
 
 ## 2. Identity route and session ownership
@@ -661,7 +678,12 @@ Options:
 - **C.** Revert `placements.yaml` and `data-sources.yaml` in Git and let the
   publisher republish.
 
-*Recommendation:* **A**, using C as the mechanism. Record it in ADR 0018 when
+**Disposition (2026-10-11, D01-1, [#108 comment](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6109518415)): A, roll forward
+only, without C as the mechanism.** D01-27 rules out a blind revert of
+`placements.yaml`, and data sources change only through writes that bump
+their revision. Recorded in ADR 0018 part 10.
+
+*Recommendation (superseded by the disposition above):* **A**, using C as the mechanism. Record it in ADR 0018 when
 it is accepted.
 
 **U5.4: tenant data rollback and schema migration** (**D01-23**). Nothing
@@ -812,6 +834,19 @@ Options:
   and ADR 0023). Make no Git revert claim until a test shows what the
   reconciler and runtime do with it. Owner: **Brett**.
 
+  **Disposition (2026-10-11, [#108 comment](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6109518415)).**
+  - Placements roll forward only.
+  - Referenced data sources change only through writes that bump their
+    revision.
+  - No blind placement revert or removal.
+  - Restoring the catalogue or a client must preserve conditional writes and
+    audit evidence.
+  - Any break-glass Git effect is characterized in tests before it is
+    claimed as a supported operational rollback.
+
+  Recorded in ADR 0018 part 10 and ADR 0023's amendment. The owed items are
+  O1, O3, O4 and O5.
+
 ---
 
 ## PR state revalidated
@@ -849,17 +884,46 @@ Options:
 
 ---
 
+## Dispositions recorded
+
+IngeniousRiley recorded these on 2026-10-11 under Brett's delegated decision
+authority ([#108 comment](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6109518415)). This section covers only the dispositions
+this document's ADR amendments act on. The comment holds the others.
+
+| ID | Disposition | Recorded in |
+|---|---|---|
+| D01-1 | Amend ADR 0018 to the verified contract and accept it through the reviewed change. Roll forward only: earlier content becomes a new revision, never a revision reset. Tenant and resource revisions stay monotonic, as well as document revisions | ADR 0018 status, part 10, "Owed" |
+| D01-2 | Amend ADR 0023 before acceptance. Taking an already-declared compatible dedicated source is distinct from provisioning a new one, and no automatic provisioning is claimed. Platform wiring and control-plane data ownership are preserved, stale console documentation is fixed (`README.md`, `docs/architecture/control-plane.md`), and activation stays explicit and readiness-gated. #112's remaining gaps go to bounded PRs | ADR 0023 status, part 2, part 4, part 5, amendment, "Owed" |
+| D01-27 | Placements roll forward only. Referenced data sources change through revision-bumping writes. No blind placement revert or removal. Catalogue and client restoration keeps conditional writes and audit evidence. Break-glass Git effects are characterized in tests before they are claimed as rollback | ADR 0018 part 10; ADR 0023 amendment |
+| D01-19d | Reviewed amendments and acceptance go in order: 0023, then 0021, then 0026. Each owed item is reconciled with the disposition, and an unimplemented guarantee is never marked verified just because an ADR is accepted | ADR 0023 status |
+
+**Owed after acceptance.** These are not built at the base of the amendment.
+Each is tracked against [#112](https://github.com/FieldstateNZ/saas-fabric/issues/112).
+
+| ID | Owed | Evidence |
+|---|---|---|
+| O1 | The publisher does not refuse a lower tenant or data-source `BindingRevision`, or a changed resource at the same revision, against the held document. Running readers ignore it, while a reader that starts later applies it | `fabric-runtime-publication/src/validate.rs` (no such rule); `fabric-tenant-runtime/src/resource/registry/merge.rs` |
+| O2 | When the held manifest is lost (out-of-band deletion), the document is treated as a first publication and offered at revision 1. Nothing refuses or reports this | `verdict.rs` (absent manifest → write); `publication/snapshot.rs::revision_or_first` |
+| O3 | A data source that is removed and declared again under the same id restarts at revision 1 | `fabric-platform-management/src/data_sources/plan.rs` |
+| O4 | A removed or lowered placement record is not detected against the last published tenants document. A Git revert can deprovision a tenant or lower its revision | `publication/snapshot.rs::compose_tenants`; `validate.rs` guards only the whole document going empty |
+| O5 | No test characterizes a Git revert of `placements.yaml`, `data-sources.yaml`, the catalogue or client documents | none exists |
+| O6 | #112 gaps G1b, G2, G3 (visible to readers; "incomplete" on the panel), G4 (`Lease`), G5 (hold, failure semantics, restart last-known-good, recovery command), G6 (versioning rule, dual-key, per-row tests), G7, G8 | [`m2-publication-gap-report.md`](m2-publication-gap-report.md) "Still deferred" |
+| O7 | The controller does not attempt placement on each pass. Placement happens only on an explicit `POST` | `fabric-control-plane/src/handlers/placements/post.rs` is the only production caller of `Placements::place` |
+| O8 | The readiness gate reports publication only. It does not report connector coverage or issuer-registry coverage (D01-18) | no such check in `fabric-platform-management` or `fabric-control-plane` |
+
 ## Decisions owed
 
 Brett owns every policy decision; D01-26 is engineering ownership under ADR
 0024 and needs Brett only if it changes D01-3(b). "Rec." is a recommendation
-only; none is approved. IDs merged during review are noted, and the original
+only, except where a row is marked **Disposed**: those are recorded under
+[Dispositions recorded](#dispositions-recorded), and the #108 comment linked
+there gives the rest. IDs merged during review are noted, and the original
 IDs are not reused.
 
 | ID | Area | Decision | Rec. |
 |---|---|---|---|
-| D01-1 | Publication | Accept or amend ADR 0018 (built, Proposed), including runtime-document rollback (U5.3, formerly D01-22) | Amend "as built", accept; roll forward only |
-| D01-2 | Publication | Accept or amend ADR 0023: resolve the non-shared placement contradiction (`:222-228`/`:370-372` vs `:230-235`, implemented by `select.rs:44-47`); §5 against D01-18; fix the stale `README.md:451-454` | Amend, then accept |
+| D01-1 | Publication | Accept or amend ADR 0018 (built, Proposed), including runtime-document rollback (U5.3, formerly D01-22) | **Disposed 2026-10-11:** amend and accept; roll forward only, resource revisions monotonic. See [Dispositions recorded](#dispositions-recorded) |
+| D01-2 | Publication | Accept or amend ADR 0023: resolve the non-shared placement contradiction (`:222-228`/`:370-372` vs `:230-235`, implemented by `select.rs:44-47`); §5 against D01-18; fix the stale `README.md:451-454` | **Disposed 2026-10-11:** amend, then accept. See [Dispositions recorded](#dispositions-recorded) |
 | D01-3 | Provisioning | Per-client platform composition, three sub-choices: (a) databases, schemas and connector processes; (b) client instance resources (formerly D01-8); (c) application component deployment (formerly D01-17) | Platform composition per client for all three |
 | D01-4 | Identity | Generator for the issuer-to-tenant registry (ADR 0019 §G4a) | Fabric publisher, one generator; gateway sub-choice open |
 | D01-5 | Identity | Accept ADR 0019; the platform owns the §G edge; clarify the client-route comment | Accept as written |
@@ -875,13 +939,13 @@ IDs are not reused.
 | D01-19a | Lifecycle | What "client created" means (ADR 0021 owed 2) | Explicit "incomplete" state |
 | D01-19b | Lifecycle | Who owns a projected identity client (ADR 0021 owed 5) | Owned by the product; hand edits refused |
 | D01-19c | Lifecycle | Activity and the size limit (ADR 0021 owed 6) | Durable audit store |
-| D01-19d | Lifecycle | Accept ADR 0021 and ADR 0026 (0026 has six owed decisions; it comes after D01-2) | In order: 0023, 0021, 0026 |
+| D01-19d | Lifecycle | Accept ADR 0021 and ADR 0026 (0026 has six owed decisions; it comes after D01-2) | **Disposed 2026-10-11:** in order 0023, 0021, 0026; owed items stay owed |
 | D01-20 | Rollback | Order updates as well as creation (`RollingSync`, platform #44) | Creation-only for the trial; `RollingSync` before the pilot |
 | D01-21 | Rollback | Rollback floor for Fabric's own component across format changes | Minimum rollable version in the release manifest |
 | D01-23 | Rollback | Owner of tenant data backup, restore and migration | Platform, gated to M5 |
 | D01-25 | Secrets | Lifecycle and rollback of client secret versions (ADR 0017; PR105/106). Options: A roll forward only, B version read and restore, C retention and destroy | A now, with explicit retention; B when an older version must be read |
 | D01-26 | Identity | Who configures tenant end-user sessions for client instances. ADR 0024 already sets the policy (the gateway holds the session); this is engineering ownership, and Brett confirms only if it changes D01-3(b) (#114) | A, platform per-client composition, with D01-3(b) |
-| D01-27 | Rollback | Rollback of the desired-state repositories (`saas-fabric-clients`, platform environment files). Options: A Git revert supported, B revert through the console only, C no revert of placements | C: placements roll forward only; data sources only by a revision-bumping edit; catalogue and client documents keep the Git edit as break-glass until a console restore exists. Decide with D01-1, D01-2, D01-19d |
+| D01-27 | Rollback | Rollback of the desired-state repositories (`saas-fabric-clients`, platform environment files). Options: A Git revert supported, B revert through the console only, C no revert of placements | C: placements roll forward only; data sources only by a revision-bumping edit; catalogue and client documents keep the Git edit as break-glass until a console restore exists. Decide with D01-1, D01-2, D01-19d. **Disposed 2026-10-11:** placements roll forward only; no blind placement revert; Git effects tested before being claimed. See [Dispositions recorded](#dispositions-recorded) |
 
 **Retired IDs:**
 

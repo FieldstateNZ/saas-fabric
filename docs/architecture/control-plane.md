@@ -1148,8 +1148,13 @@ API — both surface as the same `placed`/`refusal` pair, and the same
 `422 placement_refused` when asked for explicitly, with whichever
 refusal's own words as the message.
 
-Nothing here unplaces a tenant, and nothing is published to the runtime
-yet — both are later work ADR 0023 names and neither is built.
+Nothing here unplaces a tenant, and nothing provisions a database: a
+non-shared placement only takes a dedicated source an operator already
+declared (ADR 0023 part 2, as amended under D01-2). Placements roll forward
+only. Neither a hand removal nor a Git revert of `placements.yaml` is a
+supported rollback (ADR 0023, amendment 2026-10-11). The publication
+controller reads these records and copies them into the runtime's tenants
+document. It never creates or changes one.
 
 ### Runtime catalogue
 

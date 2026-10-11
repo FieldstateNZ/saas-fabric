@@ -94,10 +94,14 @@ not build.
   is the resource revision, reused directly on `TenantBindingDocument.revision`
   and `DataSourceDocument.revision`. Do not conflate the two; see the type's
   own rustdoc.
-- `CONTRACT_VERSION: u32 = 2`. Raised from 1 with the release rollback floor
-  (D01-21, `compatibility.yaml`). Every record states it as
-  `minimum_publisher_contract`, so publishers built at 1 (#136 to #138)
-  refuse what this one writes. `rollback_floor::check_publisher_floor` reads
+- `CONTRACT_VERSION: u32 = 3`. Raised from 1 to 2 with the release rollback
+  floor (D01-21, `compatibility.yaml`), and from 2 to 3 for the record's
+  `registry` key (#140). Every record states it as
+  `minimum_publisher_contract`, so publishers built at 1 (#136 to #138) or 2
+  (#139) refuse what this one writes, by the floor. Held manifests keep the
+  contract they were written at until their document's next revision -- the
+  Kubernetes adapter included, when it rewrites the tenants object for a new
+  record or registry only. `rollback_floor::check_publisher_floor` reads
   only that floor, before the rest of a held record.
 - File name constants: `TENANTS_FILE`, `TENANTS_MANIFEST_FILE`,
   `DATA_SOURCES_FILE`, `DATA_SOURCES_MANIFEST_FILE`, `CATALOG_FILE`,

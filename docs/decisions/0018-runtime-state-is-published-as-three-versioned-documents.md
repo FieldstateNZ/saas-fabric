@@ -704,6 +704,7 @@ generation.
   fallback. It is not the record's
   `generation`, which also advances for a catalogue change. Tying the edge to
   that number would make every document change an identity change. The
+  record's `registry` key is why the publisher contract is 3 (see Owed). The
   record carries `"registry": {"generation", "sha256"}`. The key is absent
   while no registry is published, so earlier records keep their bytes.
 - **Refusals** (`RegistryRefusal`), before anything is written:
@@ -1254,11 +1255,12 @@ ADR 0023's list and `docs/roadmap/m0-contract-decisions.md`.
 - **Release rollback floor (D01-21). Recorded and enforced in-product.**
   `compatibility.yaml` records `minimumRollableVersion: 0.3.0-preview.16`.
   Platform Management offers no rollback of Fabric below it and refuses one
-  as `422 below_rollback_floor`. The publication contract is 2, so
-  publishers from #136 to #138 refuse a record this publisher writes as
-  `BelowRollbackFloor`. Still owed: a break-glass edit of `components.yaml`
-  below the floor is not refused; the platform's runtime-document contract
-  must accept contract 2 before activation; and the release workflow does
+  as `422 below_rollback_floor`. The publication contract is 3 (raised from
+  2 for the issuer registry, #140), so publishers from #136 to #139 refuse
+  a record this publisher writes as `BelowRollbackFloor`. Still owed: a
+  break-glass edit of `components.yaml` below the floor is not refused; the
+  platform's runtime-document contract must accept publisher contract 3,
+  with manifests at contract 1, 2 or 3, before activation; and the release workflow does
   not yet read or attach the manifest (#124). Not verified live.
 - **O8. Implemented for the publisher's half, not verified live: the issuer
   registry and the readiness gates (D01-4, D01-18).** See
@@ -1273,8 +1275,16 @@ ADR 0023's list and `docs/roadmap/m0-contract-decisions.md`.
     possible future routing interruption once an edge applies registry
     generations. Durable, revision-bound identity evidence or a retained
     registration rule would be a separately reviewed contract;
-  - the `registry` record key does not raise `CONTRACT_VERSION`. A
-    contract-2 publisher (#139) that meets a record carrying it refuses the
-    record as `Unreadable`, not by its floor -- fail closed either way, and
-    no deployment writes a registry. Whether to raise the contract to 3 with
-    the platform companion is open.
+  - decided on [#140](https://github.com/FieldstateNZ/saas-fabric/pull/140#issuecomment-6114792311):
+    the registry raises the publisher contract to 3. A contract-2 publisher
+    (#139) meets floor 2 but cannot parse `registry`; at 3 it refuses the
+    record as `BelowRollbackFloor` before interpreting the registry, and
+    writes nothing. The reader contract and floor stay 1. Proven by
+    `format_compatibility_tests.rs` (`the_contract_two_to_three_migration_*`,
+    `a_contract_two_publisher_refuses_*`),
+    `issuer_registry_generation.rs` (`a_contract_two_publication_migrates_*`,
+    `a_writer_below_a_registry_records_floor_*`) and the Kubernetes
+    adapter's `the_contract_two_to_three_migration_*`, which keeps a held
+    tenants manifest when only the record or registry changes. The platform
+    companion (#58) must accept publisher contract 3 and manifest versions
+    1-3.

@@ -28,7 +28,7 @@ pub use fixtures::{
     articles_catalog, base_snapshot, data_source_id, shared_data_source, tenant_binding,
     ACME_DISCRIMINATOR_VALUE, CONNECTOR_ID, DATA_SOURCE_ID, DISCRIMINATOR_COLUMN, GLOBEX_DISCRIMINATOR_VALUE,
 };
-pub use requests::{body_json, claims_for, issuer_for, request, request_with_tenant_header};
+pub use requests::{body_json, claims_for, issuer_for, request, request_with_tenant_header, trusted_issuers};
 
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};

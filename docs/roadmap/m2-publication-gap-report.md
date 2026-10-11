@@ -798,7 +798,9 @@ carries it. This change does the following. None of it is verified live.
   contract-1 record as the next generation at contract 2, with no document
   rewritten. Publishers from #136 to #138 were built at contract 1. Each
   reads the floor first and refuses as `BelowRollbackFloor`, where a #136
-  publisher used to refuse #138's history only as `Unreadable`. Readers are
+  publisher used to refuse #138's history only as `Unreadable`. #140 raises
+  the contract again, to 3, for the record's `registry` key, so #139's
+  contract-2 publisher refuses a registry-bearing record by its floor too. Readers are
   not raised: `minimum_reader_contract` stays 1. Manifests keep the contract
   they were written at until the document's next revision, and no reader
   reads them.
@@ -809,7 +811,7 @@ carries it. This change does the following. None of it is verified live.
 | Rollback listing | `rollback_floors.rs` (`RollbackFloors::cut`, `History::at_or_above`), called from `service/rollback.rs::rollback_candidates` | `service_tests.rs::the_rollback_listing_offers_nothing_below_the_floor_and_nothing_more`; `fabric-control-plane/tests/platform_rollback_floor.rs::the_listing_stops_at_the_floor_and_says_there_is_nothing_older` |
 | Rollback request | `rollback_floors.rs::RollbackFloors::admit`, called first in `service/rollback.rs::roll_back` | `service_tests.rs::a_rollback_below_the_floor_is_refused_before_any_registry_is_asked_and_writes_nothing`, `::a_rollback_to_the_floor_itself_is_written`, `::a_floor_on_another_repository_leaves_this_component_alone`; `platform_rollback_floor.rs::a_rollback_below_the_floor_is_refused_as_its_own_code`, `::a_rollback_to_the_floor_itself_passes_the_floor`; `rollback_floors.rs` unit tests |
 | Composition | `fabric-control-plane-api` `startup/platform.rs::establish` | `startup/platform.rs::the_shipping_binding_refuses_rollbacks_below_fabrics_own_floor`; `rollback_floors.rs::this_release_floors_the_component_that_pulls_saas_fabrics_runtime_image` |
-| Published-state floor and migration | `manifest.rs::CONTRACT_VERSION` (2), `rollback_floor.rs::check_publisher_floor` | `format_compatibility_tests.rs`: `a_record_in_the_136_format_is_read_and_rewritten_at_this_contract_without_touching_a_document`, `a_record_in_the_138_format_keeps_its_resource_history_across_the_floor_raise`, `a_record_this_release_writes_is_refused_by_a_contract_one_publisher_before_its_history_is_read`, `a_record_this_release_writes_admits_this_release`, `a_record_from_a_later_floor_is_refused_by_this_release_whatever_else_it_carries`, `a_contract_one_manifest_is_still_read_as_the_documents_revision`, `this_contract_is_above_the_one_the_136_to_138_publishers_were_built_at`; existing `plan_tests.rs::a_held_record_above_this_publishers_rollback_floor_refuses_the_whole_publication` and `reader_compatibility.rs::a_reader_at_contract_n_serves_a_publication_at_n_plus_one` (contract-1 readers serve contract-2 records) |
+| Published-state floor and migration | `manifest.rs::CONTRACT_VERSION` (3 since #140), `rollback_floor.rs::check_publisher_floor` | `format_compatibility_tests.rs`: `a_record_in_the_136_format_is_read_and_rewritten_at_this_contract_without_touching_a_document`, `a_record_in_the_138_format_keeps_its_resource_history_across_the_floor_raise`, `a_record_this_release_writes_is_refused_by_a_contract_one_publisher_before_its_history_is_read`, `a_record_this_release_writes_admits_this_release`, `a_record_from_a_later_floor_is_refused_by_this_release_whatever_else_it_carries`, `a_contract_one_manifest_is_still_read_as_the_documents_revision`, `this_contract_is_above_the_one_the_136_to_138_publishers_were_built_at`; existing `plan_tests.rs::a_held_record_above_this_publishers_rollback_floor_refuses_the_whole_publication` and `reader_compatibility.rs::a_reader_at_contract_n_serves_a_publication_at_n_plus_one` (contract-1 readers serve contract-2 records) |
 
 Limits of this change:
 

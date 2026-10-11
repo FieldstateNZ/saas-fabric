@@ -338,3 +338,122 @@ async fn held_registry_bytes_that_do_not_parse_refuse_the_publication_and_write_
         before
     );
 }
+
+const DOCUMENT_FILES: [&str; 6] = [
+    "tenants.json",
+    "tenants.manifest.json",
+    "data-sources.json",
+    "data-sources.manifest.json",
+    "catalog.json",
+    "catalog.manifest.json",
+];
+
+/// Rewrites what `dir` holds as #139's contract-2 publisher left it: every
+/// manifest at contract 2, and a contract-2 record with its floor at 2,
+/// resource history and no registry.
+fn as_left_by_contract_two(dir: &TempDir) {
+    for manifest in [
+        "tenants.manifest.json",
+        "data-sources.manifest.json",
+        "catalog.manifest.json",
+    ] {
+        let mut value: serde_json::Value = serde_json::from_slice(&dir.read_raw(manifest)).unwrap();
+        value["contract_version"] = serde_json::json!(2);
+        let mut bytes = serde_json::to_vec_pretty(&value).unwrap();
+        bytes.push(b'\n');
+        dir.write_raw(manifest, &bytes);
+    }
+    let mut record: serde_json::Value =
+        serde_json::from_slice(&dir.read_raw(PUBLICATION_RECORD_FILE)).unwrap();
+    record["contract_version"] = serde_json::json!(2);
+    record["minimum_publisher_contract"] = serde_json::json!(2);
+    assert!(record.get("registry").is_none());
+    dir.write_raw(
+        PUBLICATION_RECORD_FILE,
+        &serde_json::to_vec_pretty(&record).unwrap(),
+    );
+}
+
+/// The contract 2 → 3 migration through the real filesystem publisher: the
+/// payloads and the contract-2 manifests are left byte for byte, the
+/// record's resource history survives, the floor rises to 3, the registry
+/// is added at generation 1, and the contract-1 reader serves the result.
+#[tokio::test]
+async fn a_contract_two_publication_migrates_to_three_keeping_payloads_manifests_and_history() {
+    let dir = TempDir::new();
+    dir.publisher().publish(&support::base_snapshot(1)).await.unwrap();
+    as_left_by_contract_two(&dir);
+    let before = dir.capture(&DOCUMENT_FILES);
+
+    let report = dir.publisher().publish(&snapshot(1, &["acme"])).await.unwrap();
+
+    assert_eq!(report.tenants, DocumentOutcome::Unchanged);
+    assert_eq!(report.data_sources, DocumentOutcome::Unchanged);
+    assert_eq!(report.catalog, DocumentOutcome::Unchanged);
+    assert_eq!(
+        dir.capture(&DOCUMENT_FILES),
+        before,
+        "payloads and contract-2 manifests untouched"
+    );
+    let migrated = record(&dir);
+    assert_eq!(
+        migrated.minimum_publisher_contract(),
+        fabric_runtime_publication::CONTRACT_VERSION
+    );
+    assert_eq!(migrated.minimum_reader_contract(), 1);
+    assert_eq!(migrated.registry().unwrap().generation, RegistryGeneration::FIRST);
+    let acme = TenantId::try_new("acme").unwrap();
+    assert!(
+        migrated.resources().tenant(&acme).is_some(),
+        "resource history survives"
+    );
+
+    let stack = support::assemble(dir, Reader::Generation, support::trusted_issuers()).await;
+    let response = stack
+        .app
+        .clone()
+        .oneshot(support::request("GET", "/articles", &support::claims_for("acme")))
+        .await
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        StatusCode::OK,
+        "a contract-1 reader serves the migrated generation"
+    );
+}
+
+/// An older writer meeting a record above its floor -- here, a record that
+/// carries a registry no publisher can parse -- refuses it by the floor
+/// before reading the registry, and writes nothing. This is the check every
+/// publisher since #136 runs first, so a contract-2 writer meets a
+/// contract-3 record the same way.
+#[tokio::test]
+async fn a_writer_below_a_registry_records_floor_refuses_it_before_reading_the_registry_and_changes_nothing()
+{
+    let dir = TempDir::new();
+    dir.publisher().publish(&snapshot(1, &["acme"])).await.unwrap();
+    let mut later: serde_json::Value =
+        serde_json::from_slice(&dir.read_raw(PUBLICATION_RECORD_FILE)).unwrap();
+    let floor = fabric_runtime_publication::CONTRACT_VERSION + 1;
+    later["minimum_publisher_contract"] = serde_json::json!(floor);
+    later["registry"] = serde_json::json!("a registry shape this writer has never seen");
+    dir.write_raw(
+        PUBLICATION_RECORD_FILE,
+        &serde_json::to_vec_pretty(&later).unwrap(),
+    );
+    let mut every_file = DOCUMENT_FILES.to_vec();
+    every_file.extend([PUBLICATION_RECORD_FILE, ISSUER_REGISTRY_FILE]);
+    let before = dir.capture(&every_file);
+
+    let error = dir
+        .publisher()
+        .publish(&snapshot(1, &["acme", "globex"]))
+        .await
+        .unwrap_err();
+
+    assert!(
+        matches!(error, PublicationError::BelowRollbackFloor { floor: refused, .. } if refused == floor),
+        "{error:?}"
+    );
+    assert_eq!(dir.capture(&every_file), before);
+}

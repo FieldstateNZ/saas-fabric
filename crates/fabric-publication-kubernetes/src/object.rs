@@ -59,9 +59,10 @@ pub(crate) fn path_of(namespace: &str, document: DocumentKind) -> String {
     format!("{}/{}", collection_of(namespace), name_of(document))
 }
 
-/// Builds the object a document's plan writes: both keys, any `carried`
-/// keys (the tenants object's publication record and issuer registry), the
-/// managing label, and — for a replace — the version it was read at.
+/// Builds the object a document's plan writes: the payload, `manifest`, any
+/// `carried` keys (the tenants object's publication record and issuer
+/// registry), the managing label, and — for a replace — the version it was
+/// read at.
 ///
 /// # Errors
 ///
@@ -71,13 +72,14 @@ pub(crate) fn object_for(
     namespace: &str,
     document: DocumentKind,
     plan: &DocumentPlan,
+    manifest: &DocumentManifest,
     carried: &[(&'static str, &[u8])],
     resource_version: Option<String>,
 ) -> Result<ConfigMap, PublicationError> {
     let keys = Keys::of(document);
     let payload = String::from_utf8(plan.bytes.clone())
         .map_err(|_| unwritable(document, "the document's bytes are not UTF-8"))?;
-    let manifest = DocumentManifest::new(document, plan.revision)
+    let manifest = manifest
         .canonical_json()
         .map_err(|_| unwritable(document, "the manifest could not be rendered"))?;
     let manifest =

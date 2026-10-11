@@ -27,7 +27,13 @@ use crate::DocumentRevision;
 /// carry `spec.lifecycle` (#137). A contract-1 publisher would refuse the
 /// history only as unreadable, and ignores the lifecycle. At 2 it refuses
 /// the record by its floor, before reading the rest.
-pub const CONTRACT_VERSION: u32 = 2;
+///
+/// Raised from 2 to 3 with the issuer registry (D01-4, #140): from 3 a
+/// record may carry `registry`. A contract-2 publisher meets the floor 2 but
+/// cannot parse that key, so it would refuse the record only as unreadable.
+/// At 3 it refuses by the floor, before interpreting the registry. Readers
+/// are not raised: they ignore record keys they do not know.
+pub const CONTRACT_VERSION: u32 = 3;
 
 /// Which of the three documents a manifest describes.
 ///

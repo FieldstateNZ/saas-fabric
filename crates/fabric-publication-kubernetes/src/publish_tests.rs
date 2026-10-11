@@ -512,3 +512,91 @@ async fn a_rewritten_tenants_object_keeps_an_unchanged_registry_rather_than_drop
     assert_eq!(record["generation"], 2);
     assert_eq!(record["registry"]["generation"], 1);
 }
+
+fn contract_two_manifest(document: &str, revision: u64) -> String {
+    format!(
+        "{{\n  \"contract_version\": 2,\n  \"document\": \"{document}\",\n  \"revision\": {revision}\n}}\n"
+    )
+}
+
+#[tokio::test]
+async fn the_contract_two_to_three_migration_keeps_every_payload_and_held_manifest_and_rewrites_only_the_record(
+) {
+    let held_plan = fabric_runtime_publication::plan_publication(
+        &snapshot(1),
+        &fabric_runtime_publication::HeldDocuments::default(),
+    )
+    .unwrap();
+    let text = |bytes: &[u8]| String::from_utf8(bytes.to_vec()).unwrap();
+    let mut record_139: serde_json::Value = serde_json::from_slice(&held_plan.record.bytes).unwrap();
+    record_139["contract_version"] = serde_json::json!(2);
+    record_139["minimum_publisher_contract"] = serde_json::json!(2);
+    let record_139 = serde_json::to_string(&record_139).unwrap();
+    let tenants_manifest = contract_two_manifest("tenants", 1);
+    let (client, _token, task) = fake(vec![
+        (
+            200,
+            object(
+                "fabric-runtime-tenants",
+                "11",
+                &[
+                    ("tenants.json", &text(&held_plan.tenants.bytes)),
+                    ("tenants.manifest.json", &tenants_manifest),
+                    ("publication.json", &record_139),
+                ],
+            ),
+        ),
+        (
+            200,
+            object(
+                "fabric-runtime-data-sources",
+                "12",
+                &[
+                    ("data-sources.json", &text(&held_plan.data_sources.bytes)),
+                    (
+                        "data-sources.manifest.json",
+                        &contract_two_manifest("data-sources", 1),
+                    ),
+                ],
+            ),
+        ),
+        (
+            200,
+            object(
+                "fabric-runtime-catalog",
+                "13",
+                &[
+                    ("catalog.json", &text(&held_plan.catalog.bytes)),
+                    ("catalog.manifest.json", &contract_two_manifest("catalog", 1)),
+                ],
+            ),
+        ),
+        (200, object("fabric-runtime-data-sources", "12", &[])),
+        (200, object("fabric-runtime-catalog", "13", &[])),
+        (200, object("fabric-runtime-tenants", "11", &[])),
+        (200, "{}".into()),
+    ]);
+    let adapter = KubernetesRuntimePublication::with_client(client, NS);
+
+    let report = adapter.publish(&with_registry(snapshot(1))).await.unwrap();
+
+    assert_eq!(report.tenants, DocumentOutcome::Unchanged);
+    assert_eq!(report.data_sources, DocumentOutcome::Unchanged);
+    assert_eq!(report.catalog, DocumentOutcome::Unchanged);
+    let seen = task.join().unwrap();
+    assert_eq!(seen.len(), 7, "only the tenants object is written");
+    assert!(seen[6].line.starts_with("PUT "), "{}", seen[6].line);
+    let written: serde_json::Value = serde_json::from_str(&seen[6].body).unwrap();
+    assert_eq!(written["data"]["tenants.json"], text(&held_plan.tenants.bytes));
+    assert_eq!(
+        written["data"]["tenants.manifest.json"], tenants_manifest,
+        "the held contract-2 manifest goes back as it was"
+    );
+    let record: serde_json::Value =
+        serde_json::from_str(written["data"]["publication.json"].as_str().unwrap()).unwrap();
+    assert_eq!(
+        record["minimum_publisher_contract"],
+        fabric_runtime_publication::CONTRACT_VERSION
+    );
+    assert_eq!(record["registry"]["generation"], 1);
+}

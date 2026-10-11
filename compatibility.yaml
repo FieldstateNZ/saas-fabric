@@ -19,14 +19,21 @@
 #   - resource history in the record (#138): refused as unreadable by #136,
 #     and dropped by anything older;
 #   - spec.lifecycle in client documents (#137): ignored, so a retired client
-#     reads as usable again.
-# The next release cut from main is the first that can include all three.
+#     reads as usable again;
+#   - the issuer registry in the record (#140): refused as unreadable by a
+#     contract-2 publisher, which predates it.
+# The next release cut from main is the first that can include all of them.
+# It must be cut after #140 merges; a release between #139 and #140 would
+# write contract 2 and need the floor reconsidered.
 #
 # publication is the published runtime state's side of the same floor. Every
 # publication record states publisherContract as minimum_publisher_contract,
 # and a publisher whose own contract is lower refuses to write over it, as
 # BelowRollbackFloor. Publishers from #136 to #138 were built at contract 1,
-# so they refuse what this source writes. Readers are not raised:
+# and #139's at contract 2; contract 3 is the first that can parse a record
+# carrying the issuer registry (#140), so every older publisher refuses what
+# this source writes by its floor, before reading the registry. Readers are
+# not raised:
 # minimumReaderContract 1 means every reader since #136 still serves what
 # this source publishes.
 #
@@ -41,5 +48,5 @@ spec:
   repository: ghcr.io/fieldstatenz/saas-fabric
   minimumRollableVersion: 0.3.0-preview.16
   publication:
-    publisherContract: 2
+    publisherContract: 3
     minimumReaderContract: 1

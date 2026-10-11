@@ -311,15 +311,14 @@ async fn a_publisher_below_the_held_records_rollback_floor_refuses_and_writes_no
     }
 }
 
-/// The reverse of the reader test above, for publishers, and the floor
-/// D01-21 still owes at the release level. A publisher rolled back below
-/// contract N+1 writes documents without updating the record it does not
-/// know about. Readers then find every later generation incomplete: a
-/// running reader holds the last recorded generation (stale, never mixed)
-/// and a new reader does not prime, until an operator removes the record.
-/// Recording "the release that introduced the record" as the minimum
-/// rollable version in the release compatibility manifest (#124) is what
-/// would refuse that rollback before it happens.
+/// The reverse of the reader test above, for publishers. A publisher rolled
+/// back below contract N+1 writes documents without updating the record it
+/// does not know about. Readers then find every later generation
+/// incomplete: a running reader holds the last recorded generation (stale,
+/// never mixed) and a new reader does not prime, until an operator removes
+/// the record. The release floor in `compatibility.yaml` (D01-21) now
+/// refuses that rollback in-product, in Platform Management. What remains is
+/// this behaviour after a break-glass edit that bypasses it.
 #[tokio::test]
 async fn current_behaviour_a_publisher_rolled_back_below_the_record_leaves_readers_on_the_last_recorded_generation(
 ) {

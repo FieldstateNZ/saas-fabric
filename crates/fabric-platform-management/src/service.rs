@@ -24,7 +24,7 @@ mod service_tests;
 
 pub use errors::PlatformError;
 
-use crate::{ChartIndex, ComponentStatus, DesiredState, Registry};
+use crate::{ChartIndex, ComponentStatus, DesiredState, Registry, RollbackFloors};
 
 /// Platform Management, over whatever implements its two ports.
 pub struct PlatformManagement {
@@ -46,16 +46,20 @@ pub struct PlatformManagement {
 
     /// Stamps the record a human reads.
     clock: Arc<dyn Clock>,
+
+    /// The oldest version each component may be rolled back to (D01-21).
+    floors: RollbackFloors,
 }
 
 impl PlatformManagement {
-    /// Builds the service over its two ports.
+    /// Builds the service over its ports, refusing rollbacks below `floors`.
     #[must_use]
     pub fn new(
         registry: Arc<dyn Registry>,
         charts: Arc<dyn ChartIndex>,
         desired_state: Arc<dyn DesiredState>,
         clock: Arc<dyn Clock>,
+        floors: RollbackFloors,
     ) -> Self {
         Self {
             registry,
@@ -63,7 +67,14 @@ impl PlatformManagement {
             charts,
             desired_state,
             clock,
+            floors,
         }
+    }
+
+    /// The rollback floors this service refuses to go below.
+    #[must_use]
+    pub const fn floors(&self) -> &RollbackFloors {
+        &self.floors
     }
 
     /// Attaches a read-only deployment observer.

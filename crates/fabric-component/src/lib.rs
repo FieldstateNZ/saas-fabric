@@ -40,6 +40,7 @@
 //! crate, checked as one: a release can run its renderer, and a test can
 //! read one, with no network at all.
 mod capability;
+mod compatibility;
 mod descriptor;
 mod errors;
 mod fields;
@@ -47,6 +48,7 @@ mod resource;
 mod validation;
 
 pub use capability::PlatformCapability;
+pub use compatibility::{MINIMUM_ROLLABLE_VERSION, RUNTIME_REPOSITORY};
 pub use descriptor::{
     family_version, ComponentDescriptor, ComponentName, ComponentSource, ComponentSourceSpec, ComponentSpec,
     ComponentVersion, Digest, ImageReference, Repository, Role, SourceImage, API_VERSION, ARTIFACT_TYPE,

@@ -677,6 +677,15 @@ Options:
 *Recommendation:* **A**, as part of the release compatibility manifest (#124).
 Owner: **Brett**.
 
+**Disposition (2026-10-11, D01-21, [#108 comment](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6109518415)): A.**
+Record and enforce a minimum rollable version in the compatibility manifest,
+with format and migration compatibility tests. Built: `compatibility.yaml`
+sets `minimumRollableVersion: 0.3.0-preview.16`. Platform Management refuses
+an in-product rollback of Fabric below it, and the publication contract is
+raised to 2 so publishers from #136 to #138 refuse what this one writes. A
+break-glass edit is not refused, and nothing is verified live
+([gap report](m2-publication-gap-report.md#release-rollback-floor-d01-21)).
+
 **U5.3: rolling back runtime documents.** This is now part of **D01-1**
 (formerly D01-22). Revisions cannot go backwards.
 
@@ -980,7 +989,7 @@ IDs are not reused.
 | D01-19c | Lifecycle | Activity and the size limit (ADR 0021 owed 6) | Durable audit store |
 | D01-19d | Lifecycle | Accept ADR 0021 and ADR 0026 (0026 has six owed decisions; it comes after D01-2) | **Disposed 2026-10-11:** in order 0023, 0021, 0026; owed items stay owed |
 | D01-20 | Rollback | Order updates as well as creation (`RollingSync`, platform #44) | Creation-only for the trial; `RollingSync` before the pilot |
-| D01-21 | Rollback | Rollback floor for Fabric's own component across format changes. #136 records and enforces a floor for the published state (`minimum_publisher_contract`); the release-level floor is still undecided | Minimum rollable version in the release manifest |
+| D01-21 | Rollback | Rollback floor for Fabric's own component across format changes. #136 records and enforces a floor for the published state (`minimum_publisher_contract`) | Minimum rollable version in the release manifest. **Disposed 2026-10-11:** A. Built: `compatibility.yaml` floor `0.3.0-preview.16`, enforced for in-product rollback; publication contract 2. Break-glass not refused; not verified live |
 | D01-23 | Rollback | Owner of tenant data backup, restore and migration | Platform, gated to M5 |
 | D01-25 | Secrets | Lifecycle and rollback of client secret versions (ADR 0017; PR105/106). Options: A roll forward only, B version read and restore, C retention and destroy | A now, with explicit retention; B when an older version must be read |
 | D01-26 | Identity | Who configures tenant end-user sessions for client instances. ADR 0024 already sets the policy (the gateway holds the session); this is engineering ownership, and Brett confirms only if it changes D01-3(b) (#114) | A, platform per-client composition, with D01-3(b) |

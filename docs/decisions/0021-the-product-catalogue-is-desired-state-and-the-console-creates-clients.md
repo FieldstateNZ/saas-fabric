@@ -803,7 +803,10 @@ activity entry. It applies no retention period and starts no deletion.
   this amendment reads a tombstoned client as active and would let it be
   edited and placed. Publication is unaffected, because this change does not
   withhold a retired tenant either. The release rollback floor (D01-21) should sit at or
-  above the release that carries this.
+  above the release that carries this. It does: `compatibility.yaml` sets it
+  at `0.3.0-preview.16`, the first release that can carry this amendment,
+  and Platform Management refuses an in-product rollback below it. A
+  break-glass edit of the platform repository is not refused.
 
 ### Deferred, and how each is bounded
 

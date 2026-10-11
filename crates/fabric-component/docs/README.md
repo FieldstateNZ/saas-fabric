@@ -93,6 +93,11 @@ assert_eq!(ComponentDescriptor::from_json(&bytes)?, descriptor);
   an `artifactType` of the family at another version is `UnsupportedVersion`,
   naming it as `v2` — the spelling `from_json` uses for a later `apiVersion`.
 - **Find which role an image plays:** `descriptor.role_of(&repository, &digest)`.
+- **Raise Fabric's rollback floor (D01-21):** change `MINIMUM_ROLLABLE_VERSION`
+  in `src/compatibility.rs` and `minimumRollableVersion` in the root
+  `compatibility.yaml` together, in the pull request that introduces the
+  format change needing it. `tests/this_repositorys_compatibility.rs` fails
+  if the two disagree.
 
 ## Gotchas
 

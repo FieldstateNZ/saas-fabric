@@ -40,6 +40,14 @@ two Rust images.
 matrix does not include it, so nothing publishes it today: a release of this
 version of the workspace still ships exactly the three images above.
 
+### The rollback floor, recorded beside it
+
+[`compatibility.yaml`](../../compatibility.yaml) records the oldest release
+that may be rolled back to (D01-21). Platform Management is built with that
+floor, and refuses an in-product rollback of Fabric below it. The release
+does not read, render or attach the file yet. That is #124's release
+compatibility manifest, and this file is its rollback-floor part.
+
 ### And one component descriptor, attached last
 
 A release also attaches one **component descriptor** to the runtime image

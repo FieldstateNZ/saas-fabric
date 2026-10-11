@@ -285,6 +285,7 @@ fn service(registries: &Arc<Registries>, desired_state: &Arc<Recorded>) -> Platf
         Arc::new(Charts::default()) as Arc<dyn ChartIndex>,
         Arc::clone(desired_state) as Arc<dyn DesiredState>,
         Arc::new(fabric_core::SystemClock::new()) as Arc<dyn fabric_core::Clock>,
+        crate::RollbackFloors::default(),
     )
 }
 
@@ -1050,6 +1051,7 @@ fn charted_service(charts: &Arc<Charts>, desired_state: &Arc<Recorded>) -> Platf
         Arc::clone(charts) as Arc<dyn ChartIndex>,
         Arc::clone(desired_state) as Arc<dyn DesiredState>,
         Arc::new(fabric_core::SystemClock::new()) as Arc<dyn fabric_core::Clock>,
+        crate::RollbackFloors::default(),
     )
 }
 
@@ -1408,4 +1410,122 @@ async fn observation_does_not_change_desired_state_or_update_selection() {
         .status;
     assert_eq!(updated.desired, version("0.3.0-preview.3"));
     assert!(updated.observation.is_none());
+}
+
+/// The service over these fakes, refusing rollbacks of anything pulling
+/// `repository` below `floor`.
+fn floored_service(
+    registries: &Arc<Registries>,
+    desired_state: &Arc<Recorded>,
+    repository: &str,
+    floor: &str,
+) -> PlatformManagement {
+    PlatformManagement::new(
+        Arc::clone(registries) as Arc<dyn Registry>,
+        Arc::new(Charts::default()) as Arc<dyn ChartIndex>,
+        Arc::clone(desired_state) as Arc<dyn DesiredState>,
+        Arc::new(fabric_core::SystemClock::new()) as Arc<dyn fabric_core::Clock>,
+        crate::RollbackFloors::default().with(repository, version(floor)),
+    )
+}
+
+/// Complete releases from `preview.1` to `preview.9`.
+fn registries_from_one_to_nine() -> Arc<Registries> {
+    let registries = Arc::new(Registries::default());
+    for n in 1..=9 {
+        registries.publish_all(&format!("0.3.0-preview.{n}"), "aaaa");
+    }
+    registries
+}
+
+fn listed(history: &crate::History) -> Vec<String> {
+    history
+        .releases
+        .iter()
+        .map(|release| release.version().as_str().to_owned())
+        .collect()
+}
+
+#[tokio::test]
+async fn the_rollback_listing_offers_nothing_below_the_floor_and_nothing_more() {
+    // Unfloored, five of the nine are listed and `more` says older ones
+    // exist. With the floor at preview.7, everything older is unreachable,
+    // so `more` is not left promising it.
+    let desired_state = Arc::new(Recorded::at("0.3.0-preview.10", UpdatePolicy::Automatic, None));
+    let registries = registries_from_one_to_nine();
+
+    let unfloored = service(&registries, &desired_state)
+        .rollback_candidates("lucentroot", "saas-fabric")
+        .await
+        .unwrap();
+    assert!(unfloored.more);
+
+    let floored = floored_service(&registries, &desired_state, RUNTIME, "0.3.0-preview.7")
+        .rollback_candidates("lucentroot", "saas-fabric")
+        .await
+        .unwrap();
+
+    assert_eq!(
+        listed(&floored),
+        ["0.3.0-preview.9", "0.3.0-preview.8", "0.3.0-preview.7"]
+    );
+    assert!(!floored.more);
+}
+
+#[tokio::test]
+async fn a_rollback_below_the_floor_is_refused_before_any_registry_is_asked_and_writes_nothing() {
+    let desired_state = Arc::new(Recorded::at("0.3.0-preview.10", UpdatePolicy::Automatic, None));
+    let registries = registries_from_one_to_nine();
+    let service = floored_service(&registries, &desired_state, RUNTIME, "0.3.0-preview.7");
+    registries.forget_resolutions();
+
+    let refused = service
+        .roll_back("lucentroot", "saas-fabric", "0.3.0-preview.6", None)
+        .await
+        .unwrap_err();
+
+    assert_eq!(
+        refused,
+        PlatformError::BelowRollbackFloor {
+            component: "saas-fabric".to_owned(),
+            version: "0.3.0-preview.6".to_owned(),
+            floor: "0.3.0-preview.7".to_owned(),
+        }
+    );
+    assert!(desired_state.rollbacks().is_empty());
+    assert_eq!(registries.resolutions(), 0);
+}
+
+#[tokio::test]
+async fn a_rollback_to_the_floor_itself_is_written() {
+    let desired_state = Arc::new(Recorded::at("0.3.0-preview.10", UpdatePolicy::Automatic, None));
+    let registries = registries_from_one_to_nine();
+    let service = floored_service(&registries, &desired_state, RUNTIME, "0.3.0-preview.7");
+
+    let status = service
+        .roll_back("lucentroot", "saas-fabric", "0.3.0-preview.7", None)
+        .await
+        .unwrap();
+
+    assert_eq!(status.desired, version("0.3.0-preview.7"));
+    assert_eq!(desired_state.rollbacks().len(), 1);
+}
+
+#[tokio::test]
+async fn a_floor_on_another_repository_leaves_this_component_alone() {
+    let desired_state = Arc::new(Recorded::at("0.3.0-preview.10", UpdatePolicy::Automatic, None));
+    let registries = registries_from_one_to_nine();
+    let service = floored_service(
+        &registries,
+        &desired_state,
+        "ghcr.io/example/other",
+        "0.3.0-preview.7",
+    );
+
+    service
+        .roll_back("lucentroot", "saas-fabric", "0.3.0-preview.6", None)
+        .await
+        .unwrap();
+
+    assert_eq!(desired_state.rollbacks().len(), 1);
 }

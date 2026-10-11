@@ -262,6 +262,7 @@ mod tests {
                 Arc::new(NeverAsked) as Arc<dyn ChartIndex>,
                 Arc::new(desired_state) as Arc<dyn DesiredState>,
                 Arc::clone(clock),
+                fabric_platform_management::RollbackFloors::default(),
             )),
             repository,
             data_sources,

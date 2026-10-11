@@ -985,6 +985,16 @@ repository no longer lists is refused the same way an image version that was
 never a release unit is — `422 version_not_rollable`, decided against the index
 on this request.
 
+**Fabric's own component has a rollback floor** (D01-21). `compatibility.yaml`
+names the oldest release that reads everything newer releases write, and
+Platform Management is built with it. For whichever component pulls Fabric's
+runtime repository, the listing offers nothing below the floor, and says
+there is nothing older (`more: false`) once the floor is reached. A request
+naming a version below it is refused as `422 below_rollback_floor`, before
+any registry is asked. Its own code, because no other version below the
+floor would do: the way back past it is a reviewed recovery, not a rollback.
+Other components have no floor.
+
 What gets written is resolved at the moment of the write, **with the hold**, in
 one commit: for images the version, its source commit and its three digests —
 for a described component found through its component descriptor, by the rule

@@ -169,6 +169,7 @@ fn service_over(desired_state: Arc<dyn DesiredState>) -> PlatformManagement {
         Arc::new(Charts::default()) as Arc<dyn ChartIndex>,
         desired_state,
         Arc::new(fabric_core::SystemClock::new()) as Arc<dyn fabric_core::Clock>,
+        crate::RollbackFloors::default(),
     )
 }
 
@@ -646,6 +647,7 @@ async fn a_sweep_with_nothing_connected_records_nothing() {
         Arc::new(Charts::default()) as Arc<dyn ChartIndex>,
         Arc::new(Unconnected) as Arc<dyn DesiredState>,
         Arc::new(fabric_core::SystemClock::new()) as Arc<dyn fabric_core::Clock>,
+        crate::RollbackFloors::default(),
     );
     let state = SweepState::default();
 

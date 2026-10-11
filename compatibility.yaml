@@ -1,0 +1,45 @@
+# SaaS Fabric's release compatibility manifest: the rollback floor (D01-21).
+#
+# Part of the release compatibility manifest #124 describes. This file
+# records only the floor and the contracts it rests on. Source commits,
+# digests and migrations are #124's to add, and a release does not yet
+# render or attach this file.
+#
+# minimumRollableVersion is the oldest release that reads everything this
+# source writes. Platform Management refuses an in-product rollback of the
+# component that pulls from `repository` to anything older, and leaves older
+# versions out of the rollback listing. Below the floor there is no rollback.
+# The only way back is a reviewed, backed-up and rehearsed recovery, as
+# ADR 0026 states.
+#
+# The floor is 0.3.0-preview.16 because 0.3.0-preview.15 and everything
+# before it predate three persisted formats, and each misreads the newer state:
+#   - the publication record (#136): ignored, so readers hold a stale
+#     generation;
+#   - resource history in the record (#138): refused as unreadable by #136,
+#     and dropped by anything older;
+#   - spec.lifecycle in client documents (#137): ignored, so a retired client
+#     reads as usable again.
+# The next release cut from main is the first that can include all three.
+#
+# publication is the published runtime state's side of the same floor. Every
+# publication record states publisherContract as minimum_publisher_contract,
+# and a publisher whose own contract is lower refuses to write over it, as
+# BelowRollbackFloor. Publishers from #136 to #138 were built at contract 1,
+# so they refuse what this source writes. Readers are not raised:
+# minimumReaderContract 1 means every reader since #136 still serves what
+# this source publishes.
+#
+# crates/fabric-component/tests/this_repositorys_compatibility.rs holds every
+# value here to the constants the binaries are built with. Raising the floor
+# means changing both, in the same pull request as the format change that
+# needs the raise.
+apiVersion: fabric.fieldstate.nz/v1
+kind: Compatibility
+spec:
+  component: saas-fabric
+  repository: ghcr.io/fieldstatenz/saas-fabric
+  minimumRollableVersion: 0.3.0-preview.16
+  publication:
+    publisherContract: 2
+    minimumReaderContract: 1

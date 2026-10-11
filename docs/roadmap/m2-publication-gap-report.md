@@ -12,7 +12,8 @@
   [Reader generations](#reader-generations). Resource revision history, the
   placement and catalogue guards, and Git-revert characterization tests
   follow, under [Revision history, placements and the catalogue](#revision-history-placements-and-the-catalogue)
-  (O3, O4, O5, G8). Test names in the gap sections are as first
+  (O3, O4, O5, G8). The release rollback floor (D01-21, #124) follows
+  under [Release rollback floor](#release-rollback-floor-d01-21). Test names in the gap sections are as first
   written; see [Engineering fixes](#engineering-fixes),
   [Reader generations](#reader-generations) and the section after it for
   what changed and what each test is now called.
@@ -623,7 +624,8 @@ Still open after this change:
 - **Release floor (D01-21).** A publisher rolled back below this change does
   not update the record, so readers hold the last recorded generation until an
   operator removes it. The minimum rollable release belongs in the release
-  compatibility manifest (#124).
+  compatibility manifest (#124). Since recorded and enforced in-product; see
+  [Release rollback floor](#release-rollback-floor-d01-21).
 - **Readiness.** A process starting while a publication is incomplete fails
   its prime (`fail_fast_on_prime`) until the volumes converge.
 - **Platform mount.** Readers find the record only where the tenants
@@ -753,6 +755,88 @@ G5 (persisted last-known-good, recovery command, failure semantics), the
 release rollback floor (#124, D01-21), G7, G6's remaining items, G2's
 publisher wait, G3's panel state, O5 for the catalogue and client documents,
 and the platform contract follow-up above.
+
+## Release rollback floor (D01-21)
+
+D01-21's disposition (#108) is to record and enforce a minimum rollable
+version in the compatibility manifest, with format and migration
+compatibility tests. The approvals of #136, #137 and #138 each left the
+release floor owed. #137's review adds that an older Fabric ignores
+`spec.lifecycle`, so the floor must sit at or above the release that
+carries it. This change does the following. None of it is verified live.
+
+- **The manifest.** `compatibility.yaml` at the repository root records the
+  floor, `minimumRollableVersion: 0.3.0-preview.16`, for the component that
+  pulls `ghcr.io/fieldstatenz/saas-fabric`. Beside it are the publication
+  contracts the floor rests on. It is the rollback-floor part of #124's
+  manifest. Source commits, digests and migrations are still #124's to add,
+  and no release renders or attaches the file yet.
+- **Why `0.3.0-preview.16`.** `0.3.0-preview.15` (cut 2026-09-22) and every
+  earlier release predate three persisted formats, and each misreads the
+  newer state. They ignore the publication record (#136), so readers hold a
+  stale generation. They drop or refuse resource history (#138), so a
+  retired resource can return at a lower revision. They ignore
+  `spec.lifecycle` (#137), so a retired client reads as usable. The next
+  release cut from `main` is the first that can include all three. If it is
+  cut before this change merges, it still reads all three, so the floor
+  stays safe. `fabric-component`'s constants are held to the file by
+  `tests/this_repositorys_compatibility.rs`. That test also checks the floor
+  is above `0.3.0-preview.15` and on the workspace's version line.
+- **Enforced where the newer binary acts.** A binary older than the floor
+  enforces nothing, so the floor cannot be enforced inside it. Platform
+  Management, built with the floor (`RollbackFloors::for_this_release`, wired
+  at the composition root), applies it to whichever component pulls Fabric's
+  runtime repository, whatever the environment calls that component:
+  - the rollback listing leaves out every version below the floor, and
+    clears `more` once the floor is reached;
+  - `POST .../rollback` naming a version below the floor is refused as
+    `422 below_rollback_floor` (`PlatformError::BelowRollbackFloor`), before
+    any registry is asked and before anything is written.
+- **The published state's side of the floor.** The publication contract is
+  raised from 1 to 2, and every record states it as
+  `minimum_publisher_contract`. The first pass of this publisher rewrites a
+  contract-1 record as the next generation at contract 2, with no document
+  rewritten. Publishers from #136 to #138 were built at contract 1. Each
+  reads the floor first and refuses as `BelowRollbackFloor`, where a #136
+  publisher used to refuse #138's history only as `Unreadable`. Readers are
+  not raised: `minimum_reader_contract` stays 1. Manifests keep the contract
+  they were written at until the document's next revision, and no reader
+  reads them.
+
+| Item | Guard | Tests (each fails with its guard removed; checked by reverting the guard locally) |
+|---|---|---|
+| Manifest agrees with the binaries | `fabric-component` `compatibility.rs` | `this_repositorys_compatibility.rs::the_floor_is_the_one_the_binaries_enforce`, `::the_floor_is_above_every_release_that_misreads_the_current_formats`, `::the_floor_is_on_the_line_this_workspace_releases`, `::the_floor_applies_to_the_runtime_image_component_yaml_names`, `::the_publication_floor_is_the_publishers_contract_and_readers_are_not_raised`, `::the_floor_is_a_version_a_release_can_carry` |
+| Rollback listing | `rollback_floors.rs` (`RollbackFloors::cut`, `History::at_or_above`), called from `service/rollback.rs::rollback_candidates` | `service_tests.rs::the_rollback_listing_offers_nothing_below_the_floor_and_nothing_more`; `fabric-control-plane/tests/platform_rollback_floor.rs::the_listing_stops_at_the_floor_and_says_there_is_nothing_older` |
+| Rollback request | `rollback_floors.rs::RollbackFloors::admit`, called first in `service/rollback.rs::roll_back` | `service_tests.rs::a_rollback_below_the_floor_is_refused_before_any_registry_is_asked_and_writes_nothing`, `::a_rollback_to_the_floor_itself_is_written`, `::a_floor_on_another_repository_leaves_this_component_alone`; `platform_rollback_floor.rs::a_rollback_below_the_floor_is_refused_as_its_own_code`, `::a_rollback_to_the_floor_itself_passes_the_floor`; `rollback_floors.rs` unit tests |
+| Composition | `fabric-control-plane-api` `startup/platform.rs::establish` | `startup/platform.rs::the_shipping_binding_refuses_rollbacks_below_fabrics_own_floor`; `rollback_floors.rs::this_release_floors_the_component_that_pulls_saas_fabrics_runtime_image` |
+| Published-state floor and migration | `manifest.rs::CONTRACT_VERSION` (2), `rollback_floor.rs::check_publisher_floor` | `format_compatibility_tests.rs`: `a_record_in_the_136_format_is_read_and_rewritten_at_this_contract_without_touching_a_document`, `a_record_in_the_138_format_keeps_its_resource_history_across_the_floor_raise`, `a_record_this_release_writes_is_refused_by_a_contract_one_publisher_before_its_history_is_read`, `a_record_this_release_writes_admits_this_release`, `a_record_from_a_later_floor_is_refused_by_this_release_whatever_else_it_carries`, `a_contract_one_manifest_is_still_read_as_the_documents_revision`, `this_contract_is_above_the_one_the_136_to_138_publishers_were_built_at`; existing `plan_tests.rs::a_held_record_above_this_publishers_rollback_floor_refuses_the_whole_publication` and `reader_compatibility.rs::a_reader_at_contract_n_serves_a_publication_at_n_plus_one` (contract-1 readers serve contract-2 records) |
+
+Limits of this change:
+
+- **Break-glass is not covered.** Editing `components.yaml` in the platform
+  repository to pin a version below the floor bypasses Platform Management,
+  and the older binary then runs as before. For the publisher, that is
+  `reader_compatibility.rs::current_behaviour_a_publisher_rolled_back_below_the_record_leaves_readers_on_the_last_recorded_generation`.
+  Below the floor there is no rollback, only a reviewed, backed-up and
+  rehearsed recovery (ADR 0026).
+- **Client documents carry no floor of their own.** A control plane from
+  before #137 ignores `spec.lifecycle`, and nothing written into a client
+  document can stop it. The in-product refusal above is the only guard.
+- **The platform contract.** `saas-fabric-platform`'s
+  `contracts/runtime-documents.yaml` pins `publicationContractVersion`, and
+  its checker holds the record's publisher floor to it. The platform
+  contract must move to 2 before this publisher is activated. That is a
+  cross-repository follow-up, not made here.
+- **Release automation.** The release workflow does not yet read
+  `compatibility.yaml`. A tag below the floor is not refused there, and the
+  manifest is not attached to a release (#124).
+- **The floor is raised by a pass.** Until a pass of this publisher runs,
+  the held record still says contract 1.
+
+Still deferred after this change: G5 (persisted last-known-good, a recovery
+command, failure semantics), G4 `Lease`, G7, G6's remaining items, G2's
+publisher wait, G3's panel state, O5 for the catalogue and client documents,
+and both platform contract follow-ups.
 
 ## Not covered here
 

@@ -7,6 +7,7 @@
 //! records the floor would let one be changed without the other.
 
 use crate::canonical::to_canonical_bytes;
+use crate::rollback_floor::check_publisher_floor;
 use crate::{PublicationError, RecordedDocuments, ResourceHistory, CONTRACT_VERSION};
 
 /// The publication record's file name, written beside `tenants.json` -- and,
@@ -51,14 +52,6 @@ pub struct PublicationRecord {
     /// record that carries one as unreadable, rather than dropping it.
     #[serde(default)]
     resources: ResourceHistory,
-}
-
-/// Only the floor, read before anything else in a held record, so a record
-/// written under a newer contract is refused by its floor rather than by an
-/// unknown field.
-#[derive(serde::Deserialize)]
-struct Floor {
-    minimum_publisher_contract: u32,
 }
 
 impl PublicationRecord {
@@ -125,18 +118,12 @@ impl PublicationRecord {
     /// may not write over; [`PublicationError::Unreadable`] (as the tenants
     /// document, which the record travels with) for one that does not parse.
     pub fn parse_held(bytes: &[u8]) -> Result<Self, PublicationError> {
-        let floor: Floor = serde_json::from_slice(bytes).map_err(unreadable)?;
-        if floor.minimum_publisher_contract > CONTRACT_VERSION {
-            return Err(PublicationError::BelowRollbackFloor {
-                floor: floor.minimum_publisher_contract,
-                publisher: CONTRACT_VERSION,
-            });
-        }
+        check_publisher_floor(bytes, CONTRACT_VERSION)?;
         serde_json::from_slice(bytes).map_err(unreadable)
     }
 }
 
-fn unreadable(cause: serde_json::Error) -> PublicationError {
+pub(crate) fn unreadable(cause: serde_json::Error) -> PublicationError {
     PublicationError::Unreadable {
         document: crate::DocumentKind::Tenants,
         cause: Box::new(cause),

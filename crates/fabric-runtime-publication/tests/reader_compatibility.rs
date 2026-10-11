@@ -25,8 +25,9 @@ use fabric_core::{BindingRevision, DataSourceId, LogicalDataSourceName, TenantId
 use fabric_runtime_publication::{
     tenants_canonical_json, ConnectionName, ConnectionSelectorDocument, DataSourceDocument, DocumentInput,
     DocumentRevision, FieldName, IsolationModelDocument, PublicationError, PublicationRecord,
-    RecordedDocument, RecordedDocuments, RuntimePublication as _, RuntimeSnapshot, TenantBindingDocument,
-    TenantDataBindingDocument, TenantDataBindings, CONTRACT_VERSION, PUBLICATION_RECORD_FILE,
+    RecordedDocument, RecordedDocuments, ResourceHistory, RuntimePublication as _, RuntimeSnapshot,
+    TenantBindingDocument, TenantDataBindingDocument, TenantDataBindings, CONTRACT_VERSION,
+    PUBLICATION_RECORD_FILE,
 };
 use fabric_tenant_runtime::{ResolveError, RuntimeConfig, RuntimeResolver, READER_CONTRACT};
 use support::Reader;
@@ -129,7 +130,7 @@ fn rewrite_record(dir: &support::TempDir, generation: u64, edit: impl FnOnce(&mu
         ),
         catalog: RecordedDocument::of(DocumentRevision::new(1), &dir.read_raw("catalog.json")),
     };
-    let record = PublicationRecord::new(generation, documents);
+    let record = PublicationRecord::new(generation, documents, ResourceHistory::default());
     let mut json: serde_json::Value = serde_json::from_slice(&record.canonical_json().unwrap()).unwrap();
     edit(&mut json);
     dir.write_raw(

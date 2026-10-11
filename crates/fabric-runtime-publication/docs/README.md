@@ -111,6 +111,15 @@ A publication is refused, in whole, before a single byte is written, if:
 - a tenant binding's `data` map has no entries (`EmptyTenantData`) — reachable
   only through `Deserialize`, since construction refuses one, but the
   consumer would drop such a binding on arrival and keep whatever was held;
+- a tenant binding or DataSource does not advance past the revision it was
+  last published at (`ResourceRevisionNotAdvanced`): offered older, changed
+  at the same revision, or, when the held document no longer holds it,
+  offered at or below the highest revision the publication record's
+  `resources` history says it was ever published at;
+- a held tenant is missing from the offered tenants document, other than by
+  emptying the whole document with `Emptying::Intended` (`TenantRemoved`);
+- a catalogue entry names a logical data source no offered tenant binds
+  (`CatalogueEntryUnbound`); a tenants document with no tenants is exempt;
 - a held tenants or data-sources manifest exists but its payload does not
   (`HeldPayloadLost`) — a held manifest proves something was published, and
   guessing "empty" for a payload that is merely lost would disarm the guards

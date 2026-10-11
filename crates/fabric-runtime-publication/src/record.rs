@@ -7,7 +7,7 @@
 //! records the floor would let one be changed without the other.
 
 use crate::canonical::to_canonical_bytes;
-use crate::{PublicationError, RecordedDocuments, CONTRACT_VERSION};
+use crate::{PublicationError, RecordedDocuments, ResourceHistory, CONTRACT_VERSION};
 
 /// The publication record's file name, written beside `tenants.json` -- and,
 /// in the Kubernetes adapter, a third key of the tenants `ConfigMap`, so it is
@@ -46,6 +46,11 @@ pub struct PublicationRecord {
     minimum_publisher_contract: u32,
     generation: u64,
     documents: RecordedDocuments,
+    /// Absent from a record written before the history existed (#136),
+    /// which reads as an empty history. A publisher from before it refuses a
+    /// record that carries one as unreadable, rather than dropping it.
+    #[serde(default)]
+    resources: ResourceHistory,
 }
 
 /// Only the floor, read before anything else in a held record, so a record
@@ -57,16 +62,18 @@ struct Floor {
 }
 
 impl PublicationRecord {
-    /// A record at `generation` naming `documents`, stamped with this
-    /// publisher's contract and floors.
+    /// A record at `generation` naming `documents` and the resource history
+    /// up to and including them, stamped with this publisher's contract and
+    /// floors.
     #[must_use]
-    pub const fn new(generation: u64, documents: RecordedDocuments) -> Self {
+    pub const fn new(generation: u64, documents: RecordedDocuments, resources: ResourceHistory) -> Self {
         Self {
             contract_version: CONTRACT_VERSION,
             minimum_reader_contract: MINIMUM_READER_CONTRACT,
             minimum_publisher_contract: CONTRACT_VERSION,
             generation,
             documents,
+            resources,
         }
     }
 
@@ -80,6 +87,12 @@ impl PublicationRecord {
     #[must_use]
     pub const fn documents(&self) -> &RecordedDocuments {
         &self.documents
+    }
+
+    /// The highest revision each resource has been published at.
+    #[must_use]
+    pub const fn resources(&self) -> &ResourceHistory {
+        &self.resources
     }
 
     /// The oldest reader contract that may serve this generation.

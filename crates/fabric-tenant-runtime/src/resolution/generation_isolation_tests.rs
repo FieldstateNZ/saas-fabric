@@ -198,10 +198,11 @@ async fn a_sampler_never_sees_a_mixed_target_while_the_published_generation_adva
         refresh_interval_seconds: 1,
         fail_fast_on_prime: true,
     };
-    let (resolver, handles) =
-        build_published_runtime(&config, Arc::clone(&source) as Arc<dyn PublishedStateSource>)
-            .await
-            .unwrap();
+    let crate::PublishedRuntime {
+        resolver, handles, ..
+    } = build_published_runtime(&config, Arc::clone(&source) as Arc<dyn PublishedStateSource>)
+        .await
+        .unwrap();
 
     let stop = Arc::new(AtomicBool::new(false));
     let sampler = {

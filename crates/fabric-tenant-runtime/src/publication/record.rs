@@ -16,8 +16,7 @@ pub(super) const PUBLICATION_RECORD_FILE: &str = "publication.json";
 /// documents rely on `deny_unknown_fields` to refuse a shape they do not
 /// know; the record carries an explicit floor instead, so a publisher can
 /// add to the record what older readers may ignore and raise
-/// `minimum_reader_contract` only when they may not. The catalogue's entry
-/// is ignored too: the catalogue is read once, at process start.
+/// `minimum_reader_contract` only when they may not.
 #[derive(Debug, serde::Deserialize)]
 pub(super) struct ReaderRecord {
     pub(super) minimum_reader_contract: u32,
@@ -30,6 +29,8 @@ pub(super) struct ReaderDocuments {
     pub(super) tenants: ReaderDocument,
     #[serde(rename = "data-sources")]
     pub(super) data_sources: ReaderDocument,
+    /// Checked once, when the catalogue is read at process start.
+    pub(super) catalog: ReaderDocument,
 }
 
 #[derive(Debug, serde::Deserialize)]

@@ -9,10 +9,13 @@
   under D01-2's disposition (#108) the reader-side parts of G1b, G2, G3 and G6
   are addressed by a publication record and one resolution snapshot per
   generation, within the limits listed under
-  [Reader generations](#reader-generations). Test names in the gap sections are as first
-  written; see [Engineering fixes](#engineering-fixes) and
-  [Reader generations](#reader-generations) for what changed and what each test
-  is now called.
+  [Reader generations](#reader-generations). Resource revision history, the
+  placement and catalogue guards, and Git-revert characterization tests
+  follow, under [Revision history, placements and the catalogue](#revision-history-placements-and-the-catalogue)
+  (O3, O4, O5, G8). Test names in the gap sections are as first
+  written; see [Engineering fixes](#engineering-fixes),
+  [Reader generations](#reader-generations) and the section after it for
+  what changed and what each test is now called.
 - **Code read:** `fabric-runtime-publication` (`plan.rs`, `validate.rs`,
   `published_revisions.rs`, the filesystem adapter), `fabric-publication-kubernetes`,
   and the `fabric-tenant-runtime` reader. The catalogue reader in `fabric-api` and
@@ -499,6 +502,14 @@ this shape.
 - **Engineering:** surfacing the unbound pairs on the client's Data tab, which ADR
   0023 already owes (`0023:411-415`).
 
+**Since then:** under D01-1's disposition, an entry that *no* tenant binds is
+refused, the controller keeps the last published catalogue while one exists,
+and a runtime takes its catalogue from the same read and record as the
+generation it primes. An entry that *some* tenant does not bind is still
+published, as part 4 says. The Data tab item and catalogue refresh in a
+running replica are still owed. See
+[Revision history, placements and the catalogue](#revision-history-placements-and-the-catalogue).
+
 ## What this branch adds
 
 **Tests:** twelve new tests. All run by default; none is ignored. Eleven are named
@@ -607,8 +618,8 @@ Still open after this change:
   source's new data with the other's old data. Only in-memory and test
   compositions use it. Request-atomic application is claimed only for
   `build_published_runtime`, and has not been verified live.
-- **Catalogue.** Still read once at start and not checked against the record
-  (G8).
+- **Catalogue.** Still read once at start. Checked against the record since
+  the change below (G8).
 - **Release floor (D01-21).** A publisher rolled back below this change does
   not update the record, so readers hold the last recorded generation until an
   operator removes it. The minimum rollable release belongs in the release
@@ -618,7 +629,130 @@ Still open after this change:
 - **Platform mount.** Readers find the record only where the tenants
   `ConfigMap` is mounted as a whole volume (not by `items` or `subPath`). Not
   verified against the platform repository.
-- Still deferred: G4 `Lease`, G5, G7, G8, O3, O4.
+- Still deferred: G4 `Lease`, G5, G7, G8, O3, O4. The next section takes up
+  O3, O4, O5 and part of G8.
+
+## Revision history, placements and the catalogue
+
+D01-1 requires tenant and resource revisions to stay monotonic, not only
+document revisions. D01-27 allows no blind placement revert or removal, and
+asks for break-glass Git effects to be characterized in tests. This change
+adds the following. None of it is verified live.
+
+- **Resource history in the record (O3).** `publication.json` gains a
+  `resources` key: for every tenant binding and DataSource any recorded
+  generation published, the highest revision it was published at. Entries
+  are never removed. The plan builds it from the held record and the held
+  documents, so a record written before it existed starts from what is held.
+  An offered resource that the held document does not hold must come back
+  above that revision. Otherwise the publication is refused as
+  `ResourceRevisionNotAdvanced`, naming the revision it was last published
+  at. This covers a DataSource retired and declared again, and a tenant
+  emptied out and placed again.
+- **Declarations above what was published (O3).** `DataSources::declare`
+  reads the target's `published_resources()`, a new port method that every
+  adapter implements from its held state. It writes a declaration one above
+  the higher of the held and the published revision. This covers a new
+  declaration of a retired id, a correction made after a revert lowered
+  `data-sources.yaml`, and an unchanged entry held at or below a retired
+  revision. The control plane wires the target in at registration. Without
+  a target, revisions start at 1 as before. If the target cannot be read,
+  the declaration is refused as `PublishedStateUnreadable` (503).
+- **Placements held to the last published tenants (O4).** Before composing,
+  `compose` checks the placement records against the held tenants document.
+  - A published tenant or logical binding with no record left is refused as
+    `PlacementRemoved`.
+  - The records for the logical bindings a tenant was published with must
+    sum to at least its published revision, and to more if any of those
+    bindings changed. Otherwise the pass is refused as `PlacementLowered`.
+  - Summing only those records catches a revert that lowers one record while
+    adding others. The publisher sees only the tenant's total, which still
+    rises in that case.
+  - The explicit way past both refusals is a revision-bumping write.
+- **No silent tenant removal at the publisher (O4).** A held tenant that is
+  missing from the offered tenants document is refused as `TenantRemoved`.
+  The one exception is emptying the whole document with
+  `Emptying::Intended`.
+- **Catalogue against bindings and the record (G8).**
+  - The publisher refuses a catalogue entry on a logical data source that no
+    offered tenant binds (`CatalogueEntryUnbound`). A tenants document with
+    no tenants is exempt, because it serves no request. An entry that some
+    tenant binds and another does not is still published, as ADR 0018
+    part 4 allows.
+  - When the derived catalogue has such an entry, the controller offers the
+    held catalogue at its held revision instead, so the catalogue stays at
+    its last complete generation and tenant and data-source changes still
+    publish.
+  - `fabric-api` takes its catalogue from the same read the runtime primes
+    from (`PublishedFiles::with_catalogue`, `load_at_start`,
+    `PublishedRuntime::catalogue`). The catalogue's bytes must match the
+    digest named by the same record as the tenants and data sources the
+    resolver primed, or the prime fails. A publication that lands after the
+    prime therefore cannot pair its catalogue with the previous generation's
+    tenants. Review of #138 found that an earlier version of this change
+    read the catalogue separately after the prime and was open to exactly
+    that. Only a runtime that started unprimed (`fail_fast_on_prime = false`
+    and no complete generation at start) reads the catalogue on its own,
+    checked against the record it finds then. The tenants it later applies
+    may come from a newer generation.
+
+| Item | Guard | Tests (each fails with its guard removed; checked by reverting the guard locally) |
+|---|---|---|
+| O3, publisher | `resource_history.rs`, `resource_revisions.rs`, `plan/held.rs::resources` | `plan_tests.rs::a_data_source_retired_and_declared_again_at_or_below_its_last_revision_is_refused`, `::a_record_from_before_resource_history_starts_it_from_the_held_documents`, `::a_tenant_emptied_with_intent_and_placed_again_below_its_last_revision_is_refused`; `record_tests.rs::a_record_carries_resource_history_under_resources_and_reads_without_it` |
+| O3, declaration | `fabric-platform-management` `data_sources/plan.rs`, `data_sources/service/published.rs` | `data_sources/plan_tests.rs::an_id_removed_and_declared_again_starts_above_the_revision_it_was_last_published_at`, `::a_correction_after_a_revert_lowered_the_held_revision_moves_above_the_published_one`, `::an_unchanged_declaration_held_below_the_published_revision_is_written_above_it`, `::a_reverted_entry_at_the_revision_it_was_retired_at_is_written_above_it` |
+| O4, controller | `publication/placement_history.rs` | `snapshot_tests.rs::a_placement_reverted_out_of_a_published_tenant_is_refused`, `::a_published_tenant_reverted_out_entirely_is_refused`, `::a_record_reverted_to_its_earlier_binding_and_revision_is_refused`, `::a_lowered_record_is_refused_even_when_an_added_record_raises_the_tenants_total`, `::a_binding_changed_without_raising_its_records_revision_is_refused`, `::a_revision_bumping_write_may_change_a_binding_and_an_added_placement_is_accepted` |
+| O4, publisher | `resource_revisions.rs::refuse_removed_tenants` | `plan_tests.rs::a_held_tenant_dropped_from_the_offer_is_refused` |
+| O5 | the guards above, driven through the router, the pass and a real filesystem target | `fabric-control-plane/tests/platform_publication_revert.rs`: `reverting_placements_yaml_to_drop_a_published_placement_is_refused_and_writes_nothing`, `reverting_a_placement_record_is_refused_even_when_the_revert_adds_another`, `reverting_a_data_source_correction_is_refused_until_a_correction_moves_past_it`, `a_data_source_removed_and_declared_again_comes_back_above_its_last_published_revision`, `a_release_no_tenant_is_placed_on_waits_while_the_last_catalogue_stays_published`. Each refusal asserts all four published files unchanged |
+| G8, publisher | `catalogue_bindings.rs` | `plan_tests.rs::a_catalogue_entry_on_a_logical_data_source_no_tenant_binds_is_refused` |
+| G8, controller | `publication/catalogue_hold.rs` | `platform_publication_revert.rs::a_release_no_tenant_is_placed_on_waits_while_the_last_catalogue_stays_published` |
+| G8, reader | `fabric-tenant-runtime` `publication/published_files.rs::load_at_start`, `registration/build_published.rs`, `publication/catalogue.rs`; `fabric-api` `startup/application.rs`, `startup/catalog.rs` | `catalogue_generation.rs::a_publication_between_priming_and_the_catalogue_read_does_not_reach_the_catalogue` (a deterministic interleaving: generation 2 renames `articles` to `private_articles` and lands between the prime and the catalogue read), `::a_catalogue_from_another_generation_than_the_documents_fails_the_prime`, `::a_catalogue_from_another_generation_is_refused_at_start`, `::a_catalogue_ahead_of_the_record_is_refused_at_start`, `::the_catalogue_the_record_names_is_read`, `::with_no_record_the_catalogue_is_read_as_it_stands` |
+
+Limits of this change:
+
+- **History has a start.** Retirements published before this change are not
+  remembered. Losing the whole tenants `ConfigMap` loses the record and its
+  history, as for O2.
+- **An older publisher.** A publisher built before `resources` existed (#136)
+  refuses a record that carries it as `Unreadable` (`deny_unknown_fields`).
+  It cannot drop the history, but the refusal is not the explicit
+  `BelowRollbackFloor`. `minimum_publisher_contract` is not raised. Recording
+  the minimum rollable release is #124's.
+- **Platform contract.** `saas-fabric-platform`'s `scripts/runtime_contract.py`
+  requires the record's keys to be exactly the five #136 wrote, so it would
+  refuse a record with `resources`. The platform contract must accept the key
+  before this publisher is activated. That is a cross-repository follow-up,
+  not made here.
+- **O4.** If one record of a tenant is lowered while another of the same
+  tenant is raised in the same write, the lowering is not detected; the raise
+  is itself an explicit revision-bumping write. Removing a placement or a
+  tenant has no supported path. Deprovisioning (D01-14) is not built, and the
+  only removal the publisher accepts is emptying the whole tenants document
+  with intent. Client retirement (#137) records intent only and leaves the
+  client's placements in composition, because no withdrawal path exists
+  yet. Retiring a client therefore never removes a published tenant and
+  cannot stall publication on these guards. A withdrawal, when one is built,
+  is a separate reviewed operation that has to meet these guards.
+- **G8.**
+  - An entry that some tenant does not bind still gets `UnboundDataSource`
+    (500) for that tenant (part 4).
+  - The catalogue is not refreshed in a running replica, which is out of
+    scope here. A replica keeps the catalogue of the generation it started
+    on, while its tenants and data sources refresh to newer generations. A
+    catalogue change therefore reaches a replica only through a restart.
+  - A replica that starts while the catalogue volume lags the record fails
+    its prime until the volumes converge, as the readiness limit under
+    [Reader generations](#reader-generations) already says.
+  - With no catalogue held, a first catalogue with an unbound entry is
+    refused, and that refusal holds back the whole pass.
+- **O5, partly.** No test characterizes a Git revert of the catalogue or of
+  client documents, or restoring either through the console with conditional
+  writes and audit evidence.
+
+Still deferred after this change: G4 `Lease` (single-writer enforcement),
+G5 (persisted last-known-good, recovery command, failure semantics), the
+release rollback floor (#124, D01-21), G7, G6's remaining items, G2's
+publisher wait, G3's panel state, O5 for the catalogue and client documents,
+and the platform contract follow-up above.
 
 ## Not covered here
 

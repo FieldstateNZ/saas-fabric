@@ -387,3 +387,124 @@ fn a_lost_manifest_is_held_at_the_revision_the_record_names_so_an_older_offer_is
         "{refused}"
     );
 }
+
+fn with_unbound_data_source(revision: u64, data_source_revision: u64) -> RuntimeSnapshot {
+    let mut offered = snapshot(revision);
+    let mut spare = data_source("shared-2");
+    spare.revision = BindingRevision::new(data_source_revision);
+    offered.data_sources.payload.push(spare);
+    offered
+}
+
+#[test]
+fn a_data_source_retired_and_declared_again_at_or_below_its_last_revision_is_refused() {
+    let declared = plan_publication(&with_unbound_data_source(1, 3), &HeldDocuments::default()).unwrap();
+    let retired = plan_publication(&snapshot(2), &held_from(&declared)).unwrap();
+    assert_eq!(
+        retired
+            .record
+            .record
+            .resources()
+            .data_source(&DataSourceId::try_new("shared-2").unwrap()),
+        Some(BindingRevision::new(3))
+    );
+
+    for again in [1, 3] {
+        let refused =
+            plan_publication(&with_unbound_data_source(3, again), &held_from(&retired)).unwrap_err();
+        assert!(
+            matches!(
+                &refused,
+                PublicationError::ResourceRevisionNotAdvanced { document: DocumentKind::DataSources, resource, held, offered }
+                    if resource == "shared-2" && *held == BindingRevision::new(3) && *offered == BindingRevision::new(again)
+            ),
+            "{refused}"
+        );
+    }
+    assert!(plan_publication(&with_unbound_data_source(3, 4), &held_from(&retired)).is_ok());
+}
+
+#[test]
+fn a_record_from_before_resource_history_starts_it_from_the_held_documents() {
+    let declared = plan_publication(&with_unbound_data_source(1, 3), &HeldDocuments::default()).unwrap();
+    let mut held = held_from(&declared);
+    let mut before_history: serde_json::Value = serde_json::from_slice(&declared.record.bytes).unwrap();
+    before_history.as_object_mut().unwrap().remove("resources");
+    held.record = Some(serde_json::to_vec(&before_history).unwrap());
+
+    let retired = plan_publication(&snapshot(2), &held).unwrap();
+
+    let refused = plan_publication(&with_unbound_data_source(3, 1), &held_from(&retired)).unwrap_err();
+    assert!(
+        matches!(refused, PublicationError::ResourceRevisionNotAdvanced { .. }),
+        "{refused}"
+    );
+}
+
+#[test]
+fn a_held_tenant_dropped_from_the_offer_is_refused() {
+    let mut two = snapshot(1);
+    two.tenants.payload.push(tenant("globex", "shared-1"));
+    let held = held_from(&plan_publication(&two, &HeldDocuments::default()).unwrap());
+
+    let refused = plan_publication(&snapshot(2), &held).unwrap_err();
+
+    assert!(
+        matches!(
+            &refused,
+            PublicationError::TenantRemoved { tenant, held }
+                if tenant.as_str() == "globex" && *held == BindingRevision::new(1)
+        ),
+        "{refused}"
+    );
+}
+
+#[test]
+fn a_tenant_emptied_with_intent_and_placed_again_below_its_last_revision_is_refused() {
+    let mut at_five = snapshot(1);
+    at_five.tenants.payload[0].revision = BindingRevision::new(5);
+    let published = plan_publication(&at_five, &HeldDocuments::default()).unwrap();
+    let mut emptied = snapshot(2);
+    emptied.tenants = DocumentInput::new(DocumentRevision::new(2), vec![]).emptying_intended();
+    let emptied = plan_publication(&emptied, &held_from(&published)).unwrap();
+
+    let refused = plan_publication(&snapshot(3), &held_from(&emptied)).unwrap_err();
+
+    assert!(
+        matches!(
+            &refused,
+            PublicationError::ResourceRevisionNotAdvanced { document: DocumentKind::Tenants, held, .. }
+                if *held == BindingRevision::new(5)
+        ),
+        "{refused}"
+    );
+}
+
+#[test]
+fn a_catalogue_entry_on_a_logical_data_source_no_tenant_binds_is_refused() {
+    let mut offered = snapshot(1);
+    let mut resources: BTreeMap<_, _> = catalog()
+        .resources()
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+    let mut audit = resources.values().next().unwrap().clone();
+    audit.data_source = LogicalDataSourceName::try_new("audit").unwrap();
+    resources.insert(LogicalResourceName::try_new("auditEvents").unwrap(), audit);
+    offered.catalog = DocumentInput::new(DocumentRevision::new(1), CatalogDocument::new(resources));
+
+    let refused = plan_publication(&offered, &HeldDocuments::default()).unwrap_err();
+    assert!(
+        matches!(
+            &refused,
+            PublicationError::CatalogueEntryUnbound { resource, data_source }
+                if resource.as_str() == "auditEvents" && data_source.as_str() == "audit"
+        ),
+        "{refused}"
+    );
+
+    offered.tenants.payload.clear();
+    assert!(
+        plan_publication(&offered, &HeldDocuments::default()).is_ok(),
+        "a generation with no tenant serves no entry"
+    );
+}

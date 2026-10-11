@@ -14,8 +14,8 @@ use fabric_core::{
 use fabric_runtime_publication::{
     CatalogDocument, CollectionName, ConnectionName, ConnectionSelectorDocument, ConnectorId,
     DataResidencyDocument, DataSourceCapabilitiesDocument, FieldName, IsolationModelDocument,
-    PlacementClassDocument, PoolSettingsDocument, PublicationError, PublicationReport, PublishedRevisions,
-    ResourceDefinitionDocument, RuntimePublication, RuntimeSnapshot,
+    PlacementClassDocument, PoolSettingsDocument, PublicationError, PublicationReport, PublishedResources,
+    PublishedRevisions, ResourceDefinitionDocument, RuntimePublication, RuntimeSnapshot,
 };
 use tokio::sync::Notify;
 
@@ -454,6 +454,10 @@ struct PanickingPublication;
 impl RuntimePublication for PanickingPublication {
     async fn current(&self) -> Result<PublishedRevisions, PublicationError> {
         panic!("simulated target failure")
+    }
+
+    async fn published_resources(&self) -> Result<PublishedResources, PublicationError> {
+        unreachable!("current() always panics first")
     }
 
     async fn publish(&self, _: &RuntimeSnapshot) -> Result<PublicationReport, PublicationError> {

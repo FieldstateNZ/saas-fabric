@@ -540,23 +540,39 @@ PR. The IDs match ADR 0018's list and `docs/roadmap/m0-contract-decisions.md`.
 O1 (the publisher guards resource revisions) and O2 (a lost manifest is held
 at the revision the publication record names) are listed in ADR 0018. Both
 are implemented in [#136](https://github.com/FieldstateNZ/saas-fabric/pull/136).
+O3 and O4 are implemented, and O5 is partly characterized, as described
+below.
 #136 also narrows O6 on the reader side. Within one process, a request is
 resolved against one generation's tenants and data sources, held together
 across the binding, the exclusivity check and the execution target. What
 remains of O6 is listed in ADR 0018. None of this is verified live.
 
-- **O3. A data source that is removed and declared again restarts at
-  revision 1.** `data_sources/plan.rs` treats an id that is not held as new.
-  Declared resource revisions are therefore not monotonic across a remove
-  and re-declare of one id.
-- **O4. Nothing detects a placement record that was removed or lowered.**
-  `compose` sums whichever records are held now. Nothing compares the result
-  with the tenant set or tenant revisions last published. A Git revert of
-  `placements.yaml` can therefore deprovision a tenant (only taking the whole
-  document to empty is guarded). A lower tenant revision is now refused by
-  the publisher (O1, #136) rather than published.
-- **O5. No test characterizes a Git revert** of `placements.yaml` or
-  `data-sources.yaml` through the publisher and the runtime.
+- **O3. Implemented, not verified live.** A data source that is removed and
+  declared again no longer restarts at revision 1. `data_sources/plan.rs`
+  writes a declaration above the higher of its held revision and the
+  highest revision the id was ever published at. That revision is read from
+  the publication record's `resources` history and the held documents
+  (`RuntimePublication::published_resources`). The publisher refuses a
+  resource offered at or below it (ADR 0018, O3). History starts with the
+  first record that carries it.
+- **O4. Implemented, not verified live.** `compose` holds the placement
+  records to the tenants document last published. A published tenant or
+  logical binding with no record left is refused (`PlacementRemoved`).
+  Records that no longer reach the tenant's published revision, or that
+  reach it with a changed binding, are refused (`PlacementLowered`). A Git
+  revert of `placements.yaml` therefore cannot deprovision a tenant or move
+  it back. The way forward is a revision-bumping write. The publisher also
+  refuses a dropped tenant (`TenantRemoved`) unless the whole document is
+  emptied with intent. No withdrawal path exists yet: retiring a client
+  records intent only and leaves its placements in composition, so
+  retirement cannot stall publication on these guards.
+- **O5. Partly characterized.** Reverts of `placements.yaml` and
+  `data-sources.yaml` are driven through the router, the controller's pass
+  and a real filesystem target
+  (`fabric-control-plane/tests/platform_publication_revert.rs`). Each is
+  refused and leaves the published files unchanged. The runtime is not
+  driven in those tests; it keeps the generation the files hold. A revert
+  of the catalogue or of client documents is still not characterized.
 - **O7. The controller does not attempt placement on each pass.** Placement
   happens only on an explicit request (part 2).
 - **O8. The readiness gate is incomplete.** Fabric reports the publication

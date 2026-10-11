@@ -19,8 +19,9 @@ use std::collections::BTreeMap;
 
 use fabric_core::{BindingRevision, LogicalDataSourceName, TenantId};
 use fabric_runtime_publication::{
-    CatalogDocument, DataSourceDocument, DocumentInput, DocumentRevision, PublishedRevisions,
-    RuntimeSnapshot, TenantBindingDocument, TenantDataBindingDocument, TenantDataBindings,
+    CatalogDocument, DataSourceDocument, DocumentInput, DocumentRevision, PublishedResources,
+    PublishedRevisions, RuntimeSnapshot, TenantBindingDocument, TenantDataBindingDocument,
+    TenantDataBindings,
 };
 
 use super::compose_error::ComposeError;
@@ -41,16 +42,24 @@ use crate::placements::PlacementRecord;
 /// back empty by accident, and ADR 0018 part 6 exists for that case, not
 /// this function.
 ///
+/// `published` is what the target last published: placements are held to
+/// its tenants document before anything is composed.
+///
 /// # Errors
 ///
 /// [`ComposeError::DuplicatePlacement`] if `placements` records one
-/// tenant's logical data source twice.
+/// tenant's logical data source twice, and [`ComposeError::PlacementRemoved`]
+/// or [`ComposeError::PlacementLowered`] if they no longer account for a
+/// published tenant.
 pub fn compose(
     declarations: Vec<DataSourceDeclaration>,
     placements: &[PlacementRecord],
     catalog: CatalogDocument,
     held: &PublishedRevisions,
+    published: &PublishedResources,
 ) -> Result<RuntimeSnapshot, ComposeError> {
+    super::placement_history::refuse_removed_or_lowered(placements, &published.tenants)?;
+
     let mut data_sources: Vec<DataSourceDocument> = declarations
         .into_iter()
         .map(DataSourceDeclaration::into_document)

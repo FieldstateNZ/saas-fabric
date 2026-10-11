@@ -1,7 +1,7 @@
 //! Why [`compose`](super::compose) could not build a snapshot from what it
 //! was given.
 
-use fabric_core::{LogicalDataSourceName, TenantId};
+use fabric_core::{BindingRevision, LogicalDataSourceName, TenantId};
 
 /// Why [`compose`](super::compose) could not build a snapshot from what it
 /// was given.
@@ -38,5 +38,34 @@ pub enum ComposeError {
     EmptyTenantBinding {
         /// The tenant whose accumulated bindings were empty.
         tenant: TenantId,
+    },
+
+    /// A tenant was last published with this logical data source, and no
+    /// placement records it any more: a Git revert or hand edit of
+    /// `placements.yaml` that would deprovision it. Placements roll forward
+    /// only; nothing removes one (O4, D01-27).
+    #[error("{tenant} was published with {logical}, and no placement records it any more")]
+    PlacementRemoved {
+        /// The tenant the last publication bound.
+        tenant: TenantId,
+        /// The logical data source it was bound on.
+        logical: LogicalDataSourceName,
+    },
+
+    /// The records for the logical data sources a tenant was last published
+    /// with sum below its published revision, or to the same revision with a
+    /// binding changed: a lowered or reverted placement record, not a
+    /// revision-bumping write (O4, D01-27).
+    #[error(
+        "{tenant} was published at revision {published}; its placements now record {recorded} for the \
+         same data, which does not advance it"
+    )]
+    PlacementLowered {
+        /// The tenant whose placements went back.
+        tenant: TenantId,
+        /// Its revision in the last published tenants document.
+        published: BindingRevision,
+        /// What its records for the same logical data sources now sum to.
+        recorded: BindingRevision,
     },
 }

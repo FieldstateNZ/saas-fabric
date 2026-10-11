@@ -16,7 +16,9 @@ impl ResourceRefresher {
     /// # Errors
     ///
     /// [`SourceError`] if no generation could be applied, or if a document
-    /// read cleanly but nothing in it could be served. Of a complete
+    /// read cleanly but nothing in it could be served. On success, the
+    /// catalogue bytes [`PublishedStateSource::load_at_start`] read with the
+    /// generation applied, if the source reads one. Of a complete
     /// generation, the tenants are never applied once its data sources were
     /// refused: that would prime one registry from a generation the other
     /// does not hold.
@@ -25,9 +27,10 @@ impl ResourceRefresher {
         data_sources: &ResourceRegistry<DataSource>,
         tenants: &ResourceRegistry<TenantRuntimeBinding>,
         source: &dyn PublishedStateSource,
-    ) -> Result<(), SourceError> {
+    ) -> Result<Option<Vec<u8>>, SourceError> {
         let origin = source.describe();
-        match source.load().await? {
+        let (state, catalog) = source.load_at_start().await?;
+        match state {
             PublishedState::Generation {
                 generation: number,
                 data_sources: published_data_sources,
@@ -37,7 +40,7 @@ impl ResourceRefresher {
                 prime_with(tenants, &origin, Ok(published_tenants))?;
                 generation.publish(tenants, data_sources);
                 logging::generation_applied(&origin, number);
-                Ok(())
+                Ok(catalog)
             }
             PublishedState::Unrecorded {
                 data_sources: published_data_sources,
@@ -46,7 +49,7 @@ impl ResourceRefresher {
                 let primed_data_sources = prime_with(data_sources, &origin, published_data_sources);
                 let primed_tenants = prime_with(tenants, &origin, published_tenants);
                 generation.publish(tenants, data_sources);
-                primed_data_sources.and(primed_tenants)
+                primed_data_sources.and(primed_tenants).map(|()| catalog)
             }
         }
     }

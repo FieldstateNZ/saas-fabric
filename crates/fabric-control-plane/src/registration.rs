@@ -6,7 +6,8 @@
 use std::sync::Arc;
 
 use fabric_platform_management::{
-    PlatformRepository, PublicationState, RuntimeCatalogueSource, RuntimePublisher,
+    DataSourceState, DataSources, PlatformRepository, PublicationState, RuntimeCatalogueSource,
+    RuntimePublisher,
 };
 use fabric_reconciliation::ReconciliationStatusStore;
 
@@ -64,10 +65,7 @@ pub fn build_control_plane(
     let platform_sweeps = Arc::new(fabric_platform_management::SweepState::default());
     let health = Arc::new(crate::IntegrationHealth::new());
 
-    // Built once here, whether or not a publisher exists, so `GET
-    // /api/platform` can tell "not configured" (`publisher: None`) apart
-    // from "configured, nothing has run yet" (`publisher: Some`, no last
-    // pass) without an `Option<Option<PublicationState>>` -- see
+    // Built whether or not a publisher exists: see
     // `PlatformBinding::publication`'s own rustdoc.
     let publication_state = Arc::new(PublicationState::new());
 
@@ -89,9 +87,18 @@ pub fn build_control_plane(
             ))
         });
 
+        // Declarations are placed above what was published (O3).
+        let data_sources = publication.as_ref().map_or_else(
+            || Arc::clone(&binding.data_sources),
+            |sink| {
+                let state = Arc::clone(&binding.repository) as Arc<dyn DataSourceState>;
+                Arc::new(DataSources::new(state).with_publication(Arc::clone(&sink.target)))
+            },
+        );
         PlatformBinding {
             publisher,
             publication: Arc::clone(&publication_state),
+            data_sources,
             ..binding
         }
     });

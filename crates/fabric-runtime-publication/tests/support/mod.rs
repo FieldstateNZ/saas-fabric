@@ -339,8 +339,8 @@ pub async fn build_reader_with(
     match reader {
         Reader::Generation => {
             let (source, loads) = CountingPublished::new(dir.tenants_path(), dir.data_sources_path());
-            let (resolver, handles) = build_published_runtime(config, Arc::new(source)).await?;
-            Ok((resolver, handles, loads))
+            let published = build_published_runtime(config, Arc::new(source)).await?;
+            Ok((published.resolver, published.handles, loads))
         }
         Reader::PerDocument => {
             let (tenants, loads) = CountingSource::<TenantRuntimeBinding>::new(dir.tenants_path());

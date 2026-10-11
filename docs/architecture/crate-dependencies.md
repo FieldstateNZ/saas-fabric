@@ -33,6 +33,9 @@ fabric-fga-auth        → fabric-core
 fabric-fga-auth-api    → fabric-core
                        → fabric-fga-auth   (composition root, own image)
 
+fabric-fga-check       → fabric-data-api   (implements AuthorizationCheck;
+                                            fabric-core as a dev edge only)
+
 fabric-api             → all of the above (composition root)
 ```
 
@@ -45,6 +48,14 @@ established, while this one is the trust boundary itself, verifying signatures
 against a registry of issuers. Sharing code between them would mean the thing
 that establishes trust and the thing that consumes it could not be reasoned
 about separately (ADR 0016).
+
+**`fabric-fga-check` is the Data API's client for that front, and has no edge
+to it either** (ADR 0027). It implements `fabric-data-api`'s
+`AuthorizationCheck` port by calling the front's `POST /v1/check` over HTTP
+with the caller's own token. It shares the front's wire contract, not its code:
+a client that linked the verifier would put the trust boundary inside the thing
+that consumes it. Nothing depends on it yet. `fabric-api` composes no Check,
+because no front endpoint is configured.
 
 ## The control plane
 

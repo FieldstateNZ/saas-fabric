@@ -23,8 +23,8 @@ calls the Fabric authorization front door yet.
   fields `pub`). Fields: `listen: String`, `identity: IdentityConfig`,
   `token: TokenConfig`, `leeway: LeewaySeconds`, `tenant_runtime:
   RuntimeConfig`, `tenants_path: PathBuf`, `data_sources_path: PathBuf`,
-  `catalog_path: PathBuf`, `data_api: DataApiConfig`, `permissions:
-  ResourcePermissions`, `connectors: Vec<NdcConnectorConfig>`,
+  `catalog_path: PathBuf`, `data_api: DataApiConfig`, `health_detail_role:
+  String` (default `platform-admin`), `connectors: Vec<NdcConnectorConfig>`,
   `connector_retry_interval_seconds: u64` (default 30),
   `request_timeout_seconds: u64` (default 30, `3x` the connector default of
   10s). `AppConfig::load(path: &str) -> Result<Self, String>`;
@@ -87,8 +87,8 @@ calls the Fabric authorization front door yet.
   then `application.tasks.shutdown().await` after `axum::serve` returns.
   Logs at `error` and exits non-zero on any failure — never panics.
 - `config/` — `app_config.rs` (the struct + `Default`), `token_config.rs`,
-  `allowlist.rs`, `administrator_role.rs` (`pub(super) fn validate`, refuses
-  a blank `permissions.administrator_role` — see invariant 3 below),
+  `allowlist.rs`, `health_detail_role.rs` (`pub(super) fn validate(&str)`,
+  refuses a blank `health_detail_role` — see invariant 3 below),
   `env_namespace.rs` (`ENV_PREFIX = "FABRIC_SETTING_"` and `ENV_NESTING =
   "__"`, both `pub(super)`; `CONFIG_PATH_VAR`, `pub`), `loading.rs`
   (`AppConfig::load`, `require_readable_file` — uses `Toml::file_exact`, not
@@ -110,7 +110,7 @@ calls the Fabric authorization front door yet.
   anything still running as `Unknown`), `detail_access.rs` (`pub(super) fn
   may_see_detail(state, headers) -> bool` — `false` if
   `administrator_role.is_empty()`, defence in depth even though
-  `config::administrator_role` already refuses that at startup, because
+  `config::health_detail_role` already refuses that at startup, because
   `HealthState` is constructible without going through `AppConfig`),
   `logging.rs` (`pub(super) fn connectors_swept`, logs at `debug` per
   non-healthy connector), `probes.rs` (`pub(super) async fn liveness() ->
@@ -203,12 +203,12 @@ calls the Fabric authorization front door yet.
    configured connector `http_timeout_seconds`**, checked at startup
    (`validate_timeouts`) — otherwise the outer budget always fires first and
    the connector's own timeout becomes unreachable.
-3. **`permissions.administrator_role` cannot be blank.** A blank value is
-   read as "authorise nobody" by this crate's `may_see_detail` but as
-   "match every token with an empty role" by
-   `fabric_data_api::ResourcePermissions::permits` (`identity.has_role("")`)
-   — a live privilege escalation if it ever reached that far. Refusing it at
-   startup is the fix available in *this* crate.
+3. **`health_detail_role` cannot be blank, and there is no `[permissions]`.**
+   The role opens the probes' detail body and nothing else. The Data API has
+   no administrator role and no scope toggle (ADR 0027, D01-12), so
+   `[permissions]` is an unknown key and refused at load
+   (`config/loading.rs` tests). `startup::serving` composes
+   `DataAuthorization::default()`: no tenant policies, no Check configured.
 4. **`FABRIC_SETTING_*` is the only settings namespace**; `FABRIC_CONFIG`
    and `FABRIC_SECRET_*` must never fall inside it. This is asserted by
    tests in `config/env_namespace.rs`, not just documented.

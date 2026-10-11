@@ -1,14 +1,15 @@
 # fabric-data-api — LLM context
 
 The Data API. Event-ID domain **4**. Depends on `fabric-core`,
-`fabric-identity`, `fabric-tenant-runtime`, `fabric-connector`, `axum`, `http`.
+`fabric-identity`, `fabric-tenant-runtime`, `fabric-connector`, `async-trait`,
+`axum`, `http`.
 
 **Never depends on `fabric-connector-ndc`.** Nothing protocol-shaped may appear
 in this crate's public contract.
 
 ## Public surface
 
-- `build_data_api(&DataApiConfig, ResourceCatalog, ResourcePermissions,
+- `build_data_api(&DataApiConfig, ResourceCatalog, DataAuthorization,
   Arc<RuntimeResolver>, ConnectorRegistry, Arc<IdentityResolver>) -> Result<Router, String>`.
 - `data_routes(DataApiState) -> Router` — returns a router already rooted at
   `API_PREFIX`; the host must mount it as-is, not nest it under a further
@@ -16,8 +17,10 @@ in this crate's public contract.
 - `API_PREFIX: &str = "/v1/data"` — the full external path prefix. Public so
   the host and this crate's own tests share one literal.
 - `DataApiState { service, identity }`; `FromRef<DataApiState> for Arc<IdentityResolver>`
-  is what makes the `TenantIdentity` extractor work.
-- `DataApiService` — `list`, `read`, `create`, `update`, `delete`, `config()`.
+  is what makes the `Caller` extractor work (it resolves the `TenantIdentity`
+  first, so identity refusals are unchanged, then keeps the bearer).
+- `DataApiService` — `list`, `read`, `create`, `update`, `delete` (each takes
+  `&Caller`), `config()`.
   Holds an `Arc<RuntimeResolver>`, not registries.
   Split by responsibility across `execution/`: `data_api_service` (the struct),
   `prepare` (catalogue → authorization → DataSource → connector),
@@ -36,10 +39,32 @@ in this crate's public contract.
   **both** directions — what a caller may name, and what a response may carry.
   An empty `queryable_fields` still means "no restriction"; see the rustdoc on
   `permits_field` for why "expose nothing" is not a usable default here.
-- `OperationKind { Read, List, Create, Update, Delete }` — `as_str()`,
-  `is_write()`, `required_scope(resource)` → `data:{resource}:{read|write}`.
-- `ResourcePermissions { require_scopes (true), administrator_role ("platform-admin") }`,
-  `permits(&TenantIdentity, OperationKind, &str) -> bool`.
+- `OperationKind { Read, List, Create, Update, Delete }` (from `fabric-core`) —
+  `as_str()`, `is_write()`. `required_scope(operation, resource)` →
+  `data:{resource}:{read|write}`.
+- Authorization (ADR 0027), all in `authorization/`:
+  - `DataAuthorization::new(TenantPolicies, Arc<dyn AuthorizationCheck>)`;
+    `Default` = no policies + `NoCheckConfigured`. `pub(crate) async fn
+    decide(&Caller, OperationKind, &LogicalResourceName, Option<&str>) ->
+    Result<(), Refusal>`: scope first; then, only if
+    `TenantPolicies::requires_check`, a Check on `resource:key`.
+  - `TenantPolicies::default().with(TenantId, TenantAuthorization)`,
+    `requires_check(&TenantId, &LogicalResourceName)`. An absent tenant
+    requires nothing (no declarations known).
+  - `TenantAuthorization::new(TenantPosture, impl IntoIterator<Item =
+    LogicalResourceName>)`; `TenantPosture { SyntheticTrial, RelationChecked }`.
+  - `AuthorizationCheck` (async trait, `Send + Sync`): `check(&CallerCredential,
+    &CheckQuestion) -> Result<CheckDecision, CheckFailure>`.
+    `CheckQuestion { operation, object: CheckObject }`;
+    `CheckDecision { Allowed, Denied }`;
+    `CheckFailure { Unavailable, Internal, NotConfigured }`.
+  - `CheckObject::try_new(LogicalResourceName, &str)` — the front's id rules
+    (non-empty, ≤255 bytes, no `:` `#` `/` or whitespace); `Display` is
+    `resource:id`.
+  - `Caller` (axum extractor; `identity()`, `credential()`);
+    `CallerCredential::new(String)`, `bearer()`, redacted `Debug`.
+  - `NoCheckConfigured` — always `Err(NotConfigured)`.
+  - No administrator role and no scope toggle exist anywhere (D01-12).
 - `DataApiConfig { default_limit (50), max_limit (1000), max_filters (25),
   max_sort_fields (5), max_select_fields (50), max_filter_depth (4),
   max_request_body_bytes (1 MiB), max_mutation_batch_size (500) }`,
@@ -137,7 +162,9 @@ path syntax (`{key}`, not `:key`).
 | `ResourceIsReadOnly` | 405 | "…is read-only" (no placement detail) |
 | `UnknownResource` / `NotFound` | 404 | as written |
 | `OperationNotAllowed` | 405 | as written |
-| `Forbidden` | 403 | as written |
+| `Forbidden` | 403 | as written (any layer; `reason` only in the log) |
+| `AuthorizationUndecided(Unavailable)` | 503 | "authorization is temporarily unavailable; retry shortly" |
+| `AuthorizationUndecided(Internal \| NotConfigured)` | 500 | "internal error" |
 | `BadRequest` | 400 | as written (includes every `limits`/`extraction` rejection) |
 | `PartiallyApplied` | 500 | "{applied} of {requested} records were written; …cannot determine which" |
 | `Connector` (internal) | 500 | "internal error" on a read; on a write, a sentence chosen by `effect()` so it never claims the mutation did not happen |
@@ -166,6 +193,8 @@ each row carries and the at-most-once caveat.
 1. **The tenant comes from `TenantIdentity` and nowhere else.** No method here
    takes a tenant parameter. (§10, §11)
 2. **Authorization never influences tenant selection.** (§23)
+2a. **Layer 1 always runs, first, and no role replaces it** (ADR 0027,
+   D01-12). A Check failure never becomes an allow.
 3. **Every read goes through `QuerySpec::for_target`; every write through
    `MutationSpec::for_target`.** That is what applies the tenant predicate and
    stamps the discriminator.
@@ -260,8 +289,13 @@ by `connector_failures`), and a hand-rolled `tracing::Subscriber`
 | `error_contract.rs` | request id correlation, inbound-id bound, unknown-tenant anti-enumeration, connector-text masking, refusal logging |
 | `field_exposure.rs` | `queryable_fields` and the discriminator gate every response body |
 | `authorization_ordering.rs` | a refused caller gets one identical answer whatever the request shape |
+| `layered_authorization.rs` | ADR 0027: trial on scopes alone, Check allow/deny/unavailable/not configured, undeclared resources scope-only, no role bypass, `list`/`create` refused on checked resources |
 | `write_outcome.rs` | a write may claim success only when the affected count agrees with what was sent |
 | `transport_failures.rs` | each transport variant, read against write: status, code, `Retry-After`, and what the message may claim |
+
+`tests/support/requests.rs` grants every catalogue resource's read and write
+scope to a token that names no `scope`, because scopes cannot be switched off;
+write `"scope": ""` for an unscoped caller.
 
 `tests/support/fixtures.rs`'s catalogue carries `restrictedCustomers`, the only
 entry with a non-empty `queryable_fields`. Without it every field name is

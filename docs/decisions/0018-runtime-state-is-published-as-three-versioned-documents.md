@@ -1160,9 +1160,11 @@ and `configuration` are carried through the contract because the consumer's type
 has them and `deny_unknown_fields` means they cannot be quietly dropped. Nothing
 publishes meaningful values into them yet.
 
-**`ResourcePermissions`.** It is process configuration, read from `config.toml`
-at startup, not a published resource — nothing in this decision changes that or
-gives it a place in any of the three documents.
+**Data-path authorization policy.** `ResourcePermissions` was process
+configuration and is gone (ADR 0027). Its successor, the per-tenant
+`TenantPolicies`, is not yet published by anything. ADR 0027 owes its delivery
+through publication before M3, and nothing in this decision yet gives it a
+place in any of the three documents.
 
 **Where the document revision comes from in production.** The caller states it.
 Which caller, and how it decides, belongs with whatever schedules publication.

@@ -125,6 +125,7 @@ Kubernetes, or opens a connection (§6).
 | [`fabric-data-api`](crates/fabric-data-api) | The public HTTP surface. |
 | [`fabric-fga-auth`](crates/fabric-fga-auth) | The authorization front's identity primitive — verifies a tenant's bearer against a trusted issuer registry and answers a Check (ADR 0016). |
 | [`fabric-fga-auth-api`](crates/fabric-fga-auth-api) | The authorization front's composition root — starts the embedded OpenFGA process and serves `POST /v1/check` on the one published port. |
+| [`fabric-fga-check`](crates/fabric-fga-check) | The Data API's layer-2 adapter: asks the authorization front's `POST /v1/check` with the caller's own token. Not wired; no front endpoint is configured (ADR 0027). |
 | [`fabric-api`](crates/fabric-api) | The runtime plane's composition root. |
 
 **Control plane**
@@ -304,6 +305,7 @@ The reasoning, the licence audit, and the consequences are recorded in
 | [0024](docs/decisions/0024-an-instance-is-a-realm-signed-in-at-the-gateway-and-surfaces-are-federated-modules.md) | An instance is a realm, signed in at the gateway, and product surfaces are federated modules |
 | [0025](docs/decisions/0025-realm-bootstrap-is-platform-composition.md) | Realm bootstrap is platform composition, done with the credential the platform generates |
 | [0026](docs/decisions/0026-a-component-describes-itself-in-an-artifact-attached-to-its-image.md) | A component describes itself in an artifact attached to its image, and the catalogue selects it from registries an operator registers |
+| [0027](docs/decisions/0027-data-path-authorization-is-layered-and-fails-closed.md) | Data-path authorization is layered, chosen per tenant, and fails closed |
 
 ## Running it
 
@@ -440,9 +442,17 @@ explicit action.
 
 **The authorization front door** — `fabric-fga-auth` and `fabric-fga-auth-api`
 — is built: it verifies a tenant's bearer and answers `POST /v1/check` against
-an embedded OpenFGA (ADR 0016). It is not yet called by `fabric-data-api`, and
-it is not one of the three images the release workflow publishes — see
-[Releases](#releases).
+an embedded OpenFGA (ADR 0016). It is not one of the three images the release
+workflow publishes — see [Releases](#releases).
+
+**Data-path authorization is layered** (ADR 0027). Every request needs its
+`data:<resource>:<read|write>` scope; there is no administrator bypass and no
+way to switch scopes off. A tenant beyond the isolated synthetic trial also
+needs the front's Check on every resource that declares relations, and a Check
+that cannot be obtained refuses the request. The port, the per-tenant policy
+and the HTTP adapter (`fabric-fga-check`) are built and tested; nothing is
+wired. No tenant policy is supplied and no front endpoint is configured, so
+every tenant is held to its scopes alone, as before.
 
 Not yet built:
 

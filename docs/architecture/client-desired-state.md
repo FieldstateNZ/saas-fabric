@@ -458,6 +458,47 @@ same enum a data source declares `placement` in, and a `serde_norway::Value`
 read at the selector's call site would let a typo through as silently as an
 untyped `spec.identity` once did.
 
+## `spec.lifecycle`
+
+Recorded by
+[ADR 0021's 2026-10-11 amendment](../decisions/0021-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md#amendment-2026-10-11-a-clients-lifecycle-d01-14-d01-19a)
+(D01-14). What an operator has decided about the client's lifecycle: nothing,
+a tombstone, or a tombstone and a deletion confirmation.
+
+```yaml
+spec:
+  lifecycle:
+    tombstone:
+      at: 1760140800          # seconds since the Unix epoch
+      by: brett@example.com   # the operator subject
+      reason: Contract ended
+    deletionConfirmed:
+      at: 1760227200
+      by: brett@example.com
+```
+
+| Path | Required | Rule |
+|---|---|---|
+| `spec.lifecycle` | no | absent reads as saved intent, which every document written before it existed is |
+| `spec.lifecycle.tombstone.reason` | with a tombstone | non-blank, at most 512 bytes, no control characters |
+| `spec.lifecycle.deletionConfirmed` | no | only beside a tombstone, and not earlier than it |
+
+**Written only by the control plane's two lifecycle writes**,
+`POST /api/clients/{clientId}/tombstone` and
+`POST /api/clients/{clientId}/deletion-confirmation`. Each is a separate
+commit, so the tombstone and the confirmation never land together.
+
+**Unknown keys are refused**, unlike `spec`'s other unmodelled sections. A
+misspelt `tombstoned:` would otherwise read as an active client.
+
+**`incomplete` and `ready` are not stored.** Whether saved intent is a usable
+client is derived from evidence on every read and shown as
+`lifecycle.state` on every client response. A document cannot claim it.
+
+**Confirming deletion deletes nothing.** The document, its `spec.data`, its
+placement records, its realm and its secrets all stay. What deletion removes,
+and after what retention, is not decided.
+
 ## What may never appear
 
 **No secrets.** Not a client secret, not a database password, not a token, not a

@@ -1,7 +1,9 @@
 # ADR 0021 — The product catalogue is desired state, and the console creates clients
 
-- **Status:** Proposed
-- **Date:** 2026-09-16
+- **Status:** Proposed. Owed decisions 2 and 3 are disposed and built by
+  the [2026-10-11 amendment](#amendment-2026-10-11-a-clients-lifecycle-d01-14-d01-19a);
+  acceptance follows ADR 0023 through its own reviewed change (D01-19d).
+- **Date:** 2026-09-16; amended 2026-10-11
 - **Applies to:** `fabric-client-model`, `fabric-client-git`,
   `fabric-control-plane`, `fabric-control-plane-api`, `apps/control-plane-ui`,
   and the `saas-fabric-clients` repository that holds what they write
@@ -609,11 +611,15 @@ repository is single-process by its lock, and is a development mode only.
    rails. Remove it, and working on the console locally needs a Keycloak again,
    as that document says. Either answer should be recorded rather than left to
    whichever document was edited last.
-2. **What a created client may mean.** Whether a document with a realm and
+2. **What a created client may mean.** *Disposed 2026-10-11 (D01-19a): an
+   explicit incomplete state; see the amendment below.* Whether a document with a realm and
    product configuration is an acceptable "client exists" to show operators
    before routing, data placement and a secret boundary are designed — or
    whether creation should wait for them.
-3. **Deprovisioning.** What removing an application from a client must undo —
+3. **Deprovisioning.** *Disposed 2026-10-11 for a whole client (D01-14):
+   tombstone first, retained state, confirmed deletion as a separate
+   operation; see the amendment below. Removing one application from a client
+   is still refused and still owed.* What removing an application from a client must undo —
    the realm client, a deployment, data — what confirmation it needs, and
    whether a mistaken assignment should have an exit before that exists.
    Changing an assignment's plan, or moving it to an older version, is allowed
@@ -643,3 +649,139 @@ effect beside authored ones. A catalogue holding one is
 rules may from now on only relax, which answers, for those shapes, part of
 "How catalogue validation rules may change". Saving a draft takes a request
 shape of its own that cannot carry what the server resolved.
+
+## Amendment 2026-10-11: a client's lifecycle (D01-14, D01-19a)
+
+Recorded from the D01-14 and D01-19a dispositions in
+[#108](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6109518415):
+
+> **D01-14:** Tombstone first, explicit retained state, confirmed deletion as
+> a separate operation. No destructive action or retention period is
+> approved by this choice.
+>
+> **D01-19a:** Explicit incomplete state until provisioning/identity/publication
+> readiness is met; distinguish saved intent from usable client.
+
+This amends owed decisions 2 and 3 for a whole client. It does not accept
+this ADR.
+
+### The states
+
+```text
+ create ──► incomplete ◄──evidence──► ready
+                │                       │
+                └──── tombstone ────────┘
+                          ▼
+                     tombstoned            state retained
+                          │ confirm deletion, a separate write
+                          ▼
+                  deletionConfirmed        intent only; nothing is deleted
+```
+
+- **`incomplete`** is saved intent: the document exists and the client is not
+  usable. **`ready`** means all three readiness conditions are met. Both are
+  derived on every read, never stored. An operator does not declare a client
+  usable; the platform shows it.
+  - *Provisioning:* every logical data source in `spec.data` has a placement
+    record, and there is at least one.
+  - *Identity:* reconciliation is `applied` (or `drifted`, which was
+    corrected) at the client's current revision.
+  - *Publication:* the tenant is in the tenants document the last successful
+    publication pass left, at the revision its placements add up to
+    (ADR 0023 part 4, D1).
+
+  Missing evidence never counts as met. A deployment that manages no
+  platform, an unreadable placements document, and a process that has not
+  completed a publication pass since it started all leave the condition
+  unmet and say why. A ready client whose evidence regresses goes back to
+  `incomplete`.
+- **`tombstoned`** and **`deletionConfirmed`** are recorded in the client
+  document under `spec.lifecycle`, because an operator decided them
+  (ADR 0008). A recorded tombstone wins over any evidence.
+
+### The rules
+
+| Transition or use | Rule | Refusal (status, code) |
+|---|---|---|
+| Tombstone | Only from `incomplete` or `ready`, at the current revision, with a reason | `409 client_already_tombstoned`, `409 deletion_already_confirmed`, `422 invalid_tombstone_reason`, `409 revision_conflict` |
+| Confirm deletion | Only from `tombstoned`, as its own write at the revision the tombstone produced, naming the client again in the body | `409 deletion_requires_tombstone`, `409 deletion_already_confirmed`, `422 deletion_confirmation_mismatch`, `409 revision_conflict` |
+| Leave `tombstoned` or `deletionConfirmed` | No transition exists | — |
+| Edit product configuration | Refused when retired | `409 client_retired` |
+| Remove a secret | Refused when retired: it would not be retained | `409 client_retired` |
+| Place a data source | Refused when retired | `409 client_retired` |
+| Publish the tenant | Refused when retired. The tenant is withheld from the next pass; its placement records stay | (the pass) |
+| Route the client | Refused unless `ready` | `client_not_ready` (domain only; see below) |
+
+Saved intent may be edited, placed and published, because each is a step
+towards readiness, and publication is itself a readiness condition.
+
+Two edits stay open on a retired client on purpose: an **identity edit** and
+a **secret write**. A tombstone does not revoke the client's identity, so
+removing a compromised redirect URI or role, or rotating a leaked secret,
+must still be possible.
+
+### What a tombstone and a confirmed deletion do not do
+
+Nothing is removed. The document, its `spec.data`, every placement record,
+the realm, its projected clients and the secrets all stay. Identity
+reconciliation continues to add and correct, exactly as for any client.
+Confirming deletion writes `spec.lifecycle.deletionConfirmed` and an
+activity entry. It applies no retention period and starts no deletion.
+
+### Verified against the code (at the base of this amendment)
+
+| Claim | Where |
+|---|---|
+| The state machine and every refusal | `crates/fabric-client-model/src/lifecycle.rs`, `lifecycle/record.rs`; `lifecycle/lifecycle_tests.rs` |
+| `spec.lifecycle` round-trips, and a hand edit confirming deletion without a tombstone, before it, or under a misspelt key is refused on read | `document/lifecycle.rs`; `document/document_lifecycle_tests.rs` |
+| Readiness evidence, and missing evidence is never readiness | `crates/fabric-control-plane/src/lifecycle/evidence.rs`; `lifecycle/evidence_tests.rs` |
+| The API shows the state on every client response, and each write and refusal through the router | `handlers/tombstone_client.rs`, `handlers/confirm_client_deletion.rs`; `tests/client_lifecycle.rs` |
+| A tombstoned tenant is withheld from publication, and its placement records are kept | `fabric-platform-management/src/publication/withhold.rs`, `publication/pass.rs`; `publisher_tests.rs::a_withheld_tenant_is_left_out_and_the_others_are_published`; `client_lifecycle.rs::a_client_becomes_ready_once_placed_applied_and_published_then_tombstoning_withholds_it` |
+| An unreadable or invalid client document stops the pass rather than publishing a retired tenant | `publisher_tests.rs::an_unreadable_lifecycle_fails_the_pass_and_publishes_nothing`, `::an_invalid_client_document_refuses_the_pass` |
+| The console tells saved intent from a usable client | `apps/control-plane-ui/src/console/LifecycleStatus.tsx`; `LifecycleStatus.test.tsx`, `console.test.tsx` |
+
+### Known limits
+
+- **Withholding the only published tenant is refused, not published.** The
+  publisher refuses taking the tenants document to empty unless that is
+  intended (ADR 0018 part 6), and `compose` never says it is. The pass is
+  refused and the last good document stays, so that tenant is still served.
+  `client_lifecycle.rs::tombstoning_the_only_published_tenant_is_refused_rather_than_emptying_the_runtime`
+  characterizes it.
+- **One unreadable client document stops publication.** The lifecycle source
+  reads every client. A document that will not parse refuses the pass,
+  because a retired tenant cannot be told apart from an active one. The
+  previous documents stay.
+- **Identity and publication evidence is per process.** Both come from
+  in-memory state. After a restart a client shows `incomplete` until a
+  reconciliation pass and a publication pass have run. Nothing gates
+  publication on identity for the same reason: withdrawing a tenant after
+  every restart would be an outage.
+- **Routing has no producer in Fabric.** The rule refusing to route a client
+  that is not `ready` is in the domain (`ClientLifecycle::permits`). The
+  issuer-to-tenant registry and edge generator (D01-4) must consult it when
+  built.
+- **An older Fabric ignores `spec.lifecycle`.** A control plane from before
+  this amendment reads a tombstoned client as active and would publish it.
+  The release rollback floor (D01-21) must sit at or above the release that
+  carries this.
+
+### Deferred, not decided here
+
+Each needs its own decision. None is approved by D01-14.
+
+- **Retention:** how long a tombstoned client is retained, and whether
+  confirming deletion must wait for it.
+- **Customer data:** what confirmed deletion eventually removes (the realm
+  and its users, projected clients, secrets, placement records, the tenant's
+  rows, the client document), in what order, with what export or evidence
+  obligations, and who executes it (D01-23 gives backup, restore and
+  migration to the platform).
+- **Restoring a tombstone,** and who may.
+- **Identity at tombstone:** whether a tombstone should disable sign-in,
+  remove projected clients or end sessions.
+- **Who may confirm deletion:** today any operator may, as a separate write.
+  A second operator or a waiting period would be a further rule.
+- **Removing one application from a client** (owed decision 3's first half)
+  is still refused.
+

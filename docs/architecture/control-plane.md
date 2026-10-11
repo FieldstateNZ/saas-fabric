@@ -137,7 +137,9 @@ GET    /api/catalogue/runtime            the catalogue the runtime would be give
 GET    /api/activity                     recorded operator actions, newest first
 GET    /api/clients                      list clients
 POST   /api/clients                      create one             (refused if the id exists)
-GET    /api/clients/{clientId}           one client's overview
+GET    /api/clients/{clientId}           one client's overview and lifecycle
+POST   /api/clients/{clientId}/tombstone              retire it, retaining its state   (If-Match required)
+POST   /api/clients/{clientId}/deletion-confirmation  confirm deletion; intent only    (If-Match required)
 GET    /api/clients/{clientId}/identity  its identity, and reconciliation state
 PUT    /api/clients/{clientId}/identity  replace its identity   (If-Match required)
 GET    /api/clients/{clientId}/product   its product configuration, and what it resolves to
@@ -1727,8 +1729,10 @@ rather than reloading to re-read `GET /api/platform`.
   placed tenant whose issuer the runtime does not list is refused at the
   edge regardless of what this row says.
 - **Deprovisioning, and emptying.** Removing a placement, and what an empty
-  tenants document means for a tenant's rows, is the deprovisioning question
-  ADR 0021 already owes an answer to. `compose` never sets emptying intent —
+  tenants document means for a tenant's rows, is still undecided. A
+  tombstoned client's tenant is withheld from each pass while its placement
+  records stay (ADR 0021's 2026-10-11 amendment); withholding the only
+  published tenant is refused by the emptying guard rather than published. `compose` never sets emptying intent —
   an environment that has genuinely lost every data source or placement is
   exactly what a scheduled pass cannot tell apart from a read that came back
   empty by accident (ADR 0018 part 6).
@@ -1750,6 +1754,8 @@ time.
 | an operator's runtime-publication trigger | `control_plane.audit.publication_triggered` |
 | an image registry change, refused or not | `control_plane.audit.registry` |
 | a component version selected, refused or not | `control_plane.audit.component_selected` |
+| a client tombstoned | `control_plane.audit.client_tombstoned` |
+| a client's deletion confirmed | `control_plane.audit.client_deletion_confirmed` |
 
 The catalogue event names no client, because the catalogue has none: it carries
 `resource = "catalogue"` and the entry the command changed, and takes its

@@ -49,6 +49,7 @@
 //! and it depends on no crate that has one.
 
 mod canonical;
+mod digest;
 mod document;
 mod document_revision;
 mod errors;
@@ -58,7 +59,12 @@ mod manifest;
 mod plan;
 mod port;
 mod published_revisions;
+mod record;
+#[cfg(test)]
+mod record_tests;
+mod recorded_documents;
 mod report;
+mod resource_revisions;
 mod snapshot;
 mod validate;
 #[cfg(test)]
@@ -82,9 +88,11 @@ pub use manifest::{
     DocumentKind, DocumentManifest, CATALOG_FILE, CATALOG_MANIFEST_FILE, CONTRACT_VERSION, DATA_SOURCES_FILE,
     DATA_SOURCES_MANIFEST_FILE, TENANTS_FILE, TENANTS_MANIFEST_FILE,
 };
-pub use plan::{plan_publication, DocumentPlan, HeldDocument, HeldDocuments, PublicationPlan};
+pub use plan::{plan_publication, DocumentPlan, HeldDocument, HeldDocuments, PublicationPlan, RecordPlan};
 pub use port::RuntimePublication;
 pub use published_revisions::PublishedRevisions;
+pub use record::{PublicationRecord, MINIMUM_READER_CONTRACT, PUBLICATION_RECORD_FILE};
+pub use recorded_documents::{RecordedDocument, RecordedDocuments};
 pub use report::{DocumentOutcome, PublicationReport};
 pub use snapshot::{DocumentInput, Emptying, RuntimeSnapshot};
 

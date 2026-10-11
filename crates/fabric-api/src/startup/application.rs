@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use axum::Router;
 use fabric_identity::build_identity;
-use fabric_tenant_runtime::{build_runtime, JsonFileSource};
+use fabric_tenant_runtime::{build_published_runtime, PublishedFiles};
 
 use crate::config::AppConfig;
 use crate::startup::background_tasks::{stop_refreshers, BackgroundTasks};
@@ -51,13 +51,16 @@ pub async fn build(config: &AppConfig) -> Result<Application, String> {
     )?;
 
     // 2. Runtime state. Two independently reconciled resources, read from files
-    //    a controller writes. Never queries Git or Kubernetes (§6). This is the
-    //    step that starts background work, so from here on a failure has
-    //    something to clean up.
-    let (runtime, refresh) = build_runtime(
+    //    a controller writes, and applied only as the complete generation the
+    //    publication record beside the tenants file names. Never queries Git or
+    //    Kubernetes (§6). This is the step that starts background work, so from
+    //    here on a failure has something to clean up.
+    let (runtime, refresh) = build_published_runtime(
         &config.tenant_runtime,
-        Arc::new(JsonFileSource::new(&config.tenants_path)),
-        Arc::new(JsonFileSource::new(&config.data_sources_path)),
+        Arc::new(PublishedFiles::new(
+            &config.tenants_path,
+            &config.data_sources_path,
+        )),
     )
     .await?;
 

@@ -7,6 +7,7 @@
 mod refresh_handle;
 mod refresh_loop;
 mod refresh_once;
+mod refresh_published;
 #[cfg(test)]
 mod refresher_tests;
 

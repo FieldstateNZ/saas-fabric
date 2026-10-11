@@ -37,7 +37,9 @@ pub(super) fn outcome_from_publish_error(error: &PublicationError) -> PassOutcom
         | PublicationError::EmptyingNotIntended { .. }
         | PublicationError::EmptyCatalogue
         | PublicationError::EmptyTenantData { .. }
-        | PublicationError::HeldPayloadLost { .. } => PassOutcome::Refused {
+        | PublicationError::HeldPayloadLost { .. }
+        | PublicationError::ResourceRevisionNotAdvanced { .. }
+        | PublicationError::BelowRollbackFloor { .. } => PassOutcome::Refused {
             reason: SafeDiagnostic::sanitise(&error.to_string()),
         },
     }

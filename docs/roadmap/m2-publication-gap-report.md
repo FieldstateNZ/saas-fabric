@@ -5,9 +5,11 @@
   production code, accepts no contract and decides nothing for D01-1 or D01-2.
 - **Base:** `origin/main` at the commit this branch forks from. Every `file:line`
   below refers to that tree. Paths are under `crates/` unless they say otherwise.
-- **Since then:** the engineering-only parts of G1, G3, G4 and G4a are fixed. Test
-  names in the gap sections are as first written; see
-  [Engineering fixes](#engineering-fixes) for what changed and what each test
+- **Since then:** the engineering-only parts of G1, G3, G4 and G4a are fixed, and
+  under D01-2's disposition (#108) the reader-visible parts of G1b, G2, G3 and G6
+  are fixed by a publication record. Test names in the gap sections are as first
+  written; see [Engineering fixes](#engineering-fixes) and
+  [Reader generations](#reader-generations) for what changed and what each test
   is now called.
 - **Code read:** `fabric-runtime-publication` (`plan.rs`, `validate.rs`,
   `published_revisions.rs`, the filesystem adapter), `fabric-publication-kubernetes`,
@@ -541,6 +543,68 @@ Still deferred:
   matrix tests and CI check, G8's unbound pairs on the Data tab. Each needs
   console or CI work beyond the publication path, or waits on a D01-1
   decision as G5 says.
+
+## Reader generations
+
+D01-2 (#108, comment 6109518415) directs reconciling #112's remaining
+reader-visible and atomicity gaps in bounded PRs. This change does that with a
+publication record, `publication.json`:
+
+- **Publisher.** Every publication ends by writing a record naming each
+  document's revision and the SHA-256 of its bytes, and a monotonic
+  `generation`. The filesystem adapter writes it beside `tenants.json`, after
+  the three documents. The Kubernetes adapter writes it as a third key of the
+  tenants `ConfigMap`, so it is projected in the same volume swap as the
+  tenants payload; a publication that changes only data sources or the
+  catalogue rewrites the tenants object with its payload and manifest as held.
+  No new `ConfigMap`, so no RBAC change.
+- **Reader.** `fabric-api` now builds the runtime with
+  `build_published_runtime` over `PublishedFiles`. A pass applies the two
+  documents only when both match the record (data sources first, then
+  tenants); otherwise both registries keep the last complete generation. With
+  no record (a publisher older than this change) each document is read on its
+  own, as before.
+- **Floors.** The record carries `minimum_reader_contract` (a reader below it
+  refuses the generation: the explicit version handshake G6 lacked) and
+  `minimum_publisher_contract` (a publisher below it refuses with
+  `BelowRollbackFloor` before writing: D01-21's floor for the published
+  state).
+- **Publisher guards owed by #135.** O1: a held tenant binding or DataSource
+  offered at an older revision, or changed at the same one, is refused as
+  `ResourceRevisionNotAdvanced`, because a reader would keep its held copy and
+  part-apply the generation. O2: a lost manifest is held at the revision the
+  record names, so an offer at revision 1 is refused as `StaleRevision` and
+  `current()` reports the recorded revision.
+
+| Gap | Fixed-behaviour tests | Residual `current_behaviour_*` test |
+|---|---|---|
+| G1b | `publication_atomicity.rs::a_reader_holds_its_generation_while_tenants_reach_it_before_the_data_sources_they_name`, `::a_reader_holds_its_generation_while_data_sources_reach_it_before_the_tenants`; `published_files_tests.rs` (8 tests) | none at the reader. Within one process the two registries still swap one after the other; see below |
+| G2 | `publication_atomicity.rs::a_reader_never_applies_a_retirement_before_the_unbinding_that_preceded_it` | none at the reader; the publisher still does not wait for readers |
+| G3 | `publication_atomicity.rs::an_interrupted_publication_leaves_readers_on_the_previous_complete_generation` (five failure points, with a sampler); `concurrency_tests.rs::an_interrupted_publication_leaves_the_previous_generations_record_in_place` | `publication_atomicity.rs::current_behaviour_an_interrupted_publication_leaves_the_published_set_at_mixed_revisions` (the files, not readers) |
+| G4 (Kubernetes) | readers refuse the dangling pair | `concurrency_tests.rs::current_behaviour_writers_overlapping_after_their_checks_leave_objects_no_record_names_as_one_generation` (objects still dangle; a `Lease` is still owed) |
+| G6 | `reader_compatibility.rs::a_reader_at_contract_n_serves_a_publication_at_n_plus_one`, `::a_reader_at_contract_n_plus_one_serves_a_publication_at_n`, `::a_publication_above_the_reader_floor_keeps_running_readers_on_their_generation_and_stops_new_ones` | `reader_compatibility.rs::current_behaviour_a_shape_change_published_without_raising_the_floor_is_refused_only_by_unknown_fields` |
+| D01-21 (published state) | `reader_compatibility.rs::a_publisher_below_the_held_records_rollback_floor_refuses_and_writes_nothing`; `plan_tests.rs::a_held_record_above_this_publishers_rollback_floor_refuses_the_whole_publication` | `reader_compatibility.rs::current_behaviour_a_publisher_rolled_back_below_the_record_leaves_readers_on_the_last_recorded_generation` |
+
+Still open after this change:
+
+- **Two registry swaps.** A complete generation is applied as two pointer
+  swaps. A request resolving between them sees new data sources with the
+  previous tenants for that instant: safe for additions, but a reader that
+  skips the generation unbinding a retired DataSource can fail one such
+  request with `MissingDataSource`. One snapshot across both registries
+  closes it.
+- **Catalogue.** Still read once at start and not checked against the record
+  (G8).
+- **Release floor (D01-21).** A publisher rolled back below this change does
+  not update the record, so readers hold the last recorded generation until an
+  operator removes it. The minimum rollable release belongs in the release
+  compatibility manifest (#124).
+- **Readiness.** A process starting while a publication is incomplete fails
+  its prime (`fail_fast_on_prime`) until the volumes converge.
+- **Platform mount.** Readers find the record only where the tenants
+  `ConfigMap` is mounted as a whole volume (not by `items` or `subPath`). Not
+  verified against the platform repository.
+- Still deferred: G4 `Lease`, G5, G7, G8, O3, O4.
 
 ## Not covered here
 

@@ -128,6 +128,19 @@ impl Cluster {
         let state = self.state.lock().unwrap();
         state.objects[name].1["data"][key].as_str().unwrap().to_owned()
     }
+
+    fn record(&self) -> serde_json::Value {
+        serde_json::from_str(&self.data(
+            "fabric-runtime-tenants",
+            fabric_runtime_publication::PUBLICATION_RECORD_FILE,
+        ))
+        .unwrap()
+    }
+
+    fn manifest_revision(&self, name: &str, key: &str) -> u64 {
+        let manifest: serde_json::Value = serde_json::from_str(&self.data(name, key)).unwrap();
+        manifest["revision"].as_u64().unwrap()
+    }
 }
 
 fn serve(mut socket: TcpStream, state: &Mutex<State>, versions: &AtomicU64) {
@@ -364,16 +377,24 @@ async fn a_writer_whose_read_only_object_moved_before_it_writes_is_refused() {
         .contains("pg-2"));
 }
 
-/// Gap G4 (write skew across objects), residual. The re-read above runs
-/// before a writer's first write, so two writers that both pass it before
-/// either writes still each write only their own object. Writer A retires
-/// `pg-2` and is held at its write, after its check; writer B moves acme onto
-/// `pg-2`, and its own check passes because A's write has not landed. Both
-/// succeed, and the cluster holds a binding to a DataSource that is not
-/// published. Closing this needs one writer (a `Lease`, whose RBAC is D01-1)
-/// or a cross-document generation (G1b, D01-1).
+/// Gap G4 (write skew across objects), residual in the objects, closed for
+/// readers. The re-read above runs before a writer's first write, so two
+/// writers that both pass it before either writes still each write their
+/// own document. Writer A retires `pg-2` and is held at its first write,
+/// after its check; writer B moves acme onto `pg-2`, and its own check
+/// passes because A's write has not landed. B publishes and closes its
+/// generation in the tenants object. A's data-sources write then lands, but
+/// the record A must write to close its own generation travels in the
+/// tenants object B has since replaced, so the API server refuses it and A
+/// reports `Unwritable`.
+///
+/// The cluster still holds a tenants document naming `pg-2` beside a
+/// data-sources document without it: one writer (a `Lease`) is still what
+/// would prevent that. But the record in the tenants object names B's
+/// data-sources revision, not the one now held, so every reader finds the
+/// generation incomplete and keeps serving the last complete one.
 #[tokio::test]
-async fn current_behaviour_writers_overlapping_after_their_checks_can_leave_a_dangling_binding_in_the_cluster(
+async fn current_behaviour_writers_overlapping_after_their_checks_leave_objects_no_record_names_as_one_generation(
 ) {
     let cluster = Cluster::start();
     let (seeder, _seed_token) = cluster.writer("seed");
@@ -399,9 +420,17 @@ async fn current_behaviour_writers_overlapping_after_their_checks_can_leave_a_da
     assert_eq!(report_b.data_sources, DocumentOutcome::Unchanged);
 
     release.send(()).unwrap();
-    let report_a = writer_a.await.unwrap().unwrap();
-    assert_eq!(report_a.data_sources, DocumentOutcome::Written);
-    assert_eq!(report_a.tenants, DocumentOutcome::Unchanged);
+    let error = writer_a.await.unwrap().unwrap_err();
+    assert!(
+        matches!(
+            error,
+            PublicationError::Unwritable {
+                document: DocumentKind::Tenants,
+                ..
+            }
+        ),
+        "{error}"
+    );
 
     assert!(cluster
         .data("fabric-runtime-tenants", "tenants.json")
@@ -409,6 +438,12 @@ async fn current_behaviour_writers_overlapping_after_their_checks_can_leave_a_da
     assert!(!cluster
         .data("fabric-runtime-data-sources", "data-sources.json")
         .contains("pg-2"));
+    let record = cluster.record();
+    assert_eq!(record["documents"]["data-sources"]["revision"], 1);
+    assert_eq!(
+        cluster.manifest_revision("fabric-runtime-data-sources", "data-sources.manifest.json"),
+        2
+    );
 }
 
 /// Within one object the API server's optimistic concurrency does what the
@@ -454,16 +489,21 @@ async fn a_second_writer_of_the_same_object_is_refused_by_its_resource_version()
         .contains("initech"));
 }
 
-/// Gap G3 (interrupted publication). A failure after the data-sources object
-/// is replaced and before the tenants object is leaves the cluster at mixed
-/// document revisions, which `current()` reports and every mounting pod's
-/// kubelet will project. The next publication of the same snapshot finishes
-/// the job.
+/// Gap G3 (interrupted publication), closed for readers. A failure after
+/// the data-sources object is replaced and before the tenants object is
+/// leaves the objects at mixed document revisions, which `current()`
+/// reports and every mounting pod's kubelet will project. The record that
+/// would close the new generation travels in the tenants object, so it was
+/// not written either: it still names generation 1 and the data-sources
+/// revision that generation had, which every reader compares against what
+/// it reads and refuses as incomplete. The next publication of the same
+/// snapshot finishes the job and closes generation 2.
 #[tokio::test]
-async fn current_behaviour_an_interrupted_publication_leaves_the_cluster_at_mixed_revisions() {
+async fn an_interrupted_publication_leaves_the_previous_generations_record_in_place() {
     let cluster = Cluster::start();
     let (writer, _token) = cluster.writer("writer");
     writer.publish(&seed()).await.unwrap();
+    assert_eq!(cluster.record()["generation"], 1);
 
     let next = snapshot(
         (2, vec![tenant("acme", "pg-2", 2)]),
@@ -492,8 +532,55 @@ async fn current_behaviour_an_interrupted_publication_leaves_the_cluster_at_mixe
             catalog: Some(DocumentRevision::new(1)),
         }
     );
+    let record = cluster.record();
+    assert_eq!(record["generation"], 1);
+    assert_eq!(record["documents"]["data-sources"]["revision"], 1);
 
     let report = writer.publish(&next).await.unwrap();
     assert_eq!(report.data_sources, DocumentOutcome::Unchanged);
     assert_eq!(report.tenants, DocumentOutcome::Written);
+    let record = cluster.record();
+    assert_eq!(record["generation"], 2);
+    assert_eq!(record["documents"]["data-sources"]["revision"], 2);
+}
+
+/// A publication that changes only the data sources still closes its
+/// generation, by rewriting the tenants object with its payload and manifest
+/// exactly as held and a new record -- the one volume every reader finds
+/// the record in.
+#[tokio::test]
+async fn a_publication_of_the_data_sources_alone_rewrites_the_tenants_object_only_to_close_the_generation() {
+    let cluster = Cluster::start();
+    let (writer, _token) = cluster.writer("writer");
+    writer.publish(&seed()).await.unwrap();
+    let tenants_before = cluster.data("fabric-runtime-tenants", "tenants.json");
+    let manifest_before = cluster.data("fabric-runtime-tenants", "tenants.manifest.json");
+
+    let more = snapshot(
+        (1, vec![tenant("acme", "pg-1", 1)]),
+        (
+            2,
+            vec![data_source("pg-1"), data_source("pg-2"), data_source("pg-3")],
+        ),
+    );
+    let report = writer.publish(&more).await.unwrap();
+
+    assert_eq!(report.tenants, DocumentOutcome::Unchanged);
+    assert_eq!(report.data_sources, DocumentOutcome::Written);
+    assert_eq!(
+        cluster.data("fabric-runtime-tenants", "tenants.json"),
+        tenants_before
+    );
+    assert_eq!(
+        cluster.data("fabric-runtime-tenants", "tenants.manifest.json"),
+        manifest_before
+    );
+    let record = cluster.record();
+    assert_eq!(record["generation"], 2);
+    assert_eq!(record["documents"]["data-sources"]["revision"], 2);
+    assert_eq!(record["documents"]["tenants"]["revision"], 1);
+
+    let again = writer.publish(&more).await.unwrap();
+    assert_eq!(again.tenants, DocumentOutcome::Unchanged);
+    assert_eq!(cluster.record()["generation"], 2);
 }

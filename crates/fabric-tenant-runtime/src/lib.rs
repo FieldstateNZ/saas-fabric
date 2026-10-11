@@ -55,6 +55,7 @@ mod config;
 mod data_source;
 mod errors;
 mod logging;
+mod publication;
 mod registration;
 mod resolution;
 mod resource;
@@ -67,7 +68,8 @@ pub use data_source::{
     DataResidency, DataSource, DataSourceCapabilities, DestinationReuse, PlacementClass, PoolSettings,
 };
 pub use errors::{ConfigurationError, ResolveError, SourceError, UnusableFirstLoad};
-pub use registration::{build_runtime, RuntimeHandles};
+pub use publication::{PublishedFiles, PublishedState, PublishedStateSource, READER_CONTRACT};
+pub use registration::{build_published_runtime, build_runtime, RuntimeHandles};
 pub use resolution::{ResolvedDataSource, RuntimeResolver};
 pub use resource::sources::{InMemorySource, JsonFileSource};
 pub use resource::{

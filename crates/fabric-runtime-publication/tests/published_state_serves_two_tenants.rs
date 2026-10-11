@@ -389,14 +389,14 @@ async fn a_failed_refresh_leaves_the_runtime_serving_the_last_good_snapshot() {
     // publication -- a torn mount, not a publisher that would have refused
     // this. `refresh_now` only notifies; the loop's own next iteration is
     // what actually re-reads the file.
-    let loads_before = stack.tenant_loads.load(Ordering::SeqCst);
+    let loads_before = stack.loads.load(Ordering::SeqCst);
     stack.dir.write_raw("tenants.json", b"not json at all");
     stack.handles.refresh_now();
 
     // Wait for the load count to advance -- proof the refresher actually
     // reached the malformed bytes and ran the guard that refuses them, not
     // just that the assertions below happened to hold for a while.
-    support::poll_for_load_count_above(&stack.tenant_loads, loads_before, Duration::from_secs(2)).await;
+    support::poll_for_load_count_above(&stack.loads, loads_before, Duration::from_secs(2)).await;
 
     for (tenant, title) in [("acme", "Acme Handbook"), ("globex", "Globex Playbook")] {
         let response = stack
@@ -433,14 +433,14 @@ async fn a_malformed_published_document_does_not_deprovision_the_tenants_already
         assert_eq!(response.status(), StatusCode::OK, "{tenant}");
     }
 
-    let loads_before = stack.data_source_loads.load(Ordering::SeqCst);
+    let loads_before = stack.loads.load(Ordering::SeqCst);
     stack.dir.write_raw("data-sources.json", b"{not even an array}");
     stack.handles.refresh_now();
 
     // Wait for the load count to advance -- proof the refresher actually
     // reached the malformed bytes and ran the guard that refuses them, not
     // just that the assertions below happened to hold for a while.
-    support::poll_for_load_count_above(&stack.data_source_loads, loads_before, Duration::from_secs(2)).await;
+    support::poll_for_load_count_above(&stack.loads, loads_before, Duration::from_secs(2)).await;
 
     for (tenant, title) in [("acme", "Acme Handbook"), ("globex", "Globex Playbook")] {
         let response = stack

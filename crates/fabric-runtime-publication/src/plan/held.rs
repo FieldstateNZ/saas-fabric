@@ -1,7 +1,7 @@
 //! What an adapter holds, in the shape the plan decides against.
 
 use crate::verdict::Held;
-use crate::{DocumentManifest, PublishedRevisions};
+use crate::{DocumentManifest, DocumentRevision, PublicationRecord, PublishedRevisions};
 
 /// What an adapter currently holds for one document.
 ///
@@ -28,11 +28,20 @@ impl HeldDocument {
         }
     }
 
-    pub(super) fn held(&self) -> Option<Held<'_>> {
-        self.manifest.as_ref().map(|manifest| Held {
-            revision: manifest.revision(),
-            payload: self.payload.as_deref(),
-        })
+    /// What the verdict decides against: the manifest's revision, or --
+    /// when the manifest is lost but the publication record still names
+    /// this document -- the record's. Without that fallback a lost manifest
+    /// read as a first publication, and an offer at revision 1 was accepted
+    /// over a document published at a higher one.
+    pub(super) fn held(&self, recorded: Option<DocumentRevision>) -> Option<Held<'_>> {
+        self.manifest
+            .as_ref()
+            .map(DocumentManifest::revision)
+            .or(recorded)
+            .map(|revision| Held {
+                revision,
+                payload: self.payload.as_deref(),
+            })
     }
 }
 
@@ -46,22 +55,40 @@ pub struct HeldDocuments {
     pub data_sources: HeldDocument,
     /// `catalog.json` and its manifest.
     pub catalog: HeldDocument,
+    /// The publication record's bytes exactly as held, if one has ever been
+    /// written. Parsed by [`plan_publication`](crate::plan_publication), not
+    /// by the adapter, so every adapter enforces its floor the same way.
+    pub record: Option<Vec<u8>>,
 }
 
 impl HeldDocuments {
     /// The revision each document is held at, as
     /// [`RuntimePublication::current`](crate::RuntimePublication::current)
-    /// reports it: `None` where no manifest has ever been published.
+    /// reports it: the manifest's, or the publication record's where the
+    /// manifest is lost, and `None` where neither was ever published. A
+    /// record that does not parse contributes nothing here; planning
+    /// refuses it.
     #[must_use]
     pub fn revisions(&self) -> PublishedRevisions {
-        PublishedRevisions {
-            tenants: self.tenants.manifest.as_ref().map(DocumentManifest::revision),
-            data_sources: self
-                .data_sources
+        let record = self
+            .record
+            .as_deref()
+            .and_then(|bytes| PublicationRecord::parse_held(bytes).ok());
+        let recorded = |pick: fn(&PublicationRecord) -> DocumentRevision| record.as_ref().map(pick);
+        let held = |document: &HeldDocument, recorded: Option<DocumentRevision>| {
+            document
                 .manifest
                 .as_ref()
-                .map(DocumentManifest::revision),
-            catalog: self.catalog.manifest.as_ref().map(DocumentManifest::revision),
+                .map(DocumentManifest::revision)
+                .or(recorded)
+        };
+        PublishedRevisions {
+            tenants: held(&self.tenants, recorded(|r| r.documents().tenants.revision)),
+            data_sources: held(
+                &self.data_sources,
+                recorded(|r| r.documents().data_sources.revision),
+            ),
+            catalog: held(&self.catalog, recorded(|r| r.documents().catalog.revision)),
         }
     }
 }

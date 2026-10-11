@@ -8,9 +8,8 @@
 //! An adapter reads what it holds into a [`HeldDocuments`], calls
 //! [`plan_publication`], and writes each [`DocumentPlan`] whose outcome is
 //! [`DocumentOutcome::Written`], in the order [`PublicationPlan`]'s fields
-//! are declared. The guards ADR 0018 parts 3–6 name live here and nowhere
-//! else, so a second adapter cannot drift from the first by
-//! re-implementing them.
+//! are declared. The guards live here and nowhere else, so a second adapter
+//! cannot drift from the first by re-implementing them.
 
 mod held;
 mod parse;
@@ -21,8 +20,8 @@ pub use record::RecordPlan;
 
 use crate::verdict::{verdict, Held, Incoming};
 use crate::{
-    data_sources_canonical_json, tenants_canonical_json, DataSourceDocument, DocumentKind, DocumentOutcome,
-    DocumentRevision, PublicationError, PublicationRecord, RuntimeSnapshot, TenantBindingDocument,
+    data_sources_canonical_json, tenants_canonical_json, DocumentKind, DocumentOutcome, DocumentRevision,
+    PublicationError, PublicationRecord, RuntimeSnapshot,
 };
 
 /// One document's decided fate.
@@ -57,8 +56,10 @@ pub struct PublicationPlan {
 ///
 /// Every refusal the port promises: a stale or divergent document, a
 /// dangling or still-bound data source, an unintended emptying, an empty
-/// catalogue, a tenant with no data, a held payload gone missing, held
-/// bytes that will not parse, or a held record above this publisher's
+/// catalogue or one naming a logical data source no tenant binds, a tenant
+/// with no data, a resource that does not advance past the revision it was
+/// last published at, a held tenant removed, a held payload gone missing,
+/// held bytes that will not parse, or a held record above this publisher's
 /// rollback floor. Nothing is decided partially: an error means no document
 /// may be written.
 pub fn plan_publication(
@@ -70,17 +71,8 @@ pub fn plan_publication(
         .as_deref()
         .map(PublicationRecord::parse_held)
         .transpose()?;
-    let held_tenants: Vec<TenantBindingDocument> = parse::parse_held_documents(
-        held.tenants.manifest.as_ref(),
-        held.tenants.payload.as_deref(),
-        DocumentKind::Tenants,
-    )?;
-    let held_data_sources: Vec<DataSourceDocument> = parse::parse_held_documents(
-        held.data_sources.manifest.as_ref(),
-        held.data_sources.payload.as_deref(),
-        DocumentKind::DataSources,
-    )?;
-    crate::validate::validate_snapshot(snapshot, &held_tenants, &held_data_sources)?;
+    let published = held.resources()?;
+    crate::validate::validate_snapshot(snapshot, &published.tenants, &published.data_sources)?;
     let recorded = held_record.as_ref().map(PublicationRecord::documents);
 
     let data_sources = decide(
@@ -104,12 +96,11 @@ pub fn plan_publication(
 
     // After the document verdicts, so a whole document offered stale or
     // divergent is reported as such rather than by its first resource.
-    crate::resource_revisions::refuse_unadvanced_resource_revisions(
-        snapshot,
-        &held_tenants,
-        &held_data_sources,
-    )?;
-    let record = record::decide(held_record, &data_sources, &catalog, &tenants)?;
+    crate::resource_revisions::refuse_resource_changes(snapshot, &published)?;
+    let history = published
+        .history
+        .including(&snapshot.tenants.payload, &snapshot.data_sources.payload);
+    let record = record::decide(held_record, &data_sources, &catalog, &tenants, history)?;
 
     Ok(PublicationPlan {
         data_sources,

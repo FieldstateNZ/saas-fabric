@@ -49,6 +49,7 @@
 //! and it depends on no crate that has one.
 
 mod canonical;
+mod catalogue_bindings;
 mod digest;
 mod document;
 mod document_revision;
@@ -58,12 +59,14 @@ mod ids;
 mod manifest;
 mod plan;
 mod port;
+mod published_resources;
 mod published_revisions;
 mod record;
 #[cfg(test)]
 mod record_tests;
 mod recorded_documents;
 mod report;
+mod resource_history;
 mod resource_revisions;
 mod snapshot;
 mod validate;
@@ -73,6 +76,7 @@ mod verdict;
 #[cfg(test)]
 mod verdict_tests;
 
+pub use catalogue_bindings::unbound_catalogue_entries;
 pub use document::{
     data_sources_canonical_json, tenants_canonical_json, CatalogDocument, ConfigurationBindingDocument,
     ConnectionSelectorDocument, DataResidencyDocument, DataSourceCapabilitiesDocument, DataSourceDocument,
@@ -90,10 +94,12 @@ pub use manifest::{
 };
 pub use plan::{plan_publication, DocumentPlan, HeldDocument, HeldDocuments, PublicationPlan, RecordPlan};
 pub use port::RuntimePublication;
+pub use published_resources::PublishedResources;
 pub use published_revisions::PublishedRevisions;
 pub use record::{PublicationRecord, MINIMUM_READER_CONTRACT, PUBLICATION_RECORD_FILE};
 pub use recorded_documents::{RecordedDocument, RecordedDocuments};
 pub use report::{DocumentOutcome, PublicationReport};
+pub use resource_history::ResourceHistory;
 pub use snapshot::{DocumentInput, Emptying, RuntimeSnapshot};
 
 #[cfg(test)]

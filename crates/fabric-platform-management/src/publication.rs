@@ -21,10 +21,12 @@
 //! adapter itself are ADR 0023 part 4's other half -- named in the ADR,
 //! built against the public surface this module exports, not built here.
 
+mod catalogue_hold;
 mod catalogue_source;
 mod compose_error;
 mod outcome;
 mod pass;
+mod placement_history;
 mod protocol;
 mod publish_error;
 mod publisher;

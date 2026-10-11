@@ -7,7 +7,8 @@ use fabric_core::{BindingRevision, DataSourceId, LogicalDataSourceName, TenantId
 use fabric_runtime_publication::{
     data_sources_canonical_json, CatalogDocument, ConnectionName, ConnectionSelectorDocument, ConnectorId,
     DataResidencyDocument, DataSourceCapabilitiesDocument, DocumentRevision, FieldName,
-    IsolationModelDocument, PlacementClassDocument, PoolSettingsDocument, PublishedRevisions,
+    IsolationModelDocument, PlacementClassDocument, PoolSettingsDocument, PublishedResources,
+    PublishedRevisions,
 };
 
 use super::{compose, ComposeError};
@@ -64,7 +65,14 @@ fn data_sources_are_sorted_by_id_even_when_input_is_not() {
         declaration("shared-a", PlacementClassDocument::Dedicated, None),
     ];
 
-    let snapshot = compose(declarations, &[], empty_catalog(), &no_history()).expect("no duplicates");
+    let snapshot = compose(
+        declarations,
+        &[],
+        empty_catalog(),
+        &no_history(),
+        &PublishedResources::default(),
+    )
+    .expect("no duplicates");
 
     let ids: Vec<&str> = snapshot
         .data_sources
@@ -82,7 +90,14 @@ fn each_tenant_gets_one_binding_with_all_its_logical_entries() {
         placement("acme", "audit", "shared-b", 1),
     ];
 
-    let snapshot = compose(vec![], &placements, empty_catalog(), &no_history()).expect("no duplicates");
+    let snapshot = compose(
+        vec![],
+        &placements,
+        empty_catalog(),
+        &no_history(),
+        &PublishedResources::default(),
+    )
+    .expect("no duplicates");
 
     assert_eq!(snapshot.tenants.payload.len(), 1);
     let acme = &snapshot.tenants.payload[0];
@@ -97,7 +112,14 @@ fn a_tenants_revision_is_the_sum_of_its_records_own_revisions() {
         placement("acme", "audit", "shared-b", 1),
     ];
 
-    let snapshot = compose(vec![], &placements, empty_catalog(), &no_history()).expect("no duplicates");
+    let snapshot = compose(
+        vec![],
+        &placements,
+        empty_catalog(),
+        &no_history(),
+        &PublishedResources::default(),
+    )
+    .expect("no duplicates");
 
     assert_eq!(snapshot.tenants.payload[0].revision, BindingRevision::new(2));
 }
@@ -113,7 +135,14 @@ fn adding_a_record_moves_the_sum_and_leaves_another_tenant_unaffected() {
         placement("globex", "primary", "shared-a", 5),
     ];
 
-    let snapshot = compose(vec![], &placements, empty_catalog(), &no_history()).expect("no duplicates");
+    let snapshot = compose(
+        vec![],
+        &placements,
+        empty_catalog(),
+        &no_history(),
+        &PublishedResources::default(),
+    )
+    .expect("no duplicates");
 
     let revision_of = |tenant: &str| {
         snapshot
@@ -140,7 +169,14 @@ fn two_records_for_one_tenants_logical_data_source_are_refused() {
         placement("acme", "primary", "shared-b", 1),
     ];
 
-    let failure = compose(vec![], &placements, empty_catalog(), &no_history()).expect_err("a duplicate");
+    let failure = compose(
+        vec![],
+        &placements,
+        empty_catalog(),
+        &no_history(),
+        &PublishedResources::default(),
+    )
+    .expect_err("a duplicate");
 
     assert_eq!(
         failure,
@@ -159,7 +195,14 @@ fn held_revisions_are_carried_and_default_to_one_when_absent() {
         catalog: Some(DocumentRevision::new(3)),
     };
 
-    let snapshot = compose(vec![], &[], empty_catalog(), &held).expect("nothing to refuse");
+    let snapshot = compose(
+        vec![],
+        &[],
+        empty_catalog(),
+        &held,
+        &PublishedResources::default(),
+    )
+    .expect("nothing to refuse");
 
     assert_eq!(snapshot.tenants.revision, DocumentRevision::new(7));
     assert_eq!(snapshot.data_sources.revision, DocumentRevision::new(1));
@@ -168,7 +211,14 @@ fn held_revisions_are_carried_and_default_to_one_when_absent() {
 
 #[test]
 fn emptying_is_never_intended_however_empty_the_inputs_are() {
-    let snapshot = compose(vec![], &[], empty_catalog(), &no_history()).expect("nothing to refuse");
+    let snapshot = compose(
+        vec![],
+        &[],
+        empty_catalog(),
+        &no_history(),
+        &PublishedResources::default(),
+    )
+    .expect("nothing to refuse");
 
     assert_eq!(
         snapshot.tenants.emptying,
@@ -198,10 +248,147 @@ fn into_document_drops_the_discriminator_from_the_published_data_source() {
         }),
     )];
 
-    let snapshot = compose(declarations, &[], empty_catalog(), &no_history()).expect("no duplicates");
+    let snapshot = compose(
+        declarations,
+        &[],
+        empty_catalog(),
+        &no_history(),
+        &PublishedResources::default(),
+    )
+    .expect("no duplicates");
 
     let bytes = data_sources_canonical_json(&snapshot.data_sources.payload).expect("serialises");
     let json = String::from_utf8(bytes).expect("utf-8");
     assert!(!json.contains("discriminator"), "{json}");
     assert!(!json.contains("tenant_key"), "{json}");
+}
+
+/// What a target holds after publishing `placements`: the tenants document
+/// `compose` built from them.
+fn published_from(placements: &[PlacementRecord]) -> PublishedResources {
+    let snapshot = compose(
+        vec![],
+        placements,
+        empty_catalog(),
+        &no_history(),
+        &PublishedResources::default(),
+    )
+    .expect("a first composition");
+    PublishedResources {
+        tenants: snapshot.tenants.payload,
+        ..PublishedResources::default()
+    }
+}
+
+fn compose_against(
+    placements: &[PlacementRecord],
+    published: &PublishedResources,
+) -> Result<fabric_runtime_publication::RuntimeSnapshot, ComposeError> {
+    compose(vec![], placements, empty_catalog(), &no_history(), published)
+}
+
+#[test]
+fn a_placement_reverted_out_of_a_published_tenant_is_refused() {
+    let published = published_from(&[
+        placement("acme", "primary", "pg-1", 1),
+        placement("acme", "audit", "pg-1", 1),
+    ]);
+
+    let refused = compose_against(&[placement("acme", "primary", "pg-1", 1)], &published)
+        .expect_err("a removed placement");
+
+    assert_eq!(
+        refused,
+        ComposeError::PlacementRemoved {
+            tenant: TenantId::try_new("acme").unwrap(),
+            logical: LogicalDataSourceName::try_new("audit").unwrap(),
+        }
+    );
+}
+
+#[test]
+fn a_published_tenant_reverted_out_entirely_is_refused() {
+    let published = published_from(&[
+        placement("acme", "primary", "pg-1", 1),
+        placement("globex", "primary", "pg-1", 1),
+    ]);
+
+    let refused = compose_against(&[placement("globex", "primary", "pg-1", 1)], &published)
+        .expect_err("a removed tenant");
+
+    assert!(
+        matches!(&refused, ComposeError::PlacementRemoved { tenant, .. } if tenant.as_str() == "acme"),
+        "{refused}"
+    );
+}
+
+#[test]
+fn a_record_reverted_to_its_earlier_binding_and_revision_is_refused() {
+    let published = published_from(&[placement("acme", "primary", "pg-2", 2)]);
+
+    let refused = compose_against(&[placement("acme", "primary", "pg-1", 1)], &published)
+        .expect_err("a lowered placement");
+
+    assert_eq!(
+        refused,
+        ComposeError::PlacementLowered {
+            tenant: TenantId::try_new("acme").unwrap(),
+            published: BindingRevision::new(2),
+            recorded: BindingRevision::new(1),
+        }
+    );
+}
+
+#[test]
+fn a_lowered_record_is_refused_even_when_an_added_record_raises_the_tenants_total() {
+    // The total goes 2 -> 3, which the publisher alone would accept as an
+    // advance: only the records for the published logical data sources show
+    // the revert.
+    let published = published_from(&[placement("acme", "primary", "pg-2", 2)]);
+
+    let refused = compose_against(
+        &[
+            placement("acme", "primary", "pg-1", 1),
+            placement("acme", "audit", "pg-1", 1),
+            placement("acme", "events", "pg-1", 1),
+        ],
+        &published,
+    )
+    .expect_err("a lowered placement");
+
+    assert!(
+        matches!(&refused, ComposeError::PlacementLowered { recorded, .. } if *recorded == BindingRevision::new(1)),
+        "{refused}"
+    );
+}
+
+#[test]
+fn a_binding_changed_without_raising_its_records_revision_is_refused() {
+    let published = published_from(&[placement("acme", "primary", "pg-2", 2)]);
+
+    let refused = compose_against(&[placement("acme", "primary", "pg-1", 2)], &published)
+        .expect_err("a changed binding at the same revision");
+
+    assert!(
+        matches!(refused, ComposeError::PlacementLowered { .. }),
+        "{refused}"
+    );
+}
+
+#[test]
+fn a_revision_bumping_write_may_change_a_binding_and_an_added_placement_is_accepted() {
+    let published = published_from(&[placement("acme", "primary", "pg-2", 2)]);
+
+    let snapshot = compose_against(
+        &[
+            placement("acme", "primary", "pg-1", 3),
+            placement("acme", "audit", "pg-1", 1),
+            placement("globex", "primary", "pg-1", 1),
+        ],
+        &published,
+    )
+    .expect("a roll-forward");
+
+    assert_eq!(snapshot.tenants.payload.len(), 2);
+    assert_eq!(snapshot.tenants.payload[0].revision, BindingRevision::new(4));
 }

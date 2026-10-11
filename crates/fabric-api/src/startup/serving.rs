@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use axum::Router;
 use fabric_connector::{ConnectorRegistry, SecretResolver};
-use fabric_data_api::build_data_api;
+use fabric_data_api::{build_data_api, ResourceCatalog};
 use fabric_identity::IdentityResolver;
 use fabric_tenant_runtime::RuntimeResolver;
 
@@ -34,6 +34,10 @@ pub(super) async fn build(
     runtime: &Arc<RuntimeResolver>,
     identity: &Arc<IdentityResolver>,
 ) -> Result<(Router, ConnectorRetryHandle), String> {
+    // Before the connectors, so a catalogue refused here leaves nothing
+    // running.
+    let catalogue = catalog::load(&config.catalog_path, &config.tenants_path).await?;
+
     // Secrets: one resolver shared by every connector.
     let secrets: Arc<dyn SecretResolver> = Arc::new(EnvSecretResolver);
 
@@ -42,7 +46,7 @@ pub(super) async fn build(
     // startup — see `startup::connectors` for the policy (§35).
     let (connectors, connector_retry) = connectors::build(config, &secrets).await?;
 
-    match router(config, runtime, identity, connectors) {
+    match router(config, catalogue, runtime, identity, connectors) {
         Ok(router) => Ok((router, connector_retry)),
         Err(error) => {
             stop_connector_retry(connector_retry).await;
@@ -54,13 +58,14 @@ pub(super) async fn build(
 /// Builds the Data API and the probes, and joins them.
 fn router(
     config: &AppConfig,
+    catalogue: ResourceCatalog,
     runtime: &Arc<RuntimeResolver>,
     identity: &Arc<IdentityResolver>,
     connectors: ConnectorRegistry,
 ) -> Result<Router, String> {
     let data = build_data_api(
         &config.data_api,
-        catalog::load(&config.catalog_path)?,
+        catalogue,
         config.permissions.clone(),
         Arc::clone(runtime),
         connectors.clone(),

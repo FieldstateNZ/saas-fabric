@@ -8,6 +8,7 @@ mod pass_tests;
 
 use fabric_runtime_publication::PublishedRevisions;
 
+use crate::publication::catalogue_hold::hold_unbound_catalogue;
 use crate::publication::outcome::{PassOutcome, WaitingReason};
 use crate::publication::protocol::publish_with_retry;
 use crate::publication::publish_error::outcome_from_publish_error;
@@ -53,6 +54,11 @@ impl RuntimePublisher {
             Err(error) => return outcome_from_publish_error(&error),
         };
 
+        let published = match self.target.published_resources().await {
+            Ok(published) => published,
+            Err(error) => return outcome_from_publish_error(&error),
+        };
+
         let declarations = match self.declared_data_sources().await {
             Ok(declarations) => declarations,
             Err(halt) => return halt.into_outcome(),
@@ -72,7 +78,7 @@ impl RuntimePublisher {
             };
         }
 
-        let snapshot = match compose(declarations, &placements, catalog, &held) {
+        let mut snapshot = match compose(declarations, &placements, catalog, &held, &published) {
             Ok(snapshot) => snapshot,
             Err(error) => {
                 return PassOutcome::Refused {
@@ -80,6 +86,8 @@ impl RuntimePublisher {
                 }
             }
         };
+
+        hold_unbound_catalogue(&mut snapshot, &published, &held);
 
         match publish_with_retry(self.target.as_ref(), snapshot).await {
             Ok((report, snapshot)) => outcome_from_report(

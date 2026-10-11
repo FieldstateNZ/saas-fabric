@@ -1,7 +1,14 @@
 //! What an adapter holds, in the shape the plan decides against.
+//!
+//! In the 121-150 line band (docs/architecture/file-size-policy.md): the
+//! held state and the two views of it adapters report, revisions and
+//! resources, which must read it exactly as the plan does.
 
 use crate::verdict::Held;
-use crate::{DocumentManifest, DocumentRevision, PublicationRecord, PublishedRevisions};
+use crate::{
+    CatalogDocument, DataSourceDocument, DocumentKind, DocumentManifest, DocumentRevision, PublicationError,
+    PublicationRecord, PublishedResources, PublishedRevisions, TenantBindingDocument,
+};
 
 /// What an adapter currently holds for one document.
 ///
@@ -90,5 +97,48 @@ impl HeldDocuments {
             ),
             catalog: held(&self.catalog, recorded(|r| r.documents().catalog.revision)),
         }
+    }
+
+    /// Every held resource, parsed, with the resource history the held
+    /// record carries raised to cover them, as
+    /// [`RuntimePublication::published_resources`](crate::RuntimePublication::published_resources)
+    /// reports it.
+    ///
+    /// # Errors
+    ///
+    /// What [`plan_publication`](crate::plan_publication) would refuse the
+    /// same held state with: a record or a tenants or data-sources payload
+    /// that does not parse, or a payload lost under its manifest.
+    pub fn resources(&self) -> Result<PublishedResources, PublicationError> {
+        let record = self
+            .record
+            .as_deref()
+            .map(PublicationRecord::parse_held)
+            .transpose()?;
+        let tenants: Vec<TenantBindingDocument> = super::parse::parse_held_documents(
+            self.tenants.manifest.as_ref(),
+            self.tenants.payload.as_deref(),
+            DocumentKind::Tenants,
+        )?;
+        let data_sources: Vec<DataSourceDocument> = super::parse::parse_held_documents(
+            self.data_sources.manifest.as_ref(),
+            self.data_sources.payload.as_deref(),
+            DocumentKind::DataSources,
+        )?;
+        let history = record
+            .map(|record| record.resources().clone())
+            .unwrap_or_default()
+            .including(&tenants, &data_sources);
+        let catalog = self
+            .catalog
+            .payload
+            .as_deref()
+            .and_then(|bytes| serde_json::from_slice::<CatalogDocument>(bytes).ok());
+        Ok(PublishedResources {
+            tenants,
+            data_sources,
+            catalog,
+            history,
+        })
     }
 }

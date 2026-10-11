@@ -13,6 +13,7 @@
 //! The record shape here is this plane's own copy, as for every published
 //! document: the runtime plane may not depend on the publisher's crate.
 
+mod catalogue;
 mod digest;
 mod published_files;
 #[cfg(test)]
@@ -20,6 +21,7 @@ mod published_files_tests;
 mod published_state;
 mod record;
 
+pub use catalogue::read_recorded_catalogue;
 pub use published_files::PublishedFiles;
 pub use published_state::{PublishedState, PublishedStateSource};
 pub use record::READER_CONTRACT;

@@ -134,7 +134,10 @@ not build.
   `HeldPayloadLost { document }` (the held tenants document's manifest is present but
   its payload is gone — refused rather than read as empty, because guessing "empty"
   would disarm the retirement guard and the emptying guard, both of which read the
-  held tenants document), `Unreadable { document, cause: Box<dyn Error + Send + Sync> }`,
+  held tenants document), `ResourceRevisionNotAdvanced { document, resource, held,
+  offered }`, `TenantRemoved { tenant, held }`, `CatalogueEntryUnbound { resource,
+  data_source }`, `BelowRollbackFloor { floor, publisher }`,
+  `Unreadable { document, cause: Box<dyn Error + Send + Sync> }`,
   `Unwritable { document, cause }`.
 - `FilesystemRuntimePublication` — the adapter. `new(tenants_path, data_sources_path,
   catalog_path)` (each `impl Into<PathBuf>`); implements `RuntimePublication`.

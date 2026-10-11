@@ -35,10 +35,12 @@ use fabric_connector::ConnectorId;
 use fabric_connector_ndc::{
     build_ndc_connector, CollectionProcedures, NdcConnectorConfig, PayloadShape, ProcedureBinding,
 };
-use fabric_runtime_publication::{DocumentInput, DocumentRevision};
+use fabric_runtime_publication::{DocumentInput, DocumentRevision, PublicationError};
 use http::{Request, StatusCode};
 use serde_json::Value;
-use support::compose::{compose, compose_published, Composed};
+use support::compose::{
+    compose, compose_published, compose_with_catalogue_written_outside_the_publisher, first_refusal, Composed,
+};
 use support::connector::ConnectorMode;
 use support::gate::docker_available_or_skip;
 use support::impostor::Impostor;
@@ -1216,13 +1218,23 @@ async fn a_catalogue_naming_a_data_source_no_tenant_binds_fails_bounded_and_name
         .expect("the static connector should negotiate with no routing configured");
 
     // The catalogue moves to revision 2 and names `audit`; the tenants and
-    // data-sources documents stay at revision 1 and know no such name.
+    // data-sources documents stay at revision 1 and know no such name. The
+    // publisher refuses that (G8), so it reaches the runtime only around the
+    // publisher -- and the runtime must still fail closed on it.
+    let unbound = fixtures::articles_catalog_on("audit", &["read", "list"]);
     let mut skewed = fixtures::read_only_snapshot();
-    skewed.catalog = DocumentInput::new(
-        DocumentRevision::new(2),
-        fixtures::articles_catalog_on("audit", &["read", "list"]),
+    skewed.catalog = DocumentInput::new(DocumentRevision::new(2), unbound.clone());
+    let refused = first_refusal(&[fixtures::read_only_snapshot(), skewed]).await;
+    assert!(
+        matches!(refused, PublicationError::CatalogueEntryUnbound { .. }),
+        "{refused}"
     );
-    let composed = compose_published(connector, &[fixtures::read_only_snapshot(), skewed]).await;
+    let composed = compose_with_catalogue_written_outside_the_publisher(
+        connector,
+        &fixtures::read_only_snapshot(),
+        &unbound,
+    )
+    .await;
 
     for tenant in ["acme", "globex"] {
         for uri in ["/articles", "/articles/1"] {

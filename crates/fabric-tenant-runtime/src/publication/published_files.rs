@@ -96,7 +96,7 @@ impl PublishedStateSource for PublishedFiles {
     }
 }
 
-async fn read_optional(path: &Path, origin: &str) -> Result<Option<Vec<u8>>, SourceError> {
+pub(super) async fn read_optional(path: &Path, origin: &str) -> Result<Option<Vec<u8>>, SourceError> {
     match tokio::fs::read(path).await {
         Ok(bytes) => Ok(Some(bytes)),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
@@ -104,7 +104,7 @@ async fn read_optional(path: &Path, origin: &str) -> Result<Option<Vec<u8>>, Sou
     }
 }
 
-async fn read(path: &Path, origin: &str) -> Result<Vec<u8>, SourceError> {
+pub(super) async fn read(path: &Path, origin: &str) -> Result<Vec<u8>, SourceError> {
     tokio::fs::read(path)
         .await
         .map_err(|error| unreadable(origin, error))
@@ -117,7 +117,7 @@ fn unreadable(origin: &str, cause: io::Error) -> SourceError {
     }
 }
 
-fn parse<T: DeserializeOwned>(bytes: &[u8], origin: &str) -> Result<T, SourceError> {
+pub(super) fn parse<T: DeserializeOwned>(bytes: &[u8], origin: &str) -> Result<T, SourceError> {
     serde_json::from_slice(bytes).map_err(|error| SourceError::Malformed {
         origin: origin.to_owned(),
         detail: error.to_string(),

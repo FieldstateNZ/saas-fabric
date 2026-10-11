@@ -18,8 +18,8 @@ use super::lock::PublicationLock;
 use super::paths::DocumentPaths;
 use super::write::{write_if_needed, write_record_if_needed};
 use crate::{
-    plan_publication, DocumentKind, DocumentPlan, PublicationError, PublicationReport, PublishedRevisions,
-    RuntimePublication, RuntimeSnapshot, PUBLICATION_RECORD_FILE,
+    plan_publication, DocumentKind, DocumentPlan, PublicationError, PublicationReport, PublishedResources,
+    PublishedRevisions, RuntimePublication, RuntimeSnapshot, PUBLICATION_RECORD_FILE,
 };
 
 /// Publishes the runtime's three documents to a local filesystem, matching
@@ -69,6 +69,10 @@ impl FilesystemRuntimePublication {
 impl RuntimePublication for FilesystemRuntimePublication {
     async fn current(&self) -> Result<PublishedRevisions, PublicationError> {
         Ok(self.read_held()?.revisions())
+    }
+
+    async fn published_resources(&self) -> Result<PublishedResources, PublicationError> {
+        self.read_held()?.resources()
     }
 
     async fn publish(&self, snapshot: &RuntimeSnapshot) -> Result<PublicationReport, PublicationError> {

@@ -38,7 +38,24 @@ on:
       - 'apps/control-plane-ui/package*.json'
       - '.github/workflows/release.yml'
       - 'rust-toolchain.toml'
+      # The rollback floor and the contracts a release is held to, and the
+      # declarations they are compared with: a change to any of them is a
+      # change to what a release may publish.
+      - 'compatibility.yaml'
+      - 'scripts/release_compatibility.py'
+      - 'scripts/tests/test_release_compatibility.py'
+      - 'crates/fabric-component/src/compatibility.rs'
+      - 'crates/fabric-runtime-publication/src/manifest.rs'
+      - 'crates/fabric-runtime-publication/src/record.rs'
   workflow_dispatch:
+    inputs:
+      # Checks a version as if it were being tagged — its grammar and the
+      # rollback floor — without publishing anything, so a tag the floor would
+      # refuse is found before anybody pushes it.
+      rehearse:
+        description: 'A version to check against the rollback floor (publishes nothing)'
+        required: false
+        default: ''
 
 concurrency:
   group: release-${{ github.ref }}
@@ -148,6 +165,17 @@ jobs:
             echo "publish=false" >> "$GITHUB_OUTPUT"
           fi
 
+      # compatibility.yaml's minimumRollableVersion is the oldest release that
+      # reads what this source writes (D01-21). A tag below it would publish
+      # images Platform Management never rolls back to and that misread the
+      # current formats, so it is refused before anything is built. A
+      # rehearsal asks the same question of a version nobody has tagged.
+      - name: Refuse a version below the rollback floor
+        if: steps.version.outputs.publish == 'true' || inputs.rehearse != ''
+        env:
+          CANDIDATE: ${{ steps.version.outputs.publish == 'true' && steps.version.outputs.version || inputs.rehearse }}
+        run: python3 scripts/release_compatibility.py floor "${CANDIDATE}"
+
       # Lower-cased because a registry namespace must be, and the organisation
       # is not.
       - name: Determine the repository
@@ -190,6 +218,12 @@ jobs:
       - run: python3 scripts/check_file_sizes.py
       - run: python3 scripts/check_architecture.py
 
+      # Named on its own although `cargo test --workspace` already ran it: the
+      # compiled MINIMUM_ROLLABLE_VERSION, CONTRACT_VERSION and
+      # MINIMUM_READER_CONTRACT must equal compatibility.yaml for this commit,
+      # and that must stay a release gate however the line above is narrowed.
+      - run: cargo test -p fabric-component --test this_repositorys_compatibility
+
       # The one gate that exists for this workflow: the builder image must be
       # the compiler the workspace is pinned to.
       - run: python3 scripts/check_toolchain_pin.py
@@ -200,12 +234,99 @@ jobs:
       - run: cargo run -q -p fabric-component --example descriptor -- check component.yaml
 
   # ---------------------------------------------------------------------------
+  # What the release is held to by compatibility.yaml
+  # ---------------------------------------------------------------------------
+  #
+  # On every event, because it is the dry run of the release's compatibility
+  # gates: a pull request runs exactly the checks a tag would, and fails on
+  # the same disagreement.
+  #
+  # A release above the floor additionally asks the registry for the floor's
+  # own provenance. The floor is a promise that the release it names reads
+  # every format this source writes; a version string cannot keep that
+  # promise (Riley, #139 and #140). Only the floor's published provenance,
+  # attached by this workflow, says what contracts it was built at — and if
+  # it was cut without them, or without provenance at all, the floor has to
+  # advance rather than be assumed.
+  compatibility:
+    name: compatibility
+    runs-on: ubuntu-latest
+    needs: [version]
+    permissions:
+      contents: read
+      # Read-only: the floor's provenance is read back, never written.
+      packages: read
+    env:
+      # See the `descriptor` job.
+      ORAS_IMAGE: ghcr.io/oras-project/oras@sha256:f7bc056d54d97baa399414ed5048ecc67c3371b750d4bbce1d871827a5758179
+      VERSION: ${{ needs.version.outputs.version }}
+      OWNER: ${{ needs.version.outputs.owner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - run: python3 -m unittest scripts/tests/test_release_compatibility.py -v
+
+      # The declarations the binaries are compiled from must state what
+      # compatibility.yaml states; `verify` also compiles and runs the Rust
+      # test that holds the constants themselves to the file.
+      - name: Check the contracts the source is built with
+        run: python3 scripts/release_compatibility.py contracts
+
+      - name: Require the floor's provenance to carry these contracts
+        if: needs.version.outputs.publish == 'true'
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+          floor=$(python3 scripts/release_compatibility.py show minimumRollableVersion)
+          repository=$(python3 scripts/release_compatibility.py show repository)
+          if [ "${VERSION}" = "${floor}" ]; then
+            echo "${VERSION} is the floor: this release's own provenance is the proof, checked by verify and attached by the descriptor job."
+            exit 0
+          fi
+          case "${repository}" in
+            "${REGISTRY}/${OWNER}/"*) ;;
+            *) echo "::error::compatibility.yaml names ${repository}, which this workflow does not publish"; exit 1 ;;
+          esac
+
+          printf '%s' "${TOKEN}" | docker login "${REGISTRY}" -u "${ACTOR}" --password-stdin
+          oras() {
+            docker run --rm --user "$(id -u):$(id -g)" \
+              -v "${HOME}/.docker/config.json:/auth/config.json:ro" \
+              -v "${PWD}:/work" -w /work --entrypoint /bin/oras "${ORAS_IMAGE}" \
+              "$@" --registry-config /auth/config.json
+          }
+          advance="cut the floor with this workflow, or advance minimumRollableVersion"
+
+          if ! subject=$(oras resolve "${repository}:${floor}"); then
+            echo "::error::the floor ${repository}:${floor} could not be resolved; ${advance}"
+            exit 1
+          fi
+          attached=$(oras discover --format json "${repository}@${subject}" \
+            | jq -r '[(.referrers // .manifests // [])[] | select(.artifactType == "application/vnd.saas-fabric.release.v1") | .digest] | unique | .[]')
+          count=$(printf '%s' "${attached}" | grep -c . || true)
+          if [ "${count}" -ne 1 ]; then
+            echo "::error::the floor ${repository}:${floor} carries ${count} release provenance documents, not one; ${advance}"
+            exit 1
+          fi
+          mkdir -p floor-release
+          oras pull --output floor-release "${repository}@${attached}"
+          python3 scripts/release_compatibility.py floor-artifact \
+            floor-release/release-provenance.json --subject "${subject}"
+
+  # ---------------------------------------------------------------------------
   # Three images from one context
   # ---------------------------------------------------------------------------
   build:
     name: ${{ matrix.image }}
     runs-on: ubuntu-latest
-    needs: [verify, version]
+    needs: [verify, version, compatibility]
     # `!cancelled()` because `verify` is *skipped* when nothing will be
     # published, and a skipped dependency would otherwise skip this job too.
     # Not `always()`: cancelling a run re-evaluates every running job's
@@ -228,9 +349,11 @@ jobs:
     #
     # So: a published run requires success outright, and only a run that
     # publishes nothing may proceed on a skip. Nothing is published from a
-    # commit whose gates did not pass.
+    # commit whose gates did not pass. `compatibility` runs on every event, so
+    # it must succeed outright on every event.
     if: >-
       !cancelled() && needs.version.result == 'success' &&
+      needs.compatibility.result == 'success' &&
       ( needs.verify.result == 'success' ||
       (needs.version.outputs.publish != 'true' && needs.verify.result == 'skipped') )
     permissions:
@@ -439,11 +562,12 @@ jobs:
   descriptor:
     name: component descriptor
     runs-on: ubuntu-latest
-    needs: [verify, version, build]
+    needs: [verify, version, compatibility, build]
     if: >-
       !cancelled() && needs.version.outputs.publish == 'true' &&
       needs.version.result == 'success' &&
       needs.verify.result == 'success' &&
+      needs.compatibility.result == 'success' &&
       needs.build.result == 'success'
     permissions:
       contents: read
@@ -512,6 +636,8 @@ jobs:
       # that digest: if anything moved it since, the descriptor would name bytes
       # the tag no longer does.
       - name: Check every image is still what its leg pushed
+        env:
+          SOURCE: ${{ github.server_url }}/${{ github.repository }}
         run: |
           set -euo pipefail
           oras() {
@@ -537,12 +663,83 @@ jobs:
           done < roles.txt
           cargo run -q -p fabric-component --example descriptor -- \
             render component.yaml --version "${VERSION}" "${digest_args[@]}" --out component.json
+          # The provenance names the same images by the same digests, and the
+          # commit they were built from.
+          image_args=()
+          while read -r role repository; do
+            image_args+=(--image "${role}=${repository}@$(cat "digests/${role}")")
+          done < roles.txt
+          python3 scripts/release_compatibility.py provenance \
+            --version "${VERSION}" --commit "${GITHUB_SHA}" \
+            --source "${SOURCE}" \
+            "${image_args[@]}" --out release-provenance.json
           # The primary is the runtime role: the matrix marks it, and the
           # pull-request test pins that mark to component.yaml's roles. Its
           # repository is read from component.yaml, not written here twice.
           primary_repository=$(awk '$1 == "runtime" { print $2 }' roles.txt)
           echo "PRIMARY_REPOSITORY=${primary_repository}" >> "$GITHUB_ENV"
           echo "PRIMARY_DIGEST=$(cat digests/runtime)" >> "$GITHUB_ENV"
+
+      # compatibility.yaml and the provenance, attached to the runtime image
+      # before its component descriptor: a version that reads back as complete
+      # always carries both, and a later release's `compatibility` job reads
+      # them back from whichever version is then the floor. A family of its
+      # own, which Fabric's descriptor reader does not count as a descriptor.
+      #
+      # Idempotent as the descriptor is: the same two documents attached is
+      # nothing to do, anything else is refused.
+      - name: Attach the compatibility manifest and provenance
+        run: |
+          set -euo pipefail
+          oras() {
+            docker run --rm --user "$(id -u):$(id -g)" \
+              -v "${HOME}/.docker/config.json:/auth/config.json:ro" \
+              -v "${PWD}:/work" -w /work --entrypoint /bin/oras "${ORAS_IMAGE}" \
+              "$@" --registry-config /auth/config.json
+          }
+          primary="${PRIMARY_REPOSITORY}@${PRIMARY_DIGEST}"
+          type='application/vnd.saas-fabric.release.v1'
+          attached=$(oras discover --format json "${primary}" \
+            | jq -r --arg type "${type}" \
+              '[(.referrers // .manifests // [])[] | select(.artifactType == $type) | .digest] | unique | .[]')
+          ours=$(printf '%s\n' \
+            "sha256:$(sha256sum compatibility.yaml | cut -d' ' -f1)" \
+            "sha256:$(sha256sum release-provenance.json | cut -d' ' -f1)" | sort)
+
+          count=$(printf '%s' "${attached}" | grep -c . || true)
+          if [ "${count}" -gt 1 ]; then
+            echo "::error::${primary} already carries ${count} release provenance documents: ${attached}"
+            exit 1
+          fi
+          if [ "${count}" -eq 1 ]; then
+            theirs=$(oras manifest fetch "${PRIMARY_REPOSITORY}@${attached}" | jq -r '.layers[].digest' | sort)
+            if [ "${theirs}" = "${ours}" ]; then
+              echo "The compatibility manifest and provenance are already attached as ${attached}."
+              exit 0
+            fi
+            echo "::error::${primary} already carries different release provenance, ${attached}"
+            exit 1
+          fi
+
+          oras attach \
+            --artifact-type "${type}" \
+            --annotation "org.opencontainers.image.revision=${GITHUB_SHA}" \
+            --annotation "org.opencontainers.image.version=${VERSION}" \
+            "${primary}" \
+            "compatibility.yaml:application/vnd.saas-fabric.compatibility.v1+yaml" \
+            "release-provenance.json:application/vnd.saas-fabric.release-provenance.v1+json"
+
+      # Also kept with the run, so the provenance can be read without registry
+      # access.
+      - name: Keep the compatibility manifest and provenance with the run
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ needs.version.outputs.version }}
+          path: |
+            compatibility.yaml
+            release-provenance.json
+          retention-days: 90
+          if-no-files-found: error
 
       # None attached: attach. One attached with the same document: nothing to
       # do. Anything else: refuse, without pushing.
@@ -615,5 +812,11 @@ jobs:
             echo
             echo '```'
             cat evaluation.txt
+            echo '```'
+            echo
+            echo "### Release provenance"
+            echo
+            echo '```json'
+            cat release-provenance.json
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"

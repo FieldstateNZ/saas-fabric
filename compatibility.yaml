@@ -1,9 +1,18 @@
 # SaaS Fabric's release compatibility manifest: the rollback floor (D01-21).
 #
 # Part of the release compatibility manifest #124 describes. This file
-# records only the floor and the contracts it rests on. Source commits,
-# digests and migrations are #124's to add, and a release does not yet
-# render or attach this file.
+# records only the floor and the contracts it rests on. A release attaches it
+# to the runtime image beside release-provenance.json, which binds the
+# version to its source commit, every published image's digest, this file's
+# digest and these contracts (scripts/release_compatibility.py). Migrations
+# remain #124's to add.
+#
+# The release workflow holds a tag to this file before building: a version
+# below minimumRollableVersion is refused, the source's contract constants
+# must equal the values here, and a release above the floor must find the
+# floor's own published provenance recording these contracts. The floor's
+# version string is not that proof. If the floor was cut without the
+# support, or without provenance, the floor advances.
 #
 # minimumRollableVersion is the oldest release that reads everything this
 # source writes. Platform Management refuses an in-product rollback of the
@@ -22,9 +31,10 @@
 #     reads as usable again;
 #   - the issuer registry in the record (#140): refused as unreadable by a
 #     contract-2 publisher, which predates it.
-# The next release cut from main is the first that can include all of them.
-# It must be cut after #140 merges; a release between #139 and #140 would
-# write contract 2 and need the floor reconsidered.
+# The next release cut from main is the first that can include all of them,
+# and #140 has merged, so it writes contract 3. It must be 0.3.0-preview.16
+# itself, cut by a workflow that attaches provenance: the release workflow
+# refuses any later version until the floor's provenance exists.
 #
 # publication is the published runtime state's side of the same floor. Every
 # publication record states publisherContract as minimum_publisher_contract,

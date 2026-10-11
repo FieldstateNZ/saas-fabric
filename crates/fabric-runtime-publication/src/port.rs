@@ -3,7 +3,7 @@
 
 use async_trait::async_trait;
 
-use crate::{PublicationError, PublicationReport, PublishedRevisions, RuntimeSnapshot};
+use crate::{PublicationError, PublicationReport, PublishedResources, PublishedRevisions, RuntimeSnapshot};
 
 /// Publishes the runtime's three documents, and reports what is currently
 /// held.
@@ -43,6 +43,16 @@ pub trait RuntimePublication: Send + Sync {
     /// read or understood.
     async fn current(&self) -> Result<PublishedRevisions, PublicationError>;
 
+    /// Every resource currently held, and the highest revision each has
+    /// ever been published at, for a caller that composes its next offer
+    /// against the last one: [`HeldDocuments::resources`](crate::HeldDocuments::resources).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PublicationError`] if what is held could not be read or
+    /// understood, as [`publish`](Self::publish) would refuse it.
+    async fn published_resources(&self) -> Result<PublishedResources, PublicationError>;
+
     /// Publishes a complete snapshot of all three documents.
     ///
     /// Refuses the *whole* snapshot, before a single byte is written, if any
@@ -52,8 +62,11 @@ pub trait RuntimePublication: Send + Sync {
     /// sources document drops an id the held tenants document still
     /// references, if a document would go from non-empty to empty without
     /// stating that intent, if the catalogue document is empty, if a tenant
-    /// binding's `data` map is empty, or if the tenants or data-sources
-    /// document's held payload is lost while its manifest survives.
+    /// binding's `data` map is empty, if the tenants or data-sources
+    /// document's held payload is lost while its manifest survives, if a
+    /// resource does not advance past the revision it was last published
+    /// at, if a held tenant is dropped, or if a catalogue entry names a
+    /// logical data source no tenant binds.
     ///
     /// A publication that changes nothing writes nothing — not even a
     /// manifest whose revision did not move.

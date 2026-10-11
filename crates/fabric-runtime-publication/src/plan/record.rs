@@ -2,7 +2,7 @@
 
 use crate::{
     DocumentKind, DocumentOutcome, DocumentPlan, PublicationError, PublicationRecord, RecordedDocument,
-    RecordedDocuments,
+    RecordedDocuments, ResourceHistory,
 };
 
 /// The record's decided fate: written whenever the generation it names
@@ -19,8 +19,9 @@ pub struct RecordPlan {
     pub bytes: Vec<u8>,
 }
 
-/// Names each planned document's bytes and revision, and advances the
-/// generation when that differs from the held record.
+/// Names each planned document's bytes and revision, and the resource
+/// history including them, and advances the generation when that differs
+/// from the held record.
 ///
 /// A held record left by an interrupted publication names documents that may
 /// not all have landed; it is still the generation readers serve, so the
@@ -32,6 +33,7 @@ pub(super) fn decide(
     data_sources: &DocumentPlan,
     catalog: &DocumentPlan,
     tenants: &DocumentPlan,
+    resources: ResourceHistory,
 ) -> Result<RecordPlan, PublicationError> {
     let documents = RecordedDocuments {
         tenants: RecordedDocument::of(tenants.revision, &tenants.bytes),
@@ -40,14 +42,19 @@ pub(super) fn decide(
     };
 
     let (outcome, record) = match held {
-        Some(held) if PublicationRecord::new(held.generation(), documents.clone()) == held => {
+        Some(held)
+            if PublicationRecord::new(held.generation(), documents.clone(), resources.clone()) == held =>
+        {
             (DocumentOutcome::Unchanged, held)
         }
         Some(held) => (
             DocumentOutcome::Written,
-            PublicationRecord::new(held.generation().saturating_add(1), documents),
+            PublicationRecord::new(held.generation().saturating_add(1), documents, resources),
         ),
-        None => (DocumentOutcome::Written, PublicationRecord::new(1, documents)),
+        None => (
+            DocumentOutcome::Written,
+            PublicationRecord::new(1, documents, resources),
+        ),
     };
 
     let bytes = record

@@ -36,8 +36,8 @@ use fabric_platform_management::{
     PlacementClassDocument, PlacementRecord, PoolSettingsDocument,
 };
 use fabric_runtime_publication::{
-    FilesystemRuntimePublication, PublicationError, PublicationReport, PublishedRevisions,
-    RuntimePublication, RuntimeSnapshot,
+    FilesystemRuntimePublication, PublicationError, PublicationReport, PublishedResources,
+    PublishedRevisions, RuntimePublication, RuntimeSnapshot,
 };
 use http::StatusCode;
 use serde_json::{json, Value};
@@ -495,6 +495,10 @@ impl RuntimePublication for GatedTarget {
         self.entered.notify_one();
         self.release.notified().await;
         self.inner.current().await
+    }
+
+    async fn published_resources(&self) -> Result<PublishedResources, PublicationError> {
+        self.inner.published_resources().await
     }
 
     async fn publish(&self, snapshot: &RuntimeSnapshot) -> Result<PublicationReport, PublicationError> {

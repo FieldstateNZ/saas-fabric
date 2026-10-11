@@ -7,13 +7,9 @@
 //! guard and the empty-catalogue refusal unit-testable the same way the
 //! crate's internal verdict computation is.
 //!
-//! This file is in the 121-150 line band the file-size policy asks a reason
-//! for: it is five small, independently-testable guard functions plus the one
-//! function that runs them in order, and every guard's rustdoc names the ADR
-//! 0018 rule it enforces. Splitting the guards into their own files would
-//! scatter `validate_snapshot`'s reading order across the module tree for no
-//! reader's benefit -- the whole point of this file is that the order is
-//! visible in one place.
+//! In the 121-150 line band: small, independently-testable guards plus the
+//! one function that runs them in order, kept together so that order is
+//! visible in one place. Each guard's rustdoc names the rule it enforces.
 
 use crate::{
     CatalogDocument, DataSourceDocument, DocumentKind, Emptying, PublicationError, RuntimeSnapshot,
@@ -21,8 +17,9 @@ use crate::{
 };
 
 /// Runs every whole-snapshot rule, in the order a reader would want to know
-/// about a problem: the two unusable-shape checks first, then the two
-/// referential checks, then the two emptying guards.
+/// about a problem: the unusable-shape checks first (an empty catalogue or
+/// tenant, a catalogue entry no tenant binds), then the two referential
+/// checks, then the two emptying guards.
 ///
 /// `held_tenants` and `held_data_sources` are the *held* documents — what an
 /// adapter read off disk before this publication was offered — never the
@@ -38,6 +35,8 @@ pub(crate) fn validate_snapshot(
 ) -> Result<(), PublicationError> {
     refuse_empty_catalogue(&snapshot.catalog.payload)?;
     refuse_empty_tenant_data(&snapshot.tenants.payload)?;
+    let (catalog, tenants) = (&snapshot.catalog.payload, &snapshot.tenants.payload);
+    crate::catalogue_bindings::refuse_unbound_catalogue_entries(catalog, tenants)?;
     refuse_dangling_data_sources(&snapshot.tenants.payload, &snapshot.data_sources.payload)?;
     refuse_retired_data_source_still_bound(held_tenants, &snapshot.data_sources.payload)?;
     refuse_unintended_emptying(

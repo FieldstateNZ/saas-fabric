@@ -1,13 +1,13 @@
 //! The port implementation: read three objects, plan, write what changed.
 //!
 //! In the 121-150 line band (docs/architecture/file-size-policy.md): the
-//! port's two methods, and the one rule about when the tenants object is
+//! port's methods, and the one rule about when the tenants object is
 //! written that both the size check and the writes must share.
 
 use async_trait::async_trait;
 use fabric_runtime_publication::{
     plan_publication, DocumentKind, DocumentOutcome, DocumentPlan, PublicationError, PublicationPlan,
-    PublicationReport, PublishedRevisions, RuntimePublication, RuntimeSnapshot,
+    PublicationReport, PublishedResources, PublishedRevisions, RuntimePublication, RuntimeSnapshot,
 };
 
 use crate::client::Client;
@@ -81,15 +81,21 @@ impl RuntimePublication for KubernetesRuntimePublication {
             .revisions())
     }
 
+    async fn published_resources(&self) -> Result<PublishedResources, PublicationError> {
+        Reads::fetch(&self.client, &self.namespace)
+            .await?
+            .held()
+            .resources()
+    }
+
     async fn publish(&self, snapshot: &RuntimeSnapshot) -> Result<PublicationReport, PublicationError> {
         let reads = Reads::fetch(&self.client, &self.namespace).await?;
         let plan = plan_publication(snapshot, &reads.held())?;
         let record = Some(plan.record.bytes.as_slice());
         let tenants = tenants_object_plan(&plan);
 
-        // Every object is built — and so size-checked — before the first is
-        // written, so a document too large to publish refuses the whole
-        // publication rather than leaving the cluster half-updated.
+        // Every object is built, so size-checked, before the first is written:
+        // one too large refuses the whole publication, not half of it.
         object_for(
             &self.namespace,
             DocumentKind::DataSources,
@@ -102,8 +108,7 @@ impl RuntimePublication for KubernetesRuntimePublication {
 
         confirm_read_only_unmoved(&self.client, &self.namespace, &plan, &reads).await?;
 
-        // ADR 0018 part 3's order: a data source before anything naming it,
-        // and tenants last, carrying the record that closes the generation.
+        // ADR 0018 part 3's order; tenants last, carrying the record.
         self.write(
             DocumentKind::DataSources,
             &plan.data_sources,
@@ -128,12 +133,10 @@ impl RuntimePublication for KubernetesRuntimePublication {
     }
 }
 
-/// The tenants object's plan: written when the tenants document changed, or
-/// when only the record did -- a publication that changed the data sources
-/// or the catalogue alone still closes its generation in the tenants
-/// object, which is the one volume the record is projected in. The payload
-/// and manifest then go back exactly as held: an `Unchanged` plan carries
-/// the held bytes at the held revision.
+/// The tenants object's plan: written when the tenants document or only the
+/// record changed, since the record is projected in the tenants volume. An
+/// `Unchanged` plan carries the held bytes at the held revision, so the
+/// payload and manifest go back exactly as held.
 fn tenants_object_plan(plan: &PublicationPlan) -> DocumentPlan {
     let mut tenants = plan.tenants.clone();
     if plan.record.outcome == DocumentOutcome::Written {

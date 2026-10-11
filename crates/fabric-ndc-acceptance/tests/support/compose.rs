@@ -16,7 +16,9 @@ use fabric_connector::{ConnectorRegistry, DataConnector};
 use fabric_connector_ndc::NdcConnector;
 use fabric_data_api::{build_data_api, DataApiConfig, ResourceCatalog, ResourcePermissions};
 use fabric_identity::{build_identity, IdentityConfig};
-use fabric_runtime_publication::{FilesystemRuntimePublication, RuntimePublication as _, RuntimeSnapshot};
+use fabric_runtime_publication::{
+    CatalogDocument, FilesystemRuntimePublication, PublicationError, RuntimePublication as _, RuntimeSnapshot,
+};
 use fabric_tenant_runtime::{
     build_runtime, DataSource as RuntimeDataSource, JsonFileSource, RuntimeConfig, TenantRuntimeBinding,
 };
@@ -74,6 +76,43 @@ pub async fn compose(connector: Arc<NdcConnector>, snapshot: &RuntimeSnapshot) -
 /// over whatever the last one left on disk -- the way a catalogue published
 /// ahead of the tenants document it depends on reaches a consumer.
 pub async fn compose_published(connector: Arc<NdcConnector>, snapshots: &[RuntimeSnapshot]) -> Composed {
+    compose_over(connector, snapshots, None).await
+}
+
+/// [`compose`] over `snapshot`, with `catalog.json` then overwritten by
+/// `catalog` outside the publisher: the way a catalogue the publisher
+/// refuses can still reach a runtime that reads it without the publication
+/// record, as a hand edit or a volume from another generation.
+pub async fn compose_with_catalogue_written_outside_the_publisher(
+    connector: Arc<NdcConnector>,
+    snapshot: &RuntimeSnapshot,
+    catalog: &CatalogDocument,
+) -> Composed {
+    compose_over(connector, std::slice::from_ref(snapshot), Some(catalog)).await
+}
+
+/// What the real publisher answers for `snapshots`, published in order into
+/// a fresh directory: the first refusal, which the caller expects.
+pub async fn first_refusal(snapshots: &[RuntimeSnapshot]) -> PublicationError {
+    let tempdir = TempDir::new();
+    let publisher = FilesystemRuntimePublication::new(
+        tempdir.tenants_path(),
+        tempdir.data_sources_path(),
+        tempdir.catalog_path(),
+    );
+    for snapshot in snapshots {
+        if let Err(refusal) = publisher.publish(snapshot).await {
+            return refusal;
+        }
+    }
+    panic!("every publication was accepted")
+}
+
+async fn compose_over(
+    connector: Arc<NdcConnector>,
+    snapshots: &[RuntimeSnapshot],
+    catalog: Option<&CatalogDocument>,
+) -> Composed {
     let tempdir = TempDir::new();
     let publisher = FilesystemRuntimePublication::new(
         tempdir.tenants_path(),
@@ -82,6 +121,9 @@ pub async fn compose_published(connector: Arc<NdcConnector>, snapshots: &[Runtim
     );
     for snapshot in snapshots {
         publisher.publish(snapshot).await.unwrap();
+    }
+    if let Some(catalog) = catalog {
+        std::fs::write(tempdir.catalog_path(), catalog.canonical_json().unwrap()).unwrap();
     }
 
     let (resolver, _handles) = build_runtime(

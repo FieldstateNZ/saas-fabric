@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use axum::Router;
 use fabric_identity::build_identity;
-use fabric_tenant_runtime::{build_published_runtime, PublishedFiles};
+use fabric_tenant_runtime::{build_published_runtime, PublishedFiles, PublishedRuntime};
 
 use crate::config::AppConfig;
 use crate::startup::background_tasks::{stop_refreshers, BackgroundTasks};
@@ -55,16 +55,22 @@ pub async fn build(config: &AppConfig) -> Result<Application, String> {
     //    publication record beside the tenants file names. Never queries Git or
     //    Kubernetes (§6). This is the step that starts background work, so from
     //    here on a failure has something to clean up.
-    let (runtime, refresh) = build_published_runtime(
+    //    The catalogue is read in the same read the runtime primes from, so
+    //    it is that generation's, not one published a moment later (G8).
+    let PublishedRuntime {
+        resolver: runtime,
+        handles: refresh,
+        catalogue,
+    } = build_published_runtime(
         &config.tenant_runtime,
-        Arc::new(PublishedFiles::new(
-            &config.tenants_path,
-            &config.data_sources_path,
-        )),
+        Arc::new(
+            PublishedFiles::new(&config.tenants_path, &config.data_sources_path)
+                .with_catalogue(&config.catalog_path),
+        ),
     )
     .await?;
 
-    match serving::build(config, &runtime, &identity).await {
+    match serving::build(config, &runtime, catalogue, &identity).await {
         Ok((router, connector_retry)) => Ok(Application {
             router,
             listen: config.listen.clone(),

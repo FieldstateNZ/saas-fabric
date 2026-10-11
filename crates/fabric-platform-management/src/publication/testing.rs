@@ -10,8 +10,8 @@ mod held;
 use std::sync::Mutex;
 
 use fabric_runtime_publication::{
-    DocumentKind, PublicationError, PublicationReport, PublishedRevisions, RuntimePublication,
-    RuntimeSnapshot,
+    DocumentKind, PublicationError, PublicationReport, PublishedResources, PublishedRevisions,
+    RuntimePublication, RuntimeSnapshot,
 };
 
 use held::{Scripted, State};
@@ -90,6 +90,11 @@ impl RuntimePublication for FakePublication {
             .state
             .lock()
             .map_or_else(|poisoned| poisoned.into_inner().held, |state| state.held))
+    }
+
+    /// Nothing: this fake tracks revisions, not content.
+    async fn published_resources(&self) -> Result<PublishedResources, PublicationError> {
+        Ok(PublishedResources::default())
     }
 
     async fn publish(&self, snapshot: &RuntimeSnapshot) -> Result<PublicationReport, PublicationError> {

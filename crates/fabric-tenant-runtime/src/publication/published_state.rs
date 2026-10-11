@@ -46,6 +46,21 @@ pub trait PublishedStateSource: Send + Sync {
     /// [`SourceError`] when no generation can be applied.
     async fn load(&self) -> Result<PublishedState, SourceError>;
 
+    /// [`Self::load`] at process start, with the catalogue's bytes when this
+    /// source reads one: taken in the same read as the documents, and, for a
+    /// recorded generation, checked against the same record. A runtime that
+    /// builds its catalogue from these bytes serves the catalogue of the
+    /// generation it primed, not one published between the two reads (G8).
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::load`], and for a recorded generation
+    /// [`SourceError::IncompleteGeneration`] naming `catalog` when the
+    /// catalogue is not the record's.
+    async fn load_at_start(&self) -> Result<(PublishedState, Option<Vec<u8>>), SourceError> {
+        Ok((self.load().await?, None))
+    }
+
     /// A short description for logging.
     fn describe(&self) -> String;
 }

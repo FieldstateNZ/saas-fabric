@@ -4,7 +4,7 @@ mod build_published;
 #[cfg(test)]
 mod registration_tests;
 
-pub use build_published::build_published_runtime;
+pub use build_published::{build_published_runtime, PublishedRuntime};
 
 use std::sync::Arc;
 

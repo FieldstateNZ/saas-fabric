@@ -416,8 +416,14 @@ file under `publication/`.
   next read fixes, so they are `Failed`; a fourth `DivergentPayload` and
   every coherence refusal (`DanglingDataSource`, `RetiredDataSourceStillBound`,
   `EmptyingNotIntended`, `EmptyCatalogue`, `EmptyTenantData`,
-  `HeldPayloadLost`) name a document a human must fix, so they are
-  `Refused`.
+  `HeldPayloadLost`, `ResourceRevisionNotAdvanced`, `TenantRemoved`,
+  `CatalogueEntryUnbound`, `BelowRollbackFloor`) name a document a human
+  must fix, so they are `Refused`. Before offering, `compose` holds the
+  placement records to the tenants document last published
+  (`publication/placement_history.rs`: `PlacementRemoved`,
+  `PlacementLowered`), and the pass keeps the published catalogue while the
+  derived one names a logical data source no tenant binds
+  (`publication/catalogue_hold.rs`).
 - **`PublicationState`** (`publication/state.rs`) -- `SweepState`'s sibling:
   whether a pass is running, and the last one's `LastPass { at_unix_seconds,
   outcome }`.

@@ -21,21 +21,46 @@ pub(crate) enum Plan {
     Write(Vec<DataSourceDeclaration>),
 }
 
+/// The highest revision an id has ever been published at, and whether the
+/// published data-sources document still holds it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Published {
+    pub(crate) revision: BindingRevision,
+    pub(crate) current: bool,
+}
+
 /// Plans a declaration against what an environment currently holds.
 ///
 /// # The revision rule
 ///
-/// A new id starts at revision 1. An id that is already held keeps its
-/// revision when every other field is unchanged -- `Plan::Unchanged`, and
-/// no write at all -- or moves to `held + 1` otherwise. The revision an
-/// incoming declaration carries is never trusted; it is always recomputed
-/// here, which is why the comparison below sets it aside before deciding
-/// whether anything actually changed.
-pub(crate) fn plan(held: &[DataSourceDeclaration], incoming: &DataSourceDeclaration) -> Plan {
+/// An id that is already held keeps its revision when every other field is
+/// unchanged -- `Plan::Unchanged`, and no write at all -- provided the
+/// publisher would take it: at or above the revision it is published at
+/// now, or above the one it was last published at before it was removed.
+/// Anything else is written one above the higher of the held revision and
+/// the published one: so a new id starts at 1, and an id removed and
+/// declared again, or held lower after a Git revert, comes back above every
+/// revision a reader may still hold rather than restarting below it (O3,
+/// D01-1). The revision an incoming declaration carries is never trusted;
+/// it is always recomputed here, which is why the comparison below sets it
+/// aside before deciding whether anything actually changed.
+pub(crate) fn plan(
+    held: &[DataSourceDeclaration],
+    incoming: &DataSourceDeclaration,
+    published: Option<Published>,
+) -> Plan {
+    let floor = published.map_or(BindingRevision::ZERO, |published| published.revision);
+    let keeps = match published {
+        Some(Published {
+            revision,
+            current: false,
+        }) => revision.next(),
+        _ => floor,
+    };
     let Some(existing) = held.iter().find(|declared| declared.id == incoming.id) else {
         let mut declarations = held.to_vec();
         declarations.push(DataSourceDeclaration {
-            revision: BindingRevision::new(1),
+            revision: floor.next(),
             ..incoming.clone()
         });
         declarations.sort_by(|left, right| left.id.cmp(&right.id));
@@ -48,7 +73,7 @@ pub(crate) fn plan(held: &[DataSourceDeclaration], incoming: &DataSourceDeclarat
         ..incoming.clone()
     };
 
-    if &merged == existing {
+    if &merged == existing && existing.revision >= keeps {
         return Plan::Unchanged;
     }
 
@@ -58,7 +83,7 @@ pub(crate) fn plan(held: &[DataSourceDeclaration], incoming: &DataSourceDeclarat
         .cloned()
         .collect();
     declarations.push(DataSourceDeclaration {
-        revision: existing.revision.next(),
+        revision: existing.revision.max(floor).next(),
         ..merged
     });
     declarations.sort_by(|left, right| left.id.cmp(&right.id));

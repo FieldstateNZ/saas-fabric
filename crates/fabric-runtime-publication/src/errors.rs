@@ -3,19 +3,15 @@
 //! In the 121-150 line band: one enum, each variant naming the rule it
 //! enforces. At the ceiling: trim rustdoc or find a real second concept.
 
-use fabric_core::{BindingRevision, DataSourceId, LogicalDataSourceName, TenantId};
+use fabric_core::{BindingRevision, DataSourceId, LogicalDataSourceName, LogicalResourceName, TenantId};
 
 use crate::{DocumentKind, DocumentRevision};
 
-/// Why [`crate::RuntimePublication::publish`] refused a publication, or
-/// [`crate::RuntimePublication::current`] could not read what is held.
-///
-/// Every variant but [`Self::Unwritable`] guarantees nothing was written --
-/// see [`crate::PublicationReport`] for what a partial write there means.
+/// Why a publication was refused, or what is held could not be read. Every
+/// variant but [`Self::Unwritable`] guarantees nothing was written.
 #[derive(Debug, thiserror::Error)]
 pub enum PublicationError {
-    /// The offered revision is older than the one already held: read the
-    /// current revisions and try again.
+    /// The offered revision is older than the one held.
     #[error("{document:?} is held at revision {held}, but an older revision {offered} was offered")]
     StaleRevision {
         /// Which document was stale.
@@ -26,8 +22,7 @@ pub enum PublicationError {
         offered: DocumentRevision,
     },
 
-    /// The offered revision matches what is held, but the bytes differ:
-    /// accepting them would make the revision meaningless (ADR 0018 part 6).
+    /// The held revision offered with different bytes (ADR 0018 part 6).
     #[error("{document:?} at revision {revision} was offered with different bytes than are held")]
     DivergentPayload {
         /// Which document diverged.
@@ -36,9 +31,8 @@ pub enum PublicationError {
         revision: DocumentRevision,
     },
 
-    /// A tenant binding names a `DataSourceId` this same publication's
-    /// data-sources document does not contain: a certain 500 for that
-    /// tenant (ADR 0018 part 4).
+    /// A tenant binding names a DataSource this publication does not
+    /// include: a certain 500 for that tenant (ADR 0018 part 4).
     #[error(
         "tenant {tenant}'s {logical} binding names data source {data_source}, which this \
          publication does not include"
@@ -52,9 +46,8 @@ pub enum PublicationError {
         data_source: DataSourceId,
     },
 
-    /// The data-sources document drops a `DataSourceId` the *held* tenants
-    /// document still references: retiring a DataSource takes two
-    /// publications (ADR 0018 part 3).
+    /// A DataSource the *held* tenants document binds is dropped: retiring
+    /// one takes two publications (ADR 0018 part 3).
     #[error(
         "data source {data_source} was dropped, but the held tenants document still binds it to \
          tenant {tenant}"
@@ -66,58 +59,65 @@ pub enum PublicationError {
         tenant: TenantId,
     },
 
-    /// This publication would take a currently non-empty document to empty
-    /// without [`crate::Emptying::Intended`] (ADR 0018 part 6).
+    /// A non-empty document emptied without intent (ADR 0018 part 6).
     #[error("{document:?} would become empty, and Emptying::Intended was not given for it")]
     EmptyingNotIntended {
         /// The document that would have been emptied.
         document: DocumentKind,
     },
 
-    /// The catalogue document has no entries; `build_data_api` refuses to
-    /// start against one (ADR 0018 part 2).
+    /// The catalogue has no entries (ADR 0018 part 2).
     #[error("the catalogue document has no entries")]
     EmptyCatalogue,
 
-    /// A tenant binding's `data` map has no entries, which the consumer
-    /// drops on arrival.
+    /// A tenant binding's `data` map is empty; the consumer drops it.
     #[error("tenant {tenant}'s data map has no entries, and would be dropped on arrival")]
     EmptyTenantData {
         /// The tenant whose binding has no data source bindings.
         tenant: TenantId,
     },
 
-    /// A tenants or data-sources manifest is held, but its payload is gone,
-    /// disarming whichever guard reads it.
-    #[error(
-        "{document:?}'s manifest is held, but its payload is gone -- restore the payload file or \
-         remove the manifest before publishing again"
-    )]
+    /// A held manifest's payload is gone, disarming the guards that read it.
+    #[error("{document:?}'s manifest is held, but its payload is gone -- restore the payload file or remove the manifest before publishing again")]
     HeldPayloadLost {
         /// The document whose payload is missing while its manifest remains.
         document: DocumentKind,
     },
 
-    /// A tenant binding or DataSource the held document already holds is
-    /// offered at an older revision, or changed at the same one. A reader
-    /// keeps its held copy of such a resource and applies the rest, so
-    /// publishing it would serve a generation only part-applied.
-    #[error("{document:?} resource {resource} is held at revision {held} and offered at {offered} without advancing")]
+    /// A tenant binding or DataSource offered older, changed at the same
+    /// revision, or declared again at or below the revision it was last
+    /// published at (O1, O3): a reader holding the higher one keeps it.
+    #[error("{document:?} resource {resource} was published at revision {held} and is offered at {offered} without advancing")]
     ResourceRevisionNotAdvanced {
         /// The document the resource is in.
         document: DocumentKind,
         /// The tenant or DataSource id.
         resource: String,
-        /// Its revision in the held document.
+        /// The highest revision it has been published at.
         held: BindingRevision,
         /// Its revision in this publication.
         offered: BindingRevision,
     },
 
-    /// The held publication record was written under a contract whose
-    /// rollback floor is above this publisher's (D01-21): writing over it
-    /// would hand readers a record this publisher does not understand.
-    /// Roll the publisher forward to at least `floor`.
+    /// A held tenant dropped other than by intended emptying (O4, D01-27).
+    #[error("tenant {tenant}, published at revision {held}, would be removed")]
+    TenantRemoved {
+        /// The tenant the held document binds and the offer drops.
+        tenant: TenantId,
+        /// Its revision in the held document.
+        held: BindingRevision,
+    },
+
+    /// A catalogue entry on a logical data source no tenant binds (G8).
+    #[error("catalogue resource {resource} is on {data_source}, which no tenant binds")]
+    CatalogueEntryUnbound {
+        /// The catalogue entry.
+        resource: LogicalResourceName,
+        /// The logical data source it names.
+        data_source: LogicalDataSourceName,
+    },
+
+    /// The held record's rollback floor is above this publisher (D01-21).
     #[error(
         "the held publication record requires publisher contract {floor}; this publisher is {publisher}"
     )]

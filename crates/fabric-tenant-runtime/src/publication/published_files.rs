@@ -1,12 +1,11 @@
 //! The published documents as mounted files, read as one generation.
 
-use std::io;
 use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
-use serde::de::DeserializeOwned;
 
 use super::digest::sha256_hex;
+use super::file_reads::{parse, read, read_optional};
 use super::record::{ReaderRecord, PUBLICATION_RECORD_FILE, READER_CONTRACT};
 use super::{PublishedState, PublishedStateSource};
 use crate::{JsonFileSource, ResourceSource as _, SourceError};
@@ -22,6 +21,7 @@ pub struct PublishedFiles {
     tenants: PathBuf,
     data_sources: PathBuf,
     record: PathBuf,
+    catalog: Option<PathBuf>,
 }
 
 impl PublishedFiles {
@@ -33,6 +33,18 @@ impl PublishedFiles {
             record: tenants.with_file_name(PUBLICATION_RECORD_FILE),
             tenants,
             data_sources: data_sources_path.as_ref().to_path_buf(),
+            catalog: None,
+        }
+    }
+
+    /// Also reads the catalogue at `catalog_path`, at start only:
+    /// [`PublishedStateSource::load_at_start`]. A running replica keeps the
+    /// catalogue it started with.
+    #[must_use]
+    pub fn with_catalogue(self, catalog_path: impl AsRef<Path>) -> Self {
+        Self {
+            catalog: Some(catalog_path.as_ref().to_path_buf()),
+            ..self
         }
     }
 
@@ -47,9 +59,35 @@ impl PublishedFiles {
 #[async_trait]
 impl PublishedStateSource for PublishedFiles {
     async fn load(&self) -> Result<PublishedState, SourceError> {
+        Ok(self.read(None).await?.0)
+    }
+
+    async fn load_at_start(&self) -> Result<(PublishedState, Option<Vec<u8>>), SourceError> {
+        self.read(self.catalog.as_deref()).await
+    }
+
+    fn describe(&self) -> String {
+        format!(
+            "published files: tenants={}, data_sources={}, record={}",
+            self.tenants.display(),
+            self.data_sources.display(),
+            self.record.display()
+        )
+    }
+}
+
+impl PublishedFiles {
+    /// One read of the record and the documents it names, `catalog` among
+    /// them when given. Without a record, the documents and the catalogue
+    /// are read as they stand.
+    async fn read(&self, catalog: Option<&Path>) -> Result<(PublishedState, Option<Vec<u8>>), SourceError> {
         let origin = self.describe();
         let Some(record) = read_optional(&self.record, &origin).await? else {
-            return Ok(self.unrecorded().await);
+            let catalog = match catalog {
+                Some(path) => Some(read(path, &origin).await?),
+                None => None,
+            };
+            return Ok((self.unrecorded().await, catalog));
         };
         let record: ReaderRecord = parse(&record, &origin)?;
         if record.minimum_reader_contract > READER_CONTRACT {
@@ -62,6 +100,19 @@ impl PublishedStateSource for PublishedFiles {
 
         let data_sources = read(&self.data_sources, &origin).await?;
         let tenants = read(&self.tenants, &origin).await?;
+        let catalog = match catalog {
+            Some(path) => Some(read(path, &origin).await?),
+            None => None,
+        };
+        if let Some(bytes) = &catalog {
+            if sha256_hex(bytes) != record.documents.catalog.sha256 {
+                return Err(SourceError::IncompleteGeneration {
+                    origin,
+                    generation: record.generation,
+                    document: "catalog",
+                });
+            }
+        }
         for (document, bytes, named) in [
             (
                 "data-sources",
@@ -79,47 +130,11 @@ impl PublishedStateSource for PublishedFiles {
             }
         }
 
-        Ok(PublishedState::Generation {
+        let state = PublishedState::Generation {
             generation: record.generation,
             data_sources: parse(&data_sources, &origin)?,
             tenants: parse(&tenants, &origin)?,
-        })
+        };
+        Ok((state, catalog))
     }
-
-    fn describe(&self) -> String {
-        format!(
-            "published files: tenants={}, data_sources={}, record={}",
-            self.tenants.display(),
-            self.data_sources.display(),
-            self.record.display()
-        )
-    }
-}
-
-async fn read_optional(path: &Path, origin: &str) -> Result<Option<Vec<u8>>, SourceError> {
-    match tokio::fs::read(path).await {
-        Ok(bytes) => Ok(Some(bytes)),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(unreadable(origin, error)),
-    }
-}
-
-async fn read(path: &Path, origin: &str) -> Result<Vec<u8>, SourceError> {
-    tokio::fs::read(path)
-        .await
-        .map_err(|error| unreadable(origin, error))
-}
-
-fn unreadable(origin: &str, cause: io::Error) -> SourceError {
-    SourceError::Unreadable {
-        origin: origin.to_owned(),
-        cause: Box::new(cause),
-    }
-}
-
-fn parse<T: DeserializeOwned>(bytes: &[u8], origin: &str) -> Result<T, SourceError> {
-    serde_json::from_slice(bytes).map_err(|error| SourceError::Malformed {
-        origin: origin.to_owned(),
-        detail: error.to_string(),
-    })
 }

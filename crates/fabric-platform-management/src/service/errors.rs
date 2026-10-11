@@ -125,4 +125,10 @@ pub enum PlatformError {
         /// Every tenant still placed on it.
         tenants: Vec<TenantId>,
     },
+
+    /// What the runtime publication target holds could not be read, so a
+    /// data source's next revision cannot be placed above the one it was
+    /// last published at (O3). Nothing was written; retrying is the remedy.
+    #[error("the published runtime state could not be read")]
+    PublishedStateUnreadable,
 }

@@ -127,7 +127,8 @@ mod tests {
         RuntimeCatalogueSource,
     };
     use fabric_runtime_publication::{
-        CatalogDocument, PublicationError, PublicationReport, PublishedRevisions, RuntimeSnapshot,
+        CatalogDocument, PublicationError, PublicationReport, PublishedResources, PublishedRevisions,
+        RuntimeSnapshot,
     };
 
     use super::*;
@@ -289,6 +290,9 @@ mod tests {
             let previous = self.current_calls.fetch_add(1, Ordering::SeqCst);
             assert!(previous != 0, "simulated target failure");
             Ok(PublishedRevisions::default())
+        }
+        async fn published_resources(&self) -> Result<PublishedResources, PublicationError> {
+            Ok(PublishedResources::default())
         }
         async fn publish(&self, _: &RuntimeSnapshot) -> Result<PublicationReport, PublicationError> {
             unreachable!()

@@ -68,8 +68,10 @@ pub use data_source::{
     DataResidency, DataSource, DataSourceCapabilities, DestinationReuse, PlacementClass, PoolSettings,
 };
 pub use errors::{ConfigurationError, ResolveError, SourceError, UnusableFirstLoad};
-pub use publication::{PublishedFiles, PublishedState, PublishedStateSource, READER_CONTRACT};
-pub use registration::{build_published_runtime, build_runtime, RuntimeHandles};
+pub use publication::{
+    startup_catalogue, PublishedFiles, PublishedState, PublishedStateSource, READER_CONTRACT,
+};
+pub use registration::{build_published_runtime, build_runtime, PublishedRuntime, RuntimeHandles};
 pub use resolution::{ResolvedDataSource, RuntimeResolver};
 pub use resource::sources::{InMemorySource, JsonFileSource};
 pub use resource::{

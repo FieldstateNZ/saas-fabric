@@ -1,11 +1,18 @@
 //! Declaring an environment's data sources, and reading what is declared.
+//!
+//! In the 121-150 line band (docs/architecture/file-size-policy.md): the
+//! service, its two ports and `declare`, whose rustdoc carries the reasoning
+//! for its precondition and revision rules.
 
+mod published;
 mod remove;
 #[cfg(test)]
 #[path = "service_tests.rs"]
 mod service_tests;
 
 use std::sync::Arc;
+
+use fabric_runtime_publication::RuntimePublication;
 
 use crate::data_sources::declaration::DataSourceDeclaration;
 use crate::data_sources::held::check_held;
@@ -34,13 +41,19 @@ pub enum Declared {
 pub struct DataSources {
     /// Where declared data sources are read and written.
     state: Arc<dyn DataSourceState>,
+    /// Where they are published, when publication is configured: what a
+    /// declaration's revision is placed above (O3).
+    published: Option<Arc<dyn RuntimePublication>>,
 }
 
 impl DataSources {
     /// Builds the service over its port.
     #[must_use]
     pub fn new(state: Arc<dyn DataSourceState>) -> Self {
-        Self { state }
+        Self {
+            state,
+            published: None,
+        }
     }
 
     /// Every data source an environment declares, changing nothing.
@@ -60,10 +73,11 @@ impl DataSources {
 
     /// Declares or corrects one data source and returns the new read.
     ///
-    /// The incoming declaration's revision is ignored and computed: 1 for
-    /// a new id, held + 1 when any field differs, unchanged -- and no
-    /// write at all -- when nothing differs. at is the revision the
-    /// caller read; the write refuses if it does not match what is held.
+    /// The incoming declaration's revision is ignored and computed: one
+    /// above the higher of the held revision and the highest revision this
+    /// id was ever published at, or unchanged -- and no write at all --
+    /// when nothing differs. at is the revision the caller read; the write
+    /// refuses if it does not match what is held.
     ///
     /// # Why the precondition is checked before planning, not only on write
     ///
@@ -89,7 +103,9 @@ impl DataSources {
     ///
     /// `PlatformError::InvalidDataSource` if the declaration breaks one of
     /// ADR 0023 part 1's rules, [`DesiredStateError::Conflict`] if `at`
-    /// does not match what is held, and
+    /// does not match what is held,
+    /// [`PlatformError::PublishedStateUnreadable`] if the publication target
+    /// cannot be read, and
     /// [`PlatformError::InvalidHeldDataSources`] if what is held is no
     /// longer valid -- see [`Self::list`].
     pub async fn declare(
@@ -107,7 +123,8 @@ impl DataSources {
             return Err(DesiredStateError::Conflict.into());
         }
 
-        let Plan::Write(declarations) = plan(&held.declarations, &declaration) else {
+        let published = self.published_revision(&declaration.id).await?;
+        let Plan::Write(declarations) = plan(&held.declarations, &declaration, published) else {
             return Ok(Declared::Unchanged(held));
         };
 

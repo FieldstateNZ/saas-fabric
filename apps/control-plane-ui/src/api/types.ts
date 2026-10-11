@@ -7,6 +7,7 @@
  * in the API this console talks to.
  */
 
+import type { ClientLifecycle } from './lifecycle-types'
 import type { Publication } from './publication-types'
 
 /** Where a client's identity stands between what Git says and what exists. */
@@ -34,6 +35,8 @@ export interface Client {
    * It is what makes a write conditional — see `putIdentity`.
    */
   readonly revision: string
+  /** Saved intent, a usable client, or retired. */
+  readonly lifecycle: ClientLifecycle
 }
 
 /** Which kind of callback an application client is entitled to. */

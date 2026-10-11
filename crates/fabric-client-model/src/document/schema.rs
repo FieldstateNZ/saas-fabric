@@ -101,6 +101,11 @@ pub(super) struct SpecShape {
     /// section existed has none.
     #[serde(default)]
     pub(super) data: std::collections::BTreeMap<fabric_core::LogicalDataSourceName, crate::DataIntent>,
+
+    /// The recorded lifecycle (D01-14). Defaulted: a document without one is
+    /// saved intent, which every document written before it existed is.
+    #[serde(default)]
+    pub(super) lifecycle: crate::LifecycleRecord,
 }
 
 #[cfg(test)]

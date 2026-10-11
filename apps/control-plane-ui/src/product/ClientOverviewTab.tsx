@@ -1,4 +1,5 @@
 import type { ClientProductResponse } from '../api/catalogue-types'
+import { LifecycleStatus } from '../console/LifecycleStatus'
 import { Panel } from '../console/Panel'
 import { Status } from '../console/Status'
 import { ClientFacts } from './ClientFacts'
@@ -39,6 +40,11 @@ export function ClientOverviewTab({
           </p>
         </div>
       </div>
+      <Panel title="Lifecycle">
+        <div className="panel-body">
+          <LifecycleStatus lifecycle={data.client.lifecycle} />
+        </div>
+      </Panel>
       <Panel title="Client details">
         <div className="panel-body">
           <ClientFacts data={data} />

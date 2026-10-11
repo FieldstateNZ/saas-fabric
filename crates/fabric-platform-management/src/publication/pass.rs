@@ -6,6 +6,9 @@
 #[path = "pass_tests.rs"]
 mod pass_tests;
 
+use std::collections::BTreeMap;
+
+use fabric_core::{BindingRevision, TenantId};
 use fabric_runtime_publication::PublishedRevisions;
 
 use crate::publication::outcome::{PassOutcome, WaitingReason};
@@ -13,6 +16,7 @@ use crate::publication::protocol::publish_with_retry;
 use crate::publication::publish_error::outcome_from_publish_error;
 use crate::publication::report_outcome::outcome_from_report;
 use crate::publication::snapshot::compose;
+use crate::publication::withhold::{publishable, published_tenants};
 use crate::publication::RuntimePublisher;
 use crate::SafeDiagnostic;
 
@@ -38,10 +42,21 @@ impl Halt {
     }
 }
 
+/// What a pass did, and the tenants it left published when it published or
+/// found nothing to change.
+type PassRun = (PassOutcome, Option<BTreeMap<TenantId, BindingRevision>>);
+
 impl RuntimePublisher {
     /// Runs one pass: read, compose, offer -- without the re-entry guard
     /// [`crate::RuntimePublisher::publish_once`] holds around this call.
-    pub(super) async fn run_pass(&self) -> PassOutcome {
+    pub(super) async fn run_pass(&self) -> PassRun {
+        match self.read_and_offer().await {
+            Ok(run) => run,
+            Err(halt) => (halt.into_outcome(), None),
+        }
+    }
+
+    async fn read_and_offer(&self) -> Result<PassRun, Halt> {
         let held = match self.target.current().await {
             Ok(held) => held,
             // The same exhaustive classifier `publish_with_retry`'s own
@@ -50,48 +65,36 @@ impl RuntimePublisher {
             // too, but one classifier for every error this port can raise
             // is what keeps that true by construction rather than by both
             // call sites happening to agree.
-            Err(error) => return outcome_from_publish_error(&error),
+            Err(error) => return Ok((outcome_from_publish_error(&error), None)),
         };
 
-        let declarations = match self.declared_data_sources().await {
-            Ok(declarations) => declarations,
-            Err(halt) => return halt.into_outcome(),
-        };
-        let placements = match self.recorded_placements(&declarations).await {
-            Ok(placements) => placements,
-            Err(halt) => return halt.into_outcome(),
-        };
-        let catalog = match self.runtime_catalogue().await {
-            Ok(catalog) => catalog,
-            Err(halt) => return halt.into_outcome(),
-        };
+        let declarations = self.declared_data_sources().await?;
+        let placements = self.recorded_placements(&declarations).await?;
+        let withheld = self.withheld_tenants().await?;
+        let catalog = self.runtime_catalogue().await?;
 
         if catalog.is_empty() {
-            return PassOutcome::Waiting {
-                reason: WaitingReason::NoResources,
-            };
+            return Err(Halt::Waiting(WaitingReason::NoResources));
         }
 
-        let snapshot = match compose(declarations, &placements, catalog, &held) {
-            Ok(snapshot) => snapshot,
-            Err(error) => {
-                return PassOutcome::Refused {
-                    reason: SafeDiagnostic::sanitise(&error.to_string()),
-                }
+        let placements = publishable(placements, &withheld);
+        let snapshot = compose(declarations, &placements, catalog, &held)
+            .map_err(|error| Halt::Refused(SafeDiagnostic::sanitise(&error.to_string())))?;
+
+        Ok(match publish_with_retry(self.target.as_ref(), snapshot).await {
+            Ok((report, snapshot)) => {
+                let outcome = outcome_from_report(
+                    report,
+                    &held,
+                    PublishedRevisions {
+                        tenants: Some(snapshot.tenants.revision),
+                        data_sources: Some(snapshot.data_sources.revision),
+                        catalog: Some(snapshot.catalog.revision),
+                    },
+                );
+                (outcome, Some(published_tenants(&snapshot.tenants.payload)))
             }
-        };
-
-        match publish_with_retry(self.target.as_ref(), snapshot).await {
-            Ok((report, snapshot)) => outcome_from_report(
-                report,
-                &held,
-                PublishedRevisions {
-                    tenants: Some(snapshot.tenants.revision),
-                    data_sources: Some(snapshot.data_sources.revision),
-                    catalog: Some(snapshot.catalog.revision),
-                },
-            ),
-            Err(error) => outcome_from_publish_error(&error),
-        }
+            Err(error) => (outcome_from_publish_error(&error), None),
+        })
     }
 }

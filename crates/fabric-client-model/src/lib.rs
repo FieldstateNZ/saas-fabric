@@ -54,6 +54,7 @@ mod document;
 mod errors;
 mod identity;
 mod ids;
+pub mod lifecycle;
 mod secrets;
 
 pub use authorization::{AuthorizationConfiguration, Relation, ResourceAuthorization};
@@ -66,4 +67,5 @@ pub use identity::{
     PkceMethod, RedirectStrategy, RedirectStrategyKind, RedirectUri, RedirectUriKind, CUSTOM_SCHEME_PHASE,
 };
 pub use ids::{ClientId, ClientRevision, Host, OidcClientId, RealmName, RelationName, RoleName};
+pub use lifecycle::{ClientLifecycle, LifecycleRecord, LifecycleRefusal, LifecycleState, LifecycleUse};
 pub use secrets::{SecretNamespace, SecretsConfiguration};

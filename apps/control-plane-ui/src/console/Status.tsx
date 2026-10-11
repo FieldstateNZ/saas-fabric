@@ -14,6 +14,8 @@ import type { ReactNode } from 'react'
  * name (and a meaning) with an existing status, and `unchanged` falls
  * through with `neutral` and `unknown` to the pill's plain default colour,
  * the same as anything else this component has not been given a class for.
+ * The four client lifecycle states (`incomplete`, `ready`, `tombstoned`,
+ * `deletionConfirmed`) each have a class of their own; see `LifecycleStatus`.
  * `children` lets a caller show operator-facing text ("Loading",
  * "Unavailable") while still colouring the pill by the underlying value the
  * API returned.

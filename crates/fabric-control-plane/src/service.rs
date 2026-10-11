@@ -18,6 +18,7 @@ mod reconciliation_view;
 mod reconciliation_view_tests;
 mod record_selection;
 mod reserved;
+mod retire;
 mod runtime_catalogue_source;
 #[cfg(test)]
 mod service_tests;

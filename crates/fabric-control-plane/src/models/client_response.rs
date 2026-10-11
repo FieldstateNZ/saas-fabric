@@ -2,6 +2,7 @@
 
 use fabric_client_model::{ClientId, ClientRevision, Host, RealmName};
 
+use crate::models::LifecycleResponse;
 use crate::StoredClient;
 
 /// One client, as the list and detail endpoints render it.
@@ -28,11 +29,14 @@ pub(crate) struct ClientResponse {
 
     /// The desired-state revision this was read at.
     pub(crate) revision: ClientRevision,
+
+    /// Whether this is saved intent, a usable client, or retired.
+    pub(crate) lifecycle: LifecycleResponse,
 }
 
 impl ClientResponse {
-    /// Renders a stored client.
-    pub(crate) fn from_stored(stored: &StoredClient) -> Self {
+    /// Renders a stored client, with the lifecycle derived for it.
+    pub(crate) fn from_stored(stored: &StoredClient, lifecycle: LifecycleResponse) -> Self {
         let client = stored.document.client();
 
         Self {
@@ -41,6 +45,7 @@ impl ClientResponse {
             hosts: client.hosts.clone(),
             realm: client.identity.realm.clone(),
             revision: stored.revision.clone(),
+            lifecycle,
         }
     }
 }

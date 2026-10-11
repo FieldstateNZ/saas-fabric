@@ -14,9 +14,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { Client } from '../../api/types'
 import { Secrets } from './Secrets'
+import { SAVED_INTENT } from '../../api/lifecycle.fixture'
 
-const ACME: Client = { id: 'acme', displayName: 'Acme', hosts: [], realm: 'acme', revision: 'a' }
-const BETA: Client = { id: 'beta', displayName: 'Beta', hosts: [], realm: 'beta', revision: 'b' }
+const ACME: Client = { id: 'acme', displayName: 'Acme', hosts: [], realm: 'acme', revision: 'a', lifecycle: SAVED_INTENT }
+const BETA: Client = { id: 'beta', displayName: 'Beta', hosts: [], realm: 'beta', revision: 'b', lifecycle: SAVED_INTENT }
 
 const PATH = 'database/primary'
 const UNUSABLE = 'The control plane answered with a version this console cannot carry.'

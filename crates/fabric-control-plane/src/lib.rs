@@ -65,6 +65,7 @@ mod git_integration;
 mod handlers;
 mod identity_authority;
 mod integration;
+mod lifecycle;
 mod logging;
 mod models;
 mod operator;

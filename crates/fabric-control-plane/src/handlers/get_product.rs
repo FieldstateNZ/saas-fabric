@@ -19,7 +19,7 @@ pub(crate) async fn get_product(
 ) -> Result<Response, ControlPlaneError> {
     let stored = state.service.get(&id).await?;
     let reconciliation = state.service.reconciliation(&stored);
-    let body = ClientProductResponse::from_stored(&stored, reconciliation)?;
+    let body = ClientProductResponse::from_stored(&stored, reconciliation, state.lifecycle(&stored).await)?;
 
     let mut response = Json(body).into_response();
 

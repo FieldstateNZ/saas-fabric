@@ -16,5 +16,7 @@ pub(crate) async fn get_client(
 ) -> Result<Json<ClientResponse>, ControlPlaneError> {
     let stored = state.service.get(&client_id).await?;
 
-    Ok(Json(ClientResponse::from_stored(&stored)))
+    let lifecycle = state.lifecycle(&stored).await;
+
+    Ok(Json(ClientResponse::from_stored(&stored, lifecycle)))
 }

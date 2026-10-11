@@ -63,5 +63,6 @@ pub(crate) fn acme() -> Client {
         // This crate reconciles identity, not placement (ADR 0023 part 2):
         // nothing here asks a fixture client to declare a data intent.
         data: std::collections::BTreeMap::new(),
+        lifecycle: fabric_client_model::LifecycleRecord::default(),
     }
 }

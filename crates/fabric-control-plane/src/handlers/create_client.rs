@@ -28,7 +28,7 @@ pub(crate) async fn create_client(
 ) -> Result<Response, ControlPlaneError> {
     let stored = state.service.create_client(&operator, request).await?;
     let reconciliation = state.service.reconciliation(&stored);
-    let body = ClientProductResponse::from_stored(&stored, reconciliation)?;
+    let body = ClientProductResponse::from_stored(&stored, reconciliation, state.lifecycle(&stored).await)?;
 
     // After the write, and after the response is decided: convergence is a
     // separate event that fails independently, and this one borrows an

@@ -33,10 +33,12 @@
 //! Git at all, and a refused write leaves no commit but is still worth
 //! knowing about.
 
+mod lifecycle;
 mod product;
 mod registry;
 mod selection;
 
+pub(crate) use lifecycle::{client_deletion_confirmed, client_tombstoned};
 pub(crate) use product::{catalogue_changed, client_created, product_updated};
 pub(crate) use registry::{registry_changed, RegistryOperation};
 pub(crate) use selection::{component_selected, Selecting, SelectionOutcome};

@@ -23,6 +23,7 @@
 
 mod catalogue_source;
 mod compose_error;
+mod lifecycle_source;
 mod outcome;
 mod pass;
 mod protocol;
@@ -32,13 +33,15 @@ mod reads;
 mod report_outcome;
 mod snapshot;
 mod state;
+mod withhold;
 
 #[cfg(test)]
 pub(crate) mod testing;
 
 pub use catalogue_source::{CatalogueSourceError, RuntimeCatalogueSource};
 pub use compose_error::ComposeError;
+pub use lifecycle_source::{LifecycleSourceError, TenantLifecycleSource};
 pub use outcome::{PassOutcome, PassResult, WaitingReason};
 pub use publisher::RuntimePublisher;
 pub use snapshot::compose;
-pub use state::{LastPass, PublicationState};
+pub use state::{LastPass, PublicationState, PublishedTenants};

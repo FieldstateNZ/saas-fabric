@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { Catalogue, ClientProductResponse } from '../api/catalogue-types'
 import { ClientWorkspace } from './ClientWorkspace'
+import { SAVED_INTENT } from '../api/lifecycle.fixture'
 
 function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -23,7 +24,7 @@ const catalogue: Catalogue = {
 
 function product(revision: string): ClientProductResponse {
   return {
-    client: { id: 'acme', displayName: 'Acme', hosts: [], realm: 'acme', revision },
+    client: { id: 'acme', displayName: 'Acme', hosts: [], realm: 'acme', revision, lifecycle: SAVED_INTENT },
     product: {
       legalName: 'Acme Ltd',
       region: 'New Zealand',

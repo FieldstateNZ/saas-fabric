@@ -3,6 +3,7 @@
 use axum::extract::State;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
+use fabric_client_model::LifecycleUse;
 use fabric_platform_management::{DesiredStateError, PlatformError};
 use http::header::ETAG;
 use http::{HeaderMap, HeaderValue};
@@ -30,7 +31,8 @@ use crate::{preconditions, ControlPlaneError, Operator};
 /// # Errors
 ///
 /// [`ControlPlaneError`] if this deployment manages no platform, there is
-/// no such client, `{logical}` does not parse as a
+/// no such client, the client is tombstoned (`409` `client_retired`),
+/// `{logical}` does not parse as a
 /// [`fabric_core::LogicalDataSourceName`] (`400`), the client's document
 /// names no `spec.data` entry for it
 /// ([`ControlPlaneError::LogicalDataSourceNotDeclared`], `422`
@@ -52,6 +54,7 @@ pub(crate) async fn place_data_source(
     let expected = preconditions::required_platform_revision(&headers)?;
 
     let stored = state.service.get(&client_id).await?;
+    crate::lifecycle::require(&stored.document, LifecycleUse::Place)?;
 
     let intents = &stored.document.client().data;
     let Some(intent) = intents.get(&logical) else {

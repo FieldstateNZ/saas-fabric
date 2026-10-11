@@ -1,4 +1,5 @@
 import type { Client } from '../api/types'
+import { LifecycleStatus } from './LifecycleStatus'
 import { clientHref } from './navigation'
 import { Status } from './Status'
 import type { IdentityEntry } from './useInventory'
@@ -34,6 +35,9 @@ export function ClientDirectoryRow({
       </td>
       <td className="mono">{client.hosts.join(', ') || 'No domains'}</td>
       <td className="mono">{client.realm}</td>
+      <td>
+        <LifecycleStatus lifecycle={client.lifecycle} compact />
+      </td>
       <td>
         <Status value={loading ? 'unknown' : (entry?.identity?.reconciliation.status ?? 'unknown')}>
           {loading ? 'Loading' : (entry?.identity?.reconciliation.status ?? 'Unavailable')}

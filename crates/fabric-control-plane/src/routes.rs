@@ -1,8 +1,7 @@
 //! The control-plane API's HTTP surface.
 //!
-//! At the 150-line limit: one function, `control_plane_routes`, with the
-//! table naming every path it serves kept beside the `.route(...)` calls it
-//! describes, so the two cannot drift apart.
+//! At the 150-line limit: one function, `control_plane_routes`, with the table naming every
+//! path it serves kept beside the `.route(...)` calls it describes, so the two cannot drift apart.
 
 use axum::routing::{get, post};
 use axum::Router;
@@ -11,6 +10,7 @@ use crate::handlers;
 use crate::state::ControlPlaneState;
 
 mod integrations;
+mod lifecycle;
 mod platform;
 mod registries;
 
@@ -24,8 +24,7 @@ mod registries;
 /// repository, built and deployed together — versioning a path whose only
 /// caller ships in the same image would be ceremony, not compatibility.
 ///
-/// That stops holding the moment anything else calls this API. The answer
-/// then is the Data API's: mount `/api/v1` alongside `/api`.
+/// That stops holding the moment anything else calls this API: then mount `/api/v1` beside `/api`.
 pub const API_PREFIX: &str = "/api";
 
 /// Builds the control-plane router.
@@ -58,7 +57,8 @@ pub const API_PREFIX: &str = "/api";
 /// GET        /api/activity                          every recorded action, newest first
 /// GET        /api/operator                          who is signed in
 /// GET/POST   /api/clients                           list clients / create one
-/// GET        /api/clients/{clientId}                one client's overview
+/// GET        /api/clients/{clientId}                one client's overview and lifecycle
+/// POST       /api/clients/{clientId}/{tombstone,deletion-confirmation}  see routes::lifecycle
 /// GET/PUT    /api/clients/{clientId}/product        its product config / replace it   (If-Match)
 /// GET/PUT    /api/clients/{clientId}/identity       its identity and reconciliation state / replace it
 /// GET        /api/clients/{clientId}/placements               every logical data source, and what is true of each
@@ -68,9 +68,8 @@ pub const API_PREFIX: &str = "/api";
 /// POST       /api/clients/{clientId}/secrets/reveal             reveal values   (path in the body)
 /// ```
 ///
-/// Not here: anything that names a file, edits a document as text, or reaches
-/// an identity provider (§8, ADR 0008). `PUT` means what the Data API does
-/// not: a genuine whole-resource replacement.
+/// Not here: anything that names a file, edits a document as text, or reaches an identity provider
+/// (§8, ADR 0008). `PUT` means what the Data API does not: a genuine whole-resource replacement.
 pub(crate) fn control_plane_routes(state: ControlPlaneState) -> Router {
     // Mounted only when the deployment has a sign-in. OIDC always builds one
     // (`operator_keys::establish` in the host); `None` is a harness wiring an
@@ -144,7 +143,8 @@ pub(crate) fn control_plane_routes(state: ControlPlaneState) -> Router {
                 .merge(session)
                 .merge(integrations::client_configuration())
                 .merge(integrations::platform_management())
-                .merge(registries::routes()),
+                .merge(registries::routes())
+                .merge(lifecycle::routes()),
         )
         .with_state(state)
 }

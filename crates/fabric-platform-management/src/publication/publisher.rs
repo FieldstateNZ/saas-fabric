@@ -23,12 +23,14 @@ use super::outcome::{PassOutcome, PassResult};
 use super::state::PublicationState;
 use crate::PlatformRepository;
 use crate::RuntimeCatalogueSource;
+use crate::TenantLifecycleSource;
 
 /// Publishes one environment's runtime documents.
 ///
 /// Reads what the platform has declared ([`crate::DataSourceState`]) and
 /// recorded ([`crate::PlacementState`]), reads the derived catalogue
-/// ([`RuntimeCatalogueSource`]), composes a complete
+/// ([`RuntimeCatalogueSource`]) and the tenants a client lifecycle withholds
+/// ([`TenantLifecycleSource`]), composes a complete
 /// [`RuntimeSnapshot`](fabric_runtime_publication::RuntimeSnapshot), and
 /// offers it to a [`RuntimePublication`] target -- a filesystem in tests, a
 /// Kubernetes `ConfigMap` set in production. Everything this struct needs
@@ -38,6 +40,7 @@ pub struct RuntimePublisher {
     pub(super) environment: String,
     pub(super) platform: Arc<dyn PlatformRepository>,
     pub(super) catalogue: Arc<dyn RuntimeCatalogueSource>,
+    pub(super) lifecycle: Arc<dyn TenantLifecycleSource>,
     pub(super) target: Arc<dyn RuntimePublication>,
     pub(super) clock: Arc<dyn Clock>,
 }
@@ -50,6 +53,7 @@ impl RuntimePublisher {
         environment: String,
         platform: Arc<dyn PlatformRepository>,
         catalogue: Arc<dyn RuntimeCatalogueSource>,
+        lifecycle: Arc<dyn TenantLifecycleSource>,
         target: Arc<dyn RuntimePublication>,
         clock: Arc<dyn Clock>,
     ) -> Self {
@@ -57,6 +61,7 @@ impl RuntimePublisher {
             environment,
             platform,
             catalogue,
+            lifecycle,
             target,
             clock,
         }
@@ -87,11 +92,11 @@ impl RuntimePublisher {
             return PassResult::AlreadyRunning;
         };
 
-        let outcome = self.run_pass().await;
+        let (outcome, published) = self.run_pass().await;
 
         self.log_pass(&outcome);
         let at_unix_seconds = self.clock.now_unix_seconds();
-        state.record(at_unix_seconds, outcome.clone());
+        state.record(at_unix_seconds, outcome.clone(), published);
 
         PassResult::Ran {
             at_unix_seconds,

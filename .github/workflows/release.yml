@@ -241,13 +241,15 @@ jobs:
   # gates: a pull request runs exactly the checks a tag would, and fails on
   # the same disagreement.
   #
-  # A release above the floor additionally asks the registry for the floor's
-  # own provenance. The floor is a promise that the release it names reads
-  # every format this source writes; a version string cannot keep that
-  # promise (Riley, #139 and #140). Only the floor's published provenance,
-  # attached by this workflow, says what contracts it was built at — and if
-  # it was cut without them, or without provenance at all, the floor has to
-  # advance rather than be assumed.
+  # A release above the floor additionally proves the floor. The floor is a
+  # promise that the release it names reads every format this source writes;
+  # a version string cannot keep that promise (Riley, #139 and #140). Only the
+  # floor's complete publication can: its provenance and own
+  # compatibility.yaml, bound to one commit of this repository, to every
+  # role's image — the publisher's above all, since publisherContract is the
+  # control plane's — by tag, digest and label, and to its component
+  # descriptor, which only a finished release has. If any of it is missing
+  # or disagrees, the floor has to advance rather than be assumed.
   compatibility:
     name: compatibility
     runs-on: ubuntu-latest
@@ -277,23 +279,56 @@ jobs:
       - name: Check the contracts the source is built with
         run: python3 scripts/release_compatibility.py contracts
 
-      - name: Require the floor's provenance to carry these contracts
+      # Whether this release is the floor, and so has no earlier floor to prove.
+      - name: Find the floor
+        id: floor
         if: needs.version.outputs.publish == 'true'
-        env:
-          TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          ACTOR: ${{ github.actor }}
         run: |
           set -euo pipefail
           floor=$(python3 scripts/release_compatibility.py show minimumRollableVersion)
-          repository=$(python3 scripts/release_compatibility.py show repository)
+          echo "version=${floor}" >> "$GITHUB_OUTPUT"
           if [ "${VERSION}" = "${floor}" ]; then
-            echo "${VERSION} is the floor: this release's own provenance is the proof, checked by verify and attached by the descriptor job."
-            exit 0
+            echo "prove=false" >> "$GITHUB_OUTPUT"
+            echo "${VERSION} is the floor: verify checks its contracts and the descriptor job attaches its proof."
+          else
+            echo "prove=true" >> "$GITHUB_OUTPUT"
           fi
-          case "${repository}" in
-            "${REGISTRY}/${OWNER}/"*) ;;
-            *) echo "::error::compatibility.yaml names ${repository}, which this workflow does not publish"; exit 1 ;;
-          esac
+
+      # See "The toolchain" in ci.yml. Built before the registry login, as in
+      # the `descriptor` job, so no dependency's build script runs while a
+      # token is on disk: the roles component.yaml publishes, and Fabric's own
+      # reader of whether a version is complete.
+      - if: steps.floor.outputs.prove == 'true'
+        run: |
+          rustup toolchain install
+          rustup show active-toolchain
+          cargo build -q -p fabric-component --example descriptor
+          cargo build -q -p fabric-registry --example release_unit
+
+      # The floor's complete published proof, assembled from the registry and
+      # judged offline by release_compatibility.py:
+      #
+      #   images/<role>.json     what `<repository>:<floor>` resolves to, and
+      #                          that image's source/revision/version labels,
+      #                          for every role component.yaml publishes —
+      #                          the publisher (controlPlane) included
+      #   release/               the provenance and the floor's own
+      #                          compatibility.yaml, attached to its runtime
+      #                          image
+      #   descriptor/            its component descriptor, attached last, so
+      #                          an interrupted publication has none
+      #
+      # Then Fabric's reader must say the floor reads back as complete.
+      - name: Require the floor's complete proof to carry these contracts
+        if: steps.floor.outputs.prove == 'true'
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ACTOR: ${{ github.actor }}
+          FLOOR: ${{ steps.floor.outputs.version }}
+          SOURCE: ${{ github.server_url }}/${{ github.repository }}
+        run: |
+          set -euo pipefail
+          cargo run -q -p fabric-component --example descriptor -- images component.yaml > roles.txt
 
           printf '%s' "${TOKEN}" | docker login "${REGISTRY}" -u "${ACTOR}" --password-stdin
           oras() {
@@ -303,22 +338,57 @@ jobs:
               "$@" --registry-config /auth/config.json
           }
           advance="cut the floor with this workflow, or advance minimumRollableVersion"
+          mkdir -p floor/images floor/release floor/descriptor
 
-          if ! subject=$(oras resolve "${repository}:${floor}"); then
-            echo "::error::the floor ${repository}:${floor} could not be resolved; ${advance}"
-            exit 1
-          fi
-          attached=$(oras discover --format json "${repository}@${subject}" \
-            | jq -r '[(.referrers // .manifests // [])[] | select(.artifactType == "application/vnd.saas-fabric.release.v1") | .digest] | unique | .[]')
-          count=$(printf '%s' "${attached}" | grep -c . || true)
-          if [ "${count}" -ne 1 ]; then
-            echo "::error::the floor ${repository}:${floor} carries ${count} release provenance documents, not one; ${advance}"
-            exit 1
-          fi
-          mkdir -p floor-release
-          oras pull --output floor-release "${repository}@${attached}"
+          while read -r role repository; do
+            case "${repository}" in
+              "${REGISTRY}/${OWNER}/"*) ;;
+              *) echo "::error::component.yaml names ${repository}, which this workflow does not publish"; exit 1 ;;
+            esac
+            if ! digest=$(oras resolve "${repository}:${FLOOR}"); then
+              echo "::error::the floor ${repository}:${FLOOR} could not be resolved; ${advance}"
+              exit 1
+            fi
+            # A single image's config, or — if the push wrote an index — the
+            # config of its one linux image, attestation manifests aside.
+            manifest=$(oras manifest fetch "${repository}@${digest}")
+            target="${digest}"
+            if printf '%s' "${manifest}" | jq -e '.manifests' >/dev/null; then
+              target=$(printf '%s' "${manifest}" | jq -er '
+                [.manifests[] | select(.platform.os == "linux")
+                  | select((.annotations // {})["vnd.docker.reference.type"] == null)]
+                | if length == 1 then .[0].digest else error("not one linux image") end')
+            fi
+            oras manifest fetch-config "${repository}@${target}" \
+              | jq --arg digest "${digest}" '{digest: $digest, labels: (.config.Labels // {})}' \
+              > "floor/images/${role}.json"
+          done < roles.txt
+
+          repository=$(awk '$1 == "runtime" { print $2 }' roles.txt)
+          subject=$(jq -r .digest floor/images/runtime.json)
+          referrers=$(oras discover --format json "${repository}@${subject}")
+          pull_one() {
+            local filter="$1" into="$2" what="$3" found count
+            found=$(printf '%s' "${referrers}" \
+              | jq -r "[(.referrers // .manifests // [])[] | select(${filter}) | .digest] | unique | .[]")
+            count=$(printf '%s' "${found}" | grep -c . || true)
+            if [ "${count}" -ne 1 ]; then
+              echo "::error::the floor ${repository}:${FLOOR} carries ${count} ${what}, not one; ${advance}"
+              exit 1
+            fi
+            oras pull --output "${into}" "${repository}@${found}"
+          }
+          pull_one '.artifactType == "application/vnd.saas-fabric.release.v1"' floor/release "release proofs"
+          pull_one '(.artifactType // "") | test("^application/vnd\\.saas-fabric\\.component\\.v[0-9]+$")' \
+            floor/descriptor "component descriptors"
+
           python3 scripts/release_compatibility.py floor-artifact \
-            floor-release/release-provenance.json --subject "${subject}"
+            --proof floor --source "${SOURCE}" --roles roles.txt
+
+          if ! cargo run -q -p fabric-registry --example release_unit -- "${repository}" "${FLOOR}"; then
+            echo "::error::the floor ${repository}:${FLOOR} does not read back as complete; ${advance}"
+            exit 1
+          fi
 
   # ---------------------------------------------------------------------------
   # Three images from one context
@@ -682,8 +752,9 @@ jobs:
 
       # compatibility.yaml and the provenance, attached to the runtime image
       # before its component descriptor: a version that reads back as complete
-      # always carries both, and a later release's `compatibility` job reads
-      # them back from whichever version is then the floor. A family of its
+      # always carries both. The descriptor stays last, so a publication
+      # interrupted between the two has proof but no descriptor, and a later
+      # release's `compatibility` job refuses it as a floor. A family of its
       # own, which Fabric's descriptor reader does not count as a descriptor.
       #
       # Idempotent as the descriptor is: the same two documents attached is

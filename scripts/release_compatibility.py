@@ -21,12 +21,15 @@ every pull request. This script holds a *release* to the file:
         and floor it states. The bytes are fixed by its inputs, so a re-run
         renders the same document.
 
-    floor-artifact PROVENANCE --subject DIGEST
-        Refuses a release above the floor unless the floor's own published
-        provenance shows it was built at the contracts this source states. A
-        version string is not proof the floor carries a format: if the floor
-        was cut without that support, or without provenance at all, the floor
-        must advance.
+    floor-artifact --proof DIR --source URL --roles ROLES
+        Refuses a release above the floor unless the floor's complete published
+        proof binds it: its provenance, its own compatibility.yaml, its
+        component descriptor and what each of its image tags resolves to,
+        all agreeing on the component, the version, this repository's source,
+        one full commit and every role's repository and digest, and recording
+        the contracts this source states. A version string is not proof the
+        floor carries a format: if the floor was cut without that support,
+        without provenance, or never completed, the floor must advance.
 
     show KEY
         Prints minimumRollableVersion or repository, for the workflow.
@@ -88,6 +91,7 @@ DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
 COMMIT = re.compile(r"^[0-9a-f]{40}$")
 ROLE = re.compile(r"^[a-z][A-Za-z0-9]*$")
 REPOSITORY = re.compile(r"^[a-z0-9.-]+(?::[0-9]+)?(?:/[a-z0-9._-]+)+$")
+SOURCE = re.compile(r"^https://[A-Za-z0-9.-]+/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 
 
 class Refused(Exception):
@@ -181,7 +185,11 @@ def parse_subset(text: str) -> dict:
 
 def load_compatibility(root: Path = REPO_ROOT) -> dict:
     """compatibility.yaml's spec, with its shape checked."""
-    path = root / COMPATIBILITY_FILE
+    return load_compatibility_file(root / COMPATIBILITY_FILE)
+
+
+def load_compatibility_file(path: Path) -> dict:
+    """The spec of a compatibility.yaml at `path`, with its shape checked."""
     if not path.is_file():
         raise Refused(f"{COMPATIBILITY_FILE} does not exist")
     document = parse_subset(path.read_text(encoding="utf-8"))
@@ -202,7 +210,11 @@ def load_compatibility(root: Path = REPO_ROOT) -> dict:
 
 
 def compatibility_digest(root: Path = REPO_ROOT) -> str:
-    return "sha256:" + hashlib.sha256((root / COMPATIBILITY_FILE).read_bytes()).hexdigest()
+    return file_digest(root / COMPATIBILITY_FILE)
+
+
+def file_digest(path: Path) -> str:
+    return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def stated(spec: dict) -> dict:
@@ -267,35 +279,161 @@ def check_floor(version: str, root: Path = REPO_ROOT) -> str:
     return floor
 
 
-def check_floor_artifact(provenance: dict, subject: str, root: Path = REPO_ROOT) -> None:
-    """Refuses unless `provenance` is the floor release's own, names `subject`
-    as its runtime image, and records the contracts this source states."""
-    spec = load_compatibility(root)
-    floor = spec["minimumRollableVersion"]
-    advance = "; cut the floor with this workflow or advance minimumRollableVersion"
+# The role whose image is the publisher: publisherContract is a capability of
+# the control plane's binary, so a floor proof without that image, bound by
+# digest, proves nothing about it.
+PUBLISHER_ROLE = "controlPlane"
+
+# The OCI labels every image leg stamps (release.yml, "Build").
+LABEL_SOURCE = "org.opencontainers.image.source"
+LABEL_REVISION = "org.opencontainers.image.revision"
+LABEL_VERSION = "org.opencontainers.image.version"
+
+FLOOR_PROVENANCE = "release/release-provenance.json"
+FLOOR_COMPATIBILITY = "release/" + COMPATIBILITY_FILE
+FLOOR_DESCRIPTOR = "descriptor/component.json"
+FLOOR_IMAGES = "images"
+
+
+def read_roles(path: Path) -> dict[str, str]:
+    """`role repository` lines, as `descriptor images component.yaml` prints
+    them: the roles a release publishes, and where."""
+    roles: dict[str, str] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        parts = line.split()
+        if len(parts) != 2 or not ROLE.match(parts[0]) or not REPOSITORY.match(parts[1]):
+            raise Refused(f"{line!r} is not `role repository`")
+        if parts[0] in roles:
+            raise Refused(f"the role {parts[0]} is listed twice")
+        roles[parts[0]] = parts[1]
+    if PUBLISHER_ROLE not in roles:
+        raise Refused(f"no {PUBLISHER_ROLE} role is published, so no publisher can be bound")
+    return roles
+
+
+def _read_json(proof: Path, relative: str, what: str) -> dict:
+    try:
+        document = json.loads((proof / relative).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        raise Refused(f"the floor's {what} could not be read: {error}") from error
+    if not isinstance(document, dict):
+        raise Refused(f"the floor's {what} is not a JSON object")
+    return document
+
+
+def check_floor_artifact(proof: Path, source: str, roles: dict[str, str], root: Path = REPO_ROOT) -> None:
+    """Refuses unless everything in `proof` binds the floor release to one
+    commit of `source`, publishing every role in `roles`, built at the
+    contracts this source states, and completed."""
+    current = load_compatibility(root)
+    floor = current["minimumRollableVersion"]
+    component = current["component"]
+
+    def refuse(reason: str) -> Refused:
+        return Refused(
+            f"the floor {floor}: {reason}; cut the floor with this workflow "
+            "or advance minimumRollableVersion"
+        )
+
+    check_source(source)
+
+    # The provenance: the component, the version, this repository, one commit.
+    provenance = _read_json(proof, FLOOR_PROVENANCE, "release provenance")
     if provenance.get("apiVersion") != API_VERSION or provenance.get("kind") != PROVENANCE_KIND:
-        raise Refused(f"the floor {floor} carries no {PROVENANCE_KIND}{advance}")
-    body = provenance.get("spec") or {}
+        raise refuse(f"it carries no {PROVENANCE_KIND}")
+    body = provenance.get("spec")
+    if not isinstance(body, dict):
+        raise refuse("its provenance has no spec")
+    if body.get("component") != component:
+        raise refuse(f"its provenance is for component {body.get('component')!r}, not {component}")
     if body.get("version") != floor:
-        raise Refused(f"the floor's provenance is for {body.get('version')!r}, not {floor}{advance}")
-    runtime = [
-        image for image in body.get("images", []) if image.get("repository") == spec["repository"]
-    ]
-    if len(runtime) != 1 or runtime[0].get("digest") != subject:
-        raise Refused(f"the floor's provenance does not name {spec['repository']}@{subject}{advance}")
-    recorded = body.get("contracts") or {}
-    wanted = stated(spec)
+        raise refuse(f"its provenance is for {body.get('version')!r}")
+    recorded_source = body.get("source") if isinstance(body.get("source"), dict) else {}
+    if recorded_source.get("repository") != source:
+        raise refuse(f"its provenance names the source {recorded_source.get('repository')!r}, not {source}")
+    commit = recorded_source.get("commit")
+    if not isinstance(commit, str) or not COMMIT.match(commit):
+        raise refuse(f"its provenance names {commit!r}, not a full commit SHA")
+
+    # Every role, once, at the repository this release publishes it to, by a
+    # well-formed digest.
+    images = body.get("images")
+    if not isinstance(images, list) or not all(isinstance(image, dict) for image in images):
+        raise refuse("its provenance lists no images")
+    recorded: dict[str, dict] = {}
+    for image in images:
+        role, repository, digest = image.get("role"), image.get("repository"), image.get("digest")
+        if role in recorded:
+            raise refuse(f"its provenance names the role {role!r} twice")
+        if not isinstance(digest, str) or not DIGEST.match(digest):
+            raise refuse(f"its provenance names {role!r} by {digest!r}, not a sha256 digest")
+        recorded[role] = {"repository": repository, "digest": digest}
+    for role in sorted(set(roles) | set(recorded), key=lambda name: (name != PUBLISHER_ROLE, name)):
+        if role not in recorded:
+            what = "the publisher, " if role == PUBLISHER_ROLE else ""
+            raise refuse(f"its provenance does not name {what}{role}")
+        if role not in roles:
+            raise refuse(f"its provenance names {role!r}, which this release does not publish")
+        if recorded[role]["repository"] != roles[role]:
+            raise refuse(f"its provenance names {role} at {recorded[role]['repository']!r}, not {roles[role]}")
+
+    # The floor's own compatibility.yaml, by the digest its provenance
+    # recorded, stating the contracts its provenance recorded.
+    floor_file = proof / FLOOR_COMPATIBILITY
+    if not floor_file.is_file():
+        raise refuse(f"it carries no {COMPATIBILITY_FILE}")
+    stated_file = body.get("compatibility") if isinstance(body.get("compatibility"), dict) else {}
+    if file_digest(floor_file) != stated_file.get("digest"):
+        raise refuse(f"its {COMPATIBILITY_FILE} is not the one its provenance recorded")
+    floor_spec = load_compatibility_file(floor_file)
+    contracts = body.get("contracts") if isinstance(body.get("contracts"), dict) else {}
+    if stated(floor_spec) != contracts:
+        raise refuse(f"its {COMPATIBILITY_FILE} does not state the contracts its provenance recorded")
+    if floor_spec["component"] != component or floor_spec["repository"] != current["repository"]:
+        raise refuse(f"its {COMPATIBILITY_FILE} is for another component or repository")
+    if precedes(floor, floor_spec["minimumRollableVersion"]):
+        raise refuse(f"its own floor {floor_spec['minimumRollableVersion']} is above itself")
+
+    # Built at what this source states. Contracts only rise, so a floor that
+    # records less cannot read what this source writes.
     for key in ("publisherContract", "minimumReaderContract"):
-        if recorded.get(key) != wanted[key]:
-            raise Refused(
-                f"the floor {floor} was built with {key} {recorded.get(key)!r}, "
-                f"but this source states {wanted[key]}{advance}"
-            )
+        wanted = current["publication"][key]
+        if contracts.get(key) != wanted:
+            raise refuse(f"it was built with {key} {contracts.get(key)!r}, but this source states {wanted}")
+
+    # Completed: the component descriptor is attached last, so its presence,
+    # naming the same images, is what separates a finished floor from an
+    # interrupted one.
+    descriptor = _read_json(proof, FLOOR_DESCRIPTOR, "component descriptor")
+    described = descriptor.get("spec") if isinstance(descriptor.get("spec"), dict) else {}
+    if descriptor.get("apiVersion") != API_VERSION or descriptor.get("kind") != "Component":
+        raise refuse("its component descriptor is not a Component")
+    if described.get("name") != component or described.get("version") != floor:
+        raise refuse("its component descriptor is for another component or version")
+    if described.get("images") != recorded:
+        raise refuse("its component descriptor and provenance name different images")
+
+    # And the registry agrees: each role's floor tag resolves to the recorded
+    # digest, and each image says it was built from this source, at this
+    # commit, as this version.
+    for role, image in sorted(recorded.items()):
+        observed = _read_json(proof, f"{FLOOR_IMAGES}/{role}.json", f"{role} image")
+        if observed.get("digest") != image["digest"]:
+            raise refuse(f"{roles[role]}:{floor} is {observed.get('digest')!r}, not the recorded {image['digest']}")
+        labels = observed.get("labels") if isinstance(observed.get("labels"), dict) else {}
+        for label, wanted in ((LABEL_SOURCE, source), (LABEL_REVISION, commit), (LABEL_VERSION, floor)):
+            if labels.get(label) != wanted:
+                raise refuse(f"the {role} image's {label} is {labels.get(label)!r}, not {wanted}")
 
 
 # ---------------------------------------------------------------------------
 # Provenance
 # ---------------------------------------------------------------------------
+
+
+def check_source(source: str) -> None:
+    if not SOURCE.match(source):
+        raise Refused(f"{source!r} is not a source repository URL")
 
 
 def parse_image(argument: str) -> dict:
@@ -320,6 +458,7 @@ def render_provenance(
     check_floor(version, root)
     if not COMMIT.match(commit):
         raise Refused(f"{commit!r} is not a full commit SHA")
+    check_source(source)
     if not images:
         raise Refused("a release publishes at least one image")
     parsed = sorted((parse_image(image) for image in images), key=lambda image: image["role"])
@@ -362,8 +501,9 @@ def main(argv: list[str] | None = None, root: Path = REPO_ROOT) -> int:
     provenance.add_argument("--image", action="append", default=[])
     provenance.add_argument("--out", required=True)
     artifact = commands.add_parser("floor-artifact")
-    artifact.add_argument("provenance")
-    artifact.add_argument("--subject", required=True)
+    artifact.add_argument("--proof", required=True)
+    artifact.add_argument("--source", required=True)
+    artifact.add_argument("--roles", required=True)
     show = commands.add_parser("show")
     show.add_argument("key", choices=["minimumRollableVersion", "repository"])
     arguments = parser.parse_args(argv)
@@ -379,12 +519,9 @@ def main(argv: list[str] | None = None, root: Path = REPO_ROOT) -> int:
             )
             Path(arguments.out).write_text(rendered, encoding="utf-8")
         elif arguments.command == "floor-artifact":
-            try:
-                document = json.loads(Path(arguments.provenance).read_text(encoding="utf-8"))
-            except (OSError, ValueError) as error:
-                raise Refused(f"the floor's provenance could not be read: {error}") from error
-            check_floor_artifact(document if isinstance(document, dict) else {}, arguments.subject, root)
-            print("the floor's published provenance carries this source's contracts")
+            roles = read_roles(Path(arguments.roles))
+            check_floor_artifact(Path(arguments.proof), arguments.source, roles, root)
+            print("the floor's complete published proof carries this source's contracts")
         else:
             print(load_compatibility(root)[arguments.key])
     except Refused as refusal:

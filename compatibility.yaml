@@ -10,9 +10,12 @@
 # The release workflow holds a tag to this file before building: a version
 # below minimumRollableVersion is refused, the source's contract constants
 # must equal the values here, and a release above the floor must find the
-# floor's own published provenance recording these contracts. The floor's
-# version string is not that proof. If the floor was cut without the
-# support, or without provenance, the floor advances.
+# floor's complete publication: provenance and its own compatibility file
+# recording these contracts, bound to one commit of this repository and to
+# every image (the control-plane publisher included) by tag, digest and
+# label, and a component descriptor showing it finished. The floor's version
+# string is not that proof. If the floor was cut without the support, without
+# provenance, or never completed, the floor advances.
 #
 # minimumRollableVersion is the oldest release that reads everything this
 # source writes. Platform Management refuses an in-product rollback of the

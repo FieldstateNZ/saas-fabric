@@ -289,51 +289,200 @@ class Provenance(TreeCase):
         self.assertIn("publisherContract", err)
 
 
+SOURCE = "https://github.com/FieldstateNZ/saas-fabric"
+ROLES = {
+    "runtime": (RUNTIME, DIGEST_A),
+    "controlPlane": (f"{RUNTIME}-control-plane", DIGEST_B),
+    "console": (f"{RUNTIME}-control-plane-ui", DIGEST_C),
+}
+
+
 class FloorArtifact(TreeCase):
+    """A floor proof as the workflow assembles it: the pulled release bundle
+    and component descriptor, and each role's resolved tag and labels."""
+
     def setUp(self) -> None:
         super().setUp()
         write_tree(self.root)
-        self.path = self.root / "floor.json"
-
-    def floor_provenance(self, **contracts: int) -> dict:
-        out = self.root / "rendered.json"
-        rc.main(
-            ["provenance", "--version", "0.3.0-preview.16", "--commit", COMMIT,
-             "--source", "https://github.com/FieldstateNZ/saas-fabric", "--out", str(out),
-             "--image", f"runtime={RUNTIME}@{DIGEST_A}"],
-            root=self.root,
+        self.proof = self.root / "floor"
+        self.roles = self.root / "roles.txt"
+        self.roles.write_text("".join(f"{role} {repo}\n" for role, (repo, _) in ROLES.items()))
+        (self.proof / "release").mkdir(parents=True)
+        (self.proof / "descriptor").mkdir()
+        (self.proof / "images").mkdir()
+        (self.proof / "release" / "compatibility.yaml").write_bytes(
+            (self.root / "compatibility.yaml").read_bytes()
         )
-        document = json.loads(out.read_text())
-        document["spec"]["contracts"].update(contracts)
-        return document
+        rendered = rc.render_provenance(
+            "0.3.0-preview.16", COMMIT, SOURCE,
+            [f"{role}={repo}@{digest}" for role, (repo, digest) in ROLES.items()], self.root,
+        )
+        self.provenance = json.loads(rendered)
+        self.descriptor = {
+            "apiVersion": "fabric.fieldstate.nz/v1",
+            "kind": "Component",
+            "spec": {
+                "name": "saas-fabric",
+                "version": "0.3.0-preview.16",
+                "images": {role: {"repository": repo, "digest": digest} for role, (repo, digest) in ROLES.items()},
+            },
+        }
+        self.observed = {
+            role: {
+                "digest": digest,
+                "labels": {
+                    "org.opencontainers.image.source": SOURCE,
+                    "org.opencontainers.image.revision": COMMIT,
+                    "org.opencontainers.image.version": "0.3.0-preview.16",
+                },
+            }
+            for role, (_, digest) in ROLES.items()
+        }
 
-    def check(self, document: object, subject: str = DIGEST_A) -> tuple[int, str]:
-        self.path.write_text(json.dumps(document) if document is not None else "not json")
-        status, _, err = self.run_cli("floor-artifact", str(self.path), "--subject", subject)
+    def check(self, source: str = SOURCE) -> tuple[int, str]:
+        (self.proof / "release" / "release-provenance.json").write_text(json.dumps(self.provenance))
+        if self.descriptor is not None:
+            (self.proof / "descriptor" / "component.json").write_text(json.dumps(self.descriptor))
+        for role, observed in self.observed.items():
+            (self.proof / "images" / f"{role}.json").write_text(json.dumps(observed))
+        status, _, err = self.run_cli(
+            "floor-artifact", "--proof", str(self.proof), "--source", source, "--roles", str(self.roles)
+        )
         return status, err
 
-    def test_a_floor_built_at_these_contracts_is_admitted(self) -> None:
-        status, err = self.check(self.floor_provenance())
+    def assert_refused(self, fragment: str, source: str = SOURCE) -> None:
+        status, err = self.check(source)
+        self.assertEqual(status, 1, "the floor proof was admitted")
+        self.assertIn("::error::", err)
+        self.assertIn(fragment, err)
+
+    def images(self) -> dict:
+        return {image["role"]: image for image in self.provenance["spec"]["images"]}
+
+    def test_a_complete_floor_proof_is_admitted(self) -> None:
+        status, err = self.check()
         self.assertEqual(status, 0, err)
 
-    def test_a_floor_without_the_publisher_contract_must_advance(self) -> None:
-        status, err = self.check(self.floor_provenance(publisherContract=2))
-        self.assertEqual(status, 1)
-        self.assertIn("advance minimumRollableVersion", err)
+    # The publisher
+
+    def test_a_missing_publisher_is_refused(self) -> None:
+        spec = self.provenance["spec"]
+        spec["images"] = [image for image in spec["images"] if image["role"] == "runtime"]
+        self.assert_refused("does not name the publisher, controlPlane")
+
+    def test_a_missing_console_is_refused(self) -> None:
+        spec = self.provenance["spec"]
+        spec["images"] = [image for image in spec["images"] if image["role"] != "console"]
+        self.assert_refused("does not name console")
+
+    def test_a_publisher_at_a_foreign_repository_is_refused(self) -> None:
+        self.images()["controlPlane"]["repository"] = "ghcr.io/elsewhere/saas-fabric-control-plane"
+        self.assert_refused("names controlPlane at")
+
+    def test_a_publisher_by_an_invalid_digest_is_refused(self) -> None:
+        self.images()["controlPlane"]["digest"] = "sha256:abc"
+        self.assert_refused("not a sha256 digest")
+
+    def test_a_publisher_whose_tag_resolves_elsewhere_is_refused(self) -> None:
+        self.observed["controlPlane"]["digest"] = "sha256:" + "d" * 64
+        self.assert_refused("not the recorded")
+
+    def test_a_publisher_built_from_another_commit_is_refused(self) -> None:
+        self.observed["controlPlane"]["labels"]["org.opencontainers.image.revision"] = "f" * 40
+        self.assert_refused("image.revision")
+
+    def test_a_publisher_labelled_as_another_version_is_refused(self) -> None:
+        self.observed["controlPlane"]["labels"]["org.opencontainers.image.version"] = "0.3.0-preview.17"
+        self.assert_refused("image.version")
+
+    def test_an_unpublished_role_is_refused(self) -> None:
+        self.provenance["spec"]["images"].append(
+            {"role": "extra", "repository": f"{RUNTIME}-extra", "digest": DIGEST_A}
+        )
+        self.assert_refused("which this release does not publish")
+
+    def test_roles_without_a_publisher_are_refused(self) -> None:
+        self.roles.write_text(f"runtime {RUNTIME}\n")
+        self.assert_refused("no controlPlane role")
+
+    # The source
+
+    def test_a_malformed_commit_is_refused(self) -> None:
+        for commit in ("0123456", "G" * 40, None, COMMIT.upper()):
+            with self.subTest(commit=commit):
+                self.provenance["spec"]["source"]["commit"] = commit
+                self.assert_refused("not a full commit SHA")
+
+    def test_a_foreign_source_is_refused(self) -> None:
+        self.provenance["spec"]["source"]["repository"] = "https://github.com/someone/fork"
+        self.assert_refused("names the source")
+
+    def test_an_image_labelled_with_a_foreign_source_is_refused(self) -> None:
+        self.observed["runtime"]["labels"]["org.opencontainers.image.source"] = "https://github.com/someone/fork"
+        self.assert_refused("image.source")
+
+    def test_a_malformed_expected_source_is_refused(self) -> None:
+        self.assert_refused("not a source repository URL", source="FieldstateNZ/saas-fabric")
+
+    def test_another_component_or_version_is_refused(self) -> None:
+        self.provenance["spec"]["component"] = "other"
+        self.assert_refused("component 'other'")
+        self.provenance["spec"]["component"] = "saas-fabric"
+        self.provenance["spec"]["version"] = "0.3.0-preview.17"
+        self.assert_refused("provenance is for")
+
+    # The compatibility file
+
+    def test_a_floor_file_that_is_not_the_recorded_one_is_refused(self) -> None:
+        path = self.proof / "release" / "compatibility.yaml"
+        path.write_text(path.read_text() + "# edited\n")
+        self.assert_refused("not the one its provenance recorded")
+
+    def test_a_missing_floor_file_is_refused(self) -> None:
+        (self.proof / "release" / "compatibility.yaml").unlink()
+        self.assert_refused("carries no compatibility.yaml")
+
+    def test_recorded_contracts_the_floor_file_does_not_state_are_refused(self) -> None:
+        self.provenance["spec"]["contracts"]["publisherContract"] = 4
+        self.assert_refused("does not state the contracts")
+
+    def test_a_floor_built_below_this_sources_publisher_contract_must_advance(self) -> None:
+        write_tree(self.root, publisher=4)
+        self.assert_refused("advance minimumRollableVersion")
 
     def test_a_floor_with_a_different_reader_contract_is_refused(self) -> None:
-        self.assertEqual(self.check(self.floor_provenance(minimumReaderContract=2))[0], 1)
+        write_tree(self.root, reader=2)
+        self.assert_refused("minimumReaderContract")
 
-    def test_provenance_of_another_version_or_image_is_refused(self) -> None:
-        other = self.floor_provenance()
-        other["spec"]["version"] = "0.3.0-preview.17"
-        self.assertEqual(self.check(other)[0], 1)
-        self.assertEqual(self.check(self.floor_provenance(), subject=DIGEST_B)[0], 1)
+    def test_the_floor_file_is_compared_with_its_own_hash_not_todays(self) -> None:
+        current = self.root / "compatibility.yaml"
+        current.write_text("# a later comment\n" + current.read_text())
+        status, err = self.check()
+        self.assertEqual(status, 0, err)
+
+    # Completion
+
+    def test_an_interrupted_floor_without_a_descriptor_is_refused(self) -> None:
+        self.descriptor = None
+        self.assert_refused("component descriptor could not be read")
+
+    def test_a_descriptor_naming_other_images_is_refused(self) -> None:
+        self.descriptor["spec"]["images"]["controlPlane"]["digest"] = "sha256:" + "d" * 64
+        self.assert_refused("name different images")
+
+    def test_a_descriptor_for_another_version_is_refused(self) -> None:
+        self.descriptor["spec"]["version"] = "0.3.0-preview.17"
+        self.assert_refused("another component or version")
+
+    def test_a_missing_image_observation_is_refused(self) -> None:
+        del self.observed["console"]
+        self.assert_refused("console image could not be read")
 
     def test_missing_or_foreign_provenance_is_refused(self) -> None:
-        for document in (None, [], {}, {"apiVersion": "x", "kind": "y"}):
+        for document in ([], {}, {"apiVersion": "x", "kind": "y"}):
             with self.subTest(document=document):
-                status, err = self.check(document)
+                self.provenance = document
+                status, err = self.check()
                 self.assertEqual(status, 1)
                 self.assertIn("::error::", err)
 

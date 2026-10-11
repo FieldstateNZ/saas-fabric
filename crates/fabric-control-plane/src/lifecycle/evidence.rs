@@ -9,41 +9,16 @@
 use fabric_client_model::lifecycle::Evidence;
 use fabric_client_model::Client;
 use fabric_core::TenantId;
-use fabric_platform_management::{PlacementRecord, PublishedTenants};
 use fabric_reconciliation::ReconciliationStatus;
 
-/// What the control plane could learn about the managed platform.
-pub(crate) enum PlatformFacts {
-    /// This deployment manages no platform.
-    NotManaged,
-    /// The environment's placements could not be read.
-    Unreadable,
-    /// The placements, and what is known to be published.
-    Read {
-        /// Every recorded placement in the environment.
-        placements: Vec<PlacementRecord>,
-        /// What the last successful publication pass left published.
-        published: Published,
-    },
-}
-
-/// What is known to be published.
-pub(crate) enum Published {
-    /// This deployment has no publication target.
-    NoPublisher,
-    /// No pass has published or found nothing to change since this process
-    /// started.
-    NotYet,
-    /// The tenants a pass left published.
-    Known(PublishedTenants),
-}
+use super::facts::{Placements, PlatformFacts, Publication};
 
 /// Every logical data source the client declares has a placement.
 pub(crate) fn provisioning(client: &Client, facts: &PlatformFacts) -> Evidence {
-    let placements = match facts {
-        PlatformFacts::NotManaged => return unmet("this deployment manages no platform to place data on"),
-        PlatformFacts::Unreadable => return unmet("the environment's placements could not be read"),
-        PlatformFacts::Read { placements, .. } => placements,
+    let placements = match &facts.placements {
+        Placements::NotManaged => return unmet("this deployment manages no platform to place data on"),
+        Placements::Unreadable => return unmet("the environment's placements could not be read"),
+        Placements::Read(placements) => placements,
     };
     if client.data.is_empty() {
         return unmet("the client declares no data to place");
@@ -77,23 +52,24 @@ pub(crate) fn identity(status: ReconciliationStatus) -> Evidence {
     }
 }
 
-/// The client's tenant is in the published tenants document, at the revision
-/// its placements add up to (ADR 0023 part 4, D1).
+/// The client's tenant is in the tenants document the publication target
+/// last accepted, at the revision its placements add up to (ADR 0023 part
+/// 4, D1).
 pub(crate) fn publication(client: &Client, facts: &PlatformFacts) -> Evidence {
-    let (placements, published) = match facts {
-        PlatformFacts::NotManaged => return unmet("this deployment publishes no runtime documents"),
-        PlatformFacts::Unreadable => return unmet("the environment's placements could not be read"),
-        PlatformFacts::Read {
-            placements,
-            published,
-        } => (placements, published),
+    let placements = match &facts.placements {
+        Placements::NotManaged => return unmet("this deployment publishes no runtime documents"),
+        Placements::Unreadable => return unmet("the environment's placements could not be read"),
+        Placements::Read(placements) => placements,
     };
-    let published = match published {
-        Published::NoPublisher => return unmet("this deployment publishes no runtime documents"),
-        Published::NotYet => {
-            return unmet("no publication pass has completed since the control plane started")
+    let published = match &facts.publication {
+        Publication::NotConfigured => return unmet("this deployment publishes no runtime documents"),
+        Publication::Observed { published: None, .. } => {
+            return unmet("no publication pass has published since the control plane started")
         }
-        Published::Known(published) => published,
+        Publication::Observed {
+            published: Some(published),
+            ..
+        } => published,
     };
     let Ok(tenant) = TenantId::try_new(client.id.as_str()) else {
         return unmet("the client id is not a valid tenant id");

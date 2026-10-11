@@ -4,7 +4,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use fabric_core::{
@@ -23,9 +23,9 @@ use crate::publication::catalogue_source::CatalogueSourceError;
 use crate::publication::testing::FakePublication;
 use crate::{
     ComponentDesired, DataSourceDeclaration, DataSourceState, DataSourcesRead, DesiredRevision, DesiredState,
-    DesiredStateError, EnvironmentWrite, Hold, LifecycleSourceError, PassOutcome, PassResult,
-    PlacementRecord, PlacementState, PlacementsRead, PlatformRepository, PublicationState, Release,
-    RuntimeCatalogueSource, RuntimePublisher, TenantLifecycleSource, WaitingReason,
+    DesiredStateError, EnvironmentWrite, Hold, PassOutcome, PassResult, PlacementRecord, PlacementState,
+    PlacementsRead, PlatformRepository, PublicationState, Release, RuntimeCatalogueSource, RuntimePublisher,
+    WaitingReason,
 };
 
 fn declaration(id: &str) -> DataSourceDeclaration {
@@ -232,133 +232,18 @@ impl RuntimeCatalogueSource for GatedCatalogue {
     }
 }
 
-/// A [`TenantLifecycleSource`] that answers once, from what it was built
-/// with.
-struct FakeLifecycle(Result<BTreeSet<TenantId>, LifecycleSourceError>);
-
-#[async_trait::async_trait]
-impl TenantLifecycleSource for FakeLifecycle {
-    async fn withheld_tenants(&self) -> Result<BTreeSet<TenantId>, LifecycleSourceError> {
-        self.0.clone()
-    }
-}
-
 fn publisher(
     platform: Arc<dyn PlatformRepository>,
     catalogue: Arc<dyn RuntimeCatalogueSource>,
-    target: Arc<dyn fabric_runtime_publication::RuntimePublication>,
-) -> RuntimePublisher {
-    publisher_with(platform, catalogue, FakeLifecycle(Ok(BTreeSet::new())), target)
-}
-
-fn publisher_with(
-    platform: Arc<dyn PlatformRepository>,
-    catalogue: Arc<dyn RuntimeCatalogueSource>,
-    lifecycle: FakeLifecycle,
     target: Arc<dyn fabric_runtime_publication::RuntimePublication>,
 ) -> RuntimePublisher {
     RuntimePublisher::new(
         "lucentroot".to_owned(),
         platform,
         catalogue,
-        Arc::new(lifecycle),
         target,
         Arc::new(SystemClock::new()) as Arc<dyn Clock>,
     )
-}
-
-fn tenant(value: &str) -> TenantId {
-    TenantId::try_new(value).unwrap()
-}
-
-#[tokio::test]
-async fn a_withheld_tenant_is_left_out_and_the_others_are_published() {
-    let publisher = publisher_with(
-        Arc::new(FakePlatform::ready(
-            vec![declaration("shared-a"), declaration("shared-b")],
-            vec![placement("acme", "shared-a"), placement("globex", "shared-b")],
-        )),
-        Arc::new(FakeCatalogue(Ok(catalog_with_one_resource()))),
-        FakeLifecycle(Ok(BTreeSet::from([tenant("globex")]))),
-        Arc::new(FakePublication::new()),
-    );
-    let state = PublicationState::new();
-
-    let result = publisher.publish_once(&state).await;
-
-    assert!(
-        matches!(
-            result,
-            PassResult::Ran {
-                outcome: PassOutcome::Published { .. },
-                ..
-            }
-        ),
-        "{result:?}"
-    );
-    let held = state.published_tenants().expect("a pass published");
-    assert_eq!(
-        held.tenants,
-        BTreeMap::from([(tenant("acme"), BindingRevision::new(1))])
-    );
-}
-
-#[tokio::test]
-async fn an_unreadable_lifecycle_fails_the_pass_and_publishes_nothing() {
-    let target = Arc::new(FakePublication::new());
-    let publisher = publisher_with(
-        Arc::new(FakePlatform::ready(
-            vec![declaration("shared-a")],
-            vec![placement("acme", "shared-a")],
-        )),
-        Arc::new(FakeCatalogue(Ok(catalog_with_one_resource()))),
-        FakeLifecycle(Err(LifecycleSourceError::Unavailable("unreachable".to_owned()))),
-        Arc::clone(&target) as Arc<dyn fabric_runtime_publication::RuntimePublication>,
-    );
-    let state = PublicationState::new();
-
-    let result = publisher.publish_once(&state).await;
-
-    assert!(
-        matches!(
-            result,
-            PassResult::Ran {
-                outcome: PassOutcome::Failed { .. },
-                ..
-            }
-        ),
-        "{result:?}"
-    );
-    assert_eq!(target.publish_attempts(), 0);
-    assert_eq!(state.published_tenants(), None);
-}
-
-#[tokio::test]
-async fn an_invalid_client_document_refuses_the_pass() {
-    let publisher = publisher_with(
-        Arc::new(FakePlatform::ready(
-            vec![declaration("shared-a")],
-            vec![placement("acme", "shared-a")],
-        )),
-        Arc::new(FakeCatalogue(Ok(catalog_with_one_resource()))),
-        FakeLifecycle(Err(LifecycleSourceError::Invalid(
-            "acme will not parse".to_owned(),
-        ))),
-        Arc::new(FakePublication::new()),
-    );
-
-    let result = publisher.publish_once(&PublicationState::new()).await;
-
-    assert!(
-        matches!(
-            result,
-            PassResult::Ran {
-                outcome: PassOutcome::Refused { .. },
-                ..
-            }
-        ),
-        "{result:?}"
-    );
 }
 
 #[tokio::test]
@@ -506,6 +391,28 @@ async fn published_then_unchanged_on_an_identical_republish() {
         ),
         "{second:?}"
     );
+    assert_eq!(
+        state.published_tenants().expect("a pass published").tenants,
+        BTreeMap::from([(
+            fabric_core::TenantId::try_new("acme").unwrap(),
+            BindingRevision::new(1)
+        )]),
+        "what the accepted tenants document carries is recorded"
+    );
+}
+
+#[tokio::test]
+async fn nothing_is_recorded_as_published_until_a_pass_publishes() {
+    let publisher = publisher(
+        Arc::new(FakePlatform::ready(vec![], vec![])),
+        Arc::new(FakeCatalogue(Ok(CatalogDocument::new(BTreeMap::new())))),
+        Arc::new(FakePublication::new()),
+    );
+    let state = PublicationState::new();
+
+    publisher.publish_once(&state).await;
+
+    assert_eq!(state.published_tenants(), None);
 }
 
 #[tokio::test]

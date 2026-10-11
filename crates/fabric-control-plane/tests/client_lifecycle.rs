@@ -1,7 +1,9 @@
 //! A client's lifecycle through the real router (D01-14, D01-19a): saved
 //! intent until provisioning, identity and publication are met; a tombstone
-//! that retains state and withholds the tenant from publication; a separate
-//! deletion confirmation that records intent only; and every refusal.
+//! that records retirement, retains state and leaves the tenant published
+//! (withdrawal is deferred) with its withdrawal reported only from
+//! publication evidence; a separate deletion confirmation that records intent
+//! only; and every refusal.
 
 #![allow(
     clippy::unwrap_used,
@@ -192,6 +194,10 @@ fn conditions(lifecycle: &Value) -> Vec<&str> {
         .collect()
 }
 
+fn tenants_document(dir: &TempDir) -> String {
+    std::fs::read_to_string(dir.path().join("tenants.json")).unwrap()
+}
+
 fn tenants_published(dir: &TempDir) -> Vec<String> {
     let tenants: Value =
         serde_json::from_str(&std::fs::read_to_string(dir.path().join("tenants.json")).unwrap()).unwrap();
@@ -237,7 +243,8 @@ async fn a_client_is_saved_intent_until_every_readiness_condition_is_met() {
 }
 
 #[tokio::test]
-async fn a_client_becomes_ready_once_placed_applied_and_published_then_tombstoning_withholds_it() {
+async fn a_client_becomes_ready_once_placed_applied_and_published_and_retirement_leaves_every_tenant_published(
+) {
     let dir = TempDir::new("lifecycle-ready");
     let (platform, fake) = platform_binding().await;
     let plane = control_plane_with_publication(platform, sink(&dir));
@@ -251,6 +258,11 @@ async fn a_client_becomes_ready_once_placed_applied_and_published_then_tombstoni
     assert_eq!(
         saved["lifecycle"]["unmet"][0]["detail"],
         "not placed yet: primary"
+    );
+    assert_eq!(
+        saved["lifecycle"]["withdrawal"],
+        Value::Null,
+        "only retirement reports withdrawal"
     );
 
     fake.seed(DesiredRevision::new("ds-1"), vec![declared_data_source()]);
@@ -274,6 +286,7 @@ async fn a_client_becomes_ready_once_placed_applied_and_published_then_tombstoni
     publish_one_application_with_a_resource(&plane.router).await;
     let (status, pass) = post(&plane.router, "/api/platform/publication", None, &json!({})).await;
     assert_eq!(status, StatusCode::OK, "{pass}");
+    let before = tenants_document(&dir);
     assert_eq!(tenants_published(&dir), ["acme", "globex"]);
 
     let (_, ready) = get(&plane.router, "/api/clients/globex").await;
@@ -286,20 +299,40 @@ async fn a_client_becomes_ready_once_placed_applied_and_published_then_tombstoni
     assert_eq!(tombstoned["lifecycle"]["tombstone"]["reason"], "Contract ended");
     assert_eq!(tombstoned["lifecycle"]["tombstone"]["by"], support::OPERATOR);
     assert_eq!(tombstoned["lifecycle"]["deletionConfirmed"], Value::Null);
+    assert_eq!(
+        tombstoned["lifecycle"]["withdrawal"]["state"], "pending",
+        "recording retirement is not withdrawal: {tombstoned}"
+    );
 
+    // Retirement changes no placement and no tenant binding, so the next
+    // pass offers the same tenants document. That is what lets a history
+    // guard that refuses a removed or lowered published binding (#138)
+    // admit it: nothing published is removed, and every other tenant's
+    // publication proceeds.
     let (status, pass) = post(&plane.router, "/api/platform/publication", None, &json!({})).await;
     assert_eq!(status, StatusCode::OK, "{pass}");
-    assert_eq!(pass["lastPass"]["outcome"], "published", "{pass}");
+    let outcome = pass["lastPass"]["outcome"].as_str().unwrap();
+    assert!(outcome == "published" || outcome == "unchanged", "{pass}");
     assert_eq!(
-        tenants_published(&dir),
-        ["acme"],
-        "a tombstoned tenant is withheld"
+        tenants_document(&dir),
+        before,
+        "the retired tenant's binding is kept as it was"
     );
     assert_eq!(
         placed_tenants(&fake).await,
         ["acme", "globex"],
         "its placement is retained"
     );
+
+    let (_, after_pass) = get(&plane.router, "/api/clients/globex").await;
+    assert_eq!(
+        after_pass["lifecycle"]["withdrawal"]["state"], "pending",
+        "{after_pass}"
+    );
+    let detail = after_pass["lifecycle"]["withdrawal"]["detail"].as_str().unwrap();
+    assert!(detail.contains("still carries this tenant"), "{detail}");
+    let (_, other) = get(&plane.router, "/api/clients/acme").await;
+    assert_eq!(other["lifecycle"]["withdrawal"], Value::Null, "{other}");
 
     let tombstoned_revision = tombstoned["revision"].as_str().unwrap();
     let (status, confirmed) = confirm_deletion(&plane.router, "globex", tombstoned_revision).await;
@@ -313,9 +346,15 @@ async fn a_client_becomes_ready_once_placed_applied_and_published_then_tombstoni
         support::OPERATOR
     );
     assert_eq!(confirmed["lifecycle"]["tombstone"]["reason"], "Contract ended");
+    assert_eq!(
+        confirmed["lifecycle"]["withdrawal"]["state"], "pending",
+        "{confirmed}"
+    );
 
-    // Confirmation records intent only: the document, its data intent and
-    // its placement are all still there.
+    // Confirmation records intent only: the document, its data intent, its
+    // placement and its published binding are all still there.
+    post(&plane.router, "/api/platform/publication", None, &json!({})).await;
+    assert_eq!(tenants_document(&dir), before);
     let (status, retained) = get(&plane.router, "/api/clients/globex/placements").await;
     assert_eq!(status, StatusCode::OK, "{retained}");
     assert_eq!(placed_tenants(&fake).await, ["acme", "globex"]);
@@ -328,7 +367,7 @@ async fn a_client_becomes_ready_once_placed_applied_and_published_then_tombstoni
 }
 
 #[tokio::test]
-async fn tombstoning_the_only_published_tenant_is_refused_rather_than_emptying_the_runtime() {
+async fn retiring_the_only_published_tenant_neither_empties_nor_stalls_publication() {
     let dir = TempDir::new("lifecycle-only-tenant");
     let (platform, fake) = platform_binding().await;
     let plane = control_plane_with_publication(platform, sink(&dir));
@@ -338,12 +377,59 @@ async fn tombstoning_the_only_published_tenant_is_refused_rather_than_emptying_t
     post(&plane.router, "/api/platform/publication", None, &json!({})).await;
     assert_eq!(tenants_published(&dir), ["acme"]);
 
-    let (status, _) = tombstone(&plane.router, "acme", plane.revision.as_str()).await;
+    let (status, tombstoned) = tombstone(&plane.router, "acme", plane.revision.as_str()).await;
     assert_eq!(status, StatusCode::OK);
     let (_, pass) = post(&plane.router, "/api/platform/publication", None, &json!({})).await;
 
-    assert_eq!(pass["lastPass"]["outcome"], "refused", "{pass}");
+    assert_eq!(pass["lastPass"]["outcome"], "unchanged", "{pass}");
+    assert_eq!(
+        tenants_published(&dir),
+        ["acme"],
+        "still served: withdrawal is deferred"
+    );
+    assert_eq!(
+        tombstoned["lifecycle"]["withdrawal"]["state"], "pending",
+        "{tombstoned}"
+    );
+    let (_, after) = get(&plane.router, "/api/clients/acme").await;
+    assert_eq!(after["lifecycle"]["withdrawal"]["state"], "pending", "{after}");
+}
+
+#[tokio::test]
+async fn a_refused_pass_is_reported_as_refused_and_the_last_good_tenant_stays() {
+    let dir = TempDir::new("lifecycle-refused");
+    let (platform, fake) = platform_binding().await;
+    let plane = control_plane_with_publication(platform, sink(&dir));
+    fake.seed(DesiredRevision::new("ds-1"), vec![declared_data_source()]);
+    fake.seed_placements(DesiredRevision::new("pl-1"), vec![placement("acme")]);
+    publish_one_application_with_a_resource(&plane.router).await;
+    post(&plane.router, "/api/platform/publication", None, &json!({})).await;
+    tombstone(&plane.router, "acme", plane.revision.as_str()).await;
+
+    // A placement on a data source nobody declared: the pass refuses it.
+    let mut stray = placement("acme");
+    stray.data_source = DataSourceId::try_new("undeclared").unwrap();
+    fake.seed_placements(DesiredRevision::new("pl-2"), vec![stray]);
+    let (_, pass) = post(&plane.router, "/api/platform/publication", None, &json!({})).await;
+    let outcome = pass["lastPass"]["outcome"].as_str().unwrap();
+    assert!(outcome == "refused" || outcome == "failed", "{pass}");
+
+    let (_, after) = get(&plane.router, "/api/clients/acme").await;
+    assert_eq!(after["lifecycle"]["withdrawal"]["state"], "refused", "{after}");
     assert_eq!(tenants_published(&dir), ["acme"], "the last good document stays");
+}
+
+#[tokio::test]
+async fn without_publication_retirement_reports_withdrawal_as_unobserved() {
+    let plane = control_plane();
+
+    let (status, tombstoned) = tombstone(&plane.router, "acme", plane.revision.as_str()).await;
+
+    assert_eq!(status, StatusCode::OK, "{tombstoned}");
+    assert_eq!(
+        tombstoned["lifecycle"]["withdrawal"]["state"], "unobserved",
+        "{tombstoned}"
+    );
 }
 
 // Refused transitions.

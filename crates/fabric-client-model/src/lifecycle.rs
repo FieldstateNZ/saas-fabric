@@ -101,9 +101,13 @@ impl ClientLifecycle {
     /// Whether this state permits `operation`.
     ///
     /// A retired client permits none of these. Saved intent permits all but
-    /// routing: editing, placement and publication are steps towards
-    /// readiness, and publication is itself one of its conditions, so
-    /// refusing it would make readiness unreachable.
+    /// routing: editing and placement are steps towards readiness.
+    ///
+    /// Publication is not a use this governs. Saved intent must be
+    /// publishable, because publication is one of its readiness conditions;
+    /// a retired client's tenant stays published until a separately
+    /// reviewed withdrawal exists, because recording retirement is intent
+    /// only (ADR 0021's 2026-10-11 amendment, "Withdrawal is deferred").
     ///
     /// Identity edits and secret writes are not uses this governs. They are
     /// how an operator removes a compromised redirect URI or rotates a leaked

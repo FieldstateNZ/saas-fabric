@@ -11,12 +11,14 @@ use crate::models::{ClientResponse, TombstoneRequest};
 use crate::state::ControlPlaneState;
 use crate::{preconditions, ControlPlaneError, Operator};
 
-/// Takes a client out of service, retaining its state (D01-14).
+/// Records a client's retirement, retaining its state (D01-14).
 ///
 /// `If-Match` names the revision being retired, as every client write does.
-/// Nothing is removed: the document, its placements, its realm and its
-/// secrets all stay. From the next publication pass the tenant is withheld
-/// from the runtime documents.
+/// This is intent only. Nothing is removed: the document, its placements, its
+/// realm and its secrets all stay. Nothing is withdrawn either: the tenant
+/// stays in the runtime documents until a separately reviewed withdrawal
+/// exists, and the response's `lifecycle.withdrawal` says what publication
+/// evidence shows rather than claiming it stopped being served.
 pub(crate) async fn tombstone_client(
     operator: Operator,
     State(state): State<ControlPlaneState>,

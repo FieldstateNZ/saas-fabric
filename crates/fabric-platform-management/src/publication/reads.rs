@@ -8,15 +8,11 @@
 #[path = "reads_tests.rs"]
 mod reads_tests;
 
-use std::collections::BTreeSet;
-
-use fabric_core::TenantId;
 use fabric_runtime_publication::CatalogDocument;
 
 use crate::data_sources::held::check_held;
 use crate::placements::held::check_held_placements;
 use crate::publication::catalogue_source::CatalogueSourceError;
-use crate::publication::lifecycle_source::LifecycleSourceError;
 use crate::publication::outcome::WaitingReason;
 use crate::publication::pass::Halt;
 use crate::publication::RuntimePublisher;
@@ -81,16 +77,6 @@ impl RuntimePublisher {
                     Halt::Refused(SafeDiagnostic::sanitise(&error.to_string()))
                 }
                 CatalogueSourceError::Unavailable(detail) => Halt::Failed(SafeDiagnostic::sanitise(&detail)),
-            })
-    }
-
-    pub(super) async fn withheld_tenants(&self) -> Result<BTreeSet<TenantId>, Halt> {
-        self.lifecycle
-            .withheld_tenants()
-            .await
-            .map_err(|error| match error {
-                LifecycleSourceError::Invalid(detail) => Halt::Refused(SafeDiagnostic::sanitise(&detail)),
-                LifecycleSourceError::Unavailable(detail) => Halt::Failed(SafeDiagnostic::sanitise(&detail)),
             })
     }
 }

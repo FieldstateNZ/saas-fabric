@@ -6,7 +6,7 @@
 use std::sync::Arc;
 
 use fabric_platform_management::{
-    PlatformRepository, PublicationState, RuntimeCatalogueSource, RuntimePublisher, TenantLifecycleSource,
+    PlatformRepository, PublicationState, RuntimeCatalogueSource, RuntimePublisher,
 };
 use fabric_reconciliation::ReconciliationStatusStore;
 
@@ -18,7 +18,6 @@ pub use contract::{ControlPlaneDeps, ControlPlaneServices};
 pub use platform_binding::PlatformBinding;
 pub use publication_sink::PublicationSink;
 
-use crate::lifecycle::DesiredStateLifecycleSource;
 use crate::resolution::ResolutionService;
 use crate::routes::control_plane_routes;
 use crate::service::{ClientService, DesiredStateCatalogueSource};
@@ -74,20 +73,17 @@ pub fn build_control_plane(
 
     // The publisher is constructed here, not passed in whole: it needs the
     // *client* desired-state binding (`repository`, above) to answer
-    // `RuntimeCatalogueSource` and `TenantLifecycleSource`, and only this function ever has both that
+    // `RuntimeCatalogueSource`, and only this function ever has both that
     // and the platform binding in scope at once.
     let platform = platform.map(|binding| {
         let publisher = publication.as_ref().map(|sink| {
             let source: Arc<dyn RuntimeCatalogueSource> =
                 Arc::new(DesiredStateCatalogueSource::new(Arc::clone(repository)));
-            let lifecycle: Arc<dyn TenantLifecycleSource> =
-                Arc::new(DesiredStateLifecycleSource::new(Arc::clone(repository)));
 
             Arc::new(RuntimePublisher::new(
                 binding.environment.clone(),
                 Arc::clone(&binding.repository) as Arc<dyn PlatformRepository>,
                 source,
-                lifecycle,
                 Arc::clone(&sink.target),
                 Arc::clone(&clock),
             ))

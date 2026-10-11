@@ -662,6 +662,13 @@ Recorded from the D01-14 and D01-19a dispositions in
 > **D01-19a:** Explicit incomplete state until provisioning/identity/publication
 > readiness is met; distinguish saved intent from usable client.
 
+The follow-up answers in
+[#108 comment 6113749198](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6113749198)
+bound it further: retain state with no automatic deletion; record intent in
+separate revision-fenced writes; no live identity, session or credential
+change; and no claim that a tenant stopped being served without withdrawal
+evidence.
+
 This amends owed decisions 2 and 3 for a whole client. It does not accept
 this ADR.
 
@@ -672,7 +679,7 @@ this ADR.
                 │                       │
                 └──── tombstone ────────┘
                           ▼
-                     tombstoned            state retained
+                     tombstoned            retirement recorded; state retained; still published
                           │ confirm deletion, a separate write
                           ▼
                   deletionConfirmed        intent only; nothing is deleted
@@ -697,7 +704,8 @@ this ADR.
   `incomplete`.
 - **`tombstoned`** and **`deletionConfirmed`** are recorded in the client
   document under `spec.lifecycle`, because an operator decided them
-  (ADR 0008). A recorded tombstone wins over any evidence.
+  (ADR 0008). A recorded tombstone wins over any evidence. Both are intent:
+  the console labels a tombstone "Retirement recorded", never "withdrawn".
 
 ### The rules
 
@@ -709,11 +717,45 @@ this ADR.
 | Edit product configuration | Refused when retired | `409 client_retired` |
 | Remove a secret | Refused when retired: it would not be retained | `409 client_retired` |
 | Place a data source | Refused when retired | `409 client_retired` |
-| Publish the tenant | Refused when retired. The tenant is withheld from the next pass; its placement records stay | (the pass) |
+| Publish the tenant | Not governed by the lifecycle. A retired tenant stays in every pass exactly as it was, until a withdrawal exists (below) | — |
 | Route the client | Refused unless `ready` | `client_not_ready` (domain only; see below) |
 
 Saved intent may be edited, placed and published, because each is a step
 towards readiness, and publication is itself a readiness condition.
+
+### Withdrawal is deferred
+
+Recording a tombstone does not withdraw the tenant from the runtime
+documents. The publisher composes a retired tenant's placements exactly as
+before: its binding, revision and resource history are unchanged, so every
+pass offers the same tenants document and the publication history guards
+(ADR 0018; the removed-binding and held-tenant guards in #138) have nothing
+to refuse. Other tenants' publication proceeds, and the retained-last-good
+and emptying guards stay as they are.
+
+An earlier draft of this change filtered retired tenants out before
+composition. That removed a published binding without bumping anything,
+which #138's guards correctly refuse, so a multi-tenant environment would
+have stalled with the retired binding still published, and a sole tenant
+was refused by the emptying guard. Withdrawal needs its own reviewed
+operation: a revision-bumping, explicit retirement those guards can admit,
+with deterministic two-tenant and final-tenant proofs, restart and
+held-record tests, and reader-applied evidence before anything claims a
+tenant stopped being served.
+
+Until then every retired client's response carries `lifecycle.withdrawal`,
+derived only from what this process observed of publication:
+
+| `withdrawal.state` | Evidence |
+|---|---|
+| `pending` | The tenants document the publication target last accepted still carries the tenant |
+| `refused` | The last pass was refused or failed, so the runtime keeps the documents it last accepted |
+| `unobserved` | No publication target, or no pass has published since the control plane started |
+| `notPublished` | The accepted tenants document does not carry the tenant (it was never placed or published). No reader is observed applying it |
+
+There is no `withdrawn` or `applied` state. The control plane holds
+publisher-side evidence only, and Riley's answer requires reader-applied
+evidence before withdrawal is called complete.
 
 Two edits stay open on a retired client on purpose: an **identity edit** and
 a **secret write**. A tombstone does not revoke the client's identity, so
@@ -736,52 +778,65 @@ activity entry. It applies no retention period and starts no deletion.
 | `spec.lifecycle` round-trips, and a hand edit confirming deletion without a tombstone, before it, or under a misspelt key is refused on read | `document/lifecycle.rs`; `document/document_lifecycle_tests.rs` |
 | Readiness evidence, and missing evidence is never readiness | `crates/fabric-control-plane/src/lifecycle/evidence.rs`; `lifecycle/evidence_tests.rs` |
 | The API shows the state on every client response, and each write and refusal through the router | `handlers/tombstone_client.rs`, `handlers/confirm_client_deletion.rs`; `tests/client_lifecycle.rs` |
-| A tombstoned tenant is withheld from publication, and its placement records are kept | `fabric-platform-management/src/publication/withhold.rs`, `publication/pass.rs`; `publisher_tests.rs::a_withheld_tenant_is_left_out_and_the_others_are_published`; `client_lifecycle.rs::a_client_becomes_ready_once_placed_applied_and_published_then_tombstoning_withholds_it` |
-| An unreadable or invalid client document stops the pass rather than publishing a retired tenant | `publisher_tests.rs::an_unreadable_lifecycle_fails_the_pass_and_publishes_nothing`, `::an_invalid_client_document_refuses_the_pass` |
-| The console tells saved intent from a usable client | `apps/control-plane-ui/src/console/LifecycleStatus.tsx`; `LifecycleStatus.test.tsx`, `console.test.tsx` |
+| Retirement leaves every tenant published, the tenants document byte-identical and placements retained, so publication of other tenants proceeds | `client_lifecycle.rs::a_client_becomes_ready_once_placed_applied_and_published_and_retirement_leaves_every_tenant_published` |
+| Retiring the only published tenant neither empties nor stalls publication (`unchanged`) | `client_lifecycle.rs::retiring_the_only_published_tenant_neither_empties_nor_stalls_publication` |
+| Withdrawal is reported `pending`, `refused`, `unobserved` or `notPublished` only from publication evidence | `crates/fabric-control-plane/src/lifecycle/withdrawal.rs`; `lifecycle/withdrawal_tests.rs`; `client_lifecycle.rs::a_refused_pass_is_reported_as_refused_and_the_last_good_tenant_stays`, `::without_publication_retirement_reports_withdrawal_as_unobserved` |
+| The console tells saved intent from a usable client, labels a tombstone "Retirement recorded", and never claims a tenant stopped being served | `apps/control-plane-ui/src/console/LifecycleStatus.tsx`; `LifecycleStatus.test.tsx`, `console.test.tsx` |
 
 ### Known limits
 
-- **Withholding the only published tenant is refused, not published.** The
-  publisher refuses taking the tenants document to empty unless that is
-  intended (ADR 0018 part 6), and `compose` never says it is. The pass is
-  refused and the last good document stays, so that tenant is still served.
-  `client_lifecycle.rs::tombstoning_the_only_published_tenant_is_refused_rather_than_emptying_the_runtime`
-  characterizes it.
-- **One unreadable client document stops publication.** The lifecycle source
-  reads every client. A document that will not parse refuses the pass,
-  because a retired tenant cannot be told apart from an active one. The
-  previous documents stay.
+- **A retired client is still served.** Its tenant stays published, and a
+  tombstone revokes no identity, session or credential. Nothing in this
+  change limits runtime access; see "Withdrawal is deferred".
 - **Identity and publication evidence is per process.** Both come from
   in-memory state. After a restart a client shows `incomplete` until a
   reconciliation pass and a publication pass have run. Nothing gates
   publication on identity for the same reason: withdrawing a tenant after
-  every restart would be an outage.
+  every restart would be an outage. Withdrawal evidence is per process for
+  the same reason: after a restart it is `unobserved` until a pass
+  publishes.
 - **Routing has no producer in Fabric.** The rule refusing to route a client
   that is not `ready` is in the domain (`ClientLifecycle::permits`). The
   issuer-to-tenant registry and edge generator (D01-4) must consult it when
   built.
 - **An older Fabric ignores `spec.lifecycle`.** A control plane from before
-  this amendment reads a tombstoned client as active and would publish it.
-  The release rollback floor (D01-21) must sit at or above the release that
-  carries this.
+  this amendment reads a tombstoned client as active and would let it be
+  edited and placed. Publication is unaffected, because this change does not
+  withhold a retired tenant either. The release rollback floor (D01-21) should sit at or
+  above the release that carries this.
 
-### Deferred, not decided here
+### Deferred, and how each is bounded
 
-Each needs its own decision. None is approved by D01-14.
+Answered for engineering in
+[#108 comment 6113749198](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6113749198);
+the user-only parts stay open.
 
-- **Retention:** how long a tombstoned client is retained, and whether
-  confirming deletion must wait for it.
-- **Customer data:** what confirmed deletion eventually removes (the realm
-  and its users, projected clients, secrets, placement records, the tenant's
-  rows, the client document), in what order, with what export or evidence
-  obligations, and who executes it (D01-23 gives backup, restore and
-  migration to the platform).
-- **Restoring a tombstone,** and who may.
-- **Identity at tombstone:** whether a tombstone should disable sign-in,
-  remove projected clients or end sessions.
-- **Who may confirm deletion:** today any operator may, as a separate write.
-  A second operator or a waiting period would be a further rule.
+- **Retention:** no timer and no automatic deletion. State is retained until
+  a separately approved deletion. No duration, expiry or export obligation
+  is set. *Open, user-only:* the legal and customer retention duration and
+  export or evidence obligations.
+- **Eventual deletion:** confirmation stays recorded intent. Before any
+  destructive executor exists, a reviewable inventory, order, backup,
+  export and recovery plan must name exactly what would be deleted and who
+  executes it. No realm, user, secret, database or volume deletion job
+  exists. *Open, user-only:* deletion scope and its execution.
+- **Restoring a tombstone:** to be a separate, bounded, reviewed slice: an
+  explicit operator write with current-revision CAS, audit and
+  retained-placement checks, never lowering document or resource history
+  revisions and never regenerating retained secrets. No automatic restore.
+  A deletion-confirmed client needs an explicit disposition before it can be
+  restored. Not built here: there is no route back.
+- **Identity at tombstone:** a tombstone disables no sign-in, revokes no
+  token or session, removes no projected client and rotates no credential.
+  The remediation paths that stay open (identity edits, secret writes) are
+  as designed and are no permission for a live change. *Open, user-only:*
+  any live identity or session change.
+- **Who confirms deletion:** two-step, client-named, revision-fenced and
+  audited, under the existing operator authorization. No second-operator
+  role, grant or waiting period.
+- **Withdrawal:** a separately reviewed publisher and reader retirement
+  slice, as described under "Withdrawal is deferred". No activation is
+  authorized.
 - **Removing one application from a client** (owed decision 3's first half)
   is still refused.
 

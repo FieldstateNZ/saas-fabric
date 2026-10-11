@@ -3,11 +3,10 @@
 use super::*;
 use crate::ClientId;
 
-const ALL_USES: [LifecycleUse; 5] = [
+const ALL_USES: [LifecycleUse; 4] = [
     LifecycleUse::Edit,
     LifecycleUse::Remove,
     LifecycleUse::Place,
-    LifecycleUse::Publish,
     LifecycleUse::Route,
 ];
 
@@ -245,15 +244,10 @@ fn an_incomplete_client_cannot_be_routed() {
 }
 
 #[test]
-fn an_incomplete_client_can_still_be_edited_placed_and_published_towards_readiness() {
+fn an_incomplete_client_can_still_be_edited_and_placed_towards_readiness() {
     let lifecycle = ClientLifecycle::derive(&LifecycleRecord::default(), Readiness::unassessed());
 
-    for operation in [
-        LifecycleUse::Edit,
-        LifecycleUse::Remove,
-        LifecycleUse::Place,
-        LifecycleUse::Publish,
-    ] {
+    for operation in [LifecycleUse::Edit, LifecycleUse::Remove, LifecycleUse::Place] {
         assert_eq!(lifecycle.permits(operation), Ok(()));
     }
 }
@@ -292,11 +286,11 @@ fn a_client_whose_deletion_is_confirmed_refuses_every_use() {
 fn a_refusal_says_what_was_refused_and_that_state_is_retained() {
     let refusal = LifecycleRefusal::Retired {
         state: LifecycleState::Tombstoned,
-        operation: LifecycleUse::Publish,
+        operation: LifecycleUse::Place,
     };
 
     assert_eq!(
         refusal.to_string(),
-        "the client is tombstoned, so publication is refused; its state is retained"
+        "the client is tombstoned, so placement is refused; its state is retained"
     );
 }

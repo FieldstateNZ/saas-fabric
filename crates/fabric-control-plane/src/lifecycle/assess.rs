@@ -3,9 +3,12 @@
 
 use fabric_client_model::lifecycle::Readiness;
 use fabric_client_model::ClientLifecycle;
+use fabric_core::TenantId;
 use fabric_platform_management::PlacementState;
 
-use super::evidence::{self, PlatformFacts, Published};
+use super::evidence;
+use super::facts::{Placements, PlatformFacts, Publication};
+use super::withdrawal::withdrawal;
 use crate::models::LifecycleResponse;
 use crate::state::ControlPlaneState;
 use crate::StoredClient;
@@ -32,26 +35,36 @@ impl ControlPlaneState {
             evidence::identity(self.service.reconciliation(stored).status),
             evidence::publication(client, facts),
         );
+        let lifecycle = ClientLifecycle::derive(&client.lifecycle, readiness);
+        let retired = matches!(
+            lifecycle,
+            ClientLifecycle::Tombstoned { .. } | ClientLifecycle::DeletionConfirmed { .. }
+        );
+        let tenant = TenantId::try_new(client.id.as_str()).ok();
+        let withdrawal = retired.then(|| withdrawal(tenant.as_ref(), &facts.publication));
 
-        ClientLifecycle::derive(&client.lifecycle, readiness).into()
+        LifecycleResponse::new(lifecycle, withdrawal)
     }
 
     async fn platform_facts(&self) -> PlatformFacts {
         let Some(platform) = &self.platform else {
-            return PlatformFacts::NotManaged;
+            return PlatformFacts::not_managed();
         };
-        let Ok(read) = platform.repository.read_placements(&platform.environment).await else {
-            return PlatformFacts::Unreadable;
+        let placements = match platform.repository.read_placements(&platform.environment).await {
+            Ok(read) => Placements::Read(read.placements),
+            Err(_) => Placements::Unreadable,
         };
-        let published = match (&platform.publisher, platform.publication.published_tenants()) {
-            (None, _) => Published::NoPublisher,
-            (Some(_), None) => Published::NotYet,
-            (Some(_), Some(published)) => Published::Known(published),
+        let publication = match &platform.publisher {
+            None => Publication::NotConfigured,
+            Some(_) => Publication::Observed {
+                last_pass: platform.publication.last_pass(),
+                published: platform.publication.published_tenants(),
+            },
         };
 
-        PlatformFacts::Read {
-            placements: read.placements,
-            published,
+        PlatformFacts {
+            placements,
+            publication,
         }
     }
 }

@@ -133,9 +133,11 @@ publication (`PublicationState::published_tenants`); `ControlPlaneState::lifecyc
 edits and secret writes are deliberately not guarded (remediation).
 `ClientService::tombstone` / `::confirm_deletion` (`service/retire.rs`) write
 `spec.lifecycle` plus an activity entry; routes in `routes/lifecycle.rs`; codes in
-`errors/status_mapping/lifecycle.rs`; audit S16/S17. `DesiredStateLifecycleSource`
-answers `TenantLifecycleSource`, so the publisher withholds retired tenants. Nothing
-here deletes anything.
+`errors/status_mapping/lifecycle.rs`; audit S16/S17. Publication is **not** governed:
+a retired tenant stays published (withdrawal deferred). `lifecycle/withdrawal.rs`
+reports `withdrawal` (`pending`/`refused`/`unobserved`/`notPublished`) for retired
+clients from `PublicationState` evidence only; never "withdrawn". Nothing here deletes
+anything.
 
 ## Hard invariants — do not break
 

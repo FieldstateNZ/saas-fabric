@@ -499,6 +499,11 @@ client is derived from evidence on every read and shown as
 placement records, its realm and its secrets all stay. What deletion removes,
 and after what retention, is not decided.
 
+**A tombstone withdraws nothing.** The tenant stays in the runtime documents;
+withdrawal is deferred to its own reviewed operation. The client response's
+`lifecycle.withdrawal` reports what publication evidence shows, never that the
+tenant stopped being served.
+
 ## What may never appear
 
 **No secrets.** Not a client secret, not a database password, not a token, not a

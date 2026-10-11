@@ -68,7 +68,7 @@ h1, h2, h3, p { overflow-wrap: anywhere; }
    applied, pending, failed, drifted — rather than sitting a shade away from
    one of them where the difference would only show up in a colour picker. */
 .status--published { color: #35547a; background: #dbe4f0; }
-/* A client's lifecycle (D01-14, D01-19a). Saved intent shares `pending`'s amber: it is waiting on evidence, not broken. Ready shares `applied`'s green. A tombstone is grey, out of service rather than failing; a confirmed deletion keeps `failed`'s red, because it is a decision to end the client. */
+/* A client's lifecycle (D01-14, D01-19a). Saved intent shares `pending`'s amber: it is waiting on evidence, not broken. Ready shares `applied`'s green. Recorded retirement is grey: intent, not a failure and not proof the client stopped being served. A confirmed deletion keeps `failed`'s red, because it is a decision to end the client. */
 .status--incomplete { color: #8a6a23; background: #ecddb7; }
 .status--ready { color: #4a6b3f; background: #d9e2d0; }
 .status--tombstoned { color: #4d524c; background: #d8d6cf; }

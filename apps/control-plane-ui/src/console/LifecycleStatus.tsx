@@ -1,12 +1,20 @@
-import type { ClientLifecycle, LifecycleState } from '../api/lifecycle-types'
+import type { ClientLifecycle, LifecycleState, Withdrawal } from '../api/lifecycle-types'
 import { Status } from './Status'
 
 /** The words an operator sees for each state. */
 const LABEL: Record<LifecycleState, string> = {
   incomplete: 'Saved, not usable yet',
   ready: 'Ready',
-  tombstoned: 'Tombstoned',
-  deletionConfirmed: 'Deletion confirmed',
+  tombstoned: 'Retirement recorded',
+  deletionConfirmed: 'Deletion confirmed (intent)',
+}
+
+/** How each withdrawal state reads. None of them says the client stopped being served. */
+const WITHDRAWAL: Record<Withdrawal['state'], string> = {
+  pending: 'Withdrawal pending: still published',
+  refused: 'Withdrawal not applied: publication refused',
+  unobserved: 'Withdrawal not observed',
+  notPublished: 'Not in the published tenants document',
 }
 
 /** What each readiness condition is called. */
@@ -49,8 +57,13 @@ export function LifecycleStatus({
       )}
       {lifecycle.tombstone !== null && (
         <p className="lifecycle__note">
-          Tombstoned {when(lifecycle.tombstone.at)} by {lifecycle.tombstone.by}: {lifecycle.tombstone.reason}.
-          Its state is retained and it is no longer published.
+          Retirement recorded {when(lifecycle.tombstone.at)} by {lifecycle.tombstone.by}:{' '}
+          {lifecycle.tombstone.reason}. Its state is retained.
+        </p>
+      )}
+      {lifecycle.withdrawal !== null && (
+        <p className="lifecycle__note">
+          <strong>{WITHDRAWAL[lifecycle.withdrawal.state]}</strong>: {lifecycle.withdrawal.detail}.
         </p>
       )}
       {lifecycle.deletionConfirmed !== null && (

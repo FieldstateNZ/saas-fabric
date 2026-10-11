@@ -465,9 +465,11 @@ Not yet built:
 - **Client deletion, and the rest of client creation.** The console creates a
   client's document — realm, roles and product configuration — and shows it
   as `incomplete` (saved intent) until provisioning, identity and publication
-  are met. A client can be tombstoned, which retains its state and withholds
-  it from publication, and its deletion confirmed as a separate write, which
-  records intent only (ADR 0021's 2026-10-11 amendment). Nothing deletes a
+  are met. A client can be tombstoned, which records retirement and retains
+  its state, and its deletion confirmed as a separate write. Both record
+  intent only: the tenant stays published, and withdrawing it from the
+  runtime is a separate operation not built yet (ADR 0021's 2026-10-11
+  amendment). Nothing deletes a
   client's data; what deletion removes, after what retention, is not decided.
   Removing an application from a client is still refused.
 - **Deploying what the product catalogue describes.** No controller deploys an

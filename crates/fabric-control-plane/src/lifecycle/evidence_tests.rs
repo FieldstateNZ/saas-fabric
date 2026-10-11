@@ -9,7 +9,15 @@ use fabric_core::{BindingRevision, DataSourceId, LogicalDataSourceName, TenantId
 use fabric_platform_management::{IsolationModelDocument, PlacementRecord, PublishedTenants};
 use fabric_reconciliation::ReconciliationStatus;
 
-use super::evidence::{identity, provisioning, publication, PlatformFacts, Published};
+use super::evidence::{identity, provisioning, publication};
+use super::facts::{Placements, PlatformFacts, Publication};
+
+/// What a test says is known about publication.
+enum Published {
+    NoPublisher,
+    NotYet,
+    Known(PublishedTenants),
+}
 
 fn client(data: &str) -> Client {
     ClientDocument::parse(&format!(
@@ -45,9 +53,21 @@ fn record(tenant: &str, logical: &str, revision: u64) -> PlacementRecord {
 }
 
 fn read(placements: Vec<PlacementRecord>, published: Published) -> PlatformFacts {
-    PlatformFacts::Read {
-        placements,
-        published,
+    let publication = match published {
+        Published::NoPublisher => Publication::NotConfigured,
+        Published::NotYet => Publication::Observed {
+            last_pass: None,
+            published: None,
+        },
+        Published::Known(published) => Publication::Observed {
+            last_pass: None,
+            published: Some(published),
+        },
+    };
+
+    PlatformFacts {
+        placements: Placements::Read(placements),
+        publication,
     }
 }
 
@@ -95,7 +115,11 @@ fn a_client_declaring_no_data_is_not_provisioned() {
 
 #[test]
 fn no_platform_or_unreadable_placements_is_never_provisioned_or_published() {
-    for facts in [PlatformFacts::NotManaged, PlatformFacts::Unreadable] {
+    let unreadable = PlatformFacts {
+        placements: Placements::Unreadable,
+        publication: Publication::NotConfigured,
+    };
+    for facts in [PlatformFacts::not_managed(), unreadable] {
         assert!(is_unmet(&provisioning(&two_intents(), &facts)));
         assert!(is_unmet(&publication(&two_intents(), &facts)));
     }

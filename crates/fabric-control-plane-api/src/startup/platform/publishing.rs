@@ -284,18 +284,6 @@ mod tests {
     }
 
     #[async_trait::async_trait]
-    impl fabric_platform_management::TenantLifecycleSource for Untouched {
-        async fn withheld_tenants(
-            &self,
-        ) -> Result<
-            std::collections::BTreeSet<fabric_core::TenantId>,
-            fabric_platform_management::LifecycleSourceError,
-        > {
-            unreachable!()
-        }
-    }
-
-    #[async_trait::async_trait]
     impl fabric_runtime_publication::RuntimePublication for Untouched {
         async fn current(&self) -> Result<PublishedRevisions, PublicationError> {
             let previous = self.current_calls.fetch_add(1, Ordering::SeqCst);
@@ -313,9 +301,6 @@ mod tests {
     fn untouched_publisher(current_calls: &Arc<AtomicUsize>) -> Arc<RuntimePublisher> {
         Arc::new(RuntimePublisher::new(
             "lucentroot".to_owned(),
-            Arc::new(Untouched {
-                current_calls: Arc::clone(current_calls),
-            }),
             Arc::new(Untouched {
                 current_calls: Arc::clone(current_calls),
             }),

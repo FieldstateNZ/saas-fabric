@@ -14,8 +14,6 @@ pub enum LifecycleUse {
     Remove,
     /// Recording a data placement for the client.
     Place,
-    /// Including the client's tenant binding in the runtime documents.
-    Publish,
     /// Serving the client's end users as a usable client.
     Route,
 }
@@ -26,7 +24,6 @@ impl std::fmt::Display for LifecycleUse {
             Self::Edit => "editing",
             Self::Remove => "removal",
             Self::Place => "placement",
-            Self::Publish => "publication",
             Self::Route => "routing",
         })
     }

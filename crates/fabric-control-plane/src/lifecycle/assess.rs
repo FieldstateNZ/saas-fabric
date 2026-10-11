@@ -11,7 +11,7 @@ use super::facts::{Placements, PlatformFacts, Publication};
 use super::withdrawal::withdrawal;
 use crate::models::LifecycleResponse;
 use crate::state::ControlPlaneState;
-use crate::StoredClient;
+use crate::{ClientService, StoredClient};
 
 impl ControlPlaneState {
     /// One client's lifecycle.
@@ -30,12 +30,7 @@ impl ControlPlaneState {
 
     fn derive(&self, stored: &StoredClient, facts: &PlatformFacts) -> LifecycleResponse {
         let client = stored.document.client();
-        let readiness = Readiness::new(
-            evidence::provisioning(client, facts),
-            evidence::identity(self.service.reconciliation(stored).status),
-            evidence::publication(client, facts),
-        );
-        let lifecycle = ClientLifecycle::derive(&client.lifecycle, readiness);
+        let lifecycle = derive(&self.service, stored, facts);
         let retired = matches!(
             lifecycle,
             ClientLifecycle::Tombstoned { .. } | ClientLifecycle::DeletionConfirmed { .. }
@@ -67,4 +62,21 @@ impl ControlPlaneState {
             publication,
         }
     }
+}
+
+/// One client's lifecycle against `facts`: what is recorded, and the
+/// evidence for each readiness condition. The issuer registry decides which
+/// clients may be routed to with this same derivation (D01-4).
+pub(crate) fn derive(
+    service: &ClientService,
+    stored: &StoredClient,
+    facts: &PlatformFacts,
+) -> ClientLifecycle {
+    let client = stored.document.client();
+    let readiness = Readiness::new(
+        evidence::provisioning(client, facts),
+        evidence::identity(service.reconciliation(stored).status),
+        evidence::publication(client, facts),
+    );
+    ClientLifecycle::derive(&client.lifecycle, readiness)
 }

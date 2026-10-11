@@ -101,6 +101,7 @@ fn acme_moves() -> RuntimeSnapshot {
             vec![support::shared_data_source(1), second_data_source()],
         ),
         catalog: DocumentInput::new(DocumentRevision::new(1), support::articles_catalog()),
+        registry: None,
     }
 }
 

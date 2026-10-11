@@ -66,6 +66,8 @@ pub struct HeldDocuments {
     /// written. Parsed by [`plan_publication`](crate::plan_publication), not
     /// by the adapter, so every adapter enforces its floor the same way.
     pub record: Option<Vec<u8>>,
+    /// `issuer-registry.json`'s bytes exactly as held, if present.
+    pub registry: Option<Vec<u8>>,
 }
 
 impl HeldDocuments {
@@ -96,6 +98,10 @@ impl HeldDocuments {
                 recorded(|r| r.documents().data_sources.revision),
             ),
             catalog: held(&self.catalog, recorded(|r| r.documents().catalog.revision)),
+            registry: record
+                .as_ref()
+                .and_then(PublicationRecord::registry)
+                .map(|registry| registry.generation),
         }
     }
 

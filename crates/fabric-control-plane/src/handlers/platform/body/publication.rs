@@ -2,12 +2,14 @@
 //! holds, and what the last pass did.
 
 mod last_pass_row;
+mod readiness_row;
 
 pub(crate) use last_pass_row::pass_outcome_word;
 pub use last_pass_row::LastPassRow;
+pub use readiness_row::ReadinessRow;
 
 use fabric_platform_management::{PassOutcome, PublicationState, RuntimePublisher};
-use fabric_runtime_publication::{DocumentRevision, PublishedRevisions};
+use fabric_runtime_publication::{DocumentRevision, PublishedRevisions, RegistryGeneration};
 
 /// What an operator is told about this environment's runtime publication.
 ///
@@ -31,6 +33,9 @@ pub struct PublicationRow {
 
     /// What the last pass did, or `null` if none has run.
     pub last_pass: Option<LastPassRow>,
+
+    /// The three readiness gates, as of the last pass the target accepted.
+    pub readiness: ReadinessRow,
 }
 
 /// The revision currently held for each of the runtime's three documents.
@@ -43,6 +48,9 @@ pub struct PublishedDocumentsRow {
     pub data_sources: Option<u64>,
     /// The catalogue document's held revision.
     pub catalog: Option<u64>,
+    /// The issuer registry's held generation, carried with the tenants
+    /// document; `null` when none is published.
+    pub registry: Option<u64>,
 }
 
 impl PublicationRow {
@@ -51,11 +59,12 @@ impl PublicationRow {
     /// read, where there is no fresher outcome to prefer.
     pub(crate) fn of(publisher: &RuntimePublisher, state: &PublicationState) -> Self {
         match state.last_pass() {
-            Some(pass) => Self::at(publisher, pass.at_unix_seconds, &pass.outcome),
+            Some(pass) => Self::at(publisher, state, pass.at_unix_seconds, &pass.outcome),
             None => Self {
                 target: publisher.describe_target(),
                 documents: PublishedDocumentsRow::default(),
                 last_pass: None,
+                readiness: state.readiness().into(),
             },
         }
     }
@@ -67,11 +76,19 @@ impl PublicationRow {
     /// call returning and this rendering can never make the response
     /// describe a pass the operator did not ask for. See
     /// `LastPassRow::at`'s own rustdoc for the full argument.
-    pub(crate) fn at(publisher: &RuntimePublisher, at_unix_seconds: u64, outcome: &PassOutcome) -> Self {
+    /// The readiness row is `state`'s: it changes only when a pass is
+    /// accepted, which `publish_once` records before it returns.
+    pub(crate) fn at(
+        publisher: &RuntimePublisher,
+        state: &PublicationState,
+        at_unix_seconds: u64,
+        outcome: &PassOutcome,
+    ) -> Self {
         Self {
             target: publisher.describe_target(),
             documents: PublishedDocumentsRow::of(outcome),
             last_pass: Some(LastPassRow::at(at_unix_seconds, outcome)),
+            readiness: state.readiness().into(),
         }
     }
 }
@@ -96,6 +113,7 @@ impl PublishedDocumentsRow {
             tenants: revisions.tenants.map(DocumentRevision::get),
             data_sources: revisions.data_sources.map(DocumentRevision::get),
             catalog: revisions.catalog.map(DocumentRevision::get),
+            registry: revisions.registry.map(RegistryGeneration::get),
         }
     }
 }

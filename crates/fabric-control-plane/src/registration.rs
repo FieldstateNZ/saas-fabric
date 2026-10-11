@@ -5,15 +5,13 @@
 
 use std::sync::Arc;
 
-use fabric_platform_management::{
-    DataSourceState, DataSources, PlatformRepository, PublicationState, RuntimeCatalogueSource,
-    RuntimePublisher,
-};
+use fabric_platform_management::{DataSourceState, DataSources, PublicationState};
 use fabric_reconciliation::ReconciliationStatusStore;
 
 mod contract;
 mod platform_binding;
 mod publication_sink;
+mod publisher;
 
 pub use contract::{ControlPlaneDeps, ControlPlaneServices};
 pub use platform_binding::PlatformBinding;
@@ -21,7 +19,7 @@ pub use publication_sink::PublicationSink;
 
 use crate::resolution::ResolutionService;
 use crate::routes::control_plane_routes;
-use crate::service::{ClientService, DesiredStateCatalogueSource};
+use crate::service::ClientService;
 use crate::state::ControlPlaneState;
 use crate::{logging, ControlPlaneConfig};
 
@@ -69,23 +67,21 @@ pub fn build_control_plane(
     // `PlatformBinding::publication`'s own rustdoc.
     let publication_state = Arc::new(PublicationState::new());
 
-    // The publisher is constructed here, not passed in whole: it needs the
-    // *client* desired-state binding (`repository`, above) to answer
-    // `RuntimeCatalogueSource`, and only this function ever has both that
-    // and the platform binding in scope at once.
-    let platform = platform.map(|binding| {
-        let publisher = publication.as_ref().map(|sink| {
-            let source: Arc<dyn RuntimeCatalogueSource> =
-                Arc::new(DesiredStateCatalogueSource::new(Arc::clone(repository)));
+    let service = Arc::new(ClientService::new(
+        Arc::clone(repository),
+        Arc::clone(&statuses),
+        Arc::clone(&clock),
+        Arc::new(reserved_realms),
+        Arc::new(reserved_client_ids),
+    ));
 
-            Arc::new(RuntimePublisher::new(
-                binding.environment.clone(),
-                Arc::clone(&binding.repository) as Arc<dyn PlatformRepository>,
-                source,
-                Arc::clone(&sink.target),
-                Arc::clone(&clock),
-            ))
-        });
+    // The publisher is built here, not passed in whole: it needs the client
+    // desired-state binding and the client service, which only this
+    // function has in scope beside the platform binding.
+    let platform = platform.map(|binding| {
+        let publisher = publication
+            .as_ref()
+            .map(|sink| publisher::build(&binding, sink, repository, &service, &clock));
 
         // Declarations are placed above what was published (O3).
         let data_sources = publication.as_ref().map_or_else(
@@ -108,13 +104,6 @@ pub fn build_control_plane(
         resolution,
         Arc::clone(&registries),
         Arc::clone(&clock),
-    ));
-    let service = Arc::new(ClientService::new(
-        Arc::clone(repository),
-        Arc::clone(&statuses),
-        clock,
-        Arc::new(reserved_realms),
-        Arc::new(reserved_client_ids),
     ));
 
     let client_secrets =

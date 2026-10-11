@@ -68,8 +68,10 @@ pub use placements::{
 };
 pub use policy::UpdatePolicy;
 pub use publication::{
-    compose, CatalogueSourceError, ComposeError, LastPass, PassOutcome, PassResult, PublicationState,
-    PublishedTenants, RuntimeCatalogueSource, RuntimePublisher, WaitingReason,
+    compose, Accepted, CatalogueSourceError, ComposeError, GateStatus, IssuerRegistrySource, LastPass,
+    PassOutcome, PassResult, PublicationState, PublishedTenants, ReadinessEvidence, ReadinessReport,
+    Registrations, RegistryEvidence, RegistryEvidenceSummary, RegistrySourceError, RuntimeCatalogueSource,
+    RuntimePublisher, WaitingReason, Withheld,
 };
 pub use registry::{Attached, AttachedDescriptor, Provenance, Registry, RegistryError, Resolved, Unusable};
 pub use selector::{decide, Decision, Reason};

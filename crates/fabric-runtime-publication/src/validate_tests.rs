@@ -72,6 +72,7 @@ fn snapshot(tenants: Vec<TenantBindingDocument>, data_sources: Vec<DataSourceDoc
         tenants: DocumentInput::new(DocumentRevision::new(1), tenants),
         data_sources: DocumentInput::new(DocumentRevision::new(1), data_sources),
         catalog: DocumentInput::new(DocumentRevision::new(1), catalog()),
+        registry: None,
     }
 }
 

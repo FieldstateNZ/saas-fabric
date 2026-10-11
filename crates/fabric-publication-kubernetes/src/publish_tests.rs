@@ -395,3 +395,120 @@ async fn an_oversized_document_written_last_is_refused_before_the_first_is_writt
     );
     assert_eq!(task.join().unwrap().len(), 3, "three reads, and not one write");
 }
+
+fn with_registry(
+    mut snapshot: fabric_runtime_publication::RuntimeSnapshot,
+) -> fabric_runtime_publication::RuntimeSnapshot {
+    snapshot.registry = Some(vec![fabric_runtime_publication::IssuerRegistration {
+        issuer: fabric_runtime_publication::RegistryIssuer::parse(
+            "https://identity.example.invalid/realms/acme",
+        )
+        .unwrap(),
+        tenant: fabric_core::TenantId::try_new("acme").unwrap(),
+    }]);
+    snapshot
+}
+
+#[tokio::test]
+async fn the_registry_is_a_key_of_the_tenants_object_and_the_record_beside_it_names_it() {
+    let (client, _token, task) = fake(vec![
+        (404, "{}".into()),
+        (404, "{}".into()),
+        (404, "{}".into()),
+        (201, "{}".into()),
+        (201, "{}".into()),
+        (201, "{}".into()),
+    ]);
+    let adapter = KubernetesRuntimePublication::with_client(client, NS);
+
+    let report = adapter.publish(&with_registry(snapshot(1))).await.unwrap();
+
+    assert_eq!(report.registry.unwrap().generation.get(), 1);
+    let seen = task.join().unwrap();
+    let tenants: serde_json::Value = serde_json::from_str(&seen[5].body).unwrap();
+    assert_eq!(tenants["metadata"]["name"], "fabric-runtime-tenants");
+    let registry: serde_json::Value =
+        serde_json::from_str(tenants["data"]["issuer-registry.json"].as_str().unwrap()).unwrap();
+    assert_eq!(registry["generation"], 1);
+    assert_eq!(registry["issuers"][0]["tenant"], "acme");
+    let record: serde_json::Value =
+        serde_json::from_str(tenants["data"]["publication.json"].as_str().unwrap()).unwrap();
+    assert_eq!(record["registry"]["generation"], 1);
+}
+
+#[tokio::test]
+async fn a_rewritten_tenants_object_keeps_an_unchanged_registry_rather_than_dropping_it() {
+    let first = with_registry(snapshot(1));
+    let plan = fabric_runtime_publication::plan_publication(
+        &first,
+        &fabric_runtime_publication::HeldDocuments::default(),
+    )
+    .unwrap();
+    let text = |bytes: &[u8]| String::from_utf8(bytes.to_vec()).unwrap();
+    let registry = text(&plan.registry.as_ref().unwrap().bytes);
+    let (client, _token, task) = fake(vec![
+        (
+            200,
+            object(
+                "fabric-runtime-tenants",
+                "11",
+                &[
+                    ("tenants.json", &text(&plan.tenants.bytes)),
+                    ("tenants.manifest.json", &manifest(DocumentKind::Tenants, 1)),
+                    ("publication.json", &text(&plan.record.bytes)),
+                    ("issuer-registry.json", &registry),
+                ],
+            ),
+        ),
+        (
+            200,
+            object(
+                "fabric-runtime-data-sources",
+                "12",
+                &[
+                    ("data-sources.json", &text(&plan.data_sources.bytes)),
+                    (
+                        "data-sources.manifest.json",
+                        &manifest(DocumentKind::DataSources, 1),
+                    ),
+                ],
+            ),
+        ),
+        (
+            200,
+            object(
+                "fabric-runtime-catalog",
+                "13",
+                &[
+                    ("catalog.json", &text(&plan.catalog.bytes)),
+                    ("catalog.manifest.json", &manifest(DocumentKind::Catalog, 1)),
+                ],
+            ),
+        ),
+        (200, object("fabric-runtime-data-sources", "12", &[])),
+        (200, object("fabric-runtime-catalog", "13", &[])),
+        (200, "{}".into()),
+    ]);
+    let adapter = KubernetesRuntimePublication::with_client(client, NS);
+    let mut changed = with_registry(snapshot(2));
+    changed.data_sources = DocumentInput::new(
+        fabric_runtime_publication::DocumentRevision::new(1),
+        first.data_sources.payload.clone(),
+    );
+    changed.catalog = DocumentInput::new(
+        fabric_runtime_publication::DocumentRevision::new(1),
+        first.catalog.payload.clone(),
+    );
+
+    let report = adapter.publish(&changed).await.unwrap();
+
+    assert_eq!(report.tenants, DocumentOutcome::Written);
+    assert_eq!(report.registry.unwrap().outcome, DocumentOutcome::Unchanged);
+    let seen = task.join().unwrap();
+    let tenants: serde_json::Value = serde_json::from_str(&seen[5].body).unwrap();
+    assert_eq!(tenants["data"]["issuer-registry.json"], registry);
+    let record: serde_json::Value =
+        serde_json::from_str(tenants["data"]["publication.json"].as_str().unwrap()).unwrap();
+    assert_eq!(record["generation"], 2);
+    assert_eq!(record["registry"]["generation"], 1);
+}

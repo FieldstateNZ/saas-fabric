@@ -45,6 +45,9 @@ use crate::placements::PlacementRecord;
 /// `published` is what the target last published: placements are held to
 /// its tenants document before anything is composed.
 ///
+/// The snapshot carries no issuer registry: the publisher decides one from
+/// the tenants document composed here (D01-4).
+///
 /// # Errors
 ///
 /// [`ComposeError::DuplicatePlacement`] if `placements` records one
@@ -72,6 +75,7 @@ pub fn compose(
         tenants: DocumentInput::new(revision_or_first(held.tenants), tenants),
         data_sources: DocumentInput::new(revision_or_first(held.data_sources), data_sources),
         catalog: DocumentInput::new(revision_or_first(held.catalog), catalog),
+        registry: None,
     })
 }
 

@@ -1,6 +1,9 @@
 //! What the control plane could learn about the managed platform, read once
 //! per request and shared by every client it renders.
 
+use std::collections::BTreeMap;
+
+use fabric_core::{BindingRevision, TenantId};
 use fabric_platform_management::{LastPass, PlacementRecord, PublishedTenants};
 
 /// The environment's placements and its publication, as far as known.
@@ -36,6 +39,10 @@ pub(crate) enum Publication {
         /// left in the accepted tenants document.
         published: Option<PublishedTenants>,
     },
+    /// The tenants document a publication pass is offering now, with the
+    /// issuer registry decided against it: in the same generation, each
+    /// tenant is published at the revision its placements add up to.
+    Offered(BTreeMap<TenantId, BindingRevision>),
 }
 
 impl PlatformFacts {

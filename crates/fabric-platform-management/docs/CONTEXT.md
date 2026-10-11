@@ -411,8 +411,21 @@ own data-source sub-types rather than re-declared, so a hand-editable
   it, handing back a `Drop`-released guard only on the call that wins --
   released on a panic and on cancellation (a dropped future) as well as a
   normal return, which a post-`.await` `store(false, ...)` would not be.
+- `RuntimePublisher::with_issuer_registry(Arc<dyn IssuerRegistrySource>)` —
+  each pass then asks the source for `Registrations { registered, withheld }`
+  against `RegistryEvidence { placements, tenants }`: the tenants document
+  the pass is about to offer (ADR 0019 G4a). It sets `snapshot.registry`
+  before offering. A `RegistrySourceError::Unavailable` halts the pass as
+  `Failed`, before anything is offered. `PublicationError::Registry` is
+  classified `Refused`.
 - `PublicationState` — `SweepState`'s sibling: `new()`, `last_pass() ->
-  Option<LastPass>`.
+  Option<LastPass>`, and `readiness() -> ReadinessReport`.
+- `ReadinessReport { documents, identity, connectors: GateStatus, withheld }`
+  (`publication/readiness.rs`) uses publisher evidence only
+  (`ReadinessEvidence`, recorded with each accepted pass as part of
+  `Accepted`). `GateStatus::Met | Unmet { reasons }`. `connectors` is never
+  `Met`: platform composition deploys the connectors, so the gate names the
+  ones the published data sources need.
 - `LastPass { at_unix_seconds: u64, outcome: PassOutcome }`.
 - `PassOutcome` — `Published { tenants, data_sources, catalog:
   DocumentOutcome each, revisions: PublishedRevisions }` | `Unchanged {

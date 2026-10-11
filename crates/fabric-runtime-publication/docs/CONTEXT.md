@@ -142,6 +142,32 @@ not build.
 - `FilesystemRuntimePublication` — the adapter. `new(tenants_path, data_sources_path,
   catalog_path)` (each `impl Into<PathBuf>`); implements `RuntimePublication`.
 
+## The issuer registry (D01-4)
+
+- `IssuerRegistryDocument` — `issuer-registry.json`:
+  `{schemaVersion, generation, issuers}`. These are the platform contract's
+  keys, hence the camel case. `new(generation, issuers)` sorts by issuer
+  and refuses a duplicate. `canonical_json`.
+- `IssuerRegistration { issuer: RegistryIssuer, tenant: TenantId }` —
+  `fabric_identity::TrustedIssuer`'s shape, field for field.
+- `RegistryIssuer` — exactly `https://<host>[:<port>]/realms/<realm>`.
+  `IssuerOrigin` is `https://<host>[:<port>]`, and its `issuer(realm)`
+  names a realm's issuer. `IssuerError`.
+- `RegistryGeneration` — `u64`, at least 1, with `FIRST` and `next`.
+- `RecordedRegistry { generation, sha256 }` — the record's optional
+  `registry` key, omitted while none is published.
+- `RegistryPlan` — `outcome`, `document`, `bytes`; `recorded()`.
+  `registry::decide` keeps the recorded generation while the registrations
+  render to the recorded digest, and otherwise advances it by one.
+- `RegistryRefusal` — `DuplicateIssuer`, `TenantUnbound`, `Withdrawn`;
+  carried as `PublicationError::Registry`.
+- `RuntimeSnapshot.registry: Option<Vec<IssuerRegistration>>`,
+  `HeldDocuments.registry` (held bytes), `PublicationPlan.registry`,
+  `PublicationReport.registry: Option<RegistryOutcome>` and
+  `PublishedRevisions.registry: Option<RegistryGeneration>`.
+- `ISSUER_REGISTRY_FILE = "issuer-registry.json"`. The filesystem adapter
+  writes it after `tenants.json` and before the record.
+
 ## Internal modules
 
 - `canonical` — `pub(crate) fn to_canonical_bytes` — two-space pretty JSON

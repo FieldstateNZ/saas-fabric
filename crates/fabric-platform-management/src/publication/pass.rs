@@ -88,7 +88,12 @@ impl RuntimePublisher {
 
         hold_unbound_catalogue(&mut snapshot, &published, &held);
 
-        match self.offer(snapshot).await {
+        let withheld = match self.decide_registry(&mut snapshot, &placements).await {
+            Ok(withheld) => withheld,
+            Err(halt) => return halt.into_outcome(),
+        };
+
+        match self.offer(snapshot, withheld).await {
             Ok((report, snapshot)) => outcome_from_report(
                 report,
                 &held,
@@ -96,6 +101,7 @@ impl RuntimePublisher {
                     tenants: Some(snapshot.tenants.revision),
                     data_sources: Some(snapshot.data_sources.revision),
                     catalog: Some(snapshot.catalog.revision),
+                    registry: report.registry.map(|registry| registry.generation),
                 },
             ),
             Err(error) => outcome_from_publish_error(&error),

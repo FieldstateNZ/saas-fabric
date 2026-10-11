@@ -6,12 +6,12 @@
 //! actually lives — together with its constructor and its two plain reads,
 //! `list` and `get`. Every rule that *does* something to a client is
 //! already one file per rule (`create_client.rs`, `set_product.rs`, and the
-//! rest); what stays here is the struct those files all share and the
-//! handful of methods too small to be their own rule.
+//! rest); what stays here is the struct they share and its smallest methods.
 
 mod application_id_available;
 mod catalogue;
 mod create_client;
+mod issuer_registry_source;
 mod realm_available;
 mod reconciliation_view;
 #[cfg(test)]
@@ -26,6 +26,7 @@ mod set_identity;
 mod set_product;
 mod state_access;
 
+pub(crate) use issuer_registry_source::LifecycleIssuerRegistry;
 pub(crate) use runtime_catalogue_source::DesiredStateCatalogueSource;
 
 use std::collections::BTreeSet;

@@ -1,43 +1,34 @@
 //! The publication record: the file a publication writes last, naming the
 //! exact bytes of each document that together form one generation.
 //!
-//! In the 121-150 line band (docs/architecture/file-size-policy.md): one
-//! wire type and the held-record parse that enforces
-//! the floor it carries -- splitting the floor check from the type that
-//! records the floor would let one be changed without the other.
+//! In the 121-150 band: one wire type and the held-record parse that
+//! enforces the floor it carries -- split, one could change without the other.
 
 use crate::canonical::to_canonical_bytes;
-use crate::{PublicationError, RecordedDocuments, ResourceHistory, CONTRACT_VERSION};
+use crate::{PublicationError, RecordedDocuments, RecordedRegistry, ResourceHistory, CONTRACT_VERSION};
 
-/// The publication record's file name, written beside `tenants.json` -- and,
-/// in the Kubernetes adapter, a third key of the tenants `ConfigMap`, so it is
-/// projected into the same volume, in the same symlink swap, as the tenants
-/// payload it is written with.
+/// The record's file name: beside `tenants.json`, and in Kubernetes a key of
+/// the tenants `ConfigMap`, projected in the same swap as its payload.
 pub const PUBLICATION_RECORD_FILE: &str = "publication.json";
 
-/// The oldest reader contract that can serve what this publisher writes.
-///
-/// A reader whose own contract is below a record's
-/// `minimum_reader_contract` refuses the generation and keeps its last
-/// complete one; raising this constant is how a publisher activates a shape
-/// only newer readers understand, once those readers are rolled out (#112:
-/// compatible readers precede schema activation).
+/// The oldest reader contract that can serve what this publisher writes. A
+/// reader below a record's `minimum_reader_contract` keeps its last complete
+/// generation; raising this activates a shape only newer readers understand,
+/// once they are rolled out (#112). The registry does not raise it: readers
+/// ignore record keys they do not know, and no runtime reads the registry.
 pub const MINIMUM_READER_CONTRACT: u32 = 1;
 
 /// One publication generation: which revision, and which bytes, of each
 /// document belong together.
 ///
 /// Written after all three documents, so a reader that finds every document
-/// matching the record's digests holds one complete generation, and a reader
-/// that finds any mismatch is between two -- or after an interrupted
-/// publication -- and keeps the generation it already serves.
+/// matching its digests holds one complete generation, and one that finds a
+/// mismatch is between two and keeps the generation it serves.
 ///
-/// `minimum_publisher_contract` is the rollback floor for the published
-/// state (D01-21): a publisher whose [`CONTRACT_VERSION`] is below it must
-/// not write over this record, because it would leave readers a record it
-/// does not understand. Every publisher from this one on enforces it; a
-/// publisher older than the record cannot, which is why the release that
-/// introduced the record is itself the floor for rolling the publisher back.
+/// `minimum_publisher_contract` is the rollback floor (D01-21): a publisher
+/// whose [`CONTRACT_VERSION`] is below it must not write over this record. A
+/// publisher older than the record cannot enforce that, which is why the
+/// release that introduced the record is the floor for rolling back.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PublicationRecord {
@@ -46,11 +37,14 @@ pub struct PublicationRecord {
     minimum_publisher_contract: u32,
     generation: u64,
     documents: RecordedDocuments,
-    /// Absent from a record written before the history existed (#136),
-    /// which reads as an empty history. A publisher from before it refuses a
-    /// record that carries one as unreadable, rather than dropping it.
+    /// Absent before #136, reading as empty. A publisher from before it
+    /// refuses a record that carries one as unreadable, rather than drop it.
     #[serde(default)]
     resources: ResourceHistory,
+    /// The issuer registry this generation carries (D01-4); absent, not
+    /// `null`, until one is published, so earlier records keep their bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    registry: Option<RecordedRegistry>,
 }
 
 /// Only the floor, read before anything else in a held record, so a record
@@ -74,7 +68,20 @@ impl PublicationRecord {
             generation,
             documents,
             resources,
+            registry: None,
         }
+    }
+
+    /// This record, naming `registry` as the generation's issuer registry.
+    #[must_use]
+    pub fn with_registry(self, registry: Option<RecordedRegistry>) -> Self {
+        Self { registry, ..self }
+    }
+
+    /// The issuer registry this generation carries, if one is published.
+    #[must_use]
+    pub const fn registry(&self) -> Option<&RecordedRegistry> {
+        self.registry.as_ref()
     }
 
     /// The generation number: one more than the record it replaced.
@@ -107,7 +114,7 @@ impl PublicationRecord {
         self.minimum_publisher_contract
     }
 
-    /// Canonical JSON, the formatting rule every published file shares.
+    /// Canonical JSON.
     ///
     /// # Errors
     ///
@@ -116,8 +123,7 @@ impl PublicationRecord {
         to_canonical_bytes(self)
     }
 
-    /// Reads a held record, refusing one whose rollback floor is above this
-    /// publisher's contract before trying to understand the rest of it.
+    /// Reads a held record, refusing one above this publisher's floor first.
     ///
     /// # Errors
     ///

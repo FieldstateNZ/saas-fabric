@@ -29,6 +29,7 @@ mod errors;
 mod held;
 mod object;
 mod publish;
+mod tenants_object;
 mod wire;
 
 pub use config::PublicationTarget;

@@ -193,6 +193,7 @@ fn held_revisions_are_carried_and_default_to_one_when_absent() {
         tenants: Some(DocumentRevision::new(7)),
         data_sources: None,
         catalog: Some(DocumentRevision::new(3)),
+        registry: None,
     };
 
     let snapshot = compose(

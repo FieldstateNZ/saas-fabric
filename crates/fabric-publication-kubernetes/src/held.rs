@@ -3,7 +3,8 @@
 use std::collections::BTreeMap;
 
 use fabric_runtime_publication::{
-    DocumentKind, DocumentManifest, HeldDocument, HeldDocuments, PublicationError, PUBLICATION_RECORD_FILE,
+    DocumentKind, DocumentManifest, HeldDocument, HeldDocuments, PublicationError, ISSUER_REGISTRY_FILE,
+    PUBLICATION_RECORD_FILE,
 };
 
 use crate::client::{Client, Found};
@@ -17,6 +18,8 @@ pub(crate) struct Read {
     pub(crate) resource_version: Option<String>,
     /// The publication record, which only the tenants object carries.
     pub(crate) record: Option<Vec<u8>>,
+    /// The issuer registry, which only the tenants object carries.
+    pub(crate) registry: Option<Vec<u8>>,
 }
 
 /// All three, read once before a publication is planned.
@@ -41,6 +44,7 @@ impl Reads {
             data_sources: self.data_sources.held.clone(),
             catalog: self.catalog.held.clone(),
             record: self.tenants.record.clone(),
+            registry: self.tenants.registry.clone(),
         }
     }
 }
@@ -55,6 +59,7 @@ pub(crate) async fn read_one(
             held: HeldDocument::absent(),
             resource_version: None,
             record: None,
+            registry: None,
         }),
         Found::Object(object) => {
             if object.metadata.name != name_of(document) {
@@ -63,17 +68,17 @@ pub(crate) async fn read_one(
                     "the cluster answered with a different object",
                 ));
             }
-            let record = match document {
-                DocumentKind::Tenants => object
-                    .data
-                    .get(PUBLICATION_RECORD_FILE)
-                    .map(|text| text.as_bytes().to_vec()),
+            let tenants_key = |key: &str| match document {
+                DocumentKind::Tenants => object.data.get(key).map(|text| text.as_bytes().to_vec()),
                 DocumentKind::DataSources | DocumentKind::Catalog => None,
             };
+            let record = tenants_key(PUBLICATION_RECORD_FILE);
+            let registry = tenants_key(ISSUER_REGISTRY_FILE);
             Ok(Read {
                 held: held_of(&object.data, document)?,
                 resource_version: object.metadata.resource_version,
                 record,
+                registry,
             })
         }
     }

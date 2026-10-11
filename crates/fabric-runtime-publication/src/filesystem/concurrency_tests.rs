@@ -144,6 +144,7 @@ fn snapshot(
         tenants: DocumentInput::new(DocumentRevision::new(tenants.0), tenants.1),
         data_sources: DocumentInput::new(DocumentRevision::new(data_sources.0), data_sources.1),
         catalog: DocumentInput::new(DocumentRevision::new(1), catalog()),
+        registry: None,
     }
 }
 
@@ -198,6 +199,7 @@ async fn a_second_publisher_is_refused_while_the_first_holds_the_lock() {
         &dir.paths(DocumentKind::DataSources),
         &dir.paths(DocumentKind::Catalog),
         &dir.0.join(crate::PUBLICATION_RECORD_FILE),
+        &dir.0.join(crate::ISSUER_REGISTRY_FILE),
     )
     .unwrap();
     let retire = snapshot(
@@ -250,6 +252,7 @@ async fn current_behaviour_two_publishers_that_bypass_the_lock_can_publish_a_dan
         &dir.paths(DocumentKind::DataSources),
         &dir.paths(DocumentKind::Catalog),
         &dir.0.join(crate::PUBLICATION_RECORD_FILE),
+        &dir.0.join(crate::ISSUER_REGISTRY_FILE),
     )
     .unwrap();
 
@@ -311,6 +314,7 @@ async fn current_behaviour_two_publishers_that_bypass_the_lock_at_one_revision_b
         &dir.paths(DocumentKind::DataSources),
         &dir.paths(DocumentKind::Catalog),
         &dir.0.join(crate::PUBLICATION_RECORD_FILE),
+        &dir.0.join(crate::ISSUER_REGISTRY_FILE),
     )
     .unwrap();
 

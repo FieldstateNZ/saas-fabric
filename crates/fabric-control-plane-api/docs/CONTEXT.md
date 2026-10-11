@@ -27,7 +27,10 @@ testable.
   the schedule while leaving `POST /api/platform/publication` working.
   `namespace` is validated at startup against
   `fabric_publication_kubernetes::PublicationTarget::validate`, beside the
-  budget check.
+  budget check. `issuer_origin` (optional) is parsed as
+  `fabric_runtime_publication::IssuerOrigin` at startup; stated, it becomes
+  `PublicationSink.issuer_origin` and the publisher publishes the issuer
+  registry (D01-4).
 - `secrets::{PREFIX, resolve}`.
 - `startup::{build, Application, shutdown_signal}`;
   `Application { router, listen, reconciliation }`.

@@ -1,6 +1,7 @@
 //! What a publication call actually did to each document.
 
 use crate::verdict::Verdict;
+use crate::RegistryGeneration;
 
 /// Whether one document was rewritten by a publication call.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -56,4 +57,16 @@ pub struct PublicationReport {
     pub data_sources: DocumentOutcome,
     /// What happened to the catalogue document.
     pub catalog: DocumentOutcome,
+    /// What happened to the issuer registry, when the snapshot carried one.
+    pub registry: Option<RegistryOutcome>,
+}
+
+/// What a publication did to the issuer registry, and the generation it
+/// left published.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RegistryOutcome {
+    /// Whether it was rewritten.
+    pub outcome: DocumentOutcome,
+    /// The generation now published.
+    pub generation: RegistryGeneration,
 }

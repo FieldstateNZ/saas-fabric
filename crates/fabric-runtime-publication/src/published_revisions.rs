@@ -1,6 +1,6 @@
 //! What is currently held, one revision per document.
 
-use crate::DocumentRevision;
+use crate::{DocumentRevision, RegistryGeneration};
 
 /// The revision currently held for each of the three documents, as reported
 /// by [`crate::RuntimePublication::current`].
@@ -17,4 +17,6 @@ pub struct PublishedRevisions {
     pub data_sources: Option<DocumentRevision>,
     /// The catalogue document's held revision, if any.
     pub catalog: Option<DocumentRevision>,
+    /// The issuer registry generation the held record names, if any.
+    pub registry: Option<RegistryGeneration>,
 }

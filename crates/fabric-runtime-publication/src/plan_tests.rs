@@ -68,6 +68,7 @@ fn snapshot(revision: u64) -> RuntimeSnapshot {
         tenants: DocumentInput::new(DocumentRevision::new(revision), vec![tenant("acme", "shared-1")]),
         data_sources: DocumentInput::new(DocumentRevision::new(revision), vec![data_source("shared-1")]),
         catalog: DocumentInput::new(DocumentRevision::new(revision), catalog()),
+        registry: None,
     }
 }
 
@@ -81,6 +82,7 @@ fn held_from(plan: &PublicationPlan) -> HeldDocuments {
         data_sources: held(DocumentKind::DataSources, &plan.data_sources),
         catalog: held(DocumentKind::Catalog, &plan.catalog),
         record: Some(plan.record.bytes.clone()),
+        registry: None,
     }
 }
 

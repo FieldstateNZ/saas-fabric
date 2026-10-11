@@ -36,6 +36,7 @@ fn snapshot(tenants: u64, data_sources: u64, catalog: u64) -> RuntimeSnapshot {
             DocumentRevision::new(catalog),
             CatalogDocument::new(std::collections::BTreeMap::default()),
         ),
+        registry: None,
     }
 }
 

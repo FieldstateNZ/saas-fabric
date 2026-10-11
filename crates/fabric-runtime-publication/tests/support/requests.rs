@@ -30,7 +30,7 @@ fn versioned(uri: &str) -> String {
 const REGISTERED_TENANTS: [&str; 2] = ["acme", "globex"];
 
 /// The issuer registered to `tenant`.
-fn issuer_for(tenant: &str) -> String {
+pub fn issuer_for(tenant: &str) -> String {
     format!("https://identity.test.invalid/realms/{tenant}")
 }
 

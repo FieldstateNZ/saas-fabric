@@ -6,6 +6,7 @@ use super::atomic_write::atomic_write;
 use super::paths::DocumentPaths;
 use crate::{
     DocumentKind, DocumentManifest, DocumentOutcome, DocumentRevision, PublicationError, RecordPlan,
+    RegistryPlan,
 };
 
 /// Writes one document's payload, then its manifest, unless its verdict says
@@ -38,6 +39,16 @@ pub(super) fn write_if_needed(
 /// left it unchanged. A failure is reported against the tenants document,
 /// which the record travels with.
 pub(super) fn write_record_if_needed(path: &Path, plan: &RecordPlan) -> Result<(), PublicationError> {
+    if plan.outcome == DocumentOutcome::Unchanged {
+        return Ok(());
+    }
+    atomic_write(path, &plan.bytes).map_err(|cause| unwritable(DocumentKind::Tenants, cause))
+}
+
+/// Writes the issuer registry, after the tenants it names and before the
+/// record, unless its bytes are already the held ones. Reported against the
+/// tenants document, which it travels with.
+pub(super) fn write_registry_if_needed(path: &Path, plan: &RegistryPlan) -> Result<(), PublicationError> {
     if plan.outcome == DocumentOutcome::Unchanged {
         return Ok(());
     }

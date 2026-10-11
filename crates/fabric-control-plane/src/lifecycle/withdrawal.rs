@@ -43,9 +43,13 @@ pub(crate) fn withdrawal(tenant: Option<&TenantId>, publication: &Publication) -
             WithdrawalState::Unobserved,
             "this deployment publishes no runtime documents, so nothing shows whether the tenant is served",
         ),
-        Publication::Observed { last_pass, published } => (last_pass, published),
+        Publication::Observed { last_pass, published } => (
+            last_pass.as_ref(),
+            published.as_ref().map(|published| &published.tenants),
+        ),
+        Publication::Offered(tenants) => (None, Some(tenants)),
     };
-    let last_refusal = last_pass.as_ref().and_then(|last| match &last.outcome {
+    let last_refusal = last_pass.and_then(|last| match &last.outcome {
         PassOutcome::Refused { reason } => Some(("refused", reason)),
         PassOutcome::Failed { detail } => Some(("failed", detail)),
         _ => None,
@@ -65,7 +69,7 @@ pub(crate) fn withdrawal(tenant: Option<&TenantId>, publication: &Publication) -
         );
     };
 
-    match tenant.and_then(|tenant| published.tenants.get(tenant)) {
+    match tenant.and_then(|tenant| published.get(tenant)) {
         Some(revision) => of(
             WithdrawalState::Pending,
             &format!(

@@ -139,6 +139,22 @@ reports `withdrawal` (`pending`/`refused`/`unobserved`/`notPublished`) for retir
 clients from `PublicationState` evidence only; never "withdrawn". Nothing here deletes
 anything.
 
+## Issuer registry (D01-4)
+
+`service/issuer_registry_source.rs` (`LifecycleIssuerRegistry`) implements
+`fabric_platform_management::IssuerRegistrySource`. It registers each client whose
+lifecycle permits `LifecycleUse::Route`, by `IssuerOrigin::issuer(realm)`. It
+derives the lifecycle with `lifecycle::derive`, the console's own derivation, but
+its publication evidence is `Publication::Offered`: the tenants document the same
+pass offers. Not-ready and retired clients that are bound are `withheld`, with the
+refusal's words. A retired client's binding stays published (withdrawal deferred);
+leaving the registry is not withdrawal evidence. It is wired only when
+`PublicationSink.issuer_origin` is `Some` (`registration/publisher.rs`; host config
+`[platform_management.publication].issuer_origin`). No deployment states one.
+`PublicationRow` carries `documents.registry` (the generation) and `readiness`
+(`ReadinessRow`: the `documents`, `identity` and `connectors` gates, plus
+`withheld`).
+
 ## Hard invariants — do not break
 
 1. **No handler may reach an identity provider.** `ControlPlaneState` holds

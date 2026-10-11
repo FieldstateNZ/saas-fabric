@@ -303,6 +303,7 @@ fn snapshot(
         tenants: DocumentInput::new(DocumentRevision::new(tenants.0), tenants.1),
         data_sources: DocumentInput::new(DocumentRevision::new(data_sources.0), data_sources.1),
         catalog: DocumentInput::new(DocumentRevision::new(1), CatalogDocument::new(resources)),
+        registry: None,
     }
 }
 
@@ -530,6 +531,7 @@ async fn an_interrupted_publication_leaves_the_previous_generations_record_in_pl
             tenants: Some(DocumentRevision::new(1)),
             data_sources: Some(DocumentRevision::new(2)),
             catalog: Some(DocumentRevision::new(1)),
+            registry: None,
         }
     );
     let record = cluster.record();

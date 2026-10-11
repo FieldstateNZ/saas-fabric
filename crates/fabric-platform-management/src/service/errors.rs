@@ -54,6 +54,20 @@ pub enum PlatformError {
         version: String,
     },
 
+    /// The version asked for is below the component's rollback floor
+    /// (D01-21). Unlike [`NotRollable`](Self::NotRollable) the version may be
+    /// published and coherent, but it misreads persisted state, so the remedy
+    /// is a reviewed recovery rather than another version.
+    #[error("{version} is below {component}'s rollback floor, {floor}")]
+    BelowRollbackFloor {
+        /// Which component was asked.
+        component: String,
+        /// What was asked for, as the caller wrote it.
+        version: String,
+        /// The oldest version this component may be rolled back to.
+        floor: String,
+    },
+
     /// A declared data source breaks one of ADR 0023 part 1's placement
     /// rules.
     ///

@@ -32,6 +32,10 @@ impl PlatformManagement {
     /// and for images neither is one whose images never agreed.
     /// Reading it changes nothing.
     ///
+    /// Nothing below the component's rollback floor is offered (D01-21), and
+    /// `more` is cleared once the floor has cut the list: every older version
+    /// is below the floor too, so there is nothing further to look for.
+    ///
     /// # Errors
     ///
     /// The desired-state variants if the component cannot be read, and
@@ -44,7 +48,8 @@ impl PlatformManagement {
     ) -> Result<History, PlatformError> {
         let desired = self.desired_state.component(environment, component).await?;
 
-        Ok(backwards::candidates(self.registry.as_ref(), self.charts.as_ref(), &desired).await?)
+        let history = backwards::candidates(self.registry.as_ref(), self.charts.as_ref(), &desired).await?;
+        Ok(self.floors.cut(&desired.source, history))
     }
 
     /// Puts a component back on an older version, and holds it there.
@@ -80,9 +85,11 @@ impl PlatformManagement {
     ///
     /// # Errors
     ///
-    /// [`PlatformError::NotRollable`] if the version is not one this component
-    /// can be rolled back to, and the desired-state and registry variants
-    /// otherwise.
+    /// [`PlatformError::BelowRollbackFloor`] if the version is below the
+    /// component's rollback floor, checked before any registry is asked and
+    /// before anything is written; [`PlatformError::NotRollable`] if it is
+    /// not otherwise one this component can be rolled back to; and the
+    /// desired-state and registry variants otherwise.
     pub async fn roll_back(
         &self,
         environment: &str,
@@ -91,6 +98,8 @@ impl PlatformManagement {
         note: Option<&str>,
     ) -> Result<ComponentStatus, PlatformError> {
         let desired = self.desired_state.component(environment, component).await?;
+
+        self.floors.admit(&desired.source, component, version)?;
 
         let release = backwards::one(self.registry.as_ref(), self.charts.as_ref(), &desired, version)
             .await?

@@ -61,6 +61,12 @@ name and the document's size bound).
   `from_yaml(&str)`, `spec()`, `images()` yielding `(&Role, &Repository)`,
   `render(version, &BTreeMap<Role, Digest>) -> Result<ComponentDescriptor>`.
 
+- `MINIMUM_ROLLABLE_VERSION` (`"0.3.0-preview.16"`) and `RUNTIME_REPOSITORY`
+  (`"ghcr.io/fieldstatenz/saas-fabric"`) — Fabric's own rollback floor
+  (D01-21), held to the root `compatibility.yaml` by
+  `tests/this_repositorys_compatibility.rs`. Platform Management builds
+  `RollbackFloors::for_this_release()` from them.
+
 ## Internal modules
 
 - `errors.rs` — `ContractError`, `invalid()`.

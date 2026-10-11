@@ -94,7 +94,11 @@ not build.
   is the resource revision, reused directly on `TenantBindingDocument.revision`
   and `DataSourceDocument.revision`. Do not conflate the two; see the type's
   own rustdoc.
-- `CONTRACT_VERSION: u32 = 1`.
+- `CONTRACT_VERSION: u32 = 2`. Raised from 1 with the release rollback floor
+  (D01-21, `compatibility.yaml`). Every record states it as
+  `minimum_publisher_contract`, so publishers built at 1 (#136 to #138)
+  refuse what this one writes. `rollback_floor::check_publisher_floor` reads
+  only that floor, before the rest of a held record.
 - File name constants: `TENANTS_FILE`, `TENANTS_MANIFEST_FILE`,
   `DATA_SOURCES_FILE`, `DATA_SOURCES_MANIFEST_FILE`, `CATALOG_FILE`,
   `CATALOG_MANIFEST_FILE`. Each matches the ConfigMap data-key character set

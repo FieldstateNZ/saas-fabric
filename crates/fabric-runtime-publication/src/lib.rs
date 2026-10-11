@@ -55,6 +55,8 @@ mod document;
 mod document_revision;
 mod errors;
 mod filesystem;
+#[cfg(test)]
+mod format_compatibility_tests;
 mod ids;
 mod manifest;
 mod plan;
@@ -69,6 +71,7 @@ mod registry;
 mod report;
 mod resource_history;
 mod resource_revisions;
+mod rollback_floor;
 mod snapshot;
 mod validate;
 #[cfg(test)]

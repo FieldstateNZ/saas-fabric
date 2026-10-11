@@ -126,6 +126,7 @@ fn service(registry: &Arc<FakeRegistry>, desired: &Arc<Written>) -> PlatformMana
         Arc::new(NoCharts) as Arc<dyn ChartIndex>,
         Arc::clone(desired) as Arc<dyn DesiredState>,
         Arc::new(fabric_core::SystemClock::new()) as Arc<dyn fabric_core::Clock>,
+        crate::RollbackFloors::default(),
     )
 }
 

@@ -31,6 +31,7 @@ mod placements;
 mod policy;
 mod publication;
 mod registry;
+mod rollback_floors;
 mod running_guard;
 mod selector;
 mod service;
@@ -74,6 +75,7 @@ pub use publication::{
     RegistryEvidenceSummary, RegistrySourceError, RuntimeCatalogueSource, RuntimePublisher, WaitingReason,
 };
 pub use registry::{Attached, AttachedDescriptor, Provenance, Registry, RegistryError, Resolved, Unusable};
+pub use rollback_floors::RollbackFloors;
 pub use selector::{decide, Decision, Reason};
 pub use service::{PlatformError, PlatformManagement};
 pub use status::{ComponentStatus, DesiredStateStatus, Diagnostics, Reconciliation, Running};

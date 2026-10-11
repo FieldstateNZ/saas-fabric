@@ -267,6 +267,16 @@ a defined verdict.
 | present | absent | Write. There is nothing to diverge from, so a publication at exactly the held revision is accepted — this is a republication, not a divergence |
 | present | present | compared below |
 
+> **Amendment (2026-10-11, O2, [#136](https://github.com/FieldstateNZ/saas-fabric/pull/136)).**
+> A missing manifest is no longer always a first publication. If the
+> publication record (see [The publication record](#the-publication-record))
+> still names the document, the publisher holds that document at the
+> revision the record names. An older offer is then refused as
+> `StaleRevision`, and `current()` reports the recorded revision. The
+> first-publication rows above still apply when no record is held. That
+> includes losing the whole tenants `ConfigMap`, because the record is one of
+> that object's keys.
+
 When both are held, the verdict follows the incoming revision against the held
 one and, at equal revisions, a byte comparison against the held payload:
 
@@ -355,6 +365,15 @@ Each manifest carries `contract_version`. The runtime does not read it and does
 not need to — an incompatible *shape* already fails loudly through
 `deny_unknown_fields`. What the version buys is the migration path for a change
 of *meaning* at an unchanged shape.
+
+> **Amendment (2026-10-11, G6, [#136](https://github.com/FieldstateNZ/saas-fabric/pull/136)).**
+> The manifests are still not read by the runtime. The version handshake
+> is carried instead by the publication record, a separate file. Its
+> `minimum_reader_contract` is the oldest reader that may serve the
+> generation. A reader below it refuses the generation and keeps the last
+> complete one it holds. Raising that floor is how a publisher activates a
+> shape that only newer readers understand, once those readers are rolled
+> out. The dual-key path described below is still not built.
 
 A breaking change ships as **new file names and new ConfigMap keys alongside the
 old ones**, never as a reinterpretation of documents already published — the
@@ -560,6 +579,48 @@ there is **no timestamp**: nothing branches on one, the audit event already
 carries the time, and a timestamp in a ConfigMap is a diff that churns on every
 publication for no reader's benefit.
 
+### The publication record
+
+> **Amendment (2026-10-11, D01-2, [#136](https://github.com/FieldstateNZ/saas-fabric/pull/136)).**
+> Added to close #112's reader-visible atomicity gaps.
+
+`publication.json` is written once per publication, **after** all three
+documents. It is not a per-document manifest. It names which bytes of each
+document belong to one generation:
+
+```json
+{
+  "contract_version": 1,
+  "minimum_reader_contract": 1,
+  "minimum_publisher_contract": 1,
+  "generation": 4,
+  "documents": {
+    "tenants": { "revision": 9, "sha256": "<lowercase hex>" },
+    "data-sources": { "revision": 3, "sha256": "<lowercase hex>" },
+    "catalog": { "revision": 2, "sha256": "<lowercase hex>" }
+  }
+}
+```
+
+- **`generation`** increases by one each time the record changes. A
+  republication that changes no document leaves the record and its
+  generation alone. Each `sha256` is taken over the exact published bytes.
+- **Where it lives.** The filesystem adapter writes it beside `tenants.json`.
+  The Kubernetes adapter writes it as a third data key of
+  `fabric-runtime-tenants` (see [The production owner](#the-production-owner)).
+- **Readers.** A reader that finds the record applies tenants and data
+  sources only when both match it, data sources first. Otherwise it keeps
+  the last complete generation it holds. A reader that finds no record (a
+  set published before the record existed) reads each document on its own,
+  as before. The catalogue is not checked against the record (G8).
+- **`minimum_reader_contract`.** The version handshake described in part 9.
+- **`minimum_publisher_contract`.** The rollback floor for the published
+  state (D01-21). A publisher whose contract is below it refuses with
+  `BelowRollbackFloor` before writing anything. A publisher built before the
+  record existed cannot enforce the floor. The release that introduced the
+  record is therefore the lowest a publisher may be rolled back to. Recording
+  that minimum rollable version is #124's.
+
 ---
 
 ## The input this decision does not have
@@ -657,9 +718,20 @@ runtime plane at all.
 
 | ConfigMap | Data keys | Mounted at |
 |---|---|---|
-| `fabric-runtime-tenants` | `tenants.json`, `tenants.manifest.json` | the runtime's `tenants_path` directory |
+| `fabric-runtime-tenants` | `tenants.json`, `tenants.manifest.json`, `publication.json` | the runtime's `tenants_path` directory |
 | `fabric-runtime-data-sources` | `data-sources.json`, `data-sources.manifest.json` | its `data_sources_path` directory |
 | `fabric-runtime-catalog` | `catalog.json`, `catalog.manifest.json` | its `catalog_path` directory |
+
+> **Amendment (2026-10-11, [#136](https://github.com/FieldstateNZ/saas-fabric/pull/136)).**
+> `publication.json` is the third data key of `fabric-runtime-tenants`. It
+> is the [publication record](#the-publication-record), not a manifest. The
+> kubelet projects it into the runtime's volume in the same symlink swap as
+> `tenants.json`. The tenants object is written last in every publication.
+> A publication that changes only the data sources or the catalogue
+> therefore still rewrites the tenants object, with its payload and manifest
+> exactly as held, so that the record closes the generation. No object is
+> added, so the RBAC below is unchanged. The 1 MiB cap applies to the
+> tenants object with the record included.
 
 - **Exactly one writer each** — the controller's ServiceAccount, and nothing
   else. Concurrency between control-plane replicas is answered by there being
@@ -726,7 +798,9 @@ runtime plane at all.
 
 1. Three ConfigMaps, named as above, in `platform-system`.
 2. Two data keys each: `<name>.json` and `<name>.manifest.json`. Both are UTF-8
-   strings in `data`; `binaryData` is never used.
+   strings in `data`; `binaryData` is never used. **Amended (2026-10-11,
+   #136):** `fabric-runtime-tenants` carries a third key, `publication.json`.
+   It is also UTF-8 in `data`.
 3. The platform repo owns the ServiceAccount, Role, RoleBinding and volume
    mounts. It does **not** declare the ConfigMaps and must not add them to any
    Argo application.
@@ -734,7 +808,12 @@ runtime plane at all.
 5. The runtime Deployment's three paths are already configurable
    (`tenants_path`, `data_sources_path`, `catalog_path`).
 6. Mounting a directory with extra files in it is harmless — the runtime reads
-   the one file it was told about.
+   the one file it was told about. **Amended (2026-10-11, #136):** the runtime
+   also reads `publication.json` from the directory of `tenants_path`. The
+   tenants volume must therefore project the whole object, not selected
+   `items`. Without the record, readers fall back to reading each document on
+   its own and lose the generation guarantee. The platform mount has not been
+   checked against this.
 7. Every mount is a whole-volume mount. **Never `subPath`** — a `subPath` mount
    never sees an update, which would make every rule above true on disk and
    false in the running pod.
@@ -759,7 +838,9 @@ runtime plane at all.
    > and the shipped adapter builds and writes that whole object in one
    > `PUT`/`POST` — there is no ordering to get right *within* one document,
    > only *across* the three, which `publish` still writes data sources,
-   > then catalogue, then tenants, exactly as part 3 requires.
+   > then catalogue, then tenants, exactly as part 3 requires. Since #136 the
+   > tenants object also carries the publication record, so the record is
+   > written in the last write of a publication.
 4. Divergence detection is a string comparison of `ConfigMap.data["<name>.json"]`
    — no digest, no annotation.
 5. Refuse a document that would take the object past 1 MiB. Do not split.
@@ -941,36 +1022,50 @@ Accepting this decision does not make these true. Each is tracked against
 PR, with compatibility and partial-publication failure tests. The IDs match
 ADR 0023's list and `docs/roadmap/m0-contract-decisions.md`.
 
-- **O1. The publisher does not guard resource revisions.**
-  `validate_snapshot` (`crates/fabric-runtime-publication/src/validate.rs`)
-  compares no tenant or data-source `BindingRevision` with the held document.
-  It publishes a lower resource revision, or a changed resource at the same
-  revision. Running readers ignore it. A reader that starts later has no
-  held copy, so it applies it, and replicas then serve different bindings.
-- **O2. Losing the held manifest restarts the document revision.** With no
-  manifest held, the verdict treats the document as a first publication
-  (`verdict.rs`), and `compose` offers revision 1. Only an out-of-band
-  deletion gets here, because the RBAC grants no `delete`. Nothing refuses
-  or reports it.
+- **O1. Implemented in [#136](https://github.com/FieldstateNZ/saas-fabric/pull/136):
+  the publisher guards resource revisions.** A tenant binding or data source
+  that the held document holds is refused as `ResourceRevisionNotAdvanced`
+  when it is offered at an older revision, or changed at the same revision
+  (`crates/fabric-runtime-publication/src/resource_revisions.rs`;
+  `plan_tests.rs::a_held_tenant_offered_at_an_older_revision_is_refused`,
+  `::a_held_data_source_changed_at_the_same_revision_is_refused`). A
+  resource absent from the held document is not compared, so O3 and the
+  removal half of O4 stay open. Not verified live.
+- **O2. Implemented in [#136](https://github.com/FieldstateNZ/saas-fabric/pull/136)
+  while the publication record survives.** A lost manifest is held at the
+  revision the record names, so an older offer is refused as
+  `StaleRevision`
+  (`plan_tests.rs::a_lost_manifest_is_held_at_the_revision_the_record_names_so_an_older_offer_is_refused`).
+  Losing the whole tenants `ConfigMap` loses the record with it, and that
+  case is still treated as a first publication. Not verified live.
 - **O3. A data source removed and declared again restarts at revision 1**
   (`data_sources/plan.rs`). See ADR 0023.
 - **O4. Nothing detects a removed or lowered placement record.** A reverted
-  `placements.yaml` can deprovision a tenant or lower its revision (O1).
+  `placements.yaml` can deprovision a tenant. A lowered tenant revision is
+  now refused by the publisher (O1, #136).
   Only taking the whole tenants document to empty is guarded. See ADR 0023.
 - **O5. No test characterizes a Git revert** of the platform's environment
   files, or of the catalogue and client documents, through the reconciler,
   the publisher and the runtime (D01-27).
 - **O6. #112's remaining reader-visible and atomicity gaps**
   ([gap report](../roadmap/m2-publication-gap-report.md)):
-  - G1b: no generation that is consistent across the three documents;
-  - G2: retiring a data source does not wait for readers;
-  - G3: an interrupted publication is visible to readers, and the panel does
-    not show it as incomplete;
+  - G1b: readers that use the publication record (`fabric-api`, #136)
+    apply tenants and data sources only as one generation. Still open: the
+    two registries swap one after the other, and the catalogue is outside
+    the generation;
+  - G2: since #136 a reader never applies a retirement before the unbinding
+    that preceded it. The publisher still does not wait for readers;
+  - G3: since #136 an interrupted publication leaves readers on the previous
+    complete generation. The files themselves are still left mixed, and the
+    panel does not show the publication as incomplete;
   - G4: one writer is assumed, not enforced (no `Lease`);
   - G5: no pre-publication hold; no last-known-good across a restart; no
     recovery command for an unparseable held document; failure semantics
     not stated;
-  - G6: no versioning rule; §9's dual-key path is not built; no per-row
-    compatibility tests;
+  - G6: since #136 the record's `minimum_reader_contract` is the version
+    handshake, with reader tests at contract N and N+1 in both directions
+    (`reader_compatibility.rs`). Still open: §9's dual-key path is not built,
+    no check fails CI when a document shape changes without raising the
+    floor, and there are no per-row matrix tests;
   - G7: readers do not report the revisions they serve;
   - G8: the catalogue is never checked against tenant bindings.

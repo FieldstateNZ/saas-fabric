@@ -537,6 +537,12 @@ Accepting this decision does not make these true. Each is tracked against
 [#112](https://github.com/FieldstateNZ/saas-fabric/issues/112) for a bounded
 PR. The IDs match ADR 0018's list and `docs/roadmap/m0-contract-decisions.md`.
 
+O1 (the publisher guards resource revisions) and O2 (a lost manifest is held
+at the revision the publication record names) are listed in ADR 0018. Both
+are implemented in [#136](https://github.com/FieldstateNZ/saas-fabric/pull/136),
+which also closes the reader-side parts of O6 (G1b, G2, G3, G6). None of
+this is verified live.
+
 - **O3. A data source that is removed and declared again restarts at
   revision 1.** `data_sources/plan.rs` treats an id that is not held as new.
   Declared resource revisions are therefore not monotonic across a remove
@@ -545,7 +551,8 @@ PR. The IDs match ADR 0018's list and `docs/roadmap/m0-contract-decisions.md`.
   `compose` sums whichever records are held now. Nothing compares the result
   with the tenant set or tenant revisions last published. A Git revert of
   `placements.yaml` can therefore deprovision a tenant (only taking the whole
-  document to empty is guarded) or publish a lower revision (O1).
+  document to empty is guarded). A lower tenant revision is now refused by
+  the publisher (O1, #136) rather than published.
 - **O5. No test characterizes a Git revert** of `placements.yaml` or
   `data-sources.yaml` through the publisher and the runtime.
 - **O7. The controller does not attempt placement on each pass.** Placement

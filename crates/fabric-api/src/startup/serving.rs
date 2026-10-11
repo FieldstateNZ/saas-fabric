@@ -32,11 +32,12 @@ use crate::startup::{catalog, connectors};
 pub(super) async fn build(
     config: &AppConfig,
     runtime: &Arc<RuntimeResolver>,
+    primed_catalogue: Option<Vec<u8>>,
     identity: &Arc<IdentityResolver>,
 ) -> Result<(Router, ConnectorRetryHandle), String> {
     // Before the connectors, so a catalogue refused here leaves nothing
     // running.
-    let catalogue = catalog::load(&config.catalog_path, &config.tenants_path).await?;
+    let catalogue = catalog::load(primed_catalogue, &config.catalog_path, &config.tenants_path).await?;
 
     // Secrets: one resolver shared by every connector.
     let secrets: Arc<dyn SecretResolver> = Arc::new(EnvSecretResolver);

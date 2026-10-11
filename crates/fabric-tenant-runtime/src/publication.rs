@@ -15,13 +15,14 @@
 
 mod catalogue;
 mod digest;
+mod file_reads;
 mod published_files;
 #[cfg(test)]
 mod published_files_tests;
 mod published_state;
 mod record;
 
-pub use catalogue::read_recorded_catalogue;
+pub use catalogue::startup_catalogue;
 pub use published_files::PublishedFiles;
 pub use published_state::{PublishedState, PublishedStateSource};
 pub use record::READER_CONTRACT;

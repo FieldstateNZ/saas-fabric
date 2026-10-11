@@ -563,7 +563,9 @@ remains of O6 is listed in ADR 0018. None of this is verified live.
   revert of `placements.yaml` therefore cannot deprovision a tenant or move
   it back. The way forward is a revision-bumping write. The publisher also
   refuses a dropped tenant (`TenantRemoved`) unless the whole document is
-  emptied with intent.
+  emptied with intent. No withdrawal path exists yet: retiring a client
+  records intent only and leaves its placements in composition, so
+  retirement cannot stall publication on these guards.
 - **O5. Partly characterized.** Reverts of `placements.yaml` and
   `data-sources.yaml` are driven through the router, the controller's pass
   and a real filesystem target

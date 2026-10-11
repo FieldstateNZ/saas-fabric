@@ -504,9 +504,10 @@ this shape.
 
 **Since then:** under D01-1's disposition, an entry that *no* tenant binds is
 refused, the controller keeps the last published catalogue while one exists,
-and readers check the catalogue against the record at start. An entry that
-*some* tenant does not bind is still published, as part 4 says. The Data tab
-item is still owed. See
+and a runtime takes its catalogue from the same read and record as the
+generation it primes. An entry that *some* tenant does not bind is still
+published, as part 4 says. The Data tab item and catalogue refresh in a
+running replica are still owed. See
 [Revision history, placements and the catalogue](#revision-history-placements-and-the-catalogue).
 
 ## What this branch adds
@@ -682,9 +683,18 @@ adds the following. None of it is verified live.
     held catalogue at its held revision instead, so the catalogue stays at
     its last complete generation and tenant and data-source changes still
     publish.
-  - `fabric-api` loads the catalogue through `read_recorded_catalogue`.
-    Where a record is present, the catalogue's bytes must match the
-    catalogue digest the record names, or the process does not start.
+  - `fabric-api` takes its catalogue from the same read the runtime primes
+    from (`PublishedFiles::with_catalogue`, `load_at_start`,
+    `PublishedRuntime::catalogue`). The catalogue's bytes must match the
+    digest named by the same record as the tenants and data sources the
+    resolver primed, or the prime fails. A publication that lands after the
+    prime therefore cannot pair its catalogue with the previous generation's
+    tenants. Review of #138 found that an earlier version of this change
+    read the catalogue separately after the prime and was open to exactly
+    that. Only a runtime that started unprimed (`fail_fast_on_prime = false`
+    and no complete generation at start) reads the catalogue on its own,
+    checked against the record it finds then. The tenants it later applies
+    may come from a newer generation.
 
 | Item | Guard | Tests (each fails with its guard removed; checked by reverting the guard locally) |
 |---|---|---|
@@ -695,7 +705,7 @@ adds the following. None of it is verified live.
 | O5 | the guards above, driven through the router, the pass and a real filesystem target | `fabric-control-plane/tests/platform_publication_revert.rs`: `reverting_placements_yaml_to_drop_a_published_placement_is_refused_and_writes_nothing`, `reverting_a_placement_record_is_refused_even_when_the_revert_adds_another`, `reverting_a_data_source_correction_is_refused_until_a_correction_moves_past_it`, `a_data_source_removed_and_declared_again_comes_back_above_its_last_published_revision`, `a_release_no_tenant_is_placed_on_waits_while_the_last_catalogue_stays_published`. Each refusal asserts all four published files unchanged |
 | G8, publisher | `catalogue_bindings.rs` | `plan_tests.rs::a_catalogue_entry_on_a_logical_data_source_no_tenant_binds_is_refused` |
 | G8, controller | `publication/catalogue_hold.rs` | `platform_publication_revert.rs::a_release_no_tenant_is_placed_on_waits_while_the_last_catalogue_stays_published` |
-| G8, reader | `fabric-tenant-runtime` `publication/catalogue.rs`; `fabric-api` `startup/catalog.rs` | `catalogue_generation.rs::a_catalogue_from_another_generation_is_refused_at_start`, `::a_catalogue_ahead_of_the_record_is_refused_at_start`, `::the_catalogue_the_record_names_is_read`, `::with_no_record_the_catalogue_is_read_as_it_stands` |
+| G8, reader | `fabric-tenant-runtime` `publication/published_files.rs::load_at_start`, `registration/build_published.rs`, `publication/catalogue.rs`; `fabric-api` `startup/application.rs`, `startup/catalog.rs` | `catalogue_generation.rs::a_publication_between_priming_and_the_catalogue_read_does_not_reach_the_catalogue` (a deterministic interleaving: generation 2 renames `articles` to `private_articles` and lands between the prime and the catalogue read), `::a_catalogue_from_another_generation_than_the_documents_fails_the_prime`, `::a_catalogue_from_another_generation_is_refused_at_start`, `::a_catalogue_ahead_of_the_record_is_refused_at_start`, `::the_catalogue_the_record_names_is_read`, `::with_no_record_the_catalogue_is_read_as_it_stands` |
 
 Limits of this change:
 
@@ -717,13 +727,20 @@ Limits of this change:
   is itself an explicit revision-bumping write. Removing a placement or a
   tenant has no supported path. Deprovisioning (D01-14) is not built, and the
   only removal the publisher accepts is emptying the whole tenants document
-  with intent.
+  with intent. Client retirement (#137) records intent only and leaves the
+  client's placements in composition, because no withdrawal path exists
+  yet. Retiring a client therefore never removes a published tenant and
+  cannot stall publication on these guards. A withdrawal, when one is built,
+  is a separate reviewed operation that has to meet these guards.
 - **G8.**
   - An entry that some tenant does not bind still gets `UnboundDataSource`
     (500) for that tenant (part 4).
-  - A running replica keeps its startup catalogue. A replica that starts
-    while the catalogue volume lags the record fails to start until the
-    volumes converge, as the readiness limit under
+  - The catalogue is not refreshed in a running replica, which is out of
+    scope here. A replica keeps the catalogue of the generation it started
+    on, while its tenants and data sources refresh to newer generations. A
+    catalogue change therefore reaches a replica only through a restart.
+  - A replica that starts while the catalogue volume lags the record fails
+    its prime until the volumes converge, as the readiness limit under
     [Reader generations](#reader-generations) already says.
   - With no catalogue held, a first catalogue with an unbound entry is
     refused, and that refusal holds back the whole pass.

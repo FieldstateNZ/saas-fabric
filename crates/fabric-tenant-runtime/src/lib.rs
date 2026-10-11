@@ -69,9 +69,9 @@ pub use data_source::{
 };
 pub use errors::{ConfigurationError, ResolveError, SourceError, UnusableFirstLoad};
 pub use publication::{
-    read_recorded_catalogue, PublishedFiles, PublishedState, PublishedStateSource, READER_CONTRACT,
+    startup_catalogue, PublishedFiles, PublishedState, PublishedStateSource, READER_CONTRACT,
 };
-pub use registration::{build_published_runtime, build_runtime, RuntimeHandles};
+pub use registration::{build_published_runtime, build_runtime, PublishedRuntime, RuntimeHandles};
 pub use resolution::{ResolvedDataSource, RuntimeResolver};
 pub use resource::sources::{InMemorySource, JsonFileSource};
 pub use resource::{

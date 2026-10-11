@@ -631,9 +631,11 @@ document belong to one generation:
   sources only when both match it, data sources first. Otherwise it keeps
   the last complete generation it holds. A reader that finds no record (a
   set published before the record existed) reads each document on its own,
-  as before. A runtime reads the catalogue once, at start; where a record is
-  present, the catalogue must match the catalogue digest the record names,
-  or the process does not start (G8).
+  as before. A runtime reads the catalogue once, at start, in the same read
+  as the generation it primes from. Where a record is present, the
+  catalogue must match the digest named by the record its tenants and data
+  sources were checked against, or the prime fails (G8). A running replica
+  does not refresh its catalogue.
 - **`resources`** (added for O3 and O4). For every tenant binding and
   DataSource that any recorded generation published, the highest revision
   it was published at. Entries are never removed. A resource that the held
@@ -1120,8 +1122,9 @@ ADR 0023's list and `docs/roadmap/m0-contract-decisions.md`.
     floor, and there are no per-row matrix tests;
   - G7: readers do not report the revisions they serve;
   - G8: a catalogue entry that no tenant binds is refused, the controller
-    keeps the last published catalogue while one exists, and readers check
-    the catalogue against the record at start. Still open: an entry that
+    keeps the last published catalogue while one exists, and a runtime takes
+    its catalogue from the same read and record as the generation it primes.
+    Still open: an entry that
     some tenant does not bind gets `UnboundDataSource` for that tenant, a
     running replica keeps its startup catalogue, and the Data tab does not
     show unbound pairs. Not verified live.

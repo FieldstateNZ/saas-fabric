@@ -1,21 +1,27 @@
-//! Reading the catalogue as part of the generation the publication record
-//! names (G8).
+//! The catalogue a runtime starts on: the one read with the generation it
+//! primed, or, with nothing primed, the one the publication record names
+//! (G8).
 
 use std::path::Path;
 
 use super::digest::sha256_hex;
-use super::published_files::{parse, read, read_optional};
+use super::file_reads::{parse, read, read_optional};
 use super::record::{ReaderRecord, PUBLICATION_RECORD_FILE, READER_CONTRACT};
 use crate::SourceError;
 
-/// The catalogue's bytes at `catalogue_path`, refused unless they are the
-/// catalogue the publication record beside `tenants_path` names.
+/// The catalogue a runtime should start on.
 ///
-/// The catalogue is read once, at process start, from its own file -- in
-/// Kubernetes its own volume, projected on its own. Without this a process
-/// could start on a catalogue from one generation beside tenants from
-/// another. With no record (a publisher older than the record) the
-/// catalogue is read as it stands.
+/// `primed` is [`PublishedRuntime::catalogue`](crate::PublishedRuntime::catalogue):
+/// the bytes read in the same read as the generation the resolver primed
+/// from. When present they are used as they are, and nothing is read again,
+/// so a publication landing after the prime cannot pair its catalogue with
+/// the previous generation's tenants.
+///
+/// With nothing primed (the runtime started unprimed and holds no
+/// generation yet), the catalogue at `catalogue_path` is read and refused
+/// unless it is the one the publication record beside `tenants_path` names;
+/// with no record, it is read as it stands. The catalogue is read only at
+/// start: a running replica keeps it while its tenants refresh.
 ///
 /// # Errors
 ///
@@ -23,10 +29,14 @@ use crate::SourceError;
 /// differ from the record's digest; [`SourceError::UnsupportedContract`]
 /// for a record above this reader; [`SourceError::Unreadable`] or
 /// [`SourceError::Malformed`] for a file that cannot be read or parsed.
-pub async fn read_recorded_catalogue(
+pub async fn startup_catalogue(
+    primed: Option<Vec<u8>>,
     tenants_path: impl AsRef<Path>,
     catalogue_path: impl AsRef<Path>,
 ) -> Result<Vec<u8>, SourceError> {
+    if let Some(primed) = primed {
+        return Ok(primed);
+    }
     let record_path = tenants_path.as_ref().with_file_name(PUBLICATION_RECORD_FILE);
     let origin = format!(
         "catalogue: {}, record={}",

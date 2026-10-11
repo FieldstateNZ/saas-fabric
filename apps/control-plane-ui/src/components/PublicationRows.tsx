@@ -25,6 +25,9 @@ export function PublicationRows({ publication }: { publication: Publication }) {
       <dt>Catalogue</dt>
       <dd>{revision(publication.documents.catalog)}</dd>
 
+      <dt>Issuer registry</dt>
+      <dd>{generation(publication.documents.registry)}</dd>
+
       <dt>Last pass</dt>
       <dd>
         <LastPassCell pass={publication.lastPass} />
@@ -40,6 +43,11 @@ export function PublicationRows({ publication }: { publication: Publication }) {
  */
 function revision(value: number | null): string {
   return value === null ? '—' : `revision ${String(value)}`
+}
+
+/** The registry counts generations, not revisions; `null` is "none published". */
+function generation(value: number | null): string {
+  return value === null ? '—' : `generation ${String(value)}`
 }
 
 /**

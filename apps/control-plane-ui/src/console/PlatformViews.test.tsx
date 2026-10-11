@@ -20,8 +20,14 @@ function platformState(): PlatformState {
     lastCheck: null,
     publication: {
       target: 'ConfigMaps in namespace platform-system',
-      documents: { tenants: 3, dataSources: 2, catalog: 1 },
+      documents: { tenants: 3, dataSources: 2, catalog: 1, registry: null },
       lastPass: { atUnixSeconds: 1_700_000_000, outcome: 'published', detail: null },
+      readiness: {
+        documents: { met: true, reasons: [] },
+        identity: { met: false, reasons: ['Fabric publishes no issuer registry'] },
+        connectors: { met: false, reasons: ['platform composition must deploy and configure postgres-nz'] },
+        withheld: [],
+      },
     },
   }
 

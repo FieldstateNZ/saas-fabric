@@ -25,6 +25,36 @@ export interface PublishedDocuments {
   readonly tenants: number | null
   readonly dataSources: number | null
   readonly catalog: number | null
+  /** The issuer registry's generation, carried with the tenants document. */
+  readonly registry: number | null
+}
+
+/**
+ * One readiness gate (D01-18). `met` is Fabric's own evidence only: the
+ * platform still decides what the edge and the runtime applied, and an
+ * operator still raises replicas deliberately.
+ */
+export interface Gate {
+  readonly met: boolean
+  readonly reasons: readonly string[]
+}
+
+/** A published tenant no issuer reaches, and why. */
+export interface WithheldTenant {
+  readonly tenant: string
+  readonly reason: string
+}
+
+/**
+ * The three gates the runtime is raised against, named as the platform
+ * contract names them. `connectors` is never met here: platform
+ * composition deploys them, and Fabric does not observe it.
+ */
+export interface Readiness {
+  readonly documents: Gate
+  readonly identity: Gate
+  readonly connectors: Gate
+  readonly withheld: readonly WithheldTenant[]
 }
 
 /**
@@ -53,4 +83,5 @@ export interface Publication {
   readonly target: string
   readonly documents: PublishedDocuments
   readonly lastPass: LastPass | null
+  readonly readiness: Readiness
 }

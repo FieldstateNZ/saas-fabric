@@ -14,11 +14,16 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Publication } from '../api/publication-types'
 import { PublicationPanel } from './PublicationPanel'
 
+const UNASSESSED = { met: false, reasons: ['no publication pass has been accepted since the control plane started'] }
+
+const READINESS = { documents: UNASSESSED, identity: UNASSESSED, connectors: UNASSESSED, withheld: [] }
+
 function publication(overrides: Partial<Publication> = {}): Publication {
   return {
     target: 'ConfigMaps in namespace platform-system',
-    documents: { tenants: null, dataSources: null, catalog: null },
+    documents: { tenants: null, dataSources: null, catalog: null, registry: null },
     lastPass: null,
+    readiness: READINESS,
     ...overrides,
   }
 }
@@ -67,7 +72,7 @@ describe('a configured target', () => {
     render(
       <PublicationPanel
         publication={publication({
-          documents: { tenants: 3, dataSources: 2, catalog: 1 },
+          documents: { tenants: 3, dataSources: 2, catalog: 1, registry: null },
           lastPass: { atUnixSeconds: 1_700_000_000, outcome: 'published', detail: null },
         })}
       />,
@@ -87,7 +92,7 @@ describe('a configured target', () => {
           // reporting as held, so the API sends every document `null` --
           // the fixture states that directly rather than relying on the
           // panel to infer it from the outcome, which is not its job.
-          documents: { tenants: null, dataSources: null, catalog: null },
+          documents: { tenants: null, dataSources: null, catalog: null, registry: null },
           lastPass: {
             atUnixSeconds: 1_700_000_000,
             outcome: 'waiting',
@@ -149,8 +154,9 @@ describe('publishing now', () => {
       json: () =>
         Promise.resolve({
           target: 'ConfigMaps in namespace platform-system',
-          documents: { tenants: 9, dataSources: 8, catalog: 7 },
+          documents: { tenants: 9, dataSources: 8, catalog: 7, registry: null },
           lastPass: { atUnixSeconds: 1_700_000_500, outcome: 'published', detail: null },
+          readiness: READINESS,
         }),
     })
     vi.stubGlobal('fetch', fetched)
@@ -193,12 +199,13 @@ describe('publishing now', () => {
         json: () =>
           Promise.resolve({
             target: 'ConfigMaps in namespace platform-system',
-            documents: { tenants: null, dataSources: null, catalog: null },
+            documents: { tenants: null, dataSources: null, catalog: null, registry: null },
             lastPass: {
               atUnixSeconds: 1_700_000_500,
               outcome: 'failed',
               detail: 'the publication target is unavailable',
             },
+            readiness: READINESS,
           }),
       }),
     )
@@ -274,11 +281,34 @@ describe('publishing now', () => {
 
     rerender(
       <PublicationPanel
-        publication={publication({ documents: { tenants: 5, dataSources: 4, catalog: 3 } })}
+        publication={publication({ documents: { tenants: 5, dataSources: 4, catalog: 3, registry: null } })}
       />,
     )
 
     expect(fact('Tenants')).toHaveTextContent(/^revision 5$/)
     expect(screen.queryByRole('status')).not.toBeInTheDocument()
+  })
+
+  it('shows the issuer registry generation and each readiness gate beside its own label', () => {
+    render(
+      <PublicationPanel
+        publication={publication({
+          documents: { tenants: 3, dataSources: 2, catalog: 1, registry: 4 },
+          lastPass: { atUnixSeconds: 1_700_000_000, outcome: 'published', detail: null },
+          readiness: {
+            documents: { met: true, reasons: [] },
+            identity: { met: true, reasons: [] },
+            connectors: { met: false, reasons: ['platform composition must deploy and configure postgres-nz'] },
+            withheld: [{ tenant: 'acme', reason: 'the client is incomplete' }],
+          },
+        })}
+      />,
+    )
+
+    expect(fact('Issuer registry')).toHaveTextContent(/^generation 4$/)
+    expect(fact('Documents gate')).toHaveTextContent(/^●Met$/)
+    expect(fact('Identity gate')).toHaveTextContent(/^●Met$/)
+    expect(fact('Connectors gate')).toHaveTextContent(/Unmet — platform composition must deploy and configure postgres-nz/)
+    expect(fact('Not routed')).toHaveTextContent(/^acme: the client is incomplete$/)
   })
 })

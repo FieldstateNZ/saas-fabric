@@ -77,6 +77,9 @@ impl ControlPlaneError {
                 "platform_state_moved"
             }
             Self::Platform(PlatformError::NotRollable { .. }) => "version_not_rollable",
+            // Its own code, because the remedy differs: another version may be
+            // rollable, but nothing below the floor is (D01-21).
+            Self::Platform(PlatformError::BelowRollbackFloor { .. }) => "below_rollback_floor",
             // Structural, so a declaration's own rule violation keeps its
             // code (422, `invalid_data_source`) whether a handler unwraps it
             // itself or lets `?` wrap it in `Self::Platform` -- see

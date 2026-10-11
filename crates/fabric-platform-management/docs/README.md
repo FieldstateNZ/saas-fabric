@@ -110,6 +110,14 @@ read-only identity three separate integrations is a large part of the point
   together, in one commit: an environment moved backwards under a live
   `Automatic` policy would otherwise be advanced forward again by the very
   next sweep.
+- **Rollback stops at a floor (D01-21).** `RollbackFloors` maps an image
+  repository to the oldest version a component pulling it may be rolled
+  back to. The composition root passes `RollbackFloors::for_this_release()`,
+  which floors Fabric's own runtime repository at `compatibility.yaml`'s
+  `minimumRollableVersion`. The listing leaves out versions below it, and
+  `roll_back` refuses one as `PlatformError::BelowRollbackFloor` before any
+  registry is asked. Tests that are not about the floor pass
+  `RollbackFloors::default()`, which floors nothing.
 - **`PlatformDesiredState`** — the late-bound connection to whichever
   platform repository is currently connected. See "The platform binding" below.
 - **`DeploymentObserver` (`observation.rs`, ADR 0022)** — an optional,
@@ -449,13 +457,14 @@ against this module's public surface.
 
 ```rust,ignore
 use std::sync::Arc;
-use fabric_platform_management::{PlatformManagement, PlatformDesiredState};
+use fabric_platform_management::{PlatformManagement, PlatformDesiredState, RollbackFloors};
 
 let binding = PlatformDesiredState::unconnected(); // nothing connected yet
 // an operator connects one later:
 binding.connect(Arc::new(the_platform_git_repository)).await;
 
-let service = PlatformManagement::new(registry, charts, binding, clock)
+let floors = RollbackFloors::for_this_release().ok_or("no built-in floor")?;
+let service = PlatformManagement::new(registry, charts, binding, clock, floors)
     .with_observer(the_kubernetes_observer); // optional; omit and `running` stays `Unknown`
 
 let statuses = service.statuses("production").await?;

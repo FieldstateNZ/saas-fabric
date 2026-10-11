@@ -160,9 +160,17 @@ own data-source sub-types rather than re-declared, so a hand-editable
   component) -> History`. `async fn roll_back(environment, component,
   version: &str, note: Option<&str>) -> ComponentStatus`. `async fn
   sweep(environment, state: &SweepState) -> SweepResult`.
+- `RollbackFloors` — repository → oldest rollable `Version` (D01-21).
+  `default()` floors nothing; `with(repository, minimum)`;
+  `for_this_release()` floors `fabric_component::RUNTIME_REPOSITORY` at
+  `MINIMUM_ROLLABLE_VERSION`. `PlatformManagement::new` takes one as its last
+  argument. The rollback listing is cut at the floor (`History::at_or_above`,
+  clearing `more`) and `roll_back` refuses below it.
 - `PlatformError` — `DesiredState(#[from] DesiredStateError)`,
   `Registry(#[from] RegistryError)`, `NotAdvancing { component }`,
-  `NotRollable { component, version }`, `InvalidDataSource(#[from]
+  `NotRollable { component, version }`, `BelowRollbackFloor { component,
+  version, floor }` (D01-21 — checked before any registry is asked),
+  `InvalidDataSource(#[from]
   DataSourceRule)` (ADR 0023 part 1 — kept apart from `DesiredState` because
   it is refused on its own terms, before anything is read or written),
   `InvalidHeldDataSources { detail }` (a hand-edited `data-sources.yaml`

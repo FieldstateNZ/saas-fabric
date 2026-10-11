@@ -17,7 +17,7 @@ use fabric_platform_management::{
     Attached, ChartIndex, ComponentDesired, DataSourceDeclaration, DataSourceState, DataSources,
     DataSourcesRead, DesiredRevision, DesiredState, DesiredStateError, EnvironmentWrite, Hold,
     PlacementRecord, PlacementState, Placements, PlacementsRead, PlatformDesiredState, PlatformManagement,
-    PlatformRepository, Registry, RegistryError, Release, Resolved, Version,
+    PlatformRepository, Registry, RegistryError, Release, Resolved, RollbackFloors, Version,
 };
 
 use super::FixedClock;
@@ -345,6 +345,16 @@ pub async fn platform_binding_over(
     registry: Arc<dyn Registry>,
     components: Vec<(String, ComponentDesired)>,
 ) -> (PlatformBinding, Arc<FakeRepository>) {
+    platform_binding_with_floors(registry, components, RollbackFloors::default()).await
+}
+
+/// [`platform_binding_over`], refusing rollbacks below `floors` as the
+/// shipping binding does with [`RollbackFloors::for_this_release`].
+pub async fn platform_binding_with_floors(
+    registry: Arc<dyn Registry>,
+    components: Vec<(String, ComponentDesired)>,
+    floors: RollbackFloors,
+) -> (PlatformBinding, Arc<FakeRepository>) {
     let fake = FakeRepository::new(components);
     let repository = PlatformDesiredState::unconnected();
     repository
@@ -356,6 +366,7 @@ pub async fn platform_binding_over(
         Arc::new(UnusedChartIndex) as Arc<dyn ChartIndex>,
         Arc::clone(&repository) as Arc<dyn DesiredState>,
         Arc::new(FixedClock) as Arc<dyn Clock>,
+        floors,
     );
 
     let binding = PlatformBinding {

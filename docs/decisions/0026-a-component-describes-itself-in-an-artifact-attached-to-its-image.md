@@ -820,7 +820,10 @@ public images, not about any private registry or private image.
   backed-up and rehearsed recovery of three record sets at once; release
   history and client records are never deleted or rewritten to fit an older
   reader. Where the floor sits once a later format change exists stays under
-  *What this does not decide*; nothing here sets it.
+  *What this does not decide*; nothing here sets it. D01-21 has since set
+  one for later formats (the publication record, resource history and client
+  lifecycle). It is in `compatibility.yaml`, and Platform Management enforces
+  it for in-product rollback.
 - **Previews cut from a commit not on `main`** get no component descriptor, so
   once `saas-fabric` is described they are *undescribed* and are never advanced
   to or offered for rollback.

@@ -57,6 +57,10 @@ pub(super) fn status(error: &PlatformError) -> StatusCode {
         // release to return to.
         PlatformError::NotRollable { .. } => StatusCode::UNPROCESSABLE_ENTITY,
 
+        // Below the component's rollback floor (D01-21). 422 for the same
+        // reason: understood, and the version named cannot be gone back to.
+        PlatformError::BelowRollbackFloor { .. } => StatusCode::UNPROCESSABLE_ENTITY,
+
         // A declared data source breaks one of ADR 0023 part 1's rules.
         // Structural, so this is answered the same way whether a handler
         // unwraps `PlatformError::InvalidDataSource` itself or lets `?` wrap

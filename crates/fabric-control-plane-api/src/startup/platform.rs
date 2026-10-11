@@ -6,7 +6,7 @@ use fabric_control_plane::PlatformBinding;
 use fabric_core::Clock;
 use fabric_platform_management::{
     ChartIndex, DataSourceState, DataSources, DesiredState, Placements, PlatformDesiredState,
-    PlatformManagement, PlatformRepository, Registry,
+    PlatformManagement, PlatformRepository, Registry, RollbackFloors,
 };
 use fabric_registry::{HelmCharts, Registries};
 
@@ -95,6 +95,8 @@ pub fn establish(
     // authority.
     let charts = HelmCharts::new(config.registry.http_timeout_seconds)?;
 
+    let floors = RollbackFloors::for_this_release()
+        .ok_or_else(|| "the built-in rollback floor is not a version".to_owned())?;
     let repository = PlatformDesiredState::unconnected();
 
     let service = PlatformManagement::new(
@@ -102,6 +104,7 @@ pub fn establish(
         Arc::new(charts) as Arc<dyn ChartIndex>,
         Arc::clone(&repository) as Arc<dyn DesiredState>,
         Arc::clone(clock),
+        floors,
     );
     let service = if config.observation.is_empty() {
         service
@@ -219,6 +222,22 @@ mod tests {
         // The shipped defaults: fifteen, plus the ten a call may take, inside
         // thirty with five to spare for the rest of a disconnect.
         assert!(establish(Some(&managed(15)), &registries(), 10, 30, &clock()).is_ok());
+    }
+
+    #[test]
+    fn the_shipping_binding_refuses_rollbacks_below_fabrics_own_floor() {
+        let Ok(Established {
+            platform: Some(platform),
+            ..
+        }) = establish(Some(&managed(15)), &registries(), 10, 30, &clock())
+        else {
+            panic!("a managed platform must start");
+        };
+
+        assert_eq!(
+            platform.service.floors(),
+            &RollbackFloors::for_this_release().expect("the built-in floor is a version")
+        );
     }
 
     #[test]

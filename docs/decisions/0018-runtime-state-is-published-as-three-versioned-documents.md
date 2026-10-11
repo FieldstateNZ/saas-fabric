@@ -581,7 +581,7 @@ output that spells it `Tenant_Key`.
 
 ```json
 {
-  "contract_version": 1,
+  "contract_version": 2,
   "document": "tenants",
   "revision": 9
 }
@@ -605,9 +605,9 @@ document belong to one generation:
 
 ```json
 {
-  "contract_version": 1,
+  "contract_version": 2,
   "minimum_reader_contract": 1,
-  "minimum_publisher_contract": 1,
+  "minimum_publisher_contract": 2,
   "generation": 4,
   "documents": {
     "tenants": { "revision": 9, "sha256": "<lowercase hex>" },
@@ -647,9 +647,13 @@ document belong to one generation:
 - **`minimum_publisher_contract`.** The rollback floor for the published
   state (D01-21). A publisher whose contract is below it refuses with
   `BelowRollbackFloor` before writing anything. A publisher built before the
-  record existed cannot enforce the floor. The release that introduced the
-  record is therefore the lowest a publisher may be rolled back to. Recording
-  that minimum rollable version is #124's.
+  record existed cannot enforce the floor. The release floor is recorded in
+  `compatibility.yaml` as `minimumRollableVersion` (`0.3.0-preview.16`), and
+  Platform Management refuses to roll Fabric back below it. With that floor
+  the publication contract became 2. Every record a publisher writes from
+  then on states 2, so publishers built at contract 1 (#136 to #138) refuse
+  it by its floor. Readers are not raised. See the gap report's
+  [Release rollback floor](../roadmap/m2-publication-gap-report.md#release-rollback-floor-d01-21).
 
 ---
 
@@ -1114,7 +1118,7 @@ ADR 0023's list and `docs/roadmap/m0-contract-decisions.md`.
   - G4: one writer is assumed, not enforced (no `Lease`);
   - G5: no pre-publication hold; no last-known-good across a restart; no
     recovery command for an unparseable held document; failure semantics
-    not stated;
+    not stated. Still owed after the release rollback floor;
   - G6: since #136 the record's `minimum_reader_contract` is the version
     handshake, with reader tests at contract N and N+1 in both directions
     (`reader_compatibility.rs`). Still open: §9's dual-key path is not built,
@@ -1128,3 +1132,12 @@ ADR 0023's list and `docs/roadmap/m0-contract-decisions.md`.
     some tenant does not bind gets `UnboundDataSource` for that tenant, a
     running replica keeps its startup catalogue, and the Data tab does not
     show unbound pairs. Not verified live.
+- **Release rollback floor (D01-21). Recorded and enforced in-product.**
+  `compatibility.yaml` records `minimumRollableVersion: 0.3.0-preview.16`.
+  Platform Management offers no rollback of Fabric below it and refuses one
+  as `422 below_rollback_floor`. The publication contract is 2, so
+  publishers from #136 to #138 refuse a record this publisher writes as
+  `BelowRollbackFloor`. Still owed: a break-glass edit of `components.yaml`
+  below the floor is not refused; the platform's runtime-document contract
+  must accept contract 2 before activation; and the release workflow does
+  not yet read or attach the manifest (#124). Not verified live.

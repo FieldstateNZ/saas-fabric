@@ -18,7 +18,16 @@ use crate::DocumentRevision;
 /// change of *meaning* at an unchanged shape — a breaking change ships as new
 /// file names alongside the old ones, never as a silent reinterpretation of a
 /// version already published.
-pub const CONTRACT_VERSION: u32 = 1;
+///
+/// It is also the publisher's side of the rollback floor (D01-21): every
+/// publication record states it as `minimum_publisher_contract`, and a
+/// publisher whose own contract is lower refuses to write over that record.
+/// Raised from 1 to 2 with the release floor in `compatibility.yaml`: from
+/// 2, a record carries resource history (#138) beside client documents that
+/// carry `spec.lifecycle` (#137). A contract-1 publisher would refuse the
+/// history only as unreadable, and ignores the lifecycle. At 2 it refuses
+/// the record by its floor, before reading the rest.
+pub const CONTRACT_VERSION: u32 = 2;
 
 /// Which of the three documents a manifest describes.
 ///

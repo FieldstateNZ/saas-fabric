@@ -450,11 +450,13 @@ Not yet built:
   (§27). The binding format already carries their state.
 - **What runtime publication still leaves to a person.** The control plane
   composes and publishes the runtime's three documents on a schedule and on
-  request (ADR 0018, ADR 0023); the console does not yet show that row.
-  Raising the runtime stays a platform change, made once the row reports all
-  three published, the environment's `[[connectors]]` names every connector
-  its data sources reference, and the issuer-to-tenant registry (ADR 0019
-  §G4a) covers every placed tenant. Nothing generates the last two — see
+  request (ADR 0018, ADR 0023). The console's Environments page shows the
+  publication row and a **Publish now** control. Raising the runtime is still
+  a deliberate platform change. It is made once the row reports all three
+  documents published, the environment's `[[connectors]]` names every
+  connector its data sources reference, and the issuer-to-tenant registry
+  (ADR 0019 §G4a) covers every placed tenant. Fabric does not yet report the
+  last two, and nothing generates them. See
   [the control-plane architecture](docs/architecture/control-plane.md#runtime-publication-boundary).
 - **Reconciliation into OpenBao, OpenFGA, Envoy and Grafana.** Client secrets
   and Platform Management's registry and cluster reads already reach OpenBao

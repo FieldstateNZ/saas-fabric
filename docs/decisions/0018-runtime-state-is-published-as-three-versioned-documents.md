@@ -1,7 +1,12 @@
 # ADR 0018 — Runtime state is published as three independently versioned documents
 
-- **Status:** Proposed
-- **Date:** 2026-09-06
+- **Status:** Accepted as amended (2026-10-11, under the D01-1 and D01-27
+  dispositions in [#108](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6109518415)).
+  Acceptance covers the contract as amended in
+  [part 10](#10-rolling-back-is-rolling-forward-amended-2026-10-11-d01-1-d01-27).
+  It does not verify the items under [Owed](#owed-not-yet-built), which remain
+  open under [#112](https://github.com/FieldstateNZ/saas-fabric/issues/112).
+- **Date:** 2026-09-06; amended 2026-10-11
 - **Applies to:** `fabric-runtime-publication` (new), `fabric-tenant-runtime`,
   `fabric-data-api`, `fabric-api`, the Kubernetes adapter that will follow, the
   as-yet-unnamed control-plane crate that will eventually call this port, and
@@ -85,7 +90,7 @@ tenant's value in it*. That is the output of provisioning, which does not exist.
 written atomically beside a sidecar manifest, by a producer that shares no Rust
 type with the runtime and never derives physical placement from client intent.**
 
-Nine parts.
+Ten parts. Part 10 was added on 2026-10-11.
 
 ### 1. The contract is the JSON, and one crate owns it
 
@@ -355,6 +360,54 @@ A breaking change ships as **new file names and new ConfigMap keys alongside the
 old ones**, never as a reinterpretation of documents already published — the
 same rule the client desired-state document already follows.
 
+### 10. Rolling back is rolling forward (amended 2026-10-11, D01-1, D01-27)
+
+Recorded from the D01-1 and D01-27 dispositions in
+[#108](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6109518415).
+
+**Runtime documents roll forward only.** To restore earlier content, publish
+it again as a new revision: the next `DocumentRevision` after the one held.
+No operation resets a revision. The publisher refuses an older revision as
+`StaleRevision` and the same revision with different bytes as
+`DivergentPayload` (part 6). The controller ADR 0023 builds answers
+`DivergentPayload` by offering only that document again, one past the revision
+it offered. Earlier content therefore always lands at a higher revision. An
+operator-driven revision reset was considered (U5.3, option B) and is
+rejected.
+
+**Resource revisions are monotonic too, not only document revisions.** Each
+tenant binding's `revision` and each data source's `revision` is a
+`BindingRevision`. The runtime ignores an older one and refuses a changed
+payload at the same one (`ApplyReport::divergent_payload`). So restoring a
+tenant's or a data source's earlier content is a change: it must carry a
+resource revision above the one held, never the earlier number. For a data
+source, the control plane's declaration does this (held + 1). For a tenant,
+the revision is the sum of its placement records' revisions (ADR 0023 part 2),
+and records are only ever added or bumped.
+
+**Desired state rolls forward the same way.** Placements roll forward only.
+A referenced data source changes only through a write that bumps its
+revision. There is no blind placement revert or removal, and a Git revert of
+the platform's environment files is not a supported rollback (ADR 0023,
+amendment 2026-10-11). Restoring a catalogue or client document must keep
+conditional writes and audit evidence. A break-glass Git effect is
+characterized in tests before it is claimed as an operational rollback.
+
+**Verified against the code** at the base of this amendment:
+
+| Claim | Where |
+|---|---|
+| Older document revision refused; same revision with different bytes refused; same bytes is a no-op | `crates/fabric-runtime-publication/src/verdict.rs`; `verdict_tests.rs::an_older_revision_against_a_held_manifest_and_payload_is_refused`, `::the_same_revision_with_different_bytes_is_refused_as_divergent`, `::the_same_revision_with_identical_bytes_is_a_no_op` |
+| A held manifest without its payload still refuses an older revision | `verdict_tests.rs::a_held_manifest_without_its_payload_still_refuses_an_older_revision` |
+| The controller bumps only the diverging document, one past what it offered. A stale refusal is returned, never retried | `crates/fabric-platform-management/src/publication/protocol.rs`; `protocol_tests.rs::one_divergent_document_is_reoffered_once_at_held_plus_one`, `::a_stale_revision_refusal_is_returned_immediately_not_retried` |
+| Documents are offered at the held revision. There is no reset path and no reset route | `publication/snapshot.rs::compose`; the only publication route is `POST /api/platform/publication` (`crates/fabric-control-plane/src/routes.rs`) |
+| The runtime ignores an older resource revision and keeps the held copy on a same-revision divergence | `crates/fabric-tenant-runtime/src/resource/registry/merge.rs`; `stale_revision_tests.rs::a_stale_tenant_binding_revision_is_ignored_by_a_full_sync`, `::a_stale_data_source_revision_is_ignored_by_a_full_sync`; `apply_tests.rs::a_same_revision_divergent_payload_is_counted_and_the_held_payload_is_kept` |
+| A data-source correction moves its revision to held + 1 | `crates/fabric-platform-management/src/data_sources/plan.rs`; `plan_tests.rs::a_changed_field_moves_the_revision_forward_by_one` |
+| A tenant revision is the sum of its placement records' revisions | `publication/snapshot.rs::compose_tenants`; `snapshot_tests.rs::a_tenants_revision_is_the_sum_of_its_records_own_revisions` |
+
+The publisher does not yet enforce everything this part requires. The gaps
+are listed under [Owed](#owed-not-yet-built).
+
 ---
 
 ## The wire contract
@@ -510,6 +563,12 @@ publication for no reader's benefit.
 ---
 
 ## The input this decision does not have
+
+> **Amendment (2026-10-11).** ADR 0023 now supplies this input. A placement is
+> recorded in `placements.yaml` and copied, never recomputed. The production
+> caller is the control-plane controller described in ADR 0023 part 4.
+> Provisioning a database is still not built (D01-3). The text below stands
+> as the reason the input may not be derived from intent.
 
 **The publisher's input is not client desired state, and must never be derived
 from it.**
@@ -872,3 +931,46 @@ gives it a place in any of the three documents.
 
 **Where the document revision comes from in production.** The caller states it.
 Which caller, and how it decides, belongs with whatever schedules publication.
+
+---
+
+## Owed (not yet built)
+
+Accepting this decision does not make these true. Each is tracked against
+[#112](https://github.com/FieldstateNZ/saas-fabric/issues/112) for a bounded
+PR, with compatibility and partial-publication failure tests. The IDs match
+ADR 0023's list and `docs/roadmap/m0-contract-decisions.md`.
+
+- **O1. The publisher does not guard resource revisions.**
+  `validate_snapshot` (`crates/fabric-runtime-publication/src/validate.rs`)
+  compares no tenant or data-source `BindingRevision` with the held document.
+  It publishes a lower resource revision, or a changed resource at the same
+  revision. Running readers ignore it. A reader that starts later has no
+  held copy, so it applies it, and replicas then serve different bindings.
+- **O2. Losing the held manifest restarts the document revision.** With no
+  manifest held, the verdict treats the document as a first publication
+  (`verdict.rs`), and `compose` offers revision 1. Only an out-of-band
+  deletion gets here, because the RBAC grants no `delete`. Nothing refuses
+  or reports it.
+- **O3. A data source removed and declared again restarts at revision 1**
+  (`data_sources/plan.rs`). See ADR 0023.
+- **O4. Nothing detects a removed or lowered placement record.** A reverted
+  `placements.yaml` can deprovision a tenant or lower its revision (O1).
+  Only taking the whole tenants document to empty is guarded. See ADR 0023.
+- **O5. No test characterizes a Git revert** of the platform's environment
+  files, or of the catalogue and client documents, through the reconciler,
+  the publisher and the runtime (D01-27).
+- **O6. #112's remaining reader-visible and atomicity gaps**
+  ([gap report](../roadmap/m2-publication-gap-report.md)):
+  - G1b: no generation that is consistent across the three documents;
+  - G2: retiring a data source does not wait for readers;
+  - G3: an interrupted publication is visible to readers, and the panel does
+    not show it as incomplete;
+  - G4: one writer is assumed, not enforced (no `Lease`);
+  - G5: no pre-publication hold; no last-known-good across a restart; no
+    recovery command for an unparseable held document; failure semantics
+    not stated;
+  - G6: no versioning rule; §9's dual-key path is not built; no per-row
+    compatibility tests;
+  - G7: readers do not report the revisions they serve;
+  - G8: the catalogue is never checked against tenant bindings.

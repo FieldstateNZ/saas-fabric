@@ -690,7 +690,14 @@ generation.
   `fabric_identity::TrustedIssuer` field for field.
 - **Generation.** The registry has its own counter. It starts at 1 and
   advances by one only when the registrations change. It is never lowered,
-  and never reused for different registrations. It is not the record's
+  and a generation is never stamped on two different sets of bytes,
+  committed or not. A generation an interrupted publication left on disk
+  without its record is kept only for exactly its own bytes; any other
+  offer, including a return to the committed registrations, takes the next
+  generation above it. Held registry bytes that do not parse are refused,
+  because their generation is unknown. Past `u64::MAX`, changed
+  registrations are refused (`GenerationExhausted`), with no saturating
+  fallback. It is not the record's
   `generation`, which also advances for a catalogue change. Tying the edge to
   that number would make every document change an identity change. The
   record carries `"registry": {"generation", "sha256"}`. The key is absent
@@ -706,7 +713,17 @@ generation.
   only while its lifecycle permits routing (#137, `LifecycleUse::Route`).
   Readiness is judged against the tenants document the same pass offers.
   A client that is not ready (`NotReady`) or is retired (`Retired`) is left
-  out, and is listed as withheld. Without `issuer_origin`, no registry is
+  out of the generated registry and reported as excluded, by kind:
+  `notReady` (with each unmet condition), `retired`, `noClient` or
+  `invalidIssuer`. Identity evidence pending reconciliation, after a
+  control-plane restart or a client write, excludes the client too, fail
+  closed (#108 option (a)); the same issuer returns in a later generation
+  once it is reconciled, and an unchanged state stamps no new generation.
+  Exclusion is from the registry Fabric publishes. It is not route
+  withdrawal or access revocation: no runtime reads the registry, edge
+  application is not observed (`registryApplication: unobserved`), and a
+  tenant left out may still be served by trust configured elsewhere.
+  Without `issuer_origin`, no registry is
   published. No deployment states one; doing so is part of the separately
   gated live trust configuration.
 - **A tombstoned client** keeps its tenant binding published, because
@@ -1236,9 +1253,10 @@ ADR 0023's list and `docs/roadmap/m0-contract-decisions.md`.
   - the platform contract accepts the carrier and the digest;
   - the edge and runtime artefacts are rendered from one generation, with
     applied-reader evidence;
-  - a decision on whether an issuer should leave the registry when its
-    client's identity evidence lapses only because reconciliation status is
-    process memory (after a control-plane restart, or after any client
-    write before reconciliation). The question is on
-    [#108](https://github.com/FieldstateNZ/saas-fabric/issues/108). Today
-    the issuer leaves, which fails closed.
+  - decided on [#108](https://github.com/FieldstateNZ/saas-fabric/issues/108)
+    (option (a)): an issuer leaves the registry while its client's identity
+    evidence is pending, including after a control-plane restart or a client
+    write, because reconciliation status is process memory. That is a
+    possible future routing interruption once an edge applies registry
+    generations. Durable, revision-bound identity evidence or a retained
+    registration rule would be a separately reviewed contract.

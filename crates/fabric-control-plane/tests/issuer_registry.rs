@@ -232,17 +232,22 @@ async fn only_routable_clients_are_registered_and_each_change_is_one_new_generat
     assert_eq!(registry(&dir)["generation"], 1);
     assert_eq!(first["documents"]["registry"], 1, "{first}");
     assert_eq!(first["readiness"]["identity"]["met"], true, "{first}");
-    let withheld: Vec<&str> = first["readiness"]["withheld"]
+    let excluded: Vec<&str> = first["readiness"]["excludedFromRegistry"]
         .as_array()
         .unwrap()
         .iter()
         .map(|entry| entry["tenant"].as_str().unwrap())
         .collect();
-    assert_eq!(withheld, ["acme", "initech"], "{first}");
-    assert!(first["readiness"]["withheld"][1]["reason"]
+    assert_eq!(excluded, ["acme", "initech"], "{first}");
+    assert_eq!(first["readiness"]["excludedFromRegistry"][1]["kind"], "notReady");
+    assert!(first["readiness"]["excludedFromRegistry"][1]["detail"]
         .as_str()
         .unwrap()
-        .contains("incomplete"));
+        .contains("identity: identity has not been applied at this revision yet"));
+    assert_eq!(
+        first["readiness"]["registryApplication"]["state"], "unobserved",
+        "{first}"
+    );
 
     let unchanged = publish(&plane.router).await;
     assert_eq!(unchanged["documents"]["registry"], 1, "{unchanged}");
@@ -276,14 +281,18 @@ async fn only_routable_clients_are_registered_and_each_change_is_one_new_generat
     assert_eq!(registered(&dir), [(issuer("initech"), "initech".to_owned())]);
     assert_eq!(registry(&dir)["generation"], 3);
     assert_eq!(tenants_published(&dir), ["acme", "globex", "initech"]);
-    let reason = retired["readiness"]["withheld"]
+    let globex_exclusion = retired["readiness"]["excludedFromRegistry"]
         .as_array()
         .unwrap()
         .iter()
         .find(|entry| entry["tenant"] == "globex")
-        .map(|entry| entry["reason"].as_str().unwrap().to_owned())
+        .cloned()
         .unwrap();
-    assert!(reason.contains("tombstoned"), "{reason}");
+    assert_eq!(globex_exclusion["kind"], "retired", "{globex_exclusion}");
+    assert!(globex_exclusion["detail"]
+        .as_str()
+        .unwrap()
+        .contains("tombstoned"));
     let lifecycle = send(
         &plane.router,
         as_operator("GET", "/api/clients/globex")
@@ -339,4 +348,102 @@ async fn the_platform_panel_reports_the_three_gates_and_never_meets_connectors_i
         .as_str()
         .unwrap()
         .contains("postgres-nz"));
+}
+
+async fn edit_display_name(
+    plane: &TestControlPlane,
+    client: &str,
+    revision: &ClientRevision,
+) -> ClientRevision {
+    let response = send(
+        &plane.router,
+        as_operator("PUT", &format!("/api/clients/{client}/product"))
+            .header("content-type", "application/json")
+            .header("if-match", format!("\"{}\"", revision.as_str()))
+            .body(Body::from(
+                json!({
+                    "displayName": "Renamed", "hosts": [], "legalName": "Renamed Ltd",
+                    "region": "NZ", "timezone": "Pacific/Auckland", "configuration": {}, "applications": []
+                })
+                .to_string(),
+            ))
+            .unwrap(),
+    )
+    .await;
+    let status = response.status();
+    let body = body_of(response).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    ClientRevision::try_new(body["client"]["revision"].as_str().unwrap()).unwrap()
+}
+
+async fn ready_plane(dir: &TempDir) -> (TestControlPlane, ClientRevision) {
+    let (platform, fake) = platform_binding().await;
+    let plane = control_plane_with_publication(platform, sink(dir));
+    let globex = plane.repository.insert(&client_document("globex")).unwrap();
+    fake.seed(DesiredRevision::new("ds-1"), vec![declared_data_source()]);
+    fake.seed_placements(DesiredRevision::new("pl-1"), vec![placement("globex")]);
+    publish_one_application_with_a_resource(&plane.router).await;
+    (plane, globex)
+}
+
+/// Option (a) on #108: identity evidence pending reconciliation excludes the
+/// client, fail closed, after a client write and after a control-plane
+/// restart alike; reconciliation brings the same issuer back (the realm is
+/// unchanged), and repeating an unchanged state never stamps a generation.
+#[tokio::test]
+async fn pending_identity_after_a_write_or_a_restart_excludes_then_reconciliation_restores_without_churn() {
+    let dir = TempDir::new("issuer-registry-pending");
+    let globex_only = || vec![(issuer("globex"), "globex".to_owned())];
+    let mut generations = Vec::new();
+    let mut publish_twice = |dir: &TempDir, first: Value, second: Value| {
+        assert_eq!(
+            first["documents"]["registry"], second["documents"]["registry"],
+            "{second}"
+        );
+        generations.push(registry(dir)["generation"].as_u64().unwrap());
+        first
+    };
+
+    let (plane, globex) = ready_plane(&dir).await;
+    applied(&plane, "globex", &globex);
+    publish_twice(&dir, publish(&plane.router).await, publish(&plane.router).await);
+    assert_eq!(registered(&dir), globex_only());
+
+    // A client write: identity is pending at the new revision.
+    let edited = edit_display_name(&plane, "globex", &globex).await;
+    let pending = publish_twice(&dir, publish(&plane.router).await, publish(&plane.router).await);
+    assert_eq!(registered(&dir), []);
+    let exclusion = &pending["readiness"]["excludedFromRegistry"][0];
+    assert_eq!(exclusion["kind"], "notReady", "{pending}");
+    assert!(exclusion["detail"]
+        .as_str()
+        .unwrap()
+        .contains("identity: identity has not been applied at this revision yet"));
+    assert_eq!(pending["readiness"]["registryApplication"]["state"], "unobserved");
+    assert_eq!(tenants_published(&dir), ["globex"], "the binding is untouched");
+
+    applied(&plane, "globex", &edited);
+    publish_twice(&dir, publish(&plane.router).await, publish(&plane.router).await);
+    assert_eq!(registered(&dir), globex_only());
+
+    // A restart: a new control plane over the same published state, its
+    // reconciliation status empty, so identity is pending again.
+    drop(plane);
+    let (restarted, globex) = ready_plane(&dir).await;
+    publish_twice(
+        &dir,
+        publish(&restarted.router).await,
+        publish(&restarted.router).await,
+    );
+    assert_eq!(registered(&dir), []);
+
+    applied(&restarted, "globex", &globex);
+    publish_twice(
+        &dir,
+        publish(&restarted.router).await,
+        publish(&restarted.router).await,
+    );
+    assert_eq!(registered(&dir), globex_only());
+
+    assert_eq!(generations, [1, 2, 3, 4, 5]);
 }

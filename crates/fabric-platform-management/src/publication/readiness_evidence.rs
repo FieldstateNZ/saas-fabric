@@ -5,14 +5,14 @@ use std::collections::BTreeSet;
 use fabric_core::TenantId;
 use fabric_runtime_publication::{PublishedRevisions, RegistryGeneration, RuntimeSnapshot};
 
-use super::issuer_registry_source::Withheld;
+use super::issuer_registry_source::Excluded;
 
 /// What the last pass the target accepted left published, for the report.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReadinessEvidence {
     /// The held revision of each document, and the registry generation.
     pub revisions: PublishedRevisions,
-    /// The registry's issuer count and withheld tenants, when one was
+    /// The registry's registered and excluded tenants, when one was
     /// produced.
     pub registry: Option<RegistryEvidenceSummary>,
     /// The connector every published DataSource names.
@@ -27,18 +27,18 @@ pub struct RegistryEvidenceSummary {
     /// The tenants it registers.
     pub registered: BTreeSet<TenantId>,
     /// Bound tenants it leaves out, and why.
-    pub withheld: Vec<Withheld>,
+    pub excluded: Vec<Excluded>,
 }
 
 impl ReadinessEvidence {
     /// The evidence an accepted `snapshot` leaves: the revisions it was
     /// accepted at, the registry generation the target stamped, and the
-    /// tenants the registry source withheld.
+    /// tenants the registry source excluded.
     #[must_use]
     pub fn of(
         snapshot: &RuntimeSnapshot,
         registry: Option<RegistryGeneration>,
-        withheld: Vec<Withheld>,
+        excluded: Vec<Excluded>,
     ) -> Self {
         let summary = snapshot
             .registry
@@ -50,7 +50,7 @@ impl ReadinessEvidence {
                     .iter()
                     .map(|registration| registration.tenant.clone())
                     .collect(),
-                withheld,
+                excluded,
             });
         Self {
             revisions: PublishedRevisions {

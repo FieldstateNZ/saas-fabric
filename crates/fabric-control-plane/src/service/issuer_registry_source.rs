@@ -4,10 +4,11 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use fabric_client_model::LifecycleUse;
+use fabric_client_model::lifecycle::ReadinessCondition;
+use fabric_client_model::{ClientLifecycle, LifecycleRefusal, LifecycleUse};
 use fabric_core::TenantId;
 use fabric_platform_management::{
-    IssuerRegistrySource, Registrations, RegistryEvidence, RegistrySourceError, Withheld,
+    Excluded, Exclusion, IssuerRegistrySource, Registrations, RegistryEvidence, RegistrySourceError,
 };
 use fabric_runtime_publication::{IssuerOrigin, IssuerRegistration};
 
@@ -23,10 +24,13 @@ use crate::ClientService;
 /// with (ADR 0019 G4a).
 ///
 /// A client that is not ready (`LifecycleRefusal::NotReady`) or is retired
-/// (`LifecycleRefusal::Retired`) is left out, so no issuer reaches it.
-/// A retired client's tenant binding stays published: withdrawal is
-/// deferred (ADR 0021's 2026-10-11 amendment), and leaving the registry is
-/// not evidence that any edge or runtime stopped serving it.
+/// (`LifecycleRefusal::Retired`) is left out of the generated registry,
+/// fail closed (#108, option (a)): identity evidence pending reconciliation
+/// excludes it too, until it is reconciled. Exclusion is from what Fabric
+/// publishes only. No runtime reads the registry and edge application is
+/// platform composition's, so it is not withdrawal or access revocation. A
+/// retired client's tenant binding stays published (ADR 0021's 2026-10-11
+/// amendment).
 pub(crate) struct LifecycleIssuerRegistry {
     service: Arc<ClientService>,
     origin: IssuerOrigin,
@@ -70,26 +74,56 @@ impl IssuerRegistrySource for LifecycleIssuerRegistry {
             let lifecycle = crate::lifecycle::derive(&self.service, stored, &facts);
             let decided = lifecycle
                 .permits(LifecycleUse::Route)
-                .map_err(|refusal| refusal.to_string())
+                .map_err(|refusal| exclusion(&refusal, &lifecycle))
                 .and_then(|()| {
                     self.origin
                         .issuer(client.identity.realm.as_str())
-                        .map_err(|error| error.to_string())
+                        .map_err(|error| Exclusion::InvalidIssuer {
+                            detail: error.to_string(),
+                        })
                 });
             match decided {
                 Ok(issuer) => registrations
                     .registered
                     .push(IssuerRegistration { issuer, tenant }),
-                Err(reason) if is_bound => registrations.withheld.push(Withheld { tenant, reason }),
+                Err(reason) if is_bound => registrations.excluded.push(Excluded { tenant, reason }),
                 Err(_) => {}
             }
         }
         registrations
-            .withheld
-            .extend(bound.into_keys().map(|tenant| Withheld {
+            .excluded
+            .extend(bound.into_keys().map(|tenant| Excluded {
                 tenant,
-                reason: "no client in desired state names this tenant".to_owned(),
+                reason: Exclusion::NoClient,
             }));
         Ok(registrations)
+    }
+}
+
+/// The routing refusal as an exclusion kind, so evidence still pending is
+/// never reported as a recorded retirement. A not-ready refusal names each
+/// unmet condition with the evidence the lifecycle holds for it.
+fn exclusion(refusal: &LifecycleRefusal, lifecycle: &ClientLifecycle) -> Exclusion {
+    match refusal {
+        LifecycleRefusal::Retired { state, .. } => Exclusion::Retired {
+            state: state.to_string(),
+        },
+        _ => Exclusion::NotReady {
+            unmet: match lifecycle {
+                ClientLifecycle::Incomplete { unmet } => unmet
+                    .iter()
+                    .map(|unmet| format!("{}: {}", condition(unmet.condition), unmet.detail))
+                    .collect(),
+                _ => vec![refusal.to_string()],
+            },
+        },
+    }
+}
+
+const fn condition(condition: ReadinessCondition) -> &'static str {
+    match condition {
+        ReadinessCondition::Provisioning => "provisioning",
+        ReadinessCondition::Identity => "identity",
+        ReadinessCondition::Publication => "publication",
     }
 }

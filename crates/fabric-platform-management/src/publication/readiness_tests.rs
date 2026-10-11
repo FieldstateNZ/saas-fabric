@@ -4,6 +4,7 @@ use fabric_core::TenantId;
 use fabric_runtime_publication::{DocumentRevision, PublishedRevisions, RegistryGeneration};
 
 use super::*;
+use crate::publication::exclusion::Exclusion;
 use crate::publication::readiness_evidence::{ReadinessEvidence, RegistryEvidenceSummary};
 
 fn tenant(name: &str) -> TenantId {
@@ -31,9 +32,11 @@ fn registering(tenants: &[&str]) -> RegistryEvidenceSummary {
     RegistryEvidenceSummary {
         generation: RegistryGeneration::FIRST,
         registered: tenants.iter().copied().map(tenant).collect(),
-        withheld: vec![Withheld {
+        excluded: vec![Excluded {
             tenant: tenant("beta"),
-            reason: "the client is incomplete, so routing is refused until it is ready".to_owned(),
+            reason: Exclusion::NotReady {
+                unmet: vec!["identity: identity has not been applied at this revision yet".to_owned()],
+            },
         }],
     }
 }
@@ -55,13 +58,19 @@ fn without_an_accepted_pass_every_gate_is_unmet() {
 }
 
 #[test]
-fn published_documents_and_a_registry_naming_an_issuer_meet_two_gates_and_name_the_withheld() {
+fn published_documents_and_a_registry_naming_an_issuer_meet_two_gates_and_name_the_excluded() {
     let report = ReadinessReport::of(Some(&evidence(Some(registering(&["alpha"])))));
 
     assert_eq!(report.documents, GateStatus::Met);
     assert_eq!(report.identity, GateStatus::Met);
-    assert_eq!(report.withheld.len(), 1);
-    assert_eq!(report.withheld[0].tenant, tenant("beta"));
+    assert_eq!(report.excluded.len(), 1);
+    assert_eq!(report.excluded[0].tenant, tenant("beta"));
+    assert_eq!(report.excluded[0].reason.kind(), "notReady");
+    assert_eq!(
+        report.application,
+        RegistryApplication::Unobserved,
+        "a published registry is not evidence that anything applied it"
+    );
 }
 
 #[test]

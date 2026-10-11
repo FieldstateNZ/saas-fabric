@@ -1,10 +1,14 @@
-import type { Gate, Readiness } from '../api/publication-types'
+import type { ExcludedTenant, ExclusionKind, Gate, Readiness } from '../api/publication-types'
 import { Status } from '../console/Status'
 
 /**
- * The three readiness gates (D01-18), and the published tenants no issuer
- * reaches. Read-only, like `PublicationRows`: a gate shown as met is
- * Fabric's evidence, not a claim that the runtime may be raised.
+ * The three readiness gates (D01-18), the bound tenants the generated issuer
+ * registry leaves out, and what is known about the registry being applied.
+ *
+ * Read-only, like `PublicationRows`. A gate shown as met is Fabric's
+ * evidence, not a claim that the runtime may be raised; a tenant left out of
+ * the registry is not shown as unrouted, because nothing here observes an
+ * edge or a runtime applying the registry.
  */
 export function ReadinessRows({ readiness }: { readiness: Readiness }) {
   return (
@@ -24,14 +28,30 @@ export function ReadinessRows({ readiness }: { readiness: Readiness }) {
         <GateCell gate={readiness.connectors} />
       </dd>
 
-      <dt>Not routed</dt>
+      <dt>Excluded from registry</dt>
       <dd>
-        {readiness.withheld.length === 0
+        {readiness.excludedFromRegistry.length === 0
           ? 'None'
-          : readiness.withheld.map((entry) => `${entry.tenant}: ${entry.reason}`).join('; ')}
+          : readiness.excludedFromRegistry.map(excluded).join('; ')}
+      </dd>
+
+      <dt>Registry applied</dt>
+      <dd>
+        <Status value="pending">Unobserved</Status> — {readiness.registryApplication.detail}
       </dd>
     </dl>
   )
+}
+
+const KIND: Record<ExclusionKind, string> = {
+  notReady: 'not ready',
+  retired: 'retired',
+  noClient: 'no client',
+  invalidIssuer: 'invalid issuer',
+}
+
+function excluded(entry: ExcludedTenant): string {
+  return `${entry.tenant} (${KIND[entry.kind]}): ${entry.detail}`
 }
 
 function GateCell({ gate }: { gate: Gate }) {

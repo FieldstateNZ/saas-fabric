@@ -146,14 +146,16 @@ anything.
 lifecycle permits `LifecycleUse::Route`, by `IssuerOrigin::issuer(realm)`. It
 derives the lifecycle with `lifecycle::derive`, the console's own derivation, but
 its publication evidence is `Publication::Offered`: the tenants document the same
-pass offers. Not-ready and retired clients that are bound are `withheld`, with the
-refusal's words. A retired client's binding stays published (withdrawal deferred);
+pass offers. Bound clients refused routing are `Excluded` from the generated registry,
+by kind (`Exclusion::NotReady` with each unmet condition, `Retired`, `NoClient`,
+`InvalidIssuer`); pending identity evidence excludes too (#108 option (a)). A retired client's binding stays published (withdrawal deferred);
 leaving the registry is not withdrawal evidence. It is wired only when
 `PublicationSink.issuer_origin` is `Some` (`registration/publisher.rs`; host config
 `[platform_management.publication].issuer_origin`). No deployment states one.
 `PublicationRow` carries `documents.registry` (the generation) and `readiness`
-(`ReadinessRow`: the `documents`, `identity` and `connectors` gates, plus
-`withheld`).
+(`ReadinessRow`: the `documents`, `identity` and `connectors` gates,
+`excludedFromRegistry` with `kind` and `detail`, and `registryApplication`, always
+`unobserved`). None of it claims route withdrawal or access revocation.
 
 ## Hard invariants — do not break
 

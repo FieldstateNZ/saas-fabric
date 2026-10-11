@@ -153,13 +153,17 @@ not build.
 - `RegistryIssuer` — exactly `https://<host>[:<port>]/realms/<realm>`.
   `IssuerOrigin` is `https://<host>[:<port>]`, and its `issuer(realm)`
   names a realm's issuer. `IssuerError`.
-- `RegistryGeneration` — `u64`, at least 1, with `FIRST` and `next`.
+- `RegistryGeneration` — `u64`, at least 1, with `FIRST` and `next() ->
+  Option<Self>` (no saturating fallback).
 - `RecordedRegistry { generation, sha256 }` — the record's optional
   `registry` key, omitted while none is published.
 - `RegistryPlan` — `outcome`, `document`, `bytes`; `recorded()`.
-  `registry::decide` keeps the recorded generation while the registrations
-  render to the recorded digest, and otherwise advances it by one.
-- `RegistryRefusal` — `DuplicateIssuer`, `TenantUnbound`, `Withdrawn`;
+  `generation_choice::generation_for` keeps the committed generation while
+  the registrations render to the recorded digest and no uncommitted registry
+  is ahead of it, keeps an uncommitted on-disk generation only for exactly its
+  bytes, and otherwise takes one past the highest of the two; unparseable held
+  bytes are `Unreadable`, and overflow is `GenerationExhausted`.
+- `RegistryRefusal` — `DuplicateIssuer`, `TenantUnbound`, `GenerationExhausted`, `Withdrawn`;
   carried as `PublicationError::Registry`.
 - `RuntimeSnapshot.registry: Option<Vec<IssuerRegistration>>`,
   `HeldDocuments.registry` (held bytes), `PublicationPlan.registry`,

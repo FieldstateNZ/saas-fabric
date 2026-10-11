@@ -288,3 +288,53 @@ async fn the_registry_is_the_runtimes_trusted_issuers_and_routes_each_issuer_to_
     .await;
     assert_eq!(globex.status(), StatusCode::UNAUTHORIZED);
 }
+
+/// The changed-offer recovery: generation 2 reached the disk without its
+/// record, and the next offer differs from it. Generation 2 is not
+/// reissued for those other registrations, and going back to the committed
+/// set does not hide it either.
+#[tokio::test]
+async fn a_changed_offer_after_an_interrupted_publication_never_reuses_the_uncommitted_generation() {
+    for recovery in [&["globex"][..], &["acme"]] {
+        let dir = TempDir::new();
+        dir.publisher().publish(&snapshot(1, &["acme"])).await.unwrap();
+        let committed = dir.capture(&[PUBLICATION_RECORD_FILE]);
+        dir.publisher()
+            .publish(&snapshot(1, &["acme", "globex"]))
+            .await
+            .unwrap();
+        let uncommitted = dir.read_raw(ISSUER_REGISTRY_FILE);
+        dir.restore(&committed);
+
+        let report = dir.publisher().publish(&snapshot(1, recovery)).await.unwrap();
+
+        assert_eq!(report.registry.unwrap().generation.get(), 3, "{recovery:?}");
+        assert_eq!(registry_generation(&dir), 3, "{recovery:?}");
+        assert_eq!(
+            record(&dir).registry().unwrap().generation.get(),
+            3,
+            "{recovery:?}"
+        );
+        assert_ne!(dir.read_raw(ISSUER_REGISTRY_FILE), uncommitted);
+    }
+}
+
+#[tokio::test]
+async fn held_registry_bytes_that_do_not_parse_refuse_the_publication_and_write_nothing() {
+    let dir = TempDir::new();
+    dir.publisher().publish(&snapshot(1, &["acme"])).await.unwrap();
+    dir.write_raw(ISSUER_REGISTRY_FILE, b"{truncated");
+    let before = dir.capture(&[ISSUER_REGISTRY_FILE, PUBLICATION_RECORD_FILE]);
+
+    let error = dir
+        .publisher()
+        .publish(&snapshot(1, &["acme", "globex"]))
+        .await
+        .unwrap_err();
+
+    assert!(matches!(error, PublicationError::Unreadable { .. }), "{error:?}");
+    assert_eq!(
+        dir.capture(&[ISSUER_REGISTRY_FILE, PUBLICATION_RECORD_FILE]),
+        before
+    );
+}

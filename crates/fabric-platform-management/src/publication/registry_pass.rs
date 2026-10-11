@@ -3,14 +3,14 @@
 
 use fabric_runtime_publication::RuntimeSnapshot;
 
-use super::issuer_registry_source::{RegistryEvidence, RegistrySourceError, Withheld};
+use super::issuer_registry_source::{Excluded, RegistryEvidence, RegistrySourceError};
 use super::pass::Halt;
 use super::RuntimePublisher;
 use crate::{PlacementRecord, SafeDiagnostic};
 
 impl RuntimePublisher {
     /// Sets `snapshot`'s registry to what the source registers against its
-    /// own tenants document, and returns the bound tenants it withheld.
+    /// own tenants document, and returns the bound tenants it excluded.
     /// Without a source the snapshot carries no registry.
     ///
     /// A source that cannot answer halts the pass as `Failed`: offering the
@@ -21,7 +21,7 @@ impl RuntimePublisher {
         &self,
         snapshot: &mut RuntimeSnapshot,
         placements: &[PlacementRecord],
-    ) -> Result<Vec<Withheld>, Halt> {
+    ) -> Result<Vec<Excluded>, Halt> {
         let Some(source) = &self.registry else {
             return Ok(Vec::new());
         };
@@ -37,6 +37,6 @@ impl RuntimePublisher {
                     Halt::Failed(SafeDiagnostic::sanitise(&detail))
                 })?;
         snapshot.registry = Some(registrations.registered);
-        Ok(registrations.withheld)
+        Ok(registrations.excluded)
     }
 }

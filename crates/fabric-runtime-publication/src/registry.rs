@@ -12,6 +12,7 @@
 
 mod document;
 mod generation;
+mod generation_choice;
 mod issuer;
 mod origin;
 mod plan;

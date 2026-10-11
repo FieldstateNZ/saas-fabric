@@ -394,8 +394,9 @@ covers every placed tenant. A gate that reports all three is listed under
 > - With client lifecycles (D01-19a), "covers the placed tenants" means
 >   every placed tenant whose client permits routing. That holds by
 >   construction, because the registry is generated from exactly those
->   clients. Placed tenants that are not ready or are retired are listed as
->   withheld, not routed.
+>   clients. Placed tenants that are not ready or are retired are reported
+>   as excluded from the generated registry. That is not route withdrawal:
+>   no edge or runtime application of the registry is observed.
 > - `connectors` is never met by Fabric. Platform composition deploys the
 >   connectors, and Fabric observes neither them nor the runtime's
 >   `[[connectors]]`. The gate lists the connectors the published data

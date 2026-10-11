@@ -102,7 +102,102 @@ fn a_registry_at_generation_zero_or_with_an_unknown_key_does_not_parse() {
 }
 
 #[test]
-fn a_generation_only_moves_forward() {
-    assert_eq!(RegistryGeneration::FIRST.next().get(), 2);
-    assert!(RegistryGeneration::FIRST.next() > RegistryGeneration::FIRST);
+fn a_generation_only_moves_forward_and_has_no_successor_past_the_last() {
+    assert_eq!(
+        RegistryGeneration::FIRST.next().map(RegistryGeneration::get),
+        Some(2)
+    );
+    assert_eq!(RegistryGeneration::try_from(u64::MAX).unwrap().next(), None);
+}
+
+fn recorded_at(generation: u64, registrations: &[IssuerRegistration]) -> (RecordedRegistry, Vec<u8>) {
+    let generation = RegistryGeneration::try_from(generation).unwrap();
+    let bytes = IssuerRegistryDocument::new(generation, registrations.to_vec())
+        .unwrap()
+        .canonical_json()
+        .unwrap();
+    let recorded = RecordedRegistry {
+        generation,
+        sha256: crate::digest::sha256_hex(&bytes),
+    };
+    (recorded, bytes)
+}
+
+#[test]
+fn at_the_last_generation_unchanged_registrations_keep_it_and_changed_ones_are_refused() {
+    let acme = vec![registration(
+        "https://identity.example.invalid/realms/acme",
+        "acme",
+    )];
+    let globex = vec![registration(
+        "https://identity.example.invalid/realms/globex",
+        "globex",
+    )];
+    let (recorded, bytes) = recorded_at(u64::MAX, &acme);
+
+    let kept = super::generation_choice::generation_for(Some(&recorded), Some(&bytes), &acme).unwrap();
+    let changed = super::generation_choice::generation_for(Some(&recorded), Some(&bytes), &globex);
+
+    assert_eq!(kept.get(), u64::MAX);
+    assert!(
+        matches!(
+            changed,
+            Err(crate::PublicationError::Registry(
+                RegistryRefusal::GenerationExhausted { .. }
+            ))
+        ),
+        "{changed:?}"
+    );
+}
+
+#[test]
+fn an_uncommitted_generation_on_disk_is_never_reissued_for_other_registrations() {
+    let acme = vec![registration(
+        "https://identity.example.invalid/realms/acme",
+        "acme",
+    )];
+    let globex = vec![registration(
+        "https://identity.example.invalid/realms/globex",
+        "globex",
+    )];
+    let both = [acme.clone(), globex.clone()].concat();
+    let (recorded, _) = recorded_at(1, &acme);
+    let (_, uncommitted) = recorded_at(2, &both);
+
+    let same = super::generation_choice::generation_for(Some(&recorded), Some(&uncommitted), &both).unwrap();
+    let other =
+        super::generation_choice::generation_for(Some(&recorded), Some(&uncommitted), &globex).unwrap();
+    let committed =
+        super::generation_choice::generation_for(Some(&recorded), Some(&uncommitted), &acme).unwrap();
+
+    assert_eq!(
+        same.get(),
+        2,
+        "the exact uncommitted bytes may be committed as they are"
+    );
+    assert_eq!(
+        other.get(),
+        3,
+        "other registrations skip the uncommitted generation"
+    );
+    assert_eq!(
+        committed.get(),
+        3,
+        "going back to the committed set must not hide generation 2"
+    );
+}
+
+#[test]
+fn held_registry_bytes_that_do_not_parse_are_refused_rather_than_guessed() {
+    let acme = vec![registration(
+        "https://identity.example.invalid/realms/acme",
+        "acme",
+    )];
+
+    let refused = super::generation_choice::generation_for(None, Some(b"{not json"), &acme);
+
+    assert!(
+        matches!(refused, Err(crate::PublicationError::Unreadable { .. })),
+        "{refused:?}"
+    );
 }

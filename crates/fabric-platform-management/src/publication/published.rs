@@ -12,7 +12,7 @@ use fabric_runtime_publication::{
     PublicationError, PublicationReport, RuntimeSnapshot, TenantBindingDocument,
 };
 
-use crate::publication::issuer_registry_source::Withheld;
+use crate::publication::issuer_registry_source::Excluded;
 use crate::publication::protocol::publish_with_retry;
 use crate::publication::readiness_evidence::ReadinessEvidence;
 use crate::publication::RuntimePublisher;
@@ -21,18 +21,18 @@ impl RuntimePublisher {
     /// Offers `snapshot` to the target, and on acceptance remembers the
     /// tenants its tenants document carries, for
     /// [`crate::PublicationState::published_tenants`], and what the
-    /// readiness report reads, with the tenants the registry `withheld`.
+    /// readiness report reads, with the tenants the registry `excluded`.
     pub(super) async fn offer(
         &self,
         snapshot: RuntimeSnapshot,
-        withheld: Vec<Withheld>,
+        excluded: Vec<Excluded>,
     ) -> Result<(PublicationReport, RuntimeSnapshot), PublicationError> {
         let offered = publish_with_retry(self.target.as_ref(), snapshot).await;
         if let (Ok((report, accepted)), Ok(mut held)) = (&offered, self.accepted.lock()) {
             let registry = report.registry.map(|registry| registry.generation);
             *held = Some(Accepted {
                 tenants: published_tenants(&accepted.tenants.payload),
-                evidence: ReadinessEvidence::of(accepted, registry, withheld),
+                evidence: ReadinessEvidence::of(accepted, registry, excluded),
             });
         }
 

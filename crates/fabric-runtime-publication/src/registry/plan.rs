@@ -37,17 +37,14 @@ impl RegistryPlan {
 /// Decides the registry generation for `snapshot`'s registry, against the
 /// generation the held record names and the registry bytes actually held.
 ///
-/// The generation stays where the record has it while the registrations
-/// are the ones it recorded, and otherwise advances by one -- including
-/// when the held bytes are an interrupted publication's, because the record
-/// still names the generation readers hold. With no recorded registry, the
-/// first is generation 1.
+/// See `generation_choice::generation_for` for how the generation is chosen.
 ///
 /// # Errors
 ///
 /// A [`RegistryRefusal`]: a duplicate issuer, a tenant the snapshot's
 /// tenants document does not bind, or no registry offered over one that is
-/// recorded.
+/// recorded, or no unused generation left; [`PublicationError::Unreadable`]
+/// for held registry bytes that do not parse, whose generation is unknown.
 pub(crate) fn decide(
     recorded: Option<&RecordedRegistry>,
     held: Option<&[u8]>,
@@ -80,17 +77,8 @@ pub(crate) fn decide(
         .into());
     }
 
-    let (document, bytes) = match recorded {
-        Some(recorded) => {
-            let (document, bytes) = render(recorded.generation, offered)?;
-            if sha256_hex(&bytes) == recorded.sha256 {
-                (document, bytes)
-            } else {
-                render(recorded.generation.next(), offered)?
-            }
-        }
-        None => render(RegistryGeneration::FIRST, offered)?,
-    };
+    let generation = super::generation_choice::generation_for(recorded, held, offered)?;
+    let (document, bytes) = render(generation, offered)?;
     let outcome = if held == Some(bytes.as_slice()) {
         DocumentOutcome::Unchanged
     } else {
@@ -103,7 +91,7 @@ pub(crate) fn decide(
     }))
 }
 
-fn render(
+pub(super) fn render(
     generation: RegistryGeneration,
     offered: &[IssuerRegistration],
 ) -> Result<(IssuerRegistryDocument, Vec<u8>), PublicationError> {

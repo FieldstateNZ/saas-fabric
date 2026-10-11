@@ -26,7 +26,8 @@ function platformState(): PlatformState {
         documents: { met: true, reasons: [] },
         identity: { met: false, reasons: ['Fabric publishes no issuer registry'] },
         connectors: { met: false, reasons: ['platform composition must deploy and configure postgres-nz'] },
-        withheld: [],
+        excludedFromRegistry: [],
+        registryApplication: { state: 'unobserved', detail: 'no runtime reads this registry' },
       },
     },
   }

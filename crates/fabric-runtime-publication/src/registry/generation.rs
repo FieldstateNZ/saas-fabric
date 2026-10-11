@@ -4,7 +4,8 @@
 ///
 /// Starts at 1 and advances by one each time the registrations change; a
 /// publication that leaves them alone leaves the generation alone. It never
-/// goes backwards and is never reused for different registrations, so an
+/// goes backwards and is never reused for different bytes -- committed or
+/// not (`registry::plan`) -- so an
 /// edge that states the generation it applied can be held to exactly one set
 /// of issuers (D01-4). Distinct from the publication record's own generation,
 /// which also advances when only a document changes: tying the edge to that
@@ -17,10 +18,14 @@ impl RegistryGeneration {
     /// The first generation.
     pub const FIRST: Self = Self(1);
 
-    /// The generation after this one.
+    /// The generation after this one, or `None` past `u64::MAX`: a
+    /// generation is never reused, so there is no saturating fallback.
     #[must_use]
-    pub const fn next(self) -> Self {
-        Self(self.0.saturating_add(1))
+    pub const fn next(self) -> Option<Self> {
+        match self.0.checked_add(1) {
+            Some(next) => Some(Self(next)),
+            None => None,
+        }
     }
 
     /// The number.

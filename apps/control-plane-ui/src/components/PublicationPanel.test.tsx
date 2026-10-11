@@ -16,7 +16,18 @@ import { PublicationPanel } from './PublicationPanel'
 
 const UNASSESSED = { met: false, reasons: ['no publication pass has been accepted since the control plane started'] }
 
-const READINESS = { documents: UNASSESSED, identity: UNASSESSED, connectors: UNASSESSED, withheld: [] }
+const UNOBSERVED = {
+  state: 'unobserved' as const,
+  detail: 'no runtime reads this registry and no edge application is observed',
+}
+
+const READINESS = {
+  documents: UNASSESSED,
+  identity: UNASSESSED,
+  connectors: UNASSESSED,
+  excludedFromRegistry: [],
+  registryApplication: UNOBSERVED,
+}
 
 function publication(overrides: Partial<Publication> = {}): Publication {
   return {
@@ -299,7 +310,8 @@ describe('publishing now', () => {
             documents: { met: true, reasons: [] },
             identity: { met: true, reasons: [] },
             connectors: { met: false, reasons: ['platform composition must deploy and configure postgres-nz'] },
-            withheld: [{ tenant: 'acme', reason: 'the client is incomplete' }],
+            excludedFromRegistry: [],
+            registryApplication: UNOBSERVED,
           },
         })}
       />,
@@ -309,6 +321,40 @@ describe('publishing now', () => {
     expect(fact('Documents gate')).toHaveTextContent(/^●Met$/)
     expect(fact('Identity gate')).toHaveTextContent(/^●Met$/)
     expect(fact('Connectors gate')).toHaveTextContent(/Unmet — platform composition must deploy and configure postgres-nz/)
-    expect(fact('Not routed')).toHaveTextContent(/^acme: the client is incomplete$/)
+    expect(fact('Excluded from registry')).toHaveTextContent(/^None$/)
+  })
+
+  it('shows pending identity evidence as a registry exclusion, never as route withdrawal', () => {
+    render(
+      <PublicationPanel
+        publication={publication({
+          documents: { tenants: 3, dataSources: 2, catalog: 1, registry: 5 },
+          lastPass: { atUnixSeconds: 1_700_000_000, outcome: 'published', detail: null },
+          readiness: {
+            documents: { met: true, reasons: [] },
+            identity: { met: false, reasons: ['issuer registry generation 5 registers no issuer'] },
+            connectors: { met: false, reasons: ['platform composition must deploy and configure postgres-nz'] },
+            excludedFromRegistry: [
+              {
+                tenant: 'globex',
+                kind: 'notReady',
+                detail: 'not ready: identity: identity has not been applied at this revision yet',
+              },
+              { tenant: 'initech', kind: 'retired', detail: 'retirement is recorded (tombstoned)' },
+            ],
+            registryApplication: UNOBSERVED,
+          },
+        })}
+      />,
+    )
+
+    expect(fact('Excluded from registry')).toHaveTextContent(
+      /^globex \(not ready\): not ready: identity: identity has not been applied at this revision yet; initech \(retired\): retirement is recorded \(tombstoned\)$/,
+    )
+    expect(fact('Registry applied')).toHaveTextContent(
+      /^●Unobserved — no runtime reads this registry and no edge application is observed$/,
+    )
+    expect(screen.queryByText(/not routed/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/withdrawn/i)).not.toBeInTheDocument()
   })
 })

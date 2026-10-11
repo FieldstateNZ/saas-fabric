@@ -9,8 +9,9 @@ use std::collections::BTreeSet;
 
 use fabric_runtime_publication::PublishedRevisions;
 
-use super::issuer_registry_source::Withheld;
+use super::issuer_registry_source::Excluded;
 use super::readiness_evidence::{ReadinessEvidence, RegistryEvidenceSummary};
+pub use super::registry_application::RegistryApplication;
 
 /// One gate's state. Absence of evidence is never `Met`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -37,9 +38,12 @@ pub struct ReadinessReport {
     /// Never met here: connectors are deployed and configured by platform
     /// composition, and Fabric observes neither. Lists what is required.
     pub connectors: GateStatus,
-    /// Bound tenants no issuer reaches, and why. Informational: a client
-    /// that is not ready, or is retired, is not routed, by design.
-    pub withheld: Vec<Withheld>,
+    /// Bound tenants left out of the generated registry, and why. This is
+    /// exclusion from what Fabric publishes, not withdrawal: see
+    /// [`Self::application`].
+    pub excluded: Vec<Excluded>,
+    /// Whether any edge or runtime is known to apply the registry.
+    pub application: RegistryApplication,
 }
 
 impl ReadinessReport {
@@ -52,18 +56,20 @@ impl ReadinessReport {
                 documents: none(),
                 identity: none(),
                 connectors: none(),
-                withheld: Vec::new(),
+                excluded: Vec::new(),
+                application: RegistryApplication::Unobserved,
             };
         };
         Self {
             documents: documents(&evidence.revisions),
             identity: identity(evidence.registry.as_ref()),
             connectors: connectors(&evidence.connectors),
-            withheld: evidence
+            excluded: evidence
                 .registry
                 .as_ref()
-                .map(|registry| registry.withheld.clone())
+                .map(|registry| registry.excluded.clone())
                 .unwrap_or_default(),
+            application: RegistryApplication::Unobserved,
         }
     }
 }

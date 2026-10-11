@@ -4,6 +4,7 @@
 use fabric_core::TenantId;
 use fabric_runtime_publication::{IssuerRegistration, TenantBindingDocument};
 
+use super::exclusion::Exclusion;
 use crate::PlacementRecord;
 
 /// Decides which clients' issuers one publication registers (D01-4).
@@ -45,18 +46,24 @@ pub struct RegistryEvidence<'a> {
 pub struct Registrations {
     /// The issuers registered, each to its tenant.
     pub registered: Vec<IssuerRegistration>,
-    /// Bound tenants whose clients are not registered, and why.
-    pub withheld: Vec<Withheld>,
+    /// Bound tenants left out of this generated registry, and why.
+    pub excluded: Vec<Excluded>,
 }
 
-/// A tenant the tenants document binds whose issuer is not registered.
+/// A tenant the tenants document binds that the generated registry leaves
+/// out.
+///
+/// Exclusion from the registry Fabric publishes, and nothing more. No
+/// runtime reads the registry, and edge application is platform
+/// composition's. Requests for this tenant may still be served by trust
+/// configured elsewhere until an applied registry generation shows
+/// otherwise. This is not withdrawal or access revocation.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Withheld {
+pub struct Excluded {
     /// The tenant.
     pub tenant: TenantId,
-    /// Why, in an operator's words: the lifecycle's routing refusal, or the
-    /// client's absence from desired state.
-    pub reason: String,
+    /// Why.
+    pub reason: Exclusion,
 }
 
 /// Why [`IssuerRegistrySource::registrations`] could not answer.

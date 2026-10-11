@@ -88,12 +88,12 @@ impl RuntimePublisher {
 
         hold_unbound_catalogue(&mut snapshot, &published, &held);
 
-        let withheld = match self.decide_registry(&mut snapshot, &placements).await {
-            Ok(withheld) => withheld,
+        let excluded = match self.decide_registry(&mut snapshot, &placements).await {
+            Ok(excluded) => excluded,
             Err(halt) => return halt.into_outcome(),
         };
 
-        match self.offer(snapshot, withheld).await {
+        match self.offer(snapshot, excluded).await {
             Ok((report, snapshot)) => outcome_from_report(
                 report,
                 &held,

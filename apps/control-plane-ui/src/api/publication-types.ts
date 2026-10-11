@@ -39,10 +39,32 @@ export interface Gate {
   readonly reasons: readonly string[]
 }
 
-/** A published tenant no issuer reaches, and why. */
-export interface WithheldTenant {
+/**
+ * Why a bound tenant is left out of the generated issuer registry. `notReady`
+ * includes identity evidence pending reconciliation, which is temporary;
+ * `retired` is a recorded retirement.
+ */
+export type ExclusionKind = 'notReady' | 'retired' | 'noClient' | 'invalidIssuer'
+
+/**
+ * A bound tenant left out of the issuer registry Fabric generated. This is
+ * exclusion from a published registry, not route withdrawal: no runtime reads
+ * the registry and edge application is not observed — see
+ * `RegistryApplication`.
+ */
+export interface ExcludedTenant {
   readonly tenant: string
-  readonly reason: string
+  readonly kind: ExclusionKind
+  readonly detail: string
+}
+
+/**
+ * What Fabric knows about the registry being applied: always `unobserved`.
+ * A tenant left out of it may still be served by trust configured elsewhere.
+ */
+export interface RegistryApplication {
+  readonly state: 'unobserved'
+  readonly detail: string
 }
 
 /**
@@ -54,7 +76,8 @@ export interface Readiness {
   readonly documents: Gate
   readonly identity: Gate
   readonly connectors: Gate
-  readonly withheld: readonly WithheldTenant[]
+  readonly excludedFromRegistry: readonly ExcludedTenant[]
+  readonly registryApplication: RegistryApplication
 }
 
 /**

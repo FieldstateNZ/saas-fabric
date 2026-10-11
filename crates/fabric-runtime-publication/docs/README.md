@@ -226,7 +226,9 @@ it and the tenants list it came from are one generation. See ADR 0018,
 - `RuntimeSnapshot.registry` is `None` when the caller produces no registry.
   `Some` holds the registrations; the publisher stamps the generation.
 - The generation starts at 1 and advances only when the registrations
-  change. A catalogue change leaves it alone.
+  change. A catalogue change leaves it alone. No generation is stamped on
+  two different sets of bytes, committed or not (`registry/generation_choice.rs`),
+  and past `u64::MAX` a change is refused.
 - The publisher refuses (`PublicationError::Registry`):
   - an issuer registered twice;
   - a tenant the same snapshot's tenants document does not bind;

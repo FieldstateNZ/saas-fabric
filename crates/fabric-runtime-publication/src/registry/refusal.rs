@@ -28,6 +28,16 @@ pub enum RegistryRefusal {
         tenant: TenantId,
     },
 
+    /// The registrations changed and the generation is already `u64::MAX`:
+    /// there is no unused generation left to stamp them with.
+    #[error(
+        "issuer registry generation {held} is the last; changed registrations cannot be given a new one"
+    )]
+    GenerationExhausted {
+        /// The highest generation already stamped.
+        held: RegistryGeneration,
+    },
+
     /// A registry was published and this snapshot carries none. An edge
     /// holding that generation would be left with nothing to compare to; an
     /// issuer is withdrawn by a generation that leaves it out, never by

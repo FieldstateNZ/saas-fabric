@@ -412,7 +412,7 @@ own data-source sub-types rather than re-declared, so a hand-editable
   released on a panic and on cancellation (a dropped future) as well as a
   normal return, which a post-`.await` `store(false, ...)` would not be.
 - `RuntimePublisher::with_issuer_registry(Arc<dyn IssuerRegistrySource>)` —
-  each pass then asks the source for `Registrations { registered, withheld }`
+  each pass then asks the source for `Registrations { registered, excluded }`
   against `RegistryEvidence { placements, tenants }`: the tenants document
   the pass is about to offer (ADR 0019 G4a). It sets `snapshot.registry`
   before offering. A `RegistrySourceError::Unavailable` halts the pass as
@@ -420,7 +420,13 @@ own data-source sub-types rather than re-declared, so a hand-editable
   classified `Refused`.
 - `PublicationState` — `SweepState`'s sibling: `new()`, `last_pass() ->
   Option<LastPass>`, and `readiness() -> ReadinessReport`.
-- `ReadinessReport { documents, identity, connectors: GateStatus, withheld }`
+- `Excluded { tenant, reason: Exclusion }` (`publication/exclusion.rs`):
+  `NotReady { unmet }`, `Retired { state }`, `NoClient`, `InvalidIssuer`;
+  `kind()` names it for the API. Exclusion from the generated registry,
+  never route withdrawal.
+- `ReadinessReport { documents, identity, connectors: GateStatus, excluded,
+  application: RegistryApplication }` -- `RegistryApplication::Unobserved` is
+  the only state: Fabric observes no edge or runtime applying the registry.
   (`publication/readiness.rs`) uses publisher evidence only
   (`ReadinessEvidence`, recorded with each accepted pass as part of
   `Accepted`). `GateStatus::Met | Unmet { reasons }`. `connectors` is never

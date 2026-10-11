@@ -650,9 +650,11 @@ impl crate::IssuerRegistrySource for FakeRegistry {
         for binding in generation.tenants {
             self.shown.lock().unwrap().push(binding.tenant.to_string());
             if self.withhold.contains(&binding.tenant.as_str()) {
-                registrations.withheld.push(crate::Withheld {
+                registrations.excluded.push(crate::Excluded {
                     tenant: binding.tenant.clone(),
-                    reason: "not ready".to_owned(),
+                    reason: crate::Exclusion::NotReady {
+                        unmet: vec!["identity: identity has not been applied at this revision yet".to_owned()],
+                    },
                 });
             } else {
                 registrations
@@ -697,8 +699,8 @@ async fn the_registry_is_decided_against_the_tenants_document_the_same_pass_offe
     assert_eq!(report.documents, crate::GateStatus::Met);
     assert_eq!(report.identity, crate::GateStatus::Met);
     assert!(matches!(report.connectors, crate::GateStatus::Unmet { .. }));
-    assert_eq!(report.withheld.len(), 1);
-    assert_eq!(report.withheld[0].tenant.as_str(), "globex");
+    assert_eq!(report.excluded.len(), 1);
+    assert_eq!(report.excluded[0].tenant.as_str(), "globex");
 }
 
 #[tokio::test]

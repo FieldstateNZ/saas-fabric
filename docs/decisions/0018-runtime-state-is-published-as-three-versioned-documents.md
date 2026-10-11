@@ -221,6 +221,17 @@ and not something this decision refuses to publish. The shipped
 `examples/catalog.json` ships exactly this shape today: `auditEvents` is bound
 only by `acme`, and `globex`/`initech` would 500 on it.
 
+> **Amendment (2026-10-11, D01-1, G8).** A catalogue entry on a logical data
+> source that **no** tenant in the same publication binds is refused, as
+> `CatalogueEntryUnbound`. No request can reach such an entry, and it is
+> what a catalogue from another generation, or a release that no tenant is
+> placed on yet, looks like. A tenants document with no tenants is exempt,
+> because it serves no request. The entry that *some* tenant does not bind,
+> described above, is still published. While a catalogue is held, the
+> controller offers the held catalogue at its held revision instead of a
+> derived one with such an entry. The catalogue therefore waits at its last
+> complete generation, and tenant and data-source changes still publish.
+
 ### 5. Atomic replacement, payload before manifest
 
 Each file is written to a sibling temporary file in the same directory,
@@ -425,7 +436,11 @@ characterized in tests before it is claimed as an operational rollback.
 | A tenant revision is the sum of its placement records' revisions | `publication/snapshot.rs::compose_tenants`; `snapshot_tests.rs::a_tenants_revision_is_the_sum_of_its_records_own_revisions` |
 
 The publisher does not yet enforce everything this part requires. The gaps
-are listed under [Owed](#owed-not-yet-built).
+are listed under [Owed](#owed-not-yet-built). Since this table was written,
+a data-source declaration is written above the higher of its held revision
+and the highest revision it was ever published at, not simply at held + 1
+(O3).
+
 
 ---
 
@@ -598,6 +613,10 @@ document belong to one generation:
     "tenants": { "revision": 9, "sha256": "<lowercase hex>" },
     "data-sources": { "revision": 3, "sha256": "<lowercase hex>" },
     "catalog": { "revision": 2, "sha256": "<lowercase hex>" }
+  },
+  "resources": {
+    "tenants": { "acme": 3 },
+    "data-sources": { "shared-postgres-nz-01": 2, "retired-postgres": 4 }
   }
 }
 ```
@@ -612,7 +631,16 @@ document belong to one generation:
   sources only when both match it, data sources first. Otherwise it keeps
   the last complete generation it holds. A reader that finds no record (a
   set published before the record existed) reads each document on its own,
-  as before. The catalogue is not checked against the record (G8).
+  as before. A runtime reads the catalogue once, at start; where a record is
+  present, the catalogue must match the catalogue digest the record names,
+  or the process does not start (G8).
+- **`resources`** (added for O3 and O4). For every tenant binding and
+  DataSource that any recorded generation published, the highest revision
+  it was published at. Entries are never removed. A resource that the held
+  document does not hold must come back above this revision. A record
+  written before the key existed reads as an empty history. A publisher
+  built before the key existed refuses a record that carries it as
+  unreadable, so it cannot drop the history. Readers ignore the key.
 - **`minimum_reader_contract`.** The version handshake described in part 9.
 - **`minimum_publisher_contract`.** The rollback floor for the published
   state (D01-21). A publisher whose contract is below it refuses with
@@ -1029,8 +1057,8 @@ ADR 0023's list and `docs/roadmap/m0-contract-decisions.md`.
   (`crates/fabric-runtime-publication/src/resource_revisions.rs`;
   `plan_tests.rs::a_held_tenant_offered_at_an_older_revision_is_refused`,
   `::a_held_data_source_changed_at_the_same_revision_is_refused`). A
-  resource absent from the held document is not compared, so O3 and the
-  removal half of O4 stay open. Not verified live.
+  resource absent from the held document is compared with the record's
+  resource history instead (O3, below). Not verified live.
 - **O2. Implemented in [#136](https://github.com/FieldstateNZ/saas-fabric/pull/136)
   while the publication record survives.** A lost manifest is held at the
   revision the record names, so an older offer is refused as
@@ -1038,15 +1066,33 @@ ADR 0023's list and `docs/roadmap/m0-contract-decisions.md`.
   (`plan_tests.rs::a_lost_manifest_is_held_at_the_revision_the_record_names_so_an_older_offer_is_refused`).
   Losing the whole tenants `ConfigMap` loses the record with it, and that
   case is still treated as a first publication. Not verified live.
-- **O3. A data source removed and declared again restarts at revision 1**
-  (`data_sources/plan.rs`). See ADR 0023.
-- **O4. Nothing detects a removed or lowered placement record.** A reverted
-  `placements.yaml` can deprovision a tenant. A lowered tenant revision is
-  now refused by the publisher (O1, #136).
-  Only taking the whole tenants document to empty is guarded. See ADR 0023.
-- **O5. No test characterizes a Git revert** of the platform's environment
-  files, or of the catalogue and client documents, through the reconciler,
-  the publisher and the runtime (D01-27).
+- **O3. Implemented: a resource removed and declared again cannot restart
+  below the revision it was last published at.** The publication record
+  carries `resources`, the highest revision each tenant binding and
+  DataSource was ever published at. The publisher refuses a resource that
+  the held document does not hold, offered at or below that revision, as
+  `ResourceRevisionNotAdvanced`. The control plane's declaration is written
+  above the higher of the held revision and the published one
+  (`data_sources/plan.rs`, `data_sources/service/published.rs`). History
+  starts with the first record that carries it, and is lost with the whole
+  tenants `ConfigMap`. Not verified live. The platform's runtime-document
+  contract must accept the `resources` key before activation.
+- **O4. Implemented: a removed or lowered placement is refused.** `compose`
+  holds placement records to the last published tenants document. A
+  published tenant or logical binding with no record left is refused as
+  `PlacementRemoved`. Records that no longer reach a tenant's published
+  revision, or that reach it with a changed binding, are refused as
+  `PlacementLowered`. The publisher refuses a held tenant dropped other
+  than by intended emptying as `TenantRemoved`. Removal has no supported
+  path (D01-14 is not built). One record lowered while another of the
+  same tenant is raised in the same write is not detected. Not verified
+  live.
+- **O5. Partly characterized.** `fabric-control-plane/tests/platform_publication_revert.rs`
+  drives reverts of `placements.yaml` and `data-sources.yaml` through the
+  router, the controller's pass and a real filesystem target. Each refusal
+  leaves every published file unchanged. Still owed: a revert of the
+  catalogue or of client documents, and their restoration with conditional
+  writes and audit evidence.
 - **O6. #112's remaining reader-visible and atomicity gaps**
   ([gap report](../roadmap/m2-publication-gap-report.md)):
   - G1b: `fabric-api` (#136) writes tenants and data sources only as one
@@ -1073,4 +1119,9 @@ ADR 0023's list and `docs/roadmap/m0-contract-decisions.md`.
     no check fails CI when a document shape changes without raising the
     floor, and there are no per-row matrix tests;
   - G7: readers do not report the revisions they serve;
-  - G8: the catalogue is never checked against tenant bindings.
+  - G8: a catalogue entry that no tenant binds is refused, the controller
+    keeps the last published catalogue while one exists, and readers check
+    the catalogue against the record at start. Still open: an entry that
+    some tenant does not bind gets `UnboundDataSource` for that tenant, a
+    running replica keeps its startup catalogue, and the Data tab does not
+    show unbound pairs. Not verified live.

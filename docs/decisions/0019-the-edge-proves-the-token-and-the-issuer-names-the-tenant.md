@@ -239,6 +239,17 @@ generates the gateway's allow-list from. §G names the generation, not just the
 two artefacts, because two hand-maintained lists are the shape the third row
 above arrives in.
 
+> **Amendment (2026-10-11, D01-4).** The tenant list now has one generator:
+> Fabric publishes the issuer registry with the tenants document (ADR 0018,
+> "The issuer registry"). It is generation-stamped and named by the
+> publication record. Platform composition renders both the gateway's
+> allow-list and `[identity].trusted_issuers` from one registry generation,
+> and refuses an edge or runtime that states another. The `issuer` field on
+> the tenants document, described above, is not taken. It would change a
+> document the runtime reads and denies unknown fields in. It would also
+> make the runtime's trust configuration a published document, which the
+> separately gated live trust configuration has not approved.
+
 #### The audience: one string per deployment, and it must equal the front door's
 
 ADR 0010 records the finding that makes a naive `aud` requirement fail:

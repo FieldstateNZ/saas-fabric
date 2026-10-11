@@ -1049,10 +1049,15 @@ ADR 0023's list and `docs/roadmap/m0-contract-decisions.md`.
   the publisher and the runtime (D01-27).
 - **O6. #112's remaining reader-visible and atomicity gaps**
   ([gap report](../roadmap/m2-publication-gap-report.md)):
-  - G1b: readers that use the publication record (`fabric-api`, #136)
-    apply tenants and data sources only as one generation. Still open: the
-    two registries swap one after the other, and the catalogue is outside
-    the generation;
+  - G1b: `fabric-api` (#136) writes tenants and data sources only as one
+    generation, and resolves each request against one snapshot of both,
+    swapped in once both are written. The binding, the DataSource, the
+    exclusivity check and the execution target therefore always come from
+    one generation, within one process. Pinned by
+    `generation_isolation_tests.rs`. Still open: replicas may serve
+    different generations (G7), the catalogue is outside the generation
+    (G8), and `build_runtime` over independent sources still resolves across
+    its registries. Not verified live;
   - G2: since #136 a reader never applies a retirement before the unbinding
     that preceded it. The publisher still does not wait for readers;
   - G3: since #136 an interrupted publication leaves readers on the previous

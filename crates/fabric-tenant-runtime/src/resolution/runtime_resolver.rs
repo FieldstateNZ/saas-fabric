@@ -7,10 +7,9 @@ use fabric_core::{LogicalDataSourceName, TenantId};
 
 use crate::resolution::destination_exclusivity;
 use crate::resolution::isolation_enforceability::check_isolation_is_enforceable;
-use crate::resource::LookupError;
-use crate::{
-    DataSource, DataSourceRegistry, ResolveError, ResolvedDataSource, TenantRegistry, TenantRuntimeBinding,
-};
+use crate::resolution::published_generation::PublishedGeneration;
+use crate::resolution::resolution_view::ResolutionView;
+use crate::{DataSourceRegistry, ResolveError, ResolvedDataSource, TenantRegistry, TenantRuntimeBinding};
 
 /// Resolves a tenant and a logical data source name into something executable.
 ///
@@ -24,22 +23,46 @@ use crate::{
 /// and every one of them rejects the request (§28). Spreading that across
 /// callers would mean each caller getting the status codes subtly differently.
 ///
-/// It holds both registries because the chain genuinely crosses them, and
-/// because keeping the crossing here is what lets tenant bindings and
-/// DataSources be reconciled independently everywhere else.
+/// The chain crosses both registries, so every call reads one
+/// `ResolutionView` of both and answers each step from it. Built over
+/// published state, that view is the last complete generation's
+/// (`PublishedGeneration`); built over two independent sources, it is what
+/// each registry holds when the call starts.
 pub struct RuntimeResolver {
     tenants: Arc<TenantRegistry>,
     data_sources: Arc<DataSourceRegistry>,
+    published: Option<Arc<PublishedGeneration>>,
 }
 
 impl RuntimeResolver {
-    /// Builds a resolver over the two registries.
+    /// Builds a resolver over the two registries, each read as it stands.
     #[must_use]
     pub const fn new(tenants: Arc<TenantRegistry>, data_sources: Arc<DataSourceRegistry>) -> Self {
         Self {
             tenants,
             data_sources,
+            published: None,
         }
+    }
+
+    /// Builds a resolver that reads only the generation `published` holds.
+    pub(crate) const fn over_published(
+        tenants: Arc<TenantRegistry>,
+        data_sources: Arc<DataSourceRegistry>,
+        published: Arc<PublishedGeneration>,
+    ) -> Self {
+        Self {
+            tenants,
+            data_sources,
+            published: Some(published),
+        }
+    }
+
+    fn view(&self) -> ResolutionView {
+        self.published.as_ref().map_or_else(
+            || ResolutionView::of(&self.tenants, &self.data_sources),
+            |published| published.view(),
+        )
     }
 
     /// The tenant registry, for readiness reporting.
@@ -60,7 +83,7 @@ impl RuntimeResolver {
     /// the conjunction.
     #[must_use]
     pub fn is_primed(&self) -> bool {
-        self.tenants.is_primed() && self.data_sources.is_primed()
+        self.view().is_primed()
     }
 
     /// Resolves a tenant's current bindings.
@@ -70,10 +93,7 @@ impl RuntimeResolver {
     /// [`ResolveError::RuntimeUnavailable`] before the first load, or
     /// [`ResolveError::UnknownTenant`] if the tenant is not held.
     pub fn resolve_tenant(&self, tenant: &TenantId) -> Result<Arc<TenantRuntimeBinding>, ResolveError> {
-        self.tenants.lookup(tenant).map_err(|error| match error {
-            LookupError::Unavailable => ResolveError::RuntimeUnavailable,
-            LookupError::NotFound => ResolveError::UnknownTenant(tenant.clone()),
-        })
+        self.view().tenant(tenant)
     }
 
     /// Resolves a logical data source name for a tenant.
@@ -89,16 +109,16 @@ impl RuntimeResolver {
         tenant: &TenantId,
         logical: &LogicalDataSourceName,
     ) -> Result<ResolvedDataSource, ResolveError> {
-        let binding = self.resolve_tenant(tenant)?;
+        let view = self.view();
+        let binding = view.tenant(tenant)?;
         let data_binding = binding.data_binding(logical)?;
-        let data_source = self.lookup_data_source(logical, &data_binding.data_source)?;
+        let data_source = view.data_source(logical, &data_binding.data_source)?;
 
-        // Both facts are read off snapshots that derived them when they
-        // installed, so this stays an atomic load and a map lookup — and it
-        // stays *current*, which a startup-only cross-scan would not.
+        // Judged on the same view the binding and DataSource came from, so
+        // the exclusivity decision describes the pair being executed.
         let exclusivity = destination_exclusivity::observe(
-            &self.tenants,
-            &self.data_sources,
+            view.co_tenancy(),
+            view.destination_reuse(),
             &binding.tenant,
             &data_source.id,
         );
@@ -124,22 +144,5 @@ impl RuntimeResolver {
         );
 
         Ok(ResolvedDataSource { target, data_source })
-    }
-
-    /// Looks up a DataSource, mapping both failures onto the resolution error.
-    fn lookup_data_source(
-        &self,
-        logical: &LogicalDataSourceName,
-        id: &fabric_core::DataSourceId,
-    ) -> Result<Arc<DataSource>, ResolveError> {
-        self.data_sources.lookup(id).map_err(|error| match error {
-            LookupError::Unavailable => ResolveError::RuntimeUnavailable,
-            // A binding pointing at a DataSource that does not exist is a
-            // reconciliation error, never a reason to pick a different one.
-            LookupError::NotFound => ResolveError::MissingDataSource {
-                logical: logical.clone(),
-                data_source: id.clone(),
-            },
-        })
     }
 }

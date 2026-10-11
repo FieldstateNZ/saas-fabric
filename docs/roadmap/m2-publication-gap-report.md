@@ -6,8 +6,10 @@
 - **Base:** `origin/main` at the commit this branch forks from. Every `file:line`
   below refers to that tree. Paths are under `crates/` unless they say otherwise.
 - **Since then:** the engineering-only parts of G1, G3, G4 and G4a are fixed, and
-  under D01-2's disposition (#108) the reader-visible parts of G1b, G2, G3 and G6
-  are fixed by a publication record. Test names in the gap sections are as first
+  under D01-2's disposition (#108) the reader-side parts of G1b, G2, G3 and G6
+  are addressed by a publication record and one resolution snapshot per
+  generation, within the limits listed under
+  [Reader generations](#reader-generations). Test names in the gap sections are as first
   written; see [Engineering fixes](#engineering-fixes) and
   [Reader generations](#reader-generations) for what changed and what each test
   is now called.
@@ -559,11 +561,20 @@ publication record, `publication.json`:
   catalogue rewrites the tenants object with its payload and manifest as held.
   No new `ConfigMap`, so no RBAC change.
 - **Reader.** `fabric-api` now builds the runtime with
-  `build_published_runtime` over `PublishedFiles`. A pass applies the two
-  documents only when both match the record (data sources first, then
-  tenants); otherwise both registries keep the last complete generation. With
-  no record (a publisher older than this change) each document is read on its
-  own, as before.
+  `build_published_runtime` over `PublishedFiles`. A pass writes the two
+  documents to their registries only when both match the record (data
+  sources first, then tenants); otherwise both registries keep the last
+  complete generation. With no record (a publisher older than this change)
+  each document is read on its own, as before.
+- **One resolution snapshot.** The registries are only the staging area.
+  After both writes, the refresher publishes what they hold as one
+  `ResolutionView` (tenant snapshot and DataSource snapshot together) into
+  `PublishedGeneration`, a single `ArcSwap`. The published resolver reads
+  only that view, and reads it once per call. The tenant binding, the
+  DataSource, both exclusivity facts and the `ExecutionTarget` are all taken
+  from that one view. A request therefore resolves entirely against one
+  generation, before or after the swap, including while the registries hold
+  new data sources and old tenants between the two writes.
 - **Floors.** The record carries `minimum_reader_contract` (a reader below it
   refuses the generation: the explicit version handshake G6 lacked) and
   `minimum_publisher_contract` (a publisher below it refuses with
@@ -578,7 +589,7 @@ publication record, `publication.json`:
 
 | Gap | Fixed-behaviour tests | Residual `current_behaviour_*` test |
 |---|---|---|
-| G1b | `publication_atomicity.rs::a_reader_holds_its_generation_while_tenants_reach_it_before_the_data_sources_they_name`, `::a_reader_holds_its_generation_while_data_sources_reach_it_before_the_tenants`; `published_files_tests.rs` (8 tests) | none at the reader. Within one process the two registries still swap one after the other; see below |
+| G1b | `publication_atomicity.rs::a_reader_holds_its_generation_while_tenants_reach_it_before_the_data_sources_they_name`, `::a_reader_holds_its_generation_while_data_sources_reach_it_before_the_tenants`; `published_files_tests.rs` (8 tests); `generation_isolation_tests.rs::a_tenant_resolves_to_one_complete_generations_target_at_every_point_of_a_refresh` (deterministic: two dedicated tenants swap DataSources while the DataSources swap databases, resolved before, between and after the two registry writes, comparing the whole `ExecutionTarget`), `::a_sampler_never_sees_a_mixed_target_while_the_published_generation_advances` | `generation_isolation_tests.rs::current_behaviour_resolving_across_the_registries_between_the_two_writes_reaches_the_other_tenants_database` (what `build_runtime`'s resolver over two independent sources still does; production does not use it) |
 | G2 | `publication_atomicity.rs::a_reader_never_applies_a_retirement_before_the_unbinding_that_preceded_it` | none at the reader; the publisher still does not wait for readers |
 | G3 | `publication_atomicity.rs::an_interrupted_publication_leaves_readers_on_the_previous_complete_generation` (five failure points, with a sampler); `concurrency_tests.rs::an_interrupted_publication_leaves_the_previous_generations_record_in_place` | `publication_atomicity.rs::current_behaviour_an_interrupted_publication_leaves_the_published_set_at_mixed_revisions` (the files, not readers) |
 | G4 (Kubernetes) | readers refuse the dangling pair | `concurrency_tests.rs::current_behaviour_writers_overlapping_after_their_checks_leave_objects_no_record_names_as_one_generation` (objects still dangle; a `Lease` is still owed) |
@@ -587,12 +598,15 @@ publication record, `publication.json`:
 
 Still open after this change:
 
-- **Two registry swaps.** A complete generation is applied as two pointer
-  swaps. A request resolving between them sees new data sources with the
-  previous tenants for that instant: safe for additions, but a reader that
-  skips the generation unbinding a retired DataSource can fail one such
-  request with `MissingDataSource`. One snapshot across both registries
-  closes it.
+- **What the snapshot does not cover.** It holds within one process, for
+  tenants and data sources. Different replicas can still serve different
+  complete generations until each has refreshed; nothing reports which one
+  each serves (G7). The catalogue is outside the generation (below).
+  `build_runtime`, the per-document builder over two independent sources,
+  still resolves across its registries as they stand, so it can pair one
+  source's new data with the other's old data. Only in-memory and test
+  compositions use it. Request-atomic application is claimed only for
+  `build_published_runtime`, and has not been verified live.
 - **Catalogue.** Still read once at start and not checked against the record
   (G8).
 - **Release floor (D01-21).** A publisher rolled back below this change does

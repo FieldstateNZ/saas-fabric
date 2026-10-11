@@ -4,6 +4,7 @@
 //! type whose three entry points share one contract about what a failed load
 //! leaves serving; the shared loop and reload live in submodules.
 
+mod prime_published;
 mod refresh_handle;
 mod refresh_loop;
 mod refresh_once;

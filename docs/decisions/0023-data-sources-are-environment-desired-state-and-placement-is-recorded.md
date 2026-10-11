@@ -539,9 +539,11 @@ PR. The IDs match ADR 0018's list and `docs/roadmap/m0-contract-decisions.md`.
 
 O1 (the publisher guards resource revisions) and O2 (a lost manifest is held
 at the revision the publication record names) are listed in ADR 0018. Both
-are implemented in [#136](https://github.com/FieldstateNZ/saas-fabric/pull/136),
-which also closes the reader-side parts of O6 (G1b, G2, G3, G6). None of
-this is verified live.
+are implemented in [#136](https://github.com/FieldstateNZ/saas-fabric/pull/136).
+#136 also narrows O6 on the reader side. Within one process, a request is
+resolved against one generation's tenants and data sources, held together
+across the binding, the exclusivity check and the execution target. What
+remains of O6 is listed in ADR 0018. None of this is verified live.
 
 - **O3. A data source that is removed and declared again restarts at
   revision 1.** `data_sources/plan.rs` treats an id that is not held as new.

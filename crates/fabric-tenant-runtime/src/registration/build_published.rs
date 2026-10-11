@@ -5,12 +5,17 @@ use std::sync::Arc;
 
 use super::RuntimeHandles;
 use crate::publication::PublishedStateSource;
+use crate::resolution::PublishedGeneration;
 use crate::resource::{ResourceRefresher, ResourceRegistry};
 use crate::{RuntimeConfig, RuntimeResolver};
 
 /// Validates configuration, primes both registries from one read of the
 /// published documents, and starts the refresher that keeps them current a
 /// whole generation at a time.
+///
+/// The resolver it returns reads only the last generation published to it,
+/// tenant bindings and data sources together, never the registries
+/// directly: see `PublishedGeneration`.
 ///
 /// This is the production wiring: what [`build_runtime`](crate::build_runtime)
 /// does with two independent sources, except that a publication the reader
@@ -32,8 +37,11 @@ pub async fn build_published_runtime(
 
     let data_sources = Arc::new(ResourceRegistry::new());
     let tenants = Arc::new(ResourceRegistry::new());
+    let generation = Arc::new(PublishedGeneration::default());
 
-    if let Err(error) = ResourceRefresher::prime_published(&data_sources, &tenants, source.as_ref()).await {
+    if let Err(error) =
+        ResourceRefresher::prime_published(&generation, &data_sources, &tenants, source.as_ref()).await
+    {
         if config.fail_fast_on_prime {
             return Err(format!(
                 "could not load the published runtime state from {}: {error}",
@@ -50,6 +58,7 @@ pub async fn build_published_runtime(
 
     let handles = RuntimeHandles {
         refresher: ResourceRefresher::spawn_published(
+            Arc::clone(&generation),
             Arc::clone(&data_sources),
             Arc::clone(&tenants),
             source,
@@ -57,5 +66,8 @@ pub async fn build_published_runtime(
         ),
     };
 
-    Ok((Arc::new(RuntimeResolver::new(tenants, data_sources)), handles))
+    Ok((
+        Arc::new(RuntimeResolver::over_published(tenants, data_sources, generation)),
+        handles,
+    ))
 }

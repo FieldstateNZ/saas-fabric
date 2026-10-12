@@ -394,20 +394,22 @@ an ADR and Brett. **Not verified:** whether ADR 0024 slices 3–5 are built.
 
 ### What actually enforces today
 
-- **The Data API checks scopes and roles only.** `ResourcePermissions`
-  (`crates/fabric-data-api/src/authorization.rs:47-74`):
-  - The scopes are `data:<resource>:read` and `data:<resource>:write`.
-  - `require_scopes = false` makes `permits` return `true` for everything
-    (`:75-76`).
-  - `administrator_role` is configurable and defaults to `platform-admin`
-    (`:62`; `examples/config.toml:189-190`). A token holding that role passes
-    every check.
-  - Nothing calls `fabric-fga-auth` or OpenFGA on the data path. The only
-    mention is a comment in `fabric-api`
-    (`src/config/validation/issuers.rs:43`).
+- **The Data API enforces layered authorization, with only layer 1 active**
+  (ADR 0027, Proposed):
+  - Layer 1 is the scope `data:<resource>:read` or `data:<resource>:write`.
+    It runs on every request. There is no administrator role and no
+    `require_scopes` toggle, and a `[permissions]` section is refused at load
+    (D01-12).
+  - Layer 2 is the authorization front's Check, as the caller. It runs for a
+    tenant whose `TenantPosture` is not `SyntheticTrial`, on a resource that
+    declares relations, and it fails closed. It is built and tested
+    (`crates/fabric-data-api/src/authorization/`, `crates/fabric-fga-check/`)
+    and not wired: `fabric-api` composes `DataAuthorization::default()`, which
+    has no tenant policies and no configured Check.
   - Tests that information about withheld verbs does not leak:
     `crates/fabric-data-api/tests/authorization_ordering.rs::an_unauthorised_caller_cannot_tell_an_exposed_verb_from_a_withheld_one`
-    (:181) and its siblings.
+    and its siblings. The layered behaviour is in
+    `crates/fabric-data-api/tests/layered_authorization.rs`.
 - **OpenFGA is not deployed.** Platform
   `applications/core/openfga/README.md:11` says "**not deployed** — no
   `application.yaml`".
@@ -918,6 +920,8 @@ this document's ADR amendments act on. The comment holds the others.
 | D01-19d | Reviewed amendments and acceptance go in order: 0023, then 0021, then 0026. Each owed item is reconciled with the disposition, and an unimplemented guarantee is never marked verified just because an ADR is accepted | ADR 0023 status |
 | D01-14 | Tombstone first, explicit retained state, confirmed deletion as a separate operation. No destructive action or retention period is approved. State machine and refusal tests; retention and customer-data choices surfaced separately. Withdrawal from the runtime is deferred | ADR 0021 amendment 2026-10-11 ("The rules", "Withdrawal is deferred", "Deferred, and how each is bounded") |
 | D01-19a | Explicit incomplete state until provisioning, identity and publication readiness is met; saved intent is distinguished from a usable client | ADR 0021 amendment 2026-10-11 ("The states") |
+| D01-10, D01-10a | Layered authorization. Scopes and roles only for the isolated synthetic trial; OpenFGA Check on relation-declaring resources from M3 and for every tenant beyond the trial. Designed and tested now; no deployment or standing access | ADR 0027 (Proposed) §1–§4, §6; "Owed" |
+| D01-12 | No data-path administrator bypass; scopes cannot be disabled outside tests; coarse platform-operator controls retained within their current boundary | ADR 0027 §5 |
 
 **D01-14 and D01-19a: what stays open.** Built: the state machine, its
 refusals, the API and console state, and `lifecycle.withdrawal`, which reports
@@ -977,8 +981,8 @@ IDs are not reused.
 | D01-5 | Identity | Accept ADR 0019; the platform owns the §G edge; clarify the client-route comment | Accept as written |
 | D01-6 | Identity | How operator master-realm accounts come to exist (broker / create / `admin` only / `[]`); sub-choice 6b, revocation (formerly D01-7); accepting PR93's interim | `admin` interim, brokering as target; Brett names the upstream |
 | D01-9 | Session | Keep or remove the loopback workbench as `/api/session` retires (ADR 0021 owed 1); sequence with PR101 | Remove, after PR101 is settled |
-| D01-10 | Authorization | Data-path enforcement: scopes only / OpenFGA check / layered; sub-choice 10a, deploying OpenFGA (formerly D01-11) | Layered; scopes only for the isolated M1 trial; OpenFGA enforced from M3, and for any tenant beyond the trial on every resource that declares relations |
-| D01-12 | Authorization | The administrator-role bypass and `require_scopes = false`; operator granularity | Remove the bypass, forbid disabling scopes outside tests; operators stay coarse |
+| D01-10 | Authorization | Data-path enforcement: scopes only / OpenFGA check / layered; sub-choice 10a, deploying OpenFGA (formerly D01-11) | **Disposed 2026-10-11:** layered; scopes only for the isolated trial; Check on relation-declaring resources from M3 and for every tenant beyond the trial. Designed and tested, not wired (ADR 0027). Collections: a distinct tenant-bound check per resource, refused until the model contract exists (§2a). Transport: verified TLS, plaintext only on a test loopback path (§2b) |
+| D01-12 | Authorization | The administrator-role bypass and `require_scopes = false`; operator granularity | **Disposed 2026-10-11:** bypass and toggle removed; health detail role retained as the coarse operator control (ADR 0027 §5) |
 | D01-13 | Authorization | Where entitlements are enforced | Applications enforce; Fabric previews |
 | D01-14 | Lifecycle | What deprovisioning undoes (ADR 0021 owed 3; ADR 0008 Deletion) | **Disposed 2026-10-11:** tombstone first, retained state, confirmed deletion as a separate write; no destructive action or retention period. Built; retention and customer-data choices deferred. See [Dispositions recorded](#dispositions-recorded) |
 | D01-15 | Lifecycle | `.internal` private-network clients (ADR 0021 owed 4) | Follow the host kind |

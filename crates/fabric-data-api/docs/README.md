@@ -205,10 +205,49 @@ after the regression is found.
 - **Tenant resolution** — which tenant's resources does this target?
 - **Authorization** — may this identity do this?
 
-They meet nowhere. `ResourcePermissions::permits` takes an operation and an
-identity and returns a `bool`. It is never handed anything that could change the
-tenant and has no way to return one. An administrator is an administrator *of
-their own tenant*.
+They meet nowhere. `DataAuthorization` takes a caller, an operation, a resource
+and an optional key, and answers yes or no. It is never handed anything that
+could change the tenant and has no way to return one.
+
+## Layered authorization (ADR 0027)
+
+Two layers, in a fixed order:
+
+1. **Scope.** Every request needs `data:<resource>:read` or
+   `data:<resource>:write`. There is no administrator role and no way to switch
+   this off. A token holding `platform-admin`, `fabric-operator` or any other
+   role and no scope is refused.
+2. **Relation Check.** Only where the caller's tenant policy requires it: the
+   tenant is not the synthetic trial, **and** the resource declares relations.
+   The question is "may the holder of this token `<operation>`
+   `<resource>:<key>`?", asked through the `AuthorizationCheck` port with the
+   caller's own bearer token. `fabric-fga-check` is the adapter that asks the
+   authorization front.
+
+Policies are per tenant (`TenantPolicies`). The trial is the one that has to be
+named, as `TenantPosture::SyntheticTrial`. A tenant with no entry is beyond the
+trial and has no declared relations, so its scopes decide.
+
+Fail closed:
+
+- A Check that is unavailable is a 503 `authorization_unavailable`.
+- A Check that answers something other than a decision, or that is not
+  configured, is a 500 `internal`.
+- Nothing becomes an allow.
+- `list` and `create` name no record. They are asked about the resource's
+  collection (`CheckTarget::Collection`), a distinct tenant-bound object, never
+  about a record. No model defines that object yet, so on a checked resource
+  they are refused with a 403 (`collection_contract_undefined`) and nothing is
+  asked (ADR 0027 §2a).
+
+**What runs today:** `fabric-api` passes `DataAuthorization::default()`. That
+means no policies, and a Check (`NoCheckConfigured`) that would refuse if
+anything reached it. So every tenant is held to its scopes alone.
+
+**Tests:** these suites get scopes from the token, not from a switch.
+`tests/support/requests.rs` grants every catalogue resource's read and write
+scopes to any token that does not name `scope`. Write `"scope": ""` to test an
+unscoped caller.
 
 ## Failing closed
 
@@ -224,6 +263,9 @@ their own tenant*.
 | Uncatalogued resource | 404 | true regardless of tenant, so leaks nothing |
 | Operation not in catalogue | 405 | |
 | Scope refused | 403 | |
+| Relation Check denied, or required for `list`/`create` | 403 | same body as a scope refusal |
+| Relation Check unavailable | 503 | retryable; `authorization_unavailable` |
+| Relation Check not configured or not a decision | 500 | "internal error" |
 | A request limit is exceeded | 400 | see "Request limits" |
 | Connector rejected | 500 + generic message | its text names tables and servers |
 

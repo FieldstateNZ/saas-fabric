@@ -42,7 +42,7 @@ use std::sync::Arc;
 
 use axum::Router;
 use fabric_connector::{ConnectorRegistry, DataConnector, Row};
-use fabric_data_api::{build_data_api, DataApiConfig, ResourcePermissions};
+use fabric_data_api::{build_data_api, DataApiConfig, DataAuthorization};
 use fabric_identity::{build_identity, IdentityConfig, TrustedIngressReader};
 use fabric_tenant_runtime::{
     DataSource, DataSourceRegistry, RuntimeResolver, TenantRegistry, TenantRuntimeBinding,
@@ -93,7 +93,7 @@ pub fn resolver(bindings: Vec<TenantRuntimeBinding>, sources: Vec<DataSource>) -
 pub fn app_with_config(
     runtime: Arc<RuntimeResolver>,
     connector: Arc<dyn DataConnector>,
-    permissions: ResourcePermissions,
+    authorization: DataAuthorization,
     config: &DataApiConfig,
 ) -> Router {
     // Before any event this crate emits can fire, so no callsite is ever
@@ -116,7 +116,7 @@ pub fn app_with_config(
     build_data_api(
         config,
         catalog(),
-        permissions,
+        authorization,
         runtime,
         ConnectorRegistry::new().with(connector),
         identity,
@@ -129,17 +129,17 @@ pub fn app_with_config(
 pub fn app_with(
     runtime: Arc<RuntimeResolver>,
     connector: Arc<RecordingConnector>,
-    permissions: ResourcePermissions,
+    authorization: DataAuthorization,
 ) -> Router {
-    app_with_config(runtime, connector, permissions, &DataApiConfig::default())
+    app_with_config(runtime, connector, authorization, &DataApiConfig::default())
 }
 
-/// Permissions with scope checks off — most tests are about tenancy.
-pub fn open_permissions() -> ResourcePermissions {
-    ResourcePermissions {
-        require_scopes: false,
-        ..ResourcePermissions::default()
-    }
+/// The production default: every tenant held to its scopes, no Check.
+///
+/// Scopes are never off, so suites about tenancy rather than authorization
+/// get their scopes from the token instead — see `requests::token_for`.
+pub fn scopes_only() -> DataAuthorization {
+    DataAuthorization::default()
 }
 
 /// The standard fixture: two tenants on different placements, two rows.
@@ -148,7 +148,7 @@ pub fn app() -> (Router, Arc<RecordingConnector>) {
     let runtime = resolver(tenants(), data_sources());
 
     (
-        app_with(runtime, Arc::clone(&connector), open_permissions()),
+        app_with(runtime, Arc::clone(&connector), scopes_only()),
         connector,
     )
 }
@@ -159,7 +159,7 @@ pub fn empty_app() -> (Router, Arc<RecordingConnector>) {
     let runtime = resolver(tenants(), data_sources());
 
     (
-        app_with(runtime, Arc::clone(&connector), open_permissions()),
+        app_with(runtime, Arc::clone(&connector), scopes_only()),
         connector,
     )
 }

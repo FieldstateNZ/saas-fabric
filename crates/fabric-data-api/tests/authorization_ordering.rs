@@ -23,15 +23,15 @@
 //! Field-list tests use `restrictedCustomers`, the one catalogue fixture with
 //! a non-empty `queryable_fields`. Operations-list tests use `customers`
 //! against `readOnlyReport`, which are identical fixtures apart from the verbs
-//! they expose. All of them use `ResourcePermissions::default()`, so scope
-//! checks are actually enforced.
+//! they expose. Scope checks are always enforced; every token here names its
+//! scopes, so none receives the support module's default grant.
 
 mod support;
 
 use std::sync::Arc;
 
 use axum::Router;
-use fabric_data_api::{DataApiConfig, ResourcePermissions};
+use fabric_data_api::DataApiConfig;
 use http::StatusCode;
 use serde_json::{json, Value};
 use support::{body_json, json_request, request, RecordingConnector};
@@ -55,7 +55,7 @@ fn scoped_app_with(config: &DataApiConfig) -> (Router, Arc<RecordingConnector>) 
         support::app_with_config(
             runtime,
             Arc::clone(&connector) as Arc<dyn fabric_connector::DataConnector>,
-            ResourcePermissions::default(),
+            support::scopes_only(),
             config,
         ),
         connector,
@@ -64,7 +64,7 @@ fn scoped_app_with(config: &DataApiConfig) -> (Router, Arc<RecordingConnector>) 
 
 /// A token for `acme` carrying no scopes at all.
 fn no_scopes() -> Value {
-    json!({"tenant_id": "acme"})
+    json!({"tenant_id": "acme", "scope": ""})
 }
 
 /// A token allowed to read and write `restrictedCustomers`.
@@ -141,7 +141,7 @@ fn replica_app() -> (Router, Arc<RecordingConnector>) {
     );
 
     (
-        support::app_with(runtime, Arc::clone(&connector), ResourcePermissions::default()),
+        support::app_with(runtime, Arc::clone(&connector), support::scopes_only()),
         connector,
     )
 }
@@ -260,7 +260,7 @@ async fn an_unauthorised_caller_cannot_learn_the_tenant_is_placed_on_a_read_only
     // is further from the caller than the catalogue and internal by §2.
     let (app, connector) = replica_app();
 
-    let claims = json!({"tenant_id": "reader"});
+    let claims = json!({"tenant_id": "reader", "scope": ""});
     let (status, body) = write(&app, "DELETE", "/1", OPEN_RESOURCE, claims).await;
 
     assert_eq!(status, StatusCode::FORBIDDEN);

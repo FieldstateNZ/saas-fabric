@@ -7,7 +7,7 @@ use fabric_connector::ConnectorRegistry;
 use fabric_identity::IdentityResolver;
 use fabric_tenant_runtime::RuntimeResolver;
 
-use crate::{data_routes, logging, DataApiConfig, DataApiService, ResourceCatalog, ResourcePermissions};
+use crate::{data_routes, logging, DataApiConfig, DataApiService, DataAuthorization, ResourceCatalog};
 
 /// Validates configuration, builds the service, and returns its router.
 ///
@@ -20,7 +20,7 @@ use crate::{data_routes, logging, DataApiConfig, DataApiService, ResourceCatalog
 pub fn build_data_api(
     config: &DataApiConfig,
     catalog: ResourceCatalog,
-    permissions: ResourcePermissions,
+    authorization: DataAuthorization,
     runtime: Arc<RuntimeResolver>,
     connectors: ConnectorRegistry,
     identity: Arc<IdentityResolver>,
@@ -41,7 +41,7 @@ pub fn build_data_api(
         runtime,
         connectors,
         catalog,
-        permissions,
+        authorization,
         config.clone(),
     ));
 

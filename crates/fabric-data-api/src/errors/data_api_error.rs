@@ -5,7 +5,7 @@ use fabric_core::LogicalResourceName;
 use fabric_identity::IdentityError;
 use fabric_tenant_runtime::ResolveError;
 
-use crate::OperationKind;
+use crate::{CheckFailure, OperationKind};
 
 /// A refused Data API request.
 ///
@@ -62,6 +62,11 @@ pub enum DataApiError {
         /// The operation attempted.
         operation: &'static str,
     },
+
+    /// Layer 2 was required and no decision was obtained, so the operation
+    /// is refused (ADR 0027: fail closed).
+    #[error("authorization could not be decided: {0}")]
+    AuthorizationUndecided(CheckFailure),
 
     /// The request was malformed.
     #[error("{0}")]

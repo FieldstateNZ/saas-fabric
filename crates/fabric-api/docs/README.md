@@ -207,13 +207,12 @@ guarantee that example has not drifted from the code.
   cannot be constructed empty. `issuers = []` used to be read as "no
   allowlist" (accept every issuer); now it is a startup failure, and `None`
   (the field omitted) is the only way to mean "do not examine this claim".
-- `permissions.administrator_role` cannot be blank. A blank role means
-  different things to two different consumers — this crate's own
-  `may_see_detail` reads it as "authorise nobody" (fail closed), but
-  `fabric-data-api`'s `ResourcePermissions::permits` reads
-  `identity.has_role("")` as true for any token carrying an empty `roles`
-  entry, i.e. every operation on every resource. Refusing the blank value at
-  startup is what makes that disagreement unreachable.
+- There is no `[permissions]` section. The Data API has no administrator role
+  and its scope checks cannot be switched off (ADR 0027), so a file or
+  `FABRIC_SETTING_PERMISSIONS__*` variable that names one is refused at
+  startup. The one role this crate reads is `health_detail_role`, which opens
+  the probes' detail body and nothing on the data path. It cannot be blank;
+  name a role nothing holds to let nobody see the detail.
 - `PendingConnector::capabilities()`/`schema()` are always the empty,
   supports-nothing value, even after the connector resolves — nothing in
   this codebase reads them through the trait object today; the real answer

@@ -6,7 +6,8 @@ use fabric_identity::encode_unsigned_token;
 use http::Request;
 use serde_json::Value;
 
-use super::fixtures::issuer_naming;
+use super::fixtures::{catalog, issuer_naming};
+use fabric_data_api::{required_scope, OperationKind};
 
 /// Encodes claims into an unsigned bearer token, supplying a registered `iss`
 /// when the caller did not name one.
@@ -23,6 +24,14 @@ fn token_for(claims: Value) -> String {
     let Value::Object(mut object) = claims else {
         panic!("claims must be an object");
     };
+
+    // Scope checks cannot be switched off (D01-12), so a suite that is about
+    // tenancy rather than authorization still needs a token that passes them.
+    // A token that says nothing about scopes is granted every catalogue
+    // resource's; one that names `scope`, even as "", keeps exactly that.
+    if !object.contains_key("scope") {
+        object.insert("scope".to_owned(), Value::String(every_catalogue_scope()));
+    }
 
     if !object.contains_key("iss") {
         let issuer = issuer_naming(object.get("tenant_id").and_then(Value::as_str));
@@ -67,4 +76,16 @@ pub async fn body_json(response: axum::response::Response) -> Value {
         .unwrap();
 
     serde_json::from_slice(&bytes).unwrap_or(Value::Null)
+}
+
+/// Read and write scopes for every resource in the test catalogue.
+fn every_catalogue_scope() -> String {
+    catalog()
+        .names()
+        .flat_map(|name| {
+            [OperationKind::Read, OperationKind::Create]
+                .map(|operation| required_scope(operation, name.as_str()))
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }

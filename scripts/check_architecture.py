@@ -66,6 +66,7 @@ RUNTIME_PLANE = frozenset(
         "fabric-api",
         "fabric-fga-auth",
         "fabric-fga-auth-api",
+        "fabric-fga-check",
     }
 )
 
@@ -698,6 +699,17 @@ def check_dependency_direction(graph: Graph) -> list[Failure]:
         # trust in the first place (ADR 0016).
         "fabric-fga-auth": {
             "fabric-core",
+        },
+        # The Data API's layer-2 adapter (ADR 0027): it implements
+        # `fabric-data-api`'s `AuthorizationCheck` port by calling the front's
+        # runtime surface over HTTP with the caller's own token. No edge to
+        # `fabric-fga-auth`: it speaks the front's wire contract, and sharing
+        # the front's code would put the trust boundary inside its client.
+        # Nothing depends on it yet -- no front endpoint is configured.
+        # `fabric-core` is a dev edge only, for the names its tests build.
+        "fabric-fga-check": {
+            "fabric-core",
+            "fabric-data-api",
         },
         # The host: it owns the process tree, not the decision. It composes the
         # front and starts the authorization service on loopback, and knows

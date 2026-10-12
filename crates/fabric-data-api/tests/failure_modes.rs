@@ -4,12 +4,11 @@ mod support;
 
 use std::sync::Arc;
 
-use fabric_data_api::ResourcePermissions;
 use fabric_tenant_runtime::{DataSourceRegistry, RuntimeResolver, TenantRegistry};
 use http::StatusCode;
 use serde_json::json;
 use support::{
-    app, app_with, body_json, data_sources, json_request, open_permissions, request, resolver, tenants,
+    app, app_with, body_json, data_sources, json_request, request, resolver, scopes_only, tenants,
     RecordingConnector,
 };
 use tower::ServiceExt as _;
@@ -41,7 +40,7 @@ async fn an_unprimed_runtime_returns_service_unavailable_not_forbidden() {
         Arc::new(DataSourceRegistry::new()),
     ));
 
-    let app = app_with(runtime, Arc::clone(&connector), open_permissions());
+    let app = app_with(runtime, Arc::clone(&connector), scopes_only());
 
     let response = app
         .oneshot(request("GET", "/customers", json!({"tenant_id": "acme"})))
@@ -67,7 +66,7 @@ async fn an_unprimed_data_source_registry_alone_is_enough_to_be_unavailable() {
     ));
 
     let connector = RecordingConnector::new(vec![]);
-    let app = app_with(runtime, Arc::clone(&connector), open_permissions());
+    let app = app_with(runtime, Arc::clone(&connector), scopes_only());
 
     let response = app
         .oneshot(request("GET", "/customers", json!({"tenant_id": "acme"})))
@@ -89,7 +88,7 @@ async fn a_binding_pointing_at_a_missing_data_source_is_an_internal_error() {
     let app = app_with(
         resolver(bindings, data_sources()),
         Arc::clone(&connector),
-        open_permissions(),
+        scopes_only(),
     );
 
     let response = app
@@ -144,7 +143,7 @@ async fn a_scope_check_refuses_an_unauthorised_operation() {
     let app = app_with(
         resolver(tenants(), data_sources()),
         Arc::clone(&connector),
-        ResourcePermissions::default(),
+        support::scopes_only(),
     );
 
     let response = app

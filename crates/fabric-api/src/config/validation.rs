@@ -4,7 +4,7 @@ mod issuers;
 
 use std::collections::BTreeSet;
 
-use crate::config::{administrator_role, AppConfig};
+use crate::config::{health_detail_role, AppConfig};
 
 impl AppConfig {
     /// Checks the settings no single domain can see.
@@ -25,7 +25,7 @@ impl AppConfig {
     pub fn validate(&self) -> Result<(), String> {
         self.validate_connectors()?;
         self.validate_state_paths()?;
-        administrator_role::validate(&self.permissions)?;
+        health_detail_role::validate(&self.health_detail_role)?;
         issuers::validate(&self.token, &self.identity)?;
         self.validate_timeouts()
     }

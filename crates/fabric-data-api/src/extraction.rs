@@ -55,7 +55,7 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
-    use crate::{DataApiConfig, DataApiService, ResourceCatalog, ResourcePermissions};
+    use crate::{DataApiConfig, DataApiService, DataAuthorization, ResourceCatalog};
 
     struct FixedClock;
 
@@ -98,7 +98,7 @@ mod tests {
                 runtime,
                 ConnectorRegistry::new(),
                 ResourceCatalog::default(),
-                ResourcePermissions::default(),
+                DataAuthorization::default(),
                 config,
             )),
             identity,

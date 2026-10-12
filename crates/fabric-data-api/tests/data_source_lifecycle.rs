@@ -15,7 +15,7 @@ use fabric_tenant_runtime::{
 };
 use serde_json::json;
 use support::{
-    acme_data_source, app_with, data_sources, discriminator_data_source, open_permissions, request, tenant,
+    acme_data_source, app_with, data_sources, discriminator_data_source, request, scopes_only, tenant,
     tenants, RecordingConnector,
 };
 use tower::ServiceExt as _;
@@ -32,7 +32,7 @@ fn app_over(
     ));
 
     (
-        app_with(runtime, Arc::clone(&connector), open_permissions()),
+        app_with(runtime, Arc::clone(&connector), scopes_only()),
         connector,
     )
 }

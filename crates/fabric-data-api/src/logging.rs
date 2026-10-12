@@ -67,6 +67,9 @@ pub(crate) fn operation_dispatched(
 
 /// An operation was refused by authorization.
 ///
+/// `reason` names the layer and rule that refused (ADR 0027). It is on this
+/// line and nowhere in the response, which answers every denial the same.
+///
 /// Warning, not debug: a stream of these is either a misconfigured client or
 /// someone probing, and both are worth seeing.
 ///
@@ -75,7 +78,7 @@ pub(crate) fn operation_dispatched(
 /// and `subject_filtered` ride with it, because a subject cut at the bound and
 /// a subject that is genuinely that long are otherwise the same record, and so
 /// are a subject the filter emptied and a token that carried no `sub` at all.
-pub(crate) fn operation_forbidden(resource: &str, operation: &str, subject: &str) {
+pub(crate) fn operation_forbidden(resource: &str, operation: &str, subject: &str, reason: &str) {
     let subject = sanitise(subject);
 
     tracing::warn!(
@@ -83,6 +86,7 @@ pub(crate) fn operation_forbidden(resource: &str, operation: &str, subject: &str
         event_id = event_id(DOMAIN_ID, EventType::Warning, 1),
         logical_resource = resource,
         operation,
+        reason,
         subject = %subject,
         subject_truncated = subject.truncated,
         subject_filtered = subject.filtered,

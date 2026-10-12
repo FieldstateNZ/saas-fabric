@@ -7,7 +7,7 @@ use http::header::RETRY_AFTER;
 use http::HeaderValue;
 
 use crate::errors::connector_mapping::{self, PublicMessage};
-use crate::{logging, request_id, DataApiError};
+use crate::{logging, request_id, CheckFailure, DataApiError};
 
 impl DataApiError {
     /// The message the caller sees.
@@ -27,18 +27,26 @@ impl DataApiError {
             }
             Self::Resolve(ResolveError::UnknownTenant(_)) => "this tenant has no resources here".to_owned(),
 
-            // All three name platform topology — a logical data source the
-            // tenant never declared, a DataSource id, or a DataSource id plus
-            // the isolation model it was asked for. None of that is an
-            // application's business (§2), and the isolation one is the
-            // sharpest of the three: it would tell a caller both which
-            // physical resource backs them and that its tenant boundary is
-            // currently misconfigured.
+            Self::AuthorizationUndecided(CheckFailure::Unavailable) => {
+                "authorization is temporarily unavailable; retry shortly".to_owned()
+            }
+
+            // The three resolution failures name platform topology — a logical
+            // data source the tenant never declared, a DataSource id, or a
+            // DataSource id plus the isolation model it was asked for. None of
+            // that is an application's business (§2), and the isolation one is
+            // the sharpest: it would tell a caller both which physical resource
+            // backs them and that its tenant boundary is misconfigured. An
+            // undecided Check is the same kind of fact about how the platform
+            // is wired, and the code already says whether to retry.
             Self::Resolve(
                 ResolveError::UnboundDataSource { .. }
                 | ResolveError::MissingDataSource { .. }
                 | ResolveError::IsolationNotEnforceable { .. },
-            ) => "internal error".to_owned(),
+            )
+            | Self::AuthorizationUndecided(CheckFailure::Internal | CheckFailure::NotConfigured) => {
+                "internal error".to_owned()
+            }
 
             // Connector text can name tables, schemas and servers, so what a
             // caller is told is decided by the same table that decides the

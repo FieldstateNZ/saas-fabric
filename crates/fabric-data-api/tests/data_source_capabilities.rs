@@ -11,9 +11,8 @@ use std::sync::Arc;
 use http::StatusCode;
 use serde_json::json;
 use support::{
-    app_with, body_json, data_sources, draining_data_source, json_request, open_permissions,
-    read_only_data_source, request, resolver, tenant_on_draining, tenant_on_replica, tenants,
-    RecordingConnector,
+    app_with, body_json, data_sources, draining_data_source, json_request, read_only_data_source, request,
+    resolver, scopes_only, tenant_on_draining, tenant_on_replica, tenants, RecordingConnector,
 };
 use tower::ServiceExt as _;
 
@@ -28,11 +27,7 @@ fn app_with_replica() -> (axum::Router, Arc<RecordingConnector>) {
     let connector = RecordingConnector::new(vec![]);
 
     (
-        app_with(
-            resolver(bindings, sources),
-            Arc::clone(&connector),
-            open_permissions(),
-        ),
+        app_with(resolver(bindings, sources), Arc::clone(&connector), scopes_only()),
         connector,
     )
 }
@@ -87,11 +82,7 @@ async fn draining_a_data_source_does_not_affect_tenants_already_on_it() {
     sources.push(draining_data_source());
 
     let connector = RecordingConnector::new(vec![]);
-    let app = app_with(
-        resolver(bindings, sources),
-        Arc::clone(&connector),
-        open_permissions(),
-    );
+    let app = app_with(resolver(bindings, sources), Arc::clone(&connector), scopes_only());
 
     let read = app
         .clone()
@@ -127,11 +118,7 @@ async fn the_two_capability_switches_are_independent_end_to_end() {
     sources.push(draining_data_source());
 
     let connector = RecordingConnector::new(vec![]);
-    let app = app_with(
-        resolver(bindings, sources),
-        Arc::clone(&connector),
-        open_permissions(),
-    );
+    let app = app_with(resolver(bindings, sources), Arc::clone(&connector), scopes_only());
 
     let on_replica = app
         .clone()

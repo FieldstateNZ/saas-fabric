@@ -56,9 +56,15 @@ pub fn trusted_issuers() -> Vec<fabric_identity::TrustedIssuer> {
 /// The tenant comes from the issuer's registration (ADR 0019 §2), and the
 /// canonical `tenant_id` claim is required to agree with it — so both are
 /// written here, and nothing else ever selects a tenant (ADR 0018, "The
-/// Synthesis Cloud record-isolation seam", item 4).
+/// Synthesis Cloud record-isolation seam", item 4). Scope checks cannot be
+/// switched off (ADR 0027), so it also carries read and write on `articles`,
+/// the one resource these suites serve.
 pub fn claims_for(tenant: &str) -> Value {
-    serde_json::json!({ "iss": issuer_for(tenant), "tenant_id": tenant })
+    serde_json::json!({
+        "iss": issuer_for(tenant),
+        "tenant_id": tenant,
+        "scope": "data:articles:read data:articles:write",
+    })
 }
 
 /// A request carrying a bearer token and no body.

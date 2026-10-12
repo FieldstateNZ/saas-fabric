@@ -3,10 +3,9 @@
 use std::sync::Arc;
 
 use fabric_core::LogicalResourceName;
-use fabric_identity::TenantIdentity;
 
 use crate::execution::prepared::Prepared;
-use crate::{logging, DataApiError, DataApiService, OperationKind};
+use crate::{logging, Caller, DataApiError, DataApiService, OperationKind};
 
 impl DataApiService {
     /// Walks the chain and authorises the operation.
@@ -42,7 +41,7 @@ impl DataApiService {
     ///    If the catalogue ever carries entries whose existence is itself
     ///    sensitive, this is the line to revisit, and it is a deliberate change
     ///    rather than a gap.
-    /// 2. **Authorization.** As early as the rule allows: ahead of everything
+    /// 2. **Authorization.** Both layers of ADR 0027, as early as the rule allows: ahead of everything
     ///    that could describe the resource, and before any registry is touched,
     ///    so neither a status code nor the time taken to produce one can be read
     ///    for facts about the tenant estate. Every step below has already
@@ -106,15 +105,17 @@ impl DataApiService {
     /// Each states a fixed, deployment-wide rule a caller could read off the
     /// documentation, so answering it early tells them only about what they
     /// themselves put in the request.
-    pub(super) fn prepare(
+    pub(super) async fn prepare(
         &self,
-        identity: &TenantIdentity,
+        caller: &Caller,
         resource_name: &LogicalResourceName,
         operation: OperationKind,
+        key: Option<&str>,
     ) -> Result<Prepared<'_>, DataApiError> {
         let resource = self.catalog.resolve(resource_name)?;
 
-        self.authorize(identity, operation, resource_name)?;
+        self.authorize(caller, operation, resource_name, key).await?;
+        let identity = caller.identity();
 
         if !resource.allows(operation) {
             return Err(DataApiError::OperationNotAllowed {

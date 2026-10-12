@@ -19,7 +19,7 @@ use fabric_data_api::DataApiConfig;
 use http::StatusCode;
 use serde_json::{json, Value};
 use support::{
-    app_with_config, body_json, data_sources, json_request, open_permissions, request, resolver, tenants,
+    app_with_config, body_json, data_sources, json_request, request, resolver, scopes_only, tenants,
     wide_row, CountingConnector,
 };
 use tower::ServiceExt as _;
@@ -28,7 +28,7 @@ fn app(connector: &Arc<CountingConnector>) -> Router {
     app_with_config(
         resolver(tenants(), data_sources()),
         Arc::clone(connector) as _,
-        open_permissions(),
+        scopes_only(),
         &DataApiConfig::default(),
     )
 }

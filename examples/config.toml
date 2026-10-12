@@ -27,6 +27,13 @@ listen = "0.0.0.0:8080"
 # expiry check.
 leeway = 60
 
+# The role whose token may read the health probes' estate detail. A coarse
+# operator control: it opens probe detail and grants nothing on the data path.
+# The Data API has no administrator role and its scope checks cannot be
+# switched off (ADR 0027), so there is no [permissions] section; a file that
+# still carries one is refused at startup.
+health_detail_role = "platform-admin"
+
 # Files that reconciliation writes and the runtime reads. None is queried during
 # request handling — see specification §6.
 #
@@ -184,10 +191,6 @@ default_limit = 50
 # A hard ceiling on how much work one request can ask a shared database for.
 # One tenant's unbounded scan is every co-tenant's latency.
 max_limit = 1000
-
-[permissions]
-require_scopes = true
-administrator_role = "platform-admin"
 
 # One entry per connector process. Each is negotiated once at startup:
 # GET /capabilities and GET /schema, both cached.

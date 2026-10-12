@@ -39,7 +39,7 @@ use std::time::{Duration, Instant};
 use axum::body::Body;
 use axum::response::Response;
 use axum::Router;
-use fabric_data_api::{build_data_api, DataApiConfig, ResourceCatalog, ResourcePermissions};
+use fabric_data_api::{build_data_api, DataApiConfig, DataAuthorization, ResourceCatalog};
 use fabric_identity::{build_identity, IdentityConfig, TrustedIngressReader};
 use fabric_runtime_publication::{FilesystemRuntimePublication, RuntimePublication as _, RuntimeSnapshot};
 use fabric_tenant_runtime::{
@@ -213,15 +213,6 @@ pub fn runtime_config() -> RuntimeConfig {
     }
 }
 
-/// Scope checks off -- every test here is about tenancy, not authorization.
-#[must_use]
-pub fn open_permissions() -> ResourcePermissions {
-    ResourcePermissions {
-        require_scopes: false,
-        ..ResourcePermissions::default()
-    }
-}
-
 /// Everything one test needs: the temp directory the files were published
 /// into, the real runtime built from them, the real Data API router in
 /// front of it, and the connector that recorded what reached it.
@@ -304,7 +295,7 @@ pub async fn assemble(
     let app = build_data_api(
         &DataApiConfig::default(),
         catalog,
-        open_permissions(),
+        DataAuthorization::default(),
         Arc::clone(&resolver),
         fabric_connector::ConnectorRegistry::new()
             .with(Arc::clone(&connector) as Arc<dyn fabric_connector::DataConnector>),

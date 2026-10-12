@@ -91,4 +91,30 @@ mod tests {
 
         assert!(error.is_err_and(|message| message.contains("is not a file")));
     }
+
+    /// Deserialises a TOML document the way `load` does, minus the file.
+    fn parse(document: &str) -> Result<AppConfig, String> {
+        Figment::new()
+            .merge(Toml::string(document))
+            .extract()
+            .map_err(|error| error.to_string())
+    }
+
+    #[test]
+    fn scope_checks_cannot_be_switched_off_by_configuration() {
+        // D01-12: there is no runtime toggle, so the one that used to exist is
+        // an unknown key and the process refuses to start rather than run with
+        // its scopes silently on or silently off.
+        assert!(parse("[permissions]\nrequire_scopes = false\n").is_err());
+    }
+
+    #[test]
+    fn a_data_path_administrator_role_cannot_be_configured() {
+        assert!(parse("[permissions]\nadministrator_role = \"platform-admin\"\n").is_err());
+    }
+
+    #[test]
+    fn the_health_detail_role_defaults_to_the_role_it_had() {
+        assert_eq!(parse("").unwrap().health_detail_role, "platform-admin");
+    }
 }

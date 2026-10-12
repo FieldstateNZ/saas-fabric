@@ -13,9 +13,7 @@ use fabric_connector::DataConnector;
 use fabric_data_api::DataApiConfig;
 use http::StatusCode;
 use serde_json::json;
-use support::{
-    app_with_config, data_sources, open_permissions, request, resolver, tenants, RecordingConnector,
-};
+use support::{app_with_config, data_sources, request, resolver, scopes_only, tenants, RecordingConnector};
 use tower::ServiceExt as _;
 
 fn app_with(config: &DataApiConfig) -> (axum::Router, Arc<RecordingConnector>) {
@@ -24,7 +22,7 @@ fn app_with(config: &DataApiConfig) -> (axum::Router, Arc<RecordingConnector>) {
     let dispatched = Arc::clone(&connector) as Arc<dyn DataConnector>;
 
     (
-        app_with_config(runtime, dispatched, open_permissions(), config),
+        app_with_config(runtime, dispatched, scopes_only(), config),
         connector,
     )
 }

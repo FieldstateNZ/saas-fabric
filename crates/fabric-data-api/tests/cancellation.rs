@@ -16,7 +16,7 @@ use std::time::Duration;
 
 use fabric_connector::DataConnector;
 use serde_json::json;
-use support::{data_sources, open_permissions, request, resolver, tenants, DelayedConnector};
+use support::{data_sources, request, resolver, scopes_only, tenants, DelayedConnector};
 use tower::ServiceExt as _;
 
 #[tokio::test]
@@ -27,7 +27,7 @@ async fn dropping_a_request_cancels_the_in_flight_read() {
     let app = support::app_with_config(
         runtime,
         dispatched,
-        open_permissions(),
+        scopes_only(),
         &fabric_data_api::DataApiConfig::default(),
     );
 
@@ -65,7 +65,7 @@ async fn a_request_that_is_not_dropped_completes_normally() {
     let app = support::app_with_config(
         runtime,
         dispatched,
-        open_permissions(),
+        scopes_only(),
         &fabric_data_api::DataApiConfig::default(),
     );
 

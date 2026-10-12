@@ -8,7 +8,7 @@
 use std::path::PathBuf;
 
 use fabric_connector_ndc::NdcConnectorConfig;
-use fabric_data_api::{DataApiConfig, ResourcePermissions};
+use fabric_data_api::DataApiConfig;
 use fabric_identity::{IdentityConfig, LeewaySeconds};
 use fabric_tenant_runtime::RuntimeConfig;
 
@@ -59,8 +59,14 @@ pub struct AppConfig {
     /// Data API limits.
     pub data_api: DataApiConfig,
 
-    /// Authorization defaults.
-    pub permissions: ResourcePermissions,
+    /// The role whose token may read the health probes' estate detail.
+    ///
+    /// A coarse platform-operator control, kept within the boundary it already
+    /// had (D01-12): it opens probe detail and nothing else. It grants nothing
+    /// on the data path — the Data API has no administrator role and no way to
+    /// switch its scope checks off (ADR 0027) — so there is no `[permissions]`
+    /// section any more, and a file that still carries one is refused at load.
+    pub health_detail_role: String,
 
     /// The connectors this process can execute against.
     pub connectors: Vec<NdcConnectorConfig>,
@@ -123,7 +129,7 @@ impl Default for AppConfig {
             data_sources_path: PathBuf::from("/etc/fabric/data-sources.json"),
             catalog_path: PathBuf::from("/etc/fabric/catalog.json"),
             data_api: DataApiConfig::default(),
-            permissions: ResourcePermissions::default(),
+            health_detail_role: "platform-admin".to_owned(),
             connectors: Vec::new(),
             leeway: LeewaySeconds::default(),
             connector_retry_interval_seconds: 30,

@@ -4,7 +4,7 @@ use fabric_tenant_runtime::ResolveError;
 use http::StatusCode;
 
 use crate::errors::connector_mapping;
-use crate::DataApiError;
+use crate::{CheckFailure, DataApiError};
 
 /// How long a caller is told to wait before repeating a request.
 ///
@@ -62,6 +62,15 @@ impl DataApiError {
                 StatusCode::METHOD_NOT_ALLOWED
             }
             Self::Forbidden { .. } => StatusCode::FORBIDDEN,
+
+            // Refused either way. An unreachable service is transient, so 503
+            // with a retry hint; anything else is the platform's own state
+            // being wrong, which no retry fixes, so 500 — the same split
+            // `fabric-fga-auth` makes for the same two failures.
+            Self::AuthorizationUndecided(CheckFailure::Unavailable) => StatusCode::SERVICE_UNAVAILABLE,
+            Self::AuthorizationUndecided(CheckFailure::Internal | CheckFailure::NotConfigured) => {
+                StatusCode::INTERNAL_SERVER_ERROR
+            }
             Self::BadRequest(_) => StatusCode::BAD_REQUEST,
 
             // Every connector failure, including the three transport variants
@@ -105,11 +114,15 @@ impl DataApiError {
                 ResolveError::UnboundDataSource { .. }
                 | ResolveError::MissingDataSource { .. }
                 | ResolveError::IsolationNotEnforceable { .. },
-            ) => "internal",
+            )
+            | Self::AuthorizationUndecided(CheckFailure::Internal | CheckFailure::NotConfigured) => {
+                "internal"
+            }
             Self::UnknownResource(_) => "unknown_resource",
             Self::OperationNotAllowed { .. } => "operation_not_allowed",
             Self::ResourceIsReadOnly { .. } => "read_only",
             Self::Forbidden { .. } => "forbidden",
+            Self::AuthorizationUndecided(CheckFailure::Unavailable) => "authorization_unavailable",
             Self::BadRequest(_) => "bad_request",
             Self::NotFound => "not_found",
             Self::PartiallyApplied { .. } => "partial_write",

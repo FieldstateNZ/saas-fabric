@@ -1284,8 +1284,12 @@ ADR 0023's list and `docs/roadmap/m0-contract-decisions.md`.
   - G2: since #136 a reader never applies a retirement before the unbinding
     that preceded it. The publisher still does not wait for readers;
   - G3: since #136 an interrupted publication leaves readers on the previous
-    complete generation. The files themselves are still left mixed, and the
-    panel does not show the publication as incomplete;
+    complete generation. The files themselves are still left mixed. Since
+    the G3 disposition on #108, every pass ends by inspecting the target
+    against its held record (`RuntimePublication::inspect`), and the panel
+    shows `complete`, `incomplete`, `unpublished` or `unobserved` beside
+    the last pass. Only `complete` lets the documents gate be met. Source
+    only; not verified live;
   - G4: one writer is assumed, not enforced (no `Lease`);
   - G5: since #112's last-known-good change, a reader with
     `tenant_runtime.last_known_good_dir` set persists each complete

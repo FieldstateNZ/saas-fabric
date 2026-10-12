@@ -16,7 +16,9 @@
   under [Release rollback floor](#release-rollback-floor-d01-21). The
   reader's persisted last-known-good generation, its hold and fail-closed
   rules and its recovery command (G5, reader side) follow under
-  [Persisted last-known-good](#persisted-last-known-good-g5). Test names in the gap sections are as first
+  [Persisted last-known-good](#persisted-last-known-good-g5). G3's panel
+  state, the target's observed completeness, follows under
+  [Publication completeness (G3)](#publication-completeness-g3). Test names in the gap sections are as first
   written; see [Engineering fixes](#engineering-fixes),
   [Reader generations](#reader-generations) and the section after it for
   what changed and what each test is now called.
@@ -1139,6 +1141,98 @@ Still deferred after this change: G7's live wiring (above), G5's publisher
 hold and publisher-side recovery, the platform reader mount, G4 `Lease`,
 G6's remaining items, G2's publisher wait, G3's panel state, withdrawal,
 and the platform contract follow-ups. O5 is characterized since #159.
+
+## Publication completeness (G3)
+
+The disposition on [#108](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6119949193)
+takes the six defaults asked in
+[#108 comment 6119681433](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6119681433),
+with one correction: completeness is inspected at the adapter, not inferred
+from `current()`. That is because `current()` falls back to the record's
+revision when a manifest is lost and never checks a digest. This change is
+source only. Nothing is wired differently in any environment, and none of it
+is verified live.
+
+- **The retry is unchanged.** It is #132's: `publish_with_retry` re-offers
+  an `Unwritable` snapshot at once, up to twice, with no delay, and retries
+  no other refusal. Atomic writes, CAS, divergence handling and monotonic
+  revisions are untouched.
+- **The inspection (`RuntimePublication::inspect`).** Each adapter reads,
+  without a lock and without writing:
+  - the held record;
+  - every payload and manifest;
+  - the issuer registry, when the record names one;
+  - the record again.
+
+  The answer comes from one shared rule, `TargetObservation::assess`:
+  - **Complete:** every part is at the record's revision and SHA-256.
+  - **Incomplete:** a part is missing, its manifest is missing or
+    unreadable, or its revision or digest differs from the record. The
+    answer names the part and the gap, never its bytes.
+  - **Unpublished:** no record is held.
+  - **Unobserved:** a part could not be read, the record moved between the
+    two reads, or the record does not parse.
+
+  The filesystem adapter brackets with two reads of `publication.json`. The
+  Kubernetes adapter reads the tenants `ConfigMap` before and after the
+  other two, and treats a moved `resourceVersion` as unstable.
+- **When it is inspected.** Every publication pass ends with one
+  inspection, whatever the pass decided. That includes an `Unwritable`
+  that outlived its re-offers, and a pass that offered nothing.
+  `PublicationState` keeps the last inspection beside, not inside, the
+  last pass's outcome. A failed pass that wrote nothing can therefore
+  still observe `complete`.
+- **No target read on `GET`.** `GET /api/platform` renders the recorded
+  inspection and never reads the target.
+- **Restarts and clearing.** A restarted control plane holds no
+  inspection, so it reports `unobserved` until a pass inspects. Neither a
+  restart nor elapsed time clears `incomplete`, and only a verified
+  `complete` does.
+- **Readiness.** The documents gate is met only when the accepted
+  evidence names all three documents **and** the last inspection is
+  `complete`. Every other state makes it unmet, with a sanitised reason.
+  It also makes `updateComplete` false.
+- **The panel.** The publication row gains `completeness`: `state`,
+  `observedAtUnixSeconds`, the record inspected against, and `reason`. The
+  console shows it as its own **Completeness** row, under **Last pass**.
+- **Completeness is not reader evidence.** Readers keep their last complete
+  generation (#136). Completeness says nothing about what they applied.
+
+| Acceptance (#108 disposition) | Guard | Tests |
+|---|---|---|
+| Partial writes after exhausted retries make the documents gate unmet | `publisher.rs::publish_once` (`inspect_target`); `documents_gate.rs` | `publisher_tests.rs::an_interruption_that_outlives_its_reoffers_leaves_the_target_incomplete_and_the_documents_gate_unmet`; `platform_publication.rs::a_pass_that_leaves_the_target_part_written_shows_it_incomplete_and_holds_the_documents_gate`; `publication_completeness.rs::a_publication_interrupted_part_way_is_incomplete_until_it_is_completed` |
+| A refusal that wrote nothing leaves a complete target `complete` while the last pass reads `failed` | completeness kept apart from `LastPass` (`state.rs`) | `publisher_tests.rs::a_refusal_that_wrote_nothing_leaves_a_complete_target_complete_while_the_pass_reads_failed`; `platform_publication.rs::a_pass_refused_before_it_wrote_anything_leaves_a_complete_target_complete` |
+| A missing payload or manifest despite fallback revisions | `completeness/observation.rs` | `publication_completeness.rs::a_lost_payload_is_incomplete_though_its_manifest_still_reports_the_revision`, `::a_lost_manifest_is_incomplete_though_current_falls_back_to_the_records_revision`; `completeness_tests.rs::a_manifest_for_another_document_or_that_does_not_parse_is_unreadable` |
+| Equal revisions with a wrong digest | `completeness/observation.rs::payload_gap` | `publication_completeness.rs::equal_revisions_with_other_bytes_are_incomplete`; Kubernetes `inspect_tests.rs::an_object_left_by_an_interrupted_publication_is_incomplete` |
+| Issuer registry mismatch | the registry is checked when the record names one | `publication_completeness.rs::an_issuer_registry_the_record_names_is_held_to_its_digest` |
+| Unavailable or unstable inspection is `unobserved` | `filesystem/inspect.rs`; Kubernetes `inspect.rs` | `publication_completeness.rs::a_part_that_cannot_be_read_leaves_the_target_unobserved`, `::a_record_this_publisher_cannot_read_leaves_the_target_unobserved`; `completeness_tests.rs::a_record_that_moved_while_the_target_was_read_is_unstable_whatever_the_parts_say`; Kubernetes `inspect_tests.rs::a_tenants_object_that_moved_during_the_inspection_is_unstable`, `::an_object_the_cluster_cannot_supply_leaves_it_unobserved`, `::no_objects_are_unpublished` |
+| A restart followed by an observation | `PublicationState` starts with no inspection | `publisher_tests.rs::a_restart_knows_nothing_until_a_pass_inspects_and_does_not_clear_an_incomplete_target`; `platform_publication.rs::a_restarted_control_plane_shows_completeness_unobserved_until_a_pass_inspects_the_target` |
+| Retry recovery | #132's `publish_with_retry`, unchanged | `publisher_tests.rs::an_interruption_the_immediate_reoffer_completes_leaves_the_target_complete`; existing `protocol_tests.rs` G3 tests |
+| Only verified coherence clears the condition | `state.rs::record` replaces the observation only with another inspection | `publisher_tests.rs::only_an_inspection_that_finds_the_target_whole_clears_an_incomplete_target`; `readiness_tests.rs::the_documents_gate_needs_the_target_observed_whole_and_says_why_it_is_not`, `::a_complete_target_does_not_stand_in_for_an_accepted_pass` |
+| `GET` performs no extra target reads | `body/publication/completeness_row.rs` renders `PublicationState` | `platform_publication.rs::a_pass_that_leaves_the_target_part_written_shows_it_incomplete_and_holds_the_documents_gate` (counts every port call across the `GET`), `::a_restarted_control_plane_shows_completeness_unobserved_until_a_pass_inspects_the_target` |
+| The readers' last complete generation stays installed | #136's record-gated reader, unchanged | `publication_atomicity.rs::an_incomplete_target_is_reported_while_readers_stay_on_the_last_complete_generation` |
+| No payload or sensitive detail in responses | gaps are typed; read errors are dropped | `completeness_tests.rs::what_an_operator_reads_names_the_part_and_never_its_bytes`; the first `platform_publication.rs` test above checks the body names neither the changed label nor the staging path |
+| The console shows the state apart from the last pass | `CompletenessCell.tsx` | `PublicationPanel.test.tsx` "completeness" (three cases) |
+
+Limits:
+
+- **The target is still left mixed.** A publication that is interrupted
+  and then outlives its re-offers still leaves the files or objects mixed
+  until a later pass completes them. This change reports that state. It
+  does not prevent it. Preventing it needs one transaction across three
+  documents, as before.
+- **A completing pass reads `unchanged`.** When a pass finds the documents
+  already written by an interrupted one, it writes only the record. The
+  last-pass outcome counts documents, not the record, so that pass reads
+  `unchanged`. Only the completeness row shows the generation completing.
+- **The inspection is per process and per pass.** No schedule beyond the
+  existing publication schedule inspects the target, and nothing is kept
+  across a restart.
+
+Still deferred after this change: G7's live wiring, G5's publisher hold and
+publisher-side recovery, the platform reader mount, G4 `Lease`, G6's
+remaining items, G2's publisher wait, withdrawal, the O5 continuity and
+issuance guards, and the platform contract follow-ups.
 
 ## Not covered here
 

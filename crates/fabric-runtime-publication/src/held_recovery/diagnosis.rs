@@ -1,16 +1,24 @@
-//! What is held, and whether it blocks publication, read without writing
-//! and without the plan's first-refusal-wins order, so an operator sees
-//! every reason at once.
+//! What is held, and every reason it is not clear, read without writing and
+//! without the plan's first-refusal-wins order.
+//!
+//! In the 121-150 line band (docs/architecture/file-size-policy.md): the
+//! report type and the one function that fills it, so every problem it can
+//! raise reads in one place.
 
-use super::held_parse::{blocking, parse_manifest};
-use super::held_state::{DocumentDiagnosis, ManifestState, RecordState};
+use super::held_parse::blocking;
+use super::held_parts::{document, record_state, resource_problems};
+use super::held_state::{DocumentDiagnosis, ManifestState, RecordState, RegistryDiagnosis};
+use super::problem::{Part, Problem, ProblemKind};
+use super::HeldObservation;
 use crate::digest::sha256_hex;
-use crate::{DocumentKind, ObservedDocument, PublicationRecord, RecordedDocument, TargetObservation};
+use crate::{DocumentKind, IssuerRegistryDocument, ObservedDocument, PublicationRecord, RecordedDocument};
 
 /// The held state of a publication target, as the recovery command
-/// reports it. Carries digests and revisions, never document content.
+/// reports it. `clear` only when nothing is wrong with any recorded part.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct HeldDiagnosis {
+    /// Whether the record stayed the same while every part was read.
+    pub stable: bool,
     /// The publication record.
     pub record: RecordState,
     /// `tenants.json` and its manifest.
@@ -19,90 +27,101 @@ pub struct HeldDiagnosis {
     pub data_sources: DocumentDiagnosis,
     /// `catalog.json` and its manifest.
     pub catalog: DocumentDiagnosis,
-    /// Every reason the held state refuses a publication before any offer
-    /// is looked at; empty when a publication could be planned against it.
-    pub blocked: Vec<String>,
+    /// `issuer-registry.json`.
+    pub issuer_registry: RegistryDiagnosis,
+    /// Every reason the held evidence is not clear.
+    pub problems: Vec<Problem>,
+    /// No problem at all. Says nothing about any offer a later publication
+    /// makes, whose own guards are decided against it.
+    pub clear: bool,
 }
 
 /// Diagnoses what an adapter observed. Pure; writes nothing.
 #[must_use]
-pub fn diagnose(observation: &TargetObservation) -> HeldDiagnosis {
-    let (record, parsed) = match observation.record.as_deref() {
-        None => (RecordState::Absent, None),
-        Some(bytes) => match PublicationRecord::parse_held(bytes) {
-            Ok(parsed) => (
-                RecordState::Held {
-                    generation: parsed.generation(),
-                    sha256: sha256_hex(bytes),
-                },
-                Some(parsed),
-            ),
-            Err(error) => (
-                RecordState::Unusable {
-                    detail: error.to_string(),
-                    sha256: sha256_hex(bytes),
-                },
-                None,
-            ),
-        },
-    };
+pub fn diagnose(held: &HeldObservation) -> HeldDiagnosis {
+    let observation = &held.observation;
+    let mut problems = Vec::new();
+    let mut problem =
+        |part: Part, kind: ProblemKind, detail: String| problems.push(Problem { part, kind, detail });
+    if !held.stable {
+        problem(
+            Part::Observation,
+            ProblemKind::Unstable,
+            "the record changed while the target was read; inspect again".to_owned(),
+        );
+    }
+    let (record, parsed) = record_state(observation.record.as_deref());
+    if let RecordState::Unusable { detail, .. } = &record {
+        problem(Part::Record, ProblemKind::BlocksPublication, detail.clone());
+    }
     let documents = parsed.as_ref().map(PublicationRecord::documents);
-    let tenants = document(
+    let mut diagnose_document =
+        |kind: DocumentKind, held: &ObservedDocument, recorded: Option<&RecordedDocument>| {
+            let diagnosis = document(kind, held, recorded);
+            if let Some(reason) = blocking(kind, held) {
+                problem(kind.into(), ProblemKind::BlocksPublication, reason);
+            }
+            if diagnosis.matches_record == Some(false) {
+                problem(
+                    kind.into(),
+                    ProblemKind::Mismatch,
+                    "the held payload is not the bytes the record names".to_owned(),
+                );
+            }
+            if let (ManifestState::Held { revision }, Some(recorded)) = (&diagnosis.manifest, recorded) {
+                if *revision != recorded.revision {
+                    problem(
+                        kind.into(),
+                        ProblemKind::Mismatch,
+                        format!(
+                            "the manifest states revision {revision}, the record {}",
+                            recorded.revision
+                        ),
+                    );
+                }
+            }
+            diagnosis
+        };
+    let tenants = diagnose_document(
         DocumentKind::Tenants,
         &observation.tenants,
         documents.map(|d| &d.tenants),
     );
-    let data_sources = document(
+    let data_sources = diagnose_document(
         DocumentKind::DataSources,
         &observation.data_sources,
         documents.map(|d| &d.data_sources),
     );
-    let catalog = document(
+    let catalog = diagnose_document(
         DocumentKind::Catalog,
         &observation.catalog,
         documents.map(|d| &d.catalog),
     );
-    let mut blocked = Vec::new();
-    if let RecordState::Unusable { detail, .. } = &record {
-        blocked.push(format!("publication record: {detail}"));
-    }
-    for (name, diagnosis) in [
-        ("tenants", &tenants),
-        ("data sources", &data_sources),
-        ("catalogue", &catalog),
-    ] {
-        if let Some(reason) = &diagnosis.blocking {
-            blocked.push(format!("{name}: {reason}"));
-        }
-    }
+
+    let recorded_registry = parsed.as_ref().and_then(PublicationRecord::registry);
+    problems.extend(resource_problems(observation, recorded_registry));
+    let issuer_registry = RegistryDiagnosis {
+        recorded: recorded_registry.cloned(),
+        held_sha256: observation.registry.as_deref().map(sha256_hex),
+        held_generation: observation
+            .registry
+            .as_deref()
+            .and_then(|bytes| serde_json::from_slice::<IssuerRegistryDocument>(bytes).ok())
+            .map(|registry| registry.generation().into()),
+    };
+    let clear = problems.is_empty();
     HeldDiagnosis {
+        stable: held.stable,
         record,
         tenants,
         data_sources,
         catalog,
-        blocked,
+        issuer_registry,
+        problems,
+        clear,
     }
 }
 
-fn document(
-    kind: DocumentKind,
-    held: &ObservedDocument,
-    recorded: Option<&RecordedDocument>,
-) -> DocumentDiagnosis {
-    let manifest = match held.manifest.as_deref().map(|bytes| parse_manifest(bytes, kind)) {
-        None => ManifestState::Absent,
-        Some(Ok(manifest)) => ManifestState::Held {
-            revision: manifest.revision(),
-        },
-        Some(Err(detail)) => ManifestState::Unreadable { detail },
-    };
-    let payload_sha256 = held.payload.as_deref().map(sha256_hex);
-    let matches_record = recorded.map(|recorded| payload_sha256.as_deref() == Some(recorded.sha256.as_str()));
-    DocumentDiagnosis {
-        manifest,
-        payload_sha256,
-        recorded: recorded.cloned(),
-        matches_record,
-        blocking: blocking(kind, held),
-    }
-}
+#[cfg(test)]
+#[path = "diagnosis_tests.rs"]
+mod tests;

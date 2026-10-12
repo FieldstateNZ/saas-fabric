@@ -1,36 +1,43 @@
 //! Why a restore was refused. Every refusal means nothing was written and
-//! nothing was audited.
+//! no intent was recorded.
 
 use crate::{DocumentKind, DocumentRevision};
 
-/// Why [`super::plan_restore`] will not put the offered bytes back.
+/// Why a restore will not put the offered bytes back.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum RestoreRefusal {
-    /// Only the tenants and data-sources documents are parsed before a
-    /// publication; the catalogue is only byte-compared and never blocks.
+    /// Only tenants and data sources are parsed before a publication.
     #[error("{document:?} is not restored by this command: only tenants and data sources are parsed before a publication")]
     NotRestorable {
         /// The document asked for.
         document: DocumentKind,
     },
 
-    /// The document already parses: publication is not blocked by it, and
-    /// its held bytes are left alone.
-    #[error("{document:?} is not blocking publication; nothing to restore")]
-    NotBlocked {
+    /// No exclusive, fenced ownership of the target is established, so no
+    /// write can be bound to the record that authorises it.
+    #[error("this target has no established exclusive publisher ownership; only inspect and validate are supported")]
+    OwnershipUnestablished,
+
+    /// The record moved while the target was read.
+    #[error("the publication record changed while the target was read; nothing was planned against it")]
+    Unstable,
+
+    /// The held payload parses and is not the recorded bytes: readable
+    /// content the record does not name, which a restore never replaces.
+    #[error("{document:?}'s held payload is readable and is not the recorded bytes; nothing to restore")]
+    HeldReadable {
         /// The document asked for.
         document: DocumentKind,
     },
 
-    /// No publication record is held, so nothing vouches for any bytes.
-    #[error("no publication record is held, so no bytes can be shown to be the published ones")]
+    /// No publication record is held.
+    #[error("no publication record is held, so no bytes can be matched to it")]
     NoRecord,
 
-    /// The held record does not parse, or this publisher may not write over
-    /// it (its rollback floor).
+    /// The held record does not parse, or its floor is above this publisher.
     #[error("the held publication record cannot be used: {detail}")]
     RecordUnusable {
-        /// What is wrong with it, as a publication refusal would say it.
+        /// Why, as a publication refusal says it.
         detail: String,
     },
 
@@ -47,10 +54,7 @@ pub enum RestoreRefusal {
         offered: String,
     },
 
-    /// The held manifest states a revision other than the record's: an
-    /// interrupted or hand-edited publication, whose own bytes the record
-    /// does not name. Restoring the record's bytes under it would hold
-    /// content the manifest does not describe.
+    /// The held manifest is readable and states another revision.
     #[error("{document:?}'s held manifest states revision {manifest}, but the held record names revision {recorded}")]
     ManifestDisagrees {
         /// The document asked for.
@@ -61,13 +65,31 @@ pub enum RestoreRefusal {
         recorded: DocumentRevision,
     },
 
-    /// The offered bytes match the record's digest but do not parse as the
-    /// document: the record itself names bytes this publisher cannot read.
+    /// The held manifest is readable metadata a restore may not replace.
+    #[error("{document:?}'s held manifest is readable and conflicts: {detail}")]
+    ManifestConflicts {
+        /// The document asked for.
+        document: DocumentKind,
+        /// Why.
+        detail: String,
+    },
+
+    /// The offered bytes match the record but do not parse.
     #[error("the offered bytes match the record but do not parse as {document:?}: {detail}")]
     OfferedUnparseable {
         /// The document asked for.
         document: DocumentKind,
-        /// The parse error, as `PublicationError::Unreadable` carries it.
+        /// The parse error.
         detail: String,
+    },
+
+    /// The offered bytes match the record and parse, but break a resource
+    /// rule, alone or against a usable held peer.
+    #[error("the offered {document:?} match the record but are not usable: {}", problems.join("; "))]
+    OfferedInvalid {
+        /// The document asked for.
+        document: DocumentKind,
+        /// Each rule broken.
+        problems: Vec<String>,
     },
 }

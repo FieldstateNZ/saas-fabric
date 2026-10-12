@@ -1,78 +1,48 @@
-//! The restore's audit log: one JSON object per line, appended and synced
-//! before the write it records.
+//! The restore's audit lines: the operation's intent before any write,
+//! then how it ended. Operator text is self-identification, not authority.
 
-use std::fs::OpenOptions;
-use std::io::{self, Write as _};
-use std::path::{Path, PathBuf};
+use std::io;
 
-use fabric_runtime_publication::{PublicationError, RecoveryAudit, RestorePlan};
+use fabric_runtime_publication::{RecoveryAudit, RestorePlan};
 use serde_json::json;
 
-/// Who is restoring, why, when, and where the log goes.
+use super::audit_file::AuditFile;
+
+/// Who restores, why, and where the operation's lines go.
 pub(super) struct AuditLog {
-    pub(super) path: PathBuf,
+    pub(super) operation_id: String,
     pub(super) operator: String,
     pub(super) reason: String,
     pub(super) target: String,
     pub(super) from: String,
     pub(super) at_unix_seconds: u64,
+    pub(super) log: AuditFile,
+}
+
+impl AuditLog {
+    /// Records how the operation ended: `completed`, `failed` (nothing was
+    /// replaced) or `outcome_uncertain` (inspect again).
+    pub(super) fn outcome(&self, outcome: &str, error: Option<&str>) -> io::Result<()> {
+        self.log.append(&json!({
+            "operation_id": self.operation_id,
+            "at_unix_seconds": self.at_unix_seconds,
+            "action": format!("restore_{outcome}"),
+            "error": error,
+        }))
+    }
 }
 
 impl RecoveryAudit for AuditLog {
-    fn before(&self, plan: &RestorePlan) -> io::Result<()> {
-        append(
-            &self.path,
-            &json!({
-                "at_unix_seconds": self.at_unix_seconds,
-                "action": "restore",
-                "operator": self.operator,
-                "reason": self.reason,
-                "target": self.target,
-                "from": self.from,
-                "plan": plan,
-            }),
-        )
+    fn intent(&self, plan: &RestorePlan) -> io::Result<()> {
+        self.log.append(&json!({
+            "operation_id": self.operation_id,
+            "at_unix_seconds": self.at_unix_seconds,
+            "action": "restore_intent",
+            "operator_self_identified": self.operator,
+            "reason": self.reason,
+            "target": self.target,
+            "from": self.from,
+            "plan": plan,
+        }))
     }
-
-    fn failed(&self, plan: &RestorePlan, error: &PublicationError) {
-        let _ = append(
-            &self.path,
-            &json!({
-                "at_unix_seconds": self.at_unix_seconds,
-                "action": "restore_failed",
-                "operator": self.operator,
-                "document": plan.document,
-                "error": error.to_string(),
-            }),
-        );
-    }
-}
-
-fn append(path: &Path, record: &serde_json::Value) -> io::Result<()> {
-    let mut line = serde_json::to_vec(record).map_err(io::Error::other)?;
-    line.push(b'\n');
-    let mut file = OpenOptions::new().create(true).append(true).open(path)?;
-    file.write_all(&line)?;
-    file.sync_all()
-}
-
-/// Refuses an audit log in a directory a published document is in: on the
-/// filesystem it would sit beside what readers mount, and the publisher
-/// alone writes there.
-pub(super) fn check_apart(audit: &Path, published: &[&Path]) -> Result<(), String> {
-    let directory = |path: &Path| {
-        let parent = path.parent().filter(|parent| !parent.as_os_str().is_empty());
-        parent.unwrap_or_else(|| Path::new(".")).canonicalize()
-    };
-    let audit_directory =
-        directory(audit).map_err(|error| format!("the audit log's directory cannot be used: {error}"))?;
-    for path in published {
-        if directory(path).is_ok_and(|directory| directory == audit_directory) {
-            return Err(
-                "the audit log may not be in a published document's directory; give one apart from them"
-                    .to_owned(),
-            );
-        }
-    }
-    Ok(())
 }

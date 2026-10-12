@@ -55,6 +55,11 @@ impl IssuerRegistryDocument {
         })
     }
 
+    /// The registry shape these bytes were written in.
+    pub(crate) const fn schema_version(&self) -> u32 {
+        self.schema_version
+    }
+
     /// Which generation this is.
     #[must_use]
     pub const fn generation(&self) -> RegistryGeneration {

@@ -12,27 +12,39 @@
 //!         | --namespace <namespace>
 //! ```
 //!
-//! It reads no configuration and starts no telemetry: an operator runs it
-//! against the published files, or from the control plane's pod against its
-//! namespace. `inspect` and `validate` never write. `restore` puts back only
-//! the bytes the held publication record names, at the revision it names,
-//! for a document that blocks publication
-//! ([`fabric_runtime_publication::plan_restore`]); it appends and syncs an
-//! audit line first, and writes under the publisher's own exclusion (the
-//! filesystem publication lock, or the object's `resourceVersion`). Nothing
-//! here discards a held document, lowers a revision or writes content the
-//! record does not name.
+//! It reads no configuration and starts no telemetry. `inspect` and
+//! `validate` read every held part raw, take no lock and write nothing; they
+//! report digests, revisions and typed reasons, never a held value, and
+//! `validate` fails unless the held evidence is clear.
+//!
+//! `restore` is filesystem only. On Kubernetes no exclusive, fenced
+//! publisher ownership exists to bind a write to the record that authorises
+//! it, so a restore there is refused before anything is read or audited.
+//! On the filesystem it puts back only the exact bytes the held record
+//! names, at the revision it names, for a document that blocks publication
+//! ([`fabric_runtime_publication::plan_restore`]), under the publication
+//! lock. Before anything is written it refuses a source or audit log that
+//! is, or resolves to, a published file or each other; it appends and syncs
+//! an operation's intent before the first write, and its completion,
+//! failure or uncertain outcome after. The bytes already restored are a
+//! no-op. Nothing here discards a held document, lowers a revision, or
+//! writes content the record does not name. A digest match shows agreement
+//! with the record held now, not signed history.
 //!
 //! Output is one line of JSON on stdout. Exit status: 0 on success (for
-//! `validate`, nothing held blocks publication); 1 when `validate` finds
-//! something blocking or `restore` is refused, with nothing written; 2 for
-//! a usage error, a target that cannot be read, or a failed audit or write.
+//! `validate`, clear held evidence; for `restore`, completed or already
+//! restored); 1 when `validate` finds a problem or `restore` is refused,
+//! with nothing written; 2 for a usage error, a target, source or audit log
+//! that cannot be used, a failed audit, or a failed or uncertain write.
 
 mod action;
 mod arguments;
 #[cfg(test)]
 mod arguments_tests;
 mod audit;
+mod audit_file;
+mod identity;
+mod restore;
 mod run;
 
 pub use action::{Action, Target};

@@ -1313,14 +1313,16 @@ ADR 0023's list and `docs/roadmap/m0-contract-decisions.md`.
     generation it reads and, at start, primes from that copy when no
     published generation at or above it can be applied; with no valid copy
     it fails closed as before. Off by default. A held tenants or
-    data-sources document the publisher cannot parse can be restored with
-    `fabric-control-plane-api held-publication restore`, which puts back
-    only the bytes the held record names, at the revision it names, under
-    the publication lock or the object's `resourceVersion`, audited first
-    (source only; its write semantics await confirmation on #108). Still
-    open: no pre-publication hold at the publisher; no discard of a held
-    document the record cannot vouch for; the writable reader volume is not
-    mounted by the platform; not verified live;
+    data-sources document the publisher cannot parse can be diagnosed with
+    `fabric-control-plane-api held-publication inspect|validate` on either
+    adapter, and restored with `restore` on the filesystem only. The
+    restore puts back the exact bytes the held record names, at the
+    revision it names, under the publication lock, after durable intent,
+    refusing source and audit aliases (#108 comment 6122169438; source
+    only). Still open: no pre-publication hold at the publisher; no
+    Kubernetes restore without established, fenced publisher ownership; no
+    discard; the writable reader volume is not mounted by the platform;
+    not verified live;
   - G6: since #136 the record's `minimum_reader_contract` is the version
     handshake, with reader tests at contract N and N+1 in both directions
     (`reader_compatibility.rs`). Since the G6 question on #108, every row of

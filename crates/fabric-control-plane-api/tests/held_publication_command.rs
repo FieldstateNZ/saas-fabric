@@ -88,13 +88,17 @@ impl Dir {
     }
 
     fn restore(&self, from: &Path, operator: &str) -> (Output, Value) {
+        self.restore_auditing(from, &self.ops("audit.jsonl"), operator)
+    }
+
+    fn restore_auditing(&self, from: &Path, audit: &Path, operator: &str) -> (Output, Value) {
         let rest: Vec<String> = [
             "--document",
             "tenants",
             "--from",
             &from.display().to_string(),
             "--audit",
-            &self.ops("audit.jsonl").display().to_string(),
+            &audit.display().to_string(),
             "--operator",
             operator,
             "--reason",
@@ -155,6 +159,14 @@ fn files(dir: &Dir) -> Vec<(String, Vec<u8>)> {
     files
 }
 
+fn audit_lines(dir: &Dir) -> Vec<Value> {
+    std::fs::read_to_string(dir.ops("audit.jsonl"))
+        .unwrap_or_default()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect()
+}
+
 #[tokio::test]
 async fn inspect_and_validate_report_the_blocking_document_and_write_nothing() {
     let dir = torn().await;
@@ -162,22 +174,20 @@ async fn inspect_and_validate_report_the_blocking_document_and_write_nothing() {
 
     let (inspect, report) = dir.run("inspect", &[]);
     assert_eq!(inspect.status.code(), Some(0), "{inspect:?}");
-    assert_eq!(report["action"], "inspect");
-    assert!(report["diagnosis"]["tenants"]["blocking"]
-        .as_str()
-        .unwrap()
-        .starts_with("unreadable payload"));
+    assert_eq!(report["diagnosis"]["clear"], false);
+    let problems = report["diagnosis"]["problems"].as_array().unwrap();
+    assert!(problems
+        .iter()
+        .any(|problem| problem["part"] == "tenants" && problem["kind"] == "blocks_publication"));
     assert_eq!(report["diagnosis"]["tenants"]["matches_record"], false);
-    assert_eq!(report["diagnosis"]["data_sources"]["blocking"], Value::Null);
 
-    let (validate, report) = dir.run("validate", &[]);
+    let (validate, _) = dir.run("validate", &[]);
     assert_eq!(validate.status.code(), Some(1), "{validate:?}");
-    assert_eq!(report["diagnosis"]["blocked"].as_array().unwrap().len(), 1);
     assert_eq!(files(&dir), before);
 }
 
 #[tokio::test]
-async fn restore_puts_back_the_recorded_bytes_after_auditing_and_publication_resumes() {
+async fn restore_records_intent_then_completion_and_publication_resumes() {
     let dir = torn().await;
     let refused = dir.publisher().publish(&snapshot(2)).await.unwrap_err();
     assert!(
@@ -185,31 +195,30 @@ async fn restore_puts_back_the_recorded_bytes_after_auditing_and_publication_res
         "{refused:?}"
     );
     let revisions = dir.publisher().current().await.unwrap();
+    let record = std::fs::read(dir.published("publication.json")).unwrap();
 
     let (restore, report) = dir.restore(&dir.ops("tenants.json"), "ops@example");
 
     assert_eq!(restore.status.code(), Some(0), "{restore:?}");
     assert_eq!(report["restored"]["revision"], 1);
-    assert_eq!(report["restored"]["writes_payload"], true);
     assert_eq!(
         std::fs::read(dir.published("tenants.json")).unwrap(),
         std::fs::read(dir.ops("tenants.json")).unwrap()
     );
-    let audit = std::fs::read_to_string(dir.ops("audit.jsonl")).unwrap();
-    let lines: Vec<Value> = audit
-        .lines()
-        .map(|line| serde_json::from_str(line).unwrap())
-        .collect();
-    assert_eq!(lines.len(), 1);
-    assert_eq!(lines[0]["action"], "restore");
-    assert_eq!(lines[0]["operator"], "ops@example");
+    let lines = audit_lines(&dir);
+    assert_eq!(lines.len(), 2);
+    assert_eq!(lines[0]["action"], "restore_intent");
+    assert_eq!(lines[0]["operator_self_identified"], "ops@example");
     assert_eq!(lines[0]["reason"], "torn tenants volume");
-    assert_eq!(lines[0]["plan"]["sha256"], report["restored"]["sha256"]);
+    assert_eq!(lines[1]["action"], "restore_completed");
+    assert_eq!(lines[0]["operation_id"], report["operation_id"]);
+    assert_eq!(lines[1]["operation_id"], report["operation_id"]);
     assert_eq!(
         dir.publisher().current().await.unwrap(),
         revisions,
         "no revision moved"
     );
+    assert_eq!(std::fs::read(dir.published("publication.json")).unwrap(), record);
 
     let (validate, _) = dir.run("validate", &[]);
     assert_eq!(validate.status.code(), Some(0), "{validate:?}");
@@ -217,7 +226,20 @@ async fn restore_puts_back_the_recorded_bytes_after_auditing_and_publication_res
 }
 
 #[tokio::test]
-async fn restore_of_bytes_the_record_does_not_name_is_refused_and_writes_and_audits_nothing() {
+async fn a_repeated_restore_is_an_idempotent_no_op_that_records_nothing() {
+    let dir = torn().await;
+    let (first, _) = dir.restore(&dir.ops("tenants.json"), "ops");
+    assert_eq!(first.status.code(), Some(0), "{first:?}");
+
+    let (again, report) = dir.restore(&dir.ops("tenants.json"), "ops");
+
+    assert_eq!(again.status.code(), Some(0), "{again:?}");
+    assert_eq!(report["already_restored"], true);
+    assert_eq!(audit_lines(&dir).len(), 2, "only the first restore's lines");
+}
+
+#[tokio::test]
+async fn a_refused_restore_has_no_effect_not_even_an_audit_file() {
     let dir = torn().await;
     std::fs::write(dir.ops("other.json"), b"[]").unwrap();
     let before = files(&dir);
@@ -230,30 +252,107 @@ async fn restore_of_bytes_the_record_does_not_name_is_refused_and_writes_and_aud
     assert!(!dir.ops("audit.jsonl").exists());
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn an_audit_log_that_resolves_to_a_published_file_or_the_source_has_no_effect() {
+    // Review 5489986163's probe: an audit symlink outside the publication
+    // directory pointed at publication.json, and the audit line was
+    // appended into it. Review 5490101140's: an audit hard link to the
+    // source copy, appended into the backup.
+    let dir = torn().await;
+    let source = std::fs::read(dir.ops("tenants.json")).unwrap();
+    std::os::unix::fs::symlink(dir.published("publication.json"), dir.ops("symlinked.jsonl")).unwrap();
+    std::fs::hard_link(dir.published("publication.json"), dir.ops("record-link.jsonl")).unwrap();
+    std::fs::hard_link(dir.ops("tenants.json"), dir.ops("source-link.jsonl")).unwrap();
+    let before = files(&dir);
+
+    for audit in ["symlinked.jsonl", "record-link.jsonl", "source-link.jsonl"] {
+        let (restore, _) = dir.restore_auditing(&dir.ops("tenants.json"), &dir.ops(audit), "ops");
+
+        assert_eq!(restore.status.code(), Some(2), "{audit}: {restore:?}");
+        assert_eq!(files(&dir), before, "{audit}");
+        assert_eq!(std::fs::read(dir.ops("tenants.json")).unwrap(), source, "{audit}");
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_source_that_is_a_published_file_is_refused_with_no_effect() {
+    let dir = torn().await;
+    std::os::unix::fs::symlink(dir.published("tenants.json"), dir.ops("alias.json")).unwrap();
+    let before = files(&dir);
+
+    for from in [dir.published("tenants.json"), dir.ops("alias.json")] {
+        let (restore, _) = dir.restore(&from, "ops");
+        assert_eq!(restore.status.code(), Some(2), "{restore:?}");
+    }
+    assert_eq!(files(&dir), before);
+    assert!(!dir.ops("audit.jsonl").exists());
+}
+
 #[tokio::test]
 async fn restore_refuses_an_audit_log_beside_the_published_files() {
     let dir = torn().await;
     let before = files(&dir);
-    let rest: Vec<String> = [
-        "--document",
-        "tenants",
-        "--from",
-        &dir.ops("tenants.json").display().to_string(),
-        "--audit",
-        &dir.published("audit.jsonl").display().to_string(),
-        "--operator",
-        "ops",
-        "--reason",
-        "x",
-    ]
-    .iter()
-    .map(|word| (*word).to_owned())
-    .collect();
 
-    let (restore, _) = dir.run("restore", &rest);
+    let (restore, _) = dir.restore_auditing(&dir.ops("tenants.json"), &dir.published("audit.jsonl"), "ops");
 
     assert_eq!(restore.status.code(), Some(2), "{restore:?}");
     assert_eq!(files(&dir), before);
+}
+
+#[tokio::test]
+async fn a_held_value_never_reaches_inspect_or_validate_output() {
+    // Review 5490101140's probe: a private sentinel in an invalid
+    // isolation value came back out through both actions.
+    let dir = torn().await;
+    let sentinel = "SENTINEL-private-7f3a";
+    let mut tenants: Value =
+        serde_json::from_slice(&std::fs::read(dir.ops("tenants.json")).unwrap()).unwrap();
+    for tenant in tenants.as_array_mut().unwrap() {
+        for binding in tenant["data"].as_object_mut().unwrap().values_mut() {
+            binding["isolation"] = serde_json::json!({ sentinel: {} });
+        }
+    }
+    std::fs::write(
+        dir.published("tenants.json"),
+        serde_json::to_vec(&tenants).unwrap(),
+    )
+    .unwrap();
+
+    for action in ["inspect", "validate"] {
+        let (output, _) = dir.run(action, &[]);
+        let printed = [output.stdout.as_slice(), output.stderr.as_slice()].concat();
+        assert!(
+            !String::from_utf8_lossy(&printed).contains(sentinel),
+            "{action}: {output:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_kubernetes_restore_is_refused_before_anything_is_read_or_audited() {
+    let dir = Dir::new();
+    let output = Command::new(env!("CARGO_BIN_EXE_fabric-control-plane-api"))
+        .args([
+            "held-publication",
+            "restore",
+            "--namespace",
+            "platform-system",
+            "--document",
+            "tenants",
+        ])
+        .args(["--from", "/nonexistent/tenants.json", "--audit"])
+        .arg(dir.ops("audit.jsonl"))
+        .args(["--operator", "ops", "--reason", "x"])
+        .env_clear()
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(report["refused"].as_str().unwrap().contains("ownership"));
+    assert!(!dir.ops("audit.jsonl").exists());
 }
 
 #[tokio::test]

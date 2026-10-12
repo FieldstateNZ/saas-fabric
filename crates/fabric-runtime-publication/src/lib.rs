@@ -98,8 +98,9 @@ pub use document_revision::DocumentRevision;
 pub use errors::PublicationError;
 pub use filesystem::FilesystemRuntimePublication;
 pub use held_recovery::{
-    diagnose, plan_restore, DocumentDiagnosis, HeldDiagnosis, HeldRecovery, ManifestState, RecordState,
-    RecoveryAudit, RecoveryError, RestorePlan, RestoreRefusal,
+    diagnose, plan_restore, DocumentDiagnosis, HeldDiagnosis, HeldObservation, HeldRecovery, ManifestState,
+    Part, Problem, ProblemKind, RecordState, RecoveryAudit, RecoveryError, RegistryDiagnosis, RestorePlan,
+    RestoreRefusal,
 };
 pub use ids::{CollectionName, ConnectionName, ConnectorId, FieldName, SchemaName};
 pub use manifest::{

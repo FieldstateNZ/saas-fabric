@@ -47,7 +47,7 @@ fn document(paths: &DocumentPaths) -> io::Result<ObservedDocument> {
     })
 }
 
-fn read(path: &Path) -> io::Result<Option<Vec<u8>>> {
+pub(super) fn read(path: &Path) -> io::Result<Option<Vec<u8>>> {
     match std::fs::read(path) {
         Ok(bytes) => Ok(Some(bytes)),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),

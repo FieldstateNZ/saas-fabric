@@ -11,31 +11,41 @@
 //! # Restore, and only restore
 //!
 //! The held publication record names the exact SHA-256 and revision of each
-//! document of the last complete generation. Bytes with that digest are the
-//! bytes that were published, wherever they were kept (a reader's
-//! last-known-good copy holds them). [`plan_restore`] puts those bytes back
-//! at the revision the record names and nothing else:
+//! document of its generation. [`plan_restore`] puts bytes with that digest
+//! back at that revision, and nothing else:
 //!
 //! - no revision changes, so nothing rolls back (D01-1, roll forward only);
-//! - every guard the next publication runs reads exactly what the record
-//!   attests, so none is weakened;
-//! - only a document that blocks publication is touched, and only when the
-//!   record vouches for the bytes.
+//! - the record, its generation, floors, history and registry are untouched;
+//! - only a missing or malformed manifest is rebuilt; readable metadata of
+//!   another kind, revision or contract is refused;
+//! - the offered document must keep every resource rule, alone and against
+//!   each usable peer, and every unclear peer is reported, since one repair
+//!   never establishes the generation as a whole.
 //!
-//! Discarding a held document, which no record can vouch for, is not
-//! offered: the next publication would plan against an empty document and
-//! its tenant-removal, emptying and retirement guards could not see what was
-//! discarded.
+//! A digest match is agreement with the record held now. It is not signed
+//! history, and it does not stop a writer able to replace record and payload
+//! together.
+//!
+//! No discard is offered (#108): the next publication would plan against an
+//! empty document, and its tenant-removal, emptying and retirement guards
+//! could not see what was discarded.
 
 mod diagnosis;
+#[cfg(test)]
+mod fixtures;
 mod held_parse;
+mod held_parts;
 mod held_state;
 mod port;
+mod problem;
 mod refusal;
+mod restore_checks;
 mod restore_plan;
+mod semantics;
 
 pub use diagnosis::{diagnose, HeldDiagnosis};
-pub use held_state::{DocumentDiagnosis, ManifestState, RecordState};
-pub use port::{HeldRecovery, RecoveryAudit, RecoveryError};
+pub use held_state::{DocumentDiagnosis, ManifestState, RecordState, RegistryDiagnosis};
+pub use port::{HeldObservation, HeldRecovery, RecoveryAudit, RecoveryError};
+pub use problem::{Part, Problem, ProblemKind};
 pub use refusal::RestoreRefusal;
 pub use restore_plan::{plan_restore, RestorePlan};

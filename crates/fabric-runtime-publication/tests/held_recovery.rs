@@ -32,12 +32,10 @@ const TORN: &[u8] = b"[{\"tenant\":\"acme\",";
 struct Audit(Mutex<Vec<RestorePlan>>);
 
 impl RecoveryAudit for Audit {
-    fn before(&self, plan: &RestorePlan) -> std::io::Result<()> {
+    fn intent(&self, plan: &RestorePlan) -> std::io::Result<()> {
         self.0.lock().unwrap().push(plan.clone());
         Ok(())
     }
-
-    fn failed(&self, _plan: &RestorePlan, _error: &PublicationError) {}
 }
 
 /// Revision 1 published, and its exact tenants and data-sources bytes.
@@ -49,14 +47,15 @@ async fn published() -> (TempDir, Vec<u8>, Vec<u8>) {
     (dir, tenants, data_sources)
 }
 
-async fn blocked(dir: &TempDir) -> Vec<String> {
-    diagnose(&dir.publisher().observe().await.unwrap()).blocked
+async fn problems(dir: &TempDir) -> usize {
+    diagnose(&dir.publisher().observe().await.unwrap()).problems.len()
 }
 
 #[tokio::test]
 async fn a_torn_tenants_document_is_restored_from_the_recorded_bytes_and_publication_resumes() {
     let (dir, tenants, _) = published().await;
     let before = dir.publisher().current().await.unwrap();
+    let record = dir.read_raw("publication.json");
     dir.write_raw(TENANTS_FILE, TORN);
 
     let refused = dir
@@ -74,7 +73,7 @@ async fn a_torn_tenants_document_is_restored_from_the_recorded_bytes_and_publica
         ),
         "{refused:?}"
     );
-    assert_eq!(blocked(&dir).await.len(), 1);
+    assert_eq!(problems(&dir).await, 2, "blocking, and not the recorded bytes");
 
     let audit = Audit::default();
     let plan = dir
@@ -91,7 +90,12 @@ async fn a_torn_tenants_document_is_restored_from_the_recorded_bytes_and_publica
         before,
         "no revision moved"
     );
-    assert!(blocked(&dir).await.is_empty());
+    assert_eq!(
+        dir.read_raw("publication.json"),
+        record,
+        "the record, its generation and history are kept"
+    );
+    assert_eq!(problems(&dir).await, 0);
     dir.publisher().publish(&support::base_snapshot(2)).await.unwrap();
 }
 

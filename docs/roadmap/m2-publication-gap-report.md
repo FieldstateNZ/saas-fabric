@@ -18,7 +18,10 @@
   rules and its recovery command (G5, reader side) follow under
   [Persisted last-known-good](#persisted-last-known-good-g5). G3's panel
   state, the target's observed completeness, follows under
-  [Publication completeness (G3)](#publication-completeness-g3). Test names in the gap sections are as first
+  [Publication completeness (G3)](#publication-completeness-g3). G6's
+  per-row matrix tests and its CI floor check follow under
+  [Reader compatibility matrix and floor check (G6)](#reader-compatibility-matrix-and-floor-check-g6).
+  Test names in the gap sections are as first
   written; see [Engineering fixes](#engineering-fixes),
   [Reader generations](#reader-generations) and the section after it for
   what changed and what each test is now called.
@@ -78,7 +81,7 @@ Against #112's acceptance criteria:
 | Acceptance criterion | Status | Gaps |
 |---|---|---|
 | Published tenant, data-source and catalogue revisions form a consistent contract | **Not met** across documents. Met within one document only while there is a single writer (G4a) | G1, G2, G4, G4a, G7, G8 |
-| Compatible readers precede schema activation | **Not met.** No mechanism and no version handshake | G6 |
+| Compatible readers precede schema activation | **Partly met.** The record's `minimum_reader_contract` is the handshake (#136), and CI fails a shape change that does not raise it (G6 section below). Nothing at the publisher waits for readers to be rolled out before it activates a raised floor | G6 |
 | Interrupted publication cannot expose mixed revisions | **Not met.** It can, and so can uninterrupted publication | G1, G3 |
 | Last-known-good and failure behaviour are explicit | **Partly met.** The reader side is explicit in code, including across a restart when a last-known-good directory is configured (off by default; no platform mount yet). Publisher hold and publisher-side recovery are not | G5 |
 | Catalogue selection is not claimed to deploy a product | **Met in the README** (`README.md:468-470`). Console copy was not audited | — |
@@ -462,6 +465,12 @@ and the error names the field. With `false` it starts unprimed and answers
 - **Engineering:** extending this matrix into a test per row, and a CI check that a
   producer change ships with the consumer change it needs (ADR 0018 Consequences,
   `:830-833`).
+
+**Since then:** the record's floor is the handshake (#136). Every row of
+the matrix above has its own test against the production reader, and CI
+fails when the published shape changes without the floor rising. See
+[Reader compatibility matrix and floor check (G6)](#reader-compatibility-matrix-and-floor-check-g6),
+which also restates the matrix for the reader as it now is.
 
 ### G7. Nothing reports which revisions a reader is serving
 
@@ -1244,6 +1253,127 @@ Still deferred after this change: G7's live wiring, G5's publisher hold and
 publisher-side recovery, the platform reader mount, G4 `Lease`, G6's
 remaining items, G2's publisher wait, withdrawal, the O5 continuity and
 issuance guards, and the platform contract follow-ups.
+
+## Reader compatibility matrix and floor check (G6)
+
+G6's two engineering items: a test for each row of the reader-compatibility
+matrix, and a CI check that fails when a producer change ships without the
+consumer change it needs (ADR 0018 Consequences). They are asked on
+[#108 comment 6121406084](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6121406084).
+The disposition in
+[#108 comment 6122127775](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6122127775)
+accepts those defaults, with fail-closed base reads and automatic variant
+coverage, both below. This change is source and CI only. It does not
+change the release workflow, any tag or any publication, and none of it is
+verified live.
+
+**The matrix, for the production reader.** The table under G6 describes the
+per-document reader from before #136. Since #136, `fabric-api` reads with
+`build_published_runtime` over `PublishedFiles`, which applies only the
+complete generation a record names. Each row below has one test in
+`fabric-runtime-publication/tests/reader_compatibility_matrix.rs`, unless it
+names another file. Each test checks what the row says for a running reader
+and for a reader starting now. Rows the tests name `current_behaviour_*`
+pin a remaining D01-1 item.
+
+| Producer change | Running reader (holds a generation) | Reader starting now | Test |
+|---|---|---|---|
+| New revision, same shape | Applies it at the next refresh | Primes from it | `a_new_revision_at_the_same_shape_is_applied_by_a_running_reader_and_primes_a_new_one` |
+| Field added to tenants or data sources, at the top level or nested, floor unchanged | Refuses the whole generation, both documents, and keeps the last complete one | `fail_fast_on_prime = true`: fails to start, naming the field. `false`: unprimed, `RuntimeUnavailable` | `current_behaviour_a_field_added_to_tenants_or_data_sources_refuses_the_whole_generation` (four fields); also `reader_compatibility.rs::current_behaviour_a_shape_change_published_without_raising_the_floor_is_refused_only_by_unknown_fields` |
+| Required field removed, floor unchanged | As above, naming the missing field | As above | `current_behaviour_a_required_field_removed_refuses_the_whole_generation` (tenant `revision`, DataSource `connector`, residency `region`) |
+| New enum variant (isolation kind, placement class, connection kind), floor unchanged | As above, naming the variant | As above | `current_behaviour_a_new_enum_variant_refuses_the_whole_generation` |
+| One resource invalid at a known shape (a tenant with an empty `data` map) | That resource keeps its held copy, and the rest applies | Drops it and serves the rest. With nothing left, does not prime | `one_invalid_resource_keeps_its_held_copy_and_the_rest_of_the_generation_applies` |
+| Catalogue shape change | Keeps the catalogue it started with, and its tenants still refresh | Fails to start: the host cannot decode the catalogue | `current_behaviour_a_catalogue_shape_change_leaves_running_replicas_on_their_catalogue_and_stops_new_ones` |
+| `contract_version` bumped in every manifest, shape unchanged | Ignored | Ignored | `current_behaviour_a_bumped_manifest_contract_version_is_ignored_by_every_reader` |
+| v2 file names beside v1 (ADR 0018 §9) | Unaffected | Unaffected | `v2_documents_beside_v1_reach_no_reader` |
+| Key added to the publication record, floor unchanged | Ignored: the reader's record type does not deny unknown fields | Ignored | `a_key_added_to_the_record_under_an_unchanged_floor_is_ignored_by_every_reader` |
+| Record floor above the reader | Keeps its last complete generation | Does not prime (`requires reader contract`); unprimed with `fail_fast_on_prime = false` | `reader_compatibility.rs::a_publication_above_the_reader_floor_keeps_running_readers_on_their_generation_and_stops_new_ones` |
+
+The last two rows are new. Shapes this publisher cannot write are stood in
+for by editing the published bytes and writing a record that names them, so
+the reader sees what such a publisher would leave.
+
+**The floor check.** Defaults 1 to 4 of the #108 question:
+
+- **The published shape** is what the publisher writes into
+  `tenants.json`, `data-sources.json` and `catalog.json`, plus the record
+  keys a reader reads (`minimum_reader_contract`, `generation`,
+  `documents.{tenants,data-sources,catalog}.sha256`). It covers every field
+  after serde renames and its JSON kind, tagged-enum variants and their
+  fields, string-enum values, and which fields may be absent. It does not
+  cover values, value rules such as id syntax, other record keys (free to
+  add, as the reader's type says) or manifests (no reader reads them).
+- **The lock.** `crates/fabric-runtime-publication/published-shapes.json`
+  holds that shape and the `minimumReaderContract` it was recorded at.
+  `tests/published_shapes.rs` renders it from specimen documents through
+  the publisher's own canonical renderers, and fails if it differs from
+  the lock. The specimens (`tests/shapes/specimens.rs`) destructure every
+  document type without `..`, so a new field does not compile until it is
+  given a specimen, and a full specimen that leaves an optional field unset
+  fails at run time. Each enum's variants come from one table
+  (`every_variant!` in `tests/shapes/variants.rs`). The table generates both
+  an exhaustive `match` and the specimens, so a variant added to an enum
+  does not compile until it has an entry, and every entry is serialized
+  into the lock. That holds whether or not the variant deserializes. A
+  variant the writer cannot write is listed as `unwritten`: it is matched
+  too, and serializing it must fail. A deserialize-only alias changes no
+  writer output, so it changes nothing.
+  The same suite checks:
+  - the lock's floor is `MINIMUM_READER_CONTRACT`;
+  - `READER_CONTRACT` reaches it;
+  - the specimens parse as this source's reader types.
+- **The check.** `scripts/check_reader_floor.py --base REF` compares the
+  lock with the same file at `REF`. It refuses:
+  - any change to the shape, additions and removals alike, unless
+    `minimumReaderContract` rose;
+  - a floor that fell;
+  - a lock floor that differs from the source's constant;
+  - a `compatibility.yaml` that disagrees with the source
+    (`release_compatibility.check_contracts`).
+
+  The base is read fail-closed. The lock counts as absent only when
+  `git ls-tree` proves the base's tree has no such path. An unknown commit,
+  an unreadable tree, or a blob the tree names but the repository cannot
+  supply is refused. The base's `MINIMUM_READER_CONTRACT` and
+  `compatibility.yaml` must be readable and agree, and the head's floor may
+  not fall below them, even when the lock is first adopted. CI's `scripts` job runs the
+  check after the offline script tests. A pull request is compared with its
+  base commit, a push to `main` with the commit it replaced, and any other
+  push with its merge base with `main`.
+
+| Acceptance | Guard | Tests and evidence |
+|---|---|---|
+| One test per matrix row | `reader_compatibility_matrix.rs` | the nine tests in the table above, plus the existing floor test |
+| The lock is what the publisher writes | `published_shapes.rs` | `the_lock_is_the_shape_this_publisher_writes`, `::the_lock_is_byte_for_byte_what_this_suite_writes`, `::the_specimens_are_read_by_this_sources_reader`, `::each_kind_of_shape_change_changes_the_shape` |
+| The lock, the constants and `compatibility.yaml` agree | `published_shapes.rs`; `check_reader_floor.py` | `::the_lock_is_recorded_at_the_floor_this_publisher_writes`, `::this_sources_reader_serves_the_floor_this_publisher_writes`; `test_check_reader_floor.py::test_a_lock_raised_alone_is_refused`, `::test_a_constant_raised_without_compatibility_yaml_is_refused`; existing `this_repositorys_compatibility.rs` |
+| CI fails a shape change without a floor raise | `check_reader_floor.py`, `ci.yml` `scripts` job | `test_check_reader_floor.py::test_a_shape_change_without_a_floor_raise_is_refused`, `::test_a_removed_line_is_a_shape_change_too`, `::test_a_falling_floor_is_refused`; a deliberate shape change, checked locally and reverted (in the pull request) |
+| A raise admits the change | as above | `::test_a_shape_change_with_a_floor_raise_passes`, `::test_a_floor_raise_without_a_shape_change_passes` |
+| A base that cannot be read is refused, never taken as absent; the floor cannot fall when the lock is adopted | `check_reader_floor.py::read_at`, `::base_source_floor` | `::test_the_review_probe_a_missing_lock_blob_with_a_falling_floor_is_refused`, `::test_a_lock_blob_missing_at_the_same_floor_is_refused_too`, `::test_a_base_tree_that_cannot_be_read_is_refused`, `::test_a_floor_decrease_during_bootstrap_is_refused`, `::test_a_base_whose_source_and_compatibility_disagree_is_refused` |
+| A new variant cannot get a match arm without becoming a specimen, whether or not it deserializes | `every_variant!` (`tests/shapes/variants.rs`) | `published_shapes.rs::the_variant_table_yields_written_variants_and_proves_unwritten_ones`, `::a_written_variant_cannot_be_listed_as_unwritten`. Checked locally against `PlacementClassDocument`:<br>- `#[serde(skip_deserializing)] Archive` or a plain `Archive` with no table entry does not compile (`non-exhaustive patterns`);<br>- with an entry, the lock test fails (`+ data-sources.json $[].placement: one of "archive"`);<br>- listed as `unwritten`, the table fails because the writer serializes it;<br>- with the lock regenerated, the floor check refuses it unless the floor rises;<br>- an input-only `#[serde(alias)]` passes |
+
+Limits:
+
+- **Only this repository's publisher is covered.** A publisher built
+  elsewhere, or bytes written past the publisher, are still refused only by
+  the readers' `deny_unknown_fields`. The `current_behaviour_*` rows pin
+  that.
+- **Raising the floor does not roll readers out.** Nothing at the publisher
+  waits for readers at the new contract before it publishes the raised
+  floor. A reader below it keeps its last complete generation, as the
+  floor test shows. Ordering the rollout stays with the release and the
+  operator.
+- **Each change needs a raise.** The check does not class any change as
+  safe. Removing a field that may be absent is harmless to an older reader,
+  but it still needs a raise (default 2 on #108, accepted).
+- **The rules name the maps and enums.** `tests/shapes/mod.rs` says which
+  paths are maps, tagged enums and string enums. If a new map or enum
+  field is not added there, its keys or values are read as fields and
+  strings. That still changes the shape, but less precisely.
+
+Still deferred after this change: §9's dual-key path and G6's versioning rule
+(D01-1), G7's live wiring, G5's publisher hold and publisher-side recovery,
+the platform reader mount, G4 `Lease`, G2's publisher wait, withdrawal, the
+O5 continuity and issuance guards, and the platform contract follow-ups.
 
 ## Not covered here
 

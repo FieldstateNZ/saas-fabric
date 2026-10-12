@@ -17,11 +17,13 @@
     clippy::panic
 )]
 
+mod compatibility;
 mod connector;
 mod counting_source;
 mod fixtures;
 mod requests;
 
+pub use compatibility::{edit_json, poll_until, refresh, resolves_to, rewrite_record};
 pub use connector::RecordingConnector;
 pub use counting_source::{CountingPublished, CountingSource};
 pub use fixtures::{

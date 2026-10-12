@@ -22,6 +22,9 @@ workspace crate depends on it.
   itself a valid resource name; `Display` is `<resource>_collection:<resource>`;
   `collides_with(&LogicalResourceName)`. Shared because the control plane's
   model writer and the runtime's Check adapter must spell it identically.
+- `authorization_names` (a public module) — `PRINCIPAL_TYPE` (`user`) and
+  `SERVICE_RESERVED` (`self`, `this`): names the model writer emits or the
+  service reserves, which managed authorization validation keeps clear of.
 - `OperationKind` — `is_collection_operation()` (`List`, `Create`) and
   `computed_relation()` (`can_<operation>`) are the one partition and the one
   relation spelling both planes use.

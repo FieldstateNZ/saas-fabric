@@ -34,6 +34,7 @@
 //!
 //! Applications see the first. They never see the third.
 
+pub mod authorization_names;
 mod clock;
 mod collection_object;
 mod identifier_error;

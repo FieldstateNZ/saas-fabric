@@ -1,16 +1,22 @@
 //! `spec.authorization` to an authorization model.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
-use fabric_client_model::{AuthorizationConfiguration, DesiredStateError, Relation, ResourceAuthorization};
+use fabric_client_model::{AuthorizationConfiguration, DesiredStateError, ResourceAuthorization};
+use fabric_core::authorization_names::PRINCIPAL_TYPE;
 use fabric_core::{CollectionObject, OperationKind};
 
 use crate::model::{
     AuthorizationModel, Empty, Metadata, RelatedType, RelationMetadata, TypeDefinition, Userset,
-    PRINCIPAL_TYPE,
 };
+use rewrite::{first_relation, permitted_by};
 
-/// The authorization model `configuration` declares.
+/// The authorization model `configuration` declares, or `None` when it
+/// declares nothing.
+///
+/// `None` is not an empty model. A client that declares no authorization is
+/// not managed by the platform (ADR 0013), and a principal-only model would be
+/// something a later writer could mistake for one to activate.
 ///
 /// Each declared resource becomes two types:
 ///
@@ -25,15 +31,18 @@ use crate::model::{
 ///
 /// # Errors
 ///
-/// The [`DesiredStateError`] validation reports, when the configuration is one
-/// the client model would refuse. Every rule a model depends on — a
-/// nameable collection type, no collision between types, no relation named
-/// like a computed one — is a validation rule, so a document that validates
-/// always translates.
+/// The [`DesiredStateError`] validation reports. The configuration is
+/// validated again here, because its fields are public and a value built in
+/// code never passed through document parsing. A duplicate type or relation
+/// is refused, never overwritten.
 pub fn authorization_model(
     configuration: &AuthorizationConfiguration,
-) -> Result<AuthorizationModel, DesiredStateError> {
+) -> Result<Option<AuthorizationModel>, DesiredStateError> {
     configuration.validate()?;
+
+    if configuration.is_empty() {
+        return Ok(None);
+    }
 
     let mut types = vec![TypeDefinition {
         name: PRINCIPAL_TYPE.to_owned(),
@@ -49,21 +58,41 @@ pub fn authorization_model(
             }
         })?;
 
-        types.push(object_type(declared.resource.to_string(), declared, false));
-        types.push(object_type(collection.type_name(), declared, true));
+        types.push(object_type(declared.resource.to_string(), declared, false)?);
+        types.push(object_type(collection.type_name(), declared, true)?);
     }
 
-    Ok(AuthorizationModel::new(types))
+    let mut names = BTreeSet::new();
+    if let Some(duplicate) = types
+        .iter()
+        .find(|definition| !names.insert(definition.name.as_str()))
+    {
+        return Err(DesiredStateError::Duplicate {
+            field: "spec.authorization.resources[].resource",
+            value: duplicate.name.clone(),
+        });
+    }
+
+    Ok(Some(AuthorizationModel::new(types)))
 }
 
 /// One object type: the declared relations, held directly, and the computed
 /// relation of each operation asked about this kind of object.
-fn object_type(name: String, declared: &ResourceAuthorization, collection: bool) -> TypeDefinition {
+fn object_type(
+    name: String,
+    declared: &ResourceAuthorization,
+    collection: bool,
+) -> Result<TypeDefinition, DesiredStateError> {
     let mut relations = BTreeMap::new();
     let mut direct = BTreeMap::new();
+    let first = first_relation(&declared.relations)?;
 
     for relation in &declared.relations {
-        relations.insert(relation.name.to_string(), Userset::Direct(Empty {}));
+        insert(
+            &mut relations,
+            relation.name.to_string(),
+            Userset::Direct(Empty {}),
+        )?;
         direct.insert(
             relation.name.to_string(),
             RelationMetadata {
@@ -74,58 +103,39 @@ fn object_type(name: String, declared: &ResourceAuthorization, collection: bool)
 
     for operation in OperationKind::ALL {
         if operation.is_collection_operation() == collection {
-            relations.insert(
+            insert(
+                &mut relations,
                 operation.computed_relation().to_owned(),
-                permitted_by(&declared.relations, operation),
-            );
+                permitted_by(&declared.relations, first, operation),
+            )?;
         }
     }
 
-    TypeDefinition {
+    Ok(TypeDefinition {
         name,
         relations,
         metadata: Some(Metadata { relations: direct }),
-    }
+    })
 }
 
-/// Whoever holds a relation that permits `operation`.
-///
-/// Validation guarantees at least one relation. When none permits the
-/// operation, the first relation minus itself: a relation nobody can hold,
-/// and which no tuple can be written for, because it is not direct.
-fn permitted_by(relations: &[Relation], operation: OperationKind) -> Userset {
-    let mut granting: Vec<Userset> = relations
-        .iter()
-        .filter(|relation| relation.permits(operation))
-        .map(computed)
-        .collect();
-
-    if granting.len() > 1 {
-        return Userset::Union { child: granting };
+/// Adds a relation, refusing one that is already there.
+fn insert(
+    relations: &mut BTreeMap<String, Userset>,
+    name: String,
+    userset: Userset,
+) -> Result<(), DesiredStateError> {
+    if relations.contains_key(&name) {
+        return Err(DesiredStateError::Duplicate {
+            field: "spec.authorization.resources[].relations",
+            value: name,
+        });
     }
 
-    if let Some(only) = granting.pop() {
-        return only;
-    }
-
-    // An empty union only for a resource with no relations, which validation
-    // refuses; the service would refuse the model too.
-    relations
-        .first()
-        .map_or(Userset::Union { child: Vec::new() }, |first| {
-            Userset::Difference {
-                base: Box::new(computed(first)),
-                subtract: Box::new(computed(first)),
-            }
-        })
+    relations.insert(name, userset);
+    Ok(())
 }
 
-/// Whoever holds `relation` on the same object.
-fn computed(relation: &Relation) -> Userset {
-    Userset::Computed {
-        relation: relation.name.to_string(),
-    }
-}
+mod rewrite;
 
 #[cfg(test)]
 mod translate_tests;

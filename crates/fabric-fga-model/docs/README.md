@@ -30,7 +30,14 @@ resources:
 - **Nothing links them.** `viewer` on the collection grants nothing on a
   record, and the reverse.
 - **"Nobody" is a denial, not an error.** An operation no relation permits is
-  still defined, as `<first relation> but not <first relation>`.
+  still defined, as `<first> but not <first>`, where `<first>` is the least
+  relation by name, so declaration order never changes the model. One
+  contributor is that relation itself, because OpenFGA refuses a union of one.
+- **No configuration, no model.** An empty configuration is unmanaged, and
+  `authorization_model` returns `None` for it, never a principal-only model.
+- **Reserved names are refused.** A managed resource may not be named `user`,
+  `self` or `this`. A relation may not be named `self`, `this` or
+  `can_<operation>`. A duplicate is refused, never overwritten.
 - **`can_list` does not filter rows.** It authorizes the collection response.
   `ListObjects` and row filtering are a later refinement.
 
@@ -47,8 +54,9 @@ anything.
 ## Tests
 
 - `src/translate/translate_tests.rs`: the JSON for ADR 0013's example, the
-  split between the two types, "nobody", and refusal of an invalid
-  declaration.
-- `tests/model_against_openfga.rs`: the model against a real OpenFGA. This
-  test is skipped unless `FABRIC_TEST_OPENFGA_PORT` names one (see the file).
-  CI does not run it.
+  split between the two types, "nobody", order independence, `None`, and
+  refusal of invalid or reserved input.
+- `tests/model_against_openfga.rs`: the model against OpenFGA `v1.19.0`,
+  pinned by digest. CI's `authorization-model` job runs it in required mode
+  (`FABRIC_REQUIRE_OPENFGA=1`) against a throwaway container on the runner.
+  Elsewhere it skips unless `FABRIC_TEST_OPENFGA_PORT` is set.

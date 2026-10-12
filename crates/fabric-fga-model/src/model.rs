@@ -8,14 +8,6 @@ use serde::Serialize;
 /// The schema every model this crate writes is in.
 const SCHEMA_VERSION: &str = "1.1";
 
-/// The type a principal is written under.
-///
-/// The front binds every subject as `user:<realm>/<subject>` (`fabric-fga-auth`,
-/// ADR 0015). This crate has no edge to the front, so the type is restated;
-/// the two must agree, and the end-to-end test against a real service is what
-/// proves they do.
-pub(crate) const PRINCIPAL_TYPE: &str = "user";
-
 /// A complete authorization model: every type, in a stable order.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct AuthorizationModel {
@@ -98,7 +90,7 @@ pub(crate) struct Metadata {
 /// Which subject types a direct relation may be written for.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub(crate) struct RelationMetadata {
-    /// Only [`PRINCIPAL_TYPE`]: no wildcard and no userset.
+    /// Only the principal type: no wildcard and no userset.
     pub(crate) directly_related_user_types: Vec<RelatedType>,
 }
 

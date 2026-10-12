@@ -40,7 +40,10 @@ fn customers() -> AuthorizationConfiguration {
 }
 
 fn model(configuration: &AuthorizationConfiguration) -> Value {
-    serde_json::to_value(authorization_model(configuration).unwrap()).unwrap()
+    let written = authorization_model(configuration)
+        .unwrap()
+        .expect("a declaration that names resources is a managed model");
+    serde_json::to_value(written).unwrap()
 }
 
 /// The named type's definition.
@@ -157,12 +160,16 @@ fn the_collection_type_is_the_one_the_runtime_asks_about() {
 fn an_operation_no_relation_permits_is_defined_and_held_by_nobody() {
     let model = model(&declaring(vec![(
         "auditEvents",
-        vec![relation("viewer", &[OperationKind::Read])],
+        vec![
+            relation("zeta", &[OperationKind::Read]),
+            relation("alpha", &[OperationKind::Read]),
+        ],
     )]));
     let collection = type_named(&model, "auditEvents_collection");
+    // `alpha`, the least by name, not `zeta`, the first declared.
     let nobody = json!({"difference": {
-        "base": {"computedUserset": {"relation": "viewer"}},
-        "subtract": {"computedUserset": {"relation": "viewer"}}
+        "base": {"computedUserset": {"relation": "alpha"}},
+        "subtract": {"computedUserset": {"relation": "alpha"}}
     }});
 
     assert_eq!(collection["relations"]["can_list"], nobody);
@@ -171,6 +178,47 @@ fn an_operation_no_relation_permits_is_defined_and_held_by_nobody() {
         type_named(&model, "auditEvents")["relations"]["can_delete"],
         nobody
     );
+}
+
+#[test]
+fn one_contributor_is_its_relation_and_never_a_union_of_one() {
+    let model = model(&customers());
+
+    assert_eq!(
+        type_named(&model, "customers")["relations"]["can_delete"],
+        json!({"computedUserset": {"relation": "owner"}})
+    );
+}
+
+#[test]
+fn the_same_declaration_in_another_order_writes_the_same_nobody() {
+    let forwards = declaring(vec![(
+        "auditEvents",
+        vec![
+            relation("alpha", &[OperationKind::Read]),
+            relation("zeta", &[OperationKind::Read]),
+        ],
+    )]);
+    let backwards = declaring(vec![(
+        "auditEvents",
+        vec![
+            relation("zeta", &[OperationKind::Read]),
+            relation("alpha", &[OperationKind::Read]),
+        ],
+    )]);
+
+    for name in ["auditEvents", "auditEvents_collection"] {
+        let forwards = type_named(&model(&forwards), name);
+        let backwards = type_named(&model(&backwards), name);
+
+        for relation in ["can_list", "can_create", "can_update", "can_delete"] {
+            assert_eq!(
+                forwards["relations"][relation], backwards["relations"][relation],
+                "{name} {relation}"
+            );
+        }
+        assert_eq!(forwards["metadata"], backwards["metadata"], "{name}");
+    }
 }
 
 #[test]
@@ -199,11 +247,94 @@ fn every_declared_resource_gets_both_types_in_declared_order() {
 }
 
 #[test]
-fn a_configuration_declaring_nothing_is_a_model_of_principals_only() {
+fn a_configuration_declaring_nothing_is_unmanaged_and_has_no_model() {
     assert_eq!(
-        model(&AuthorizationConfiguration::default()),
-        json!({"schema_version": "1.1", "type_definitions": [{"type": "user"}]})
+        authorization_model(&AuthorizationConfiguration::default()),
+        Ok(None)
     );
+}
+
+#[test]
+fn a_resource_with_no_relations_built_in_code_is_refused() {
+    // Public fields: a value can skip document parsing, so the translator
+    // validates again.
+    let configuration = declaring(vec![("customers", Vec::new())]);
+
+    assert!(matches!(
+        authorization_model(&configuration),
+        Err(DesiredStateError::InvalidField { .. })
+    ));
+}
+
+#[test]
+fn a_reserved_name_built_in_code_is_refused() {
+    let reserved = [
+        declaring(vec![("user", vec![relation("viewer", &[OperationKind::Read])])]),
+        declaring(vec![("self", vec![relation("viewer", &[OperationKind::Read])])]),
+        declaring(vec![("this", vec![relation("viewer", &[OperationKind::Read])])]),
+        declaring(vec![(
+            "customers",
+            vec![relation("self", &[OperationKind::Read])],
+        )]),
+        declaring(vec![(
+            "customers",
+            vec![relation("this", &[OperationKind::Read])],
+        )]),
+    ];
+
+    for configuration in reserved {
+        assert!(
+            matches!(
+                authorization_model(&configuration),
+                Err(DesiredStateError::InvalidField { .. })
+            ),
+            "{configuration:?}"
+        );
+    }
+}
+
+#[test]
+fn every_computed_relation_name_is_refused_on_either_type() {
+    for operation in OperationKind::ALL {
+        let configuration = declaring(vec![(
+            "customers",
+            vec![relation(operation.computed_relation(), &[OperationKind::Read])],
+        )]);
+
+        assert!(authorization_model(&configuration).is_err(), "{operation}");
+    }
+}
+
+#[test]
+fn a_duplicate_relation_built_in_code_is_refused_not_overwritten() {
+    let configuration = declaring(vec![(
+        "customers",
+        vec![
+            relation("viewer", &[OperationKind::Read]),
+            relation("viewer", &[OperationKind::List]),
+        ],
+    )]);
+
+    assert!(matches!(
+        authorization_model(&configuration),
+        Err(DesiredStateError::Duplicate { .. })
+    ));
+}
+
+#[test]
+fn the_52_and_53_byte_boundary_holds_for_managed_resources() {
+    let longest = "r".repeat(52);
+    let too_long = "r".repeat(53);
+    let declared = |name: &str| declaring(vec![(name, vec![relation("viewer", &[OperationKind::List])])]);
+
+    let model = model(&declared(&longest));
+    assert_eq!(
+        type_named(&model, &format!("{longest}_collection"))["type"]
+            .as_str()
+            .map(str::len),
+        Some(63)
+    );
+    assert!(authorization_model(&declared(&too_long)).is_err());
 }
 
 #[test]

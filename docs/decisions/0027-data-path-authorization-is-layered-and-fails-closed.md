@@ -22,6 +22,8 @@
   [#108](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6115327492);
   the collection contract's spelling, model writer and model shape, raised in
   [#108](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6118156522)
+  and disposed in
+  [#108](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6118398377)
 
 ## Context
 
@@ -106,8 +108,9 @@ decision and is refused as `internal`, like every other unexpected status.
 *Amended 2026-10-12. Until then this section refused every collection
 operation on a checked resource with a 403
 (`collection_contract_undefined`), because no model defined the collection
-object. The contract below now exists and is covered by tests, so the
-refusal is gone (Owed item 1).*
+object. The contract below, as disposed in #108 (comment 6118398377), now
+exists. It is covered by unit tests and by a required CI job against a
+pinned OpenFGA, so the refusal is gone (Owed item 1).*
 
 `list` and `create` name no record. They are asked about the resource's
 **collection**, a distinct object, never about a record:
@@ -124,9 +127,11 @@ refusal is gone (Owed item 1).*
   `CollectionObject`, beside `OperationKind`, because the control plane writes
   it and the runtime plane asks about it, and the two planes may not depend on
   each other. Its type half must be a `LogicalResourceName`, because the
-  front parses it as one. So a resource name longer than 52 bytes has no
-  collection, and two declared resources must not collide (`customers` and
-  `customers_collection`). `spec.authorization` validation refuses both.
+  front parses it as one. So a resource that declares relations may be at
+  most 52 bytes long, and no two emitted types may collide (`customers` and
+  `customers_collection`, in either order). `spec.authorization` validation
+  refuses both. The cap applies only to managed resources: a catalogue
+  resource that declares no relations keeps all 63 bytes.
   If one reaches the Data API anyway, it is refused as a denial
   (`unnameable_object`), without asking.
 - The collection object is bound to the tenant the same way every Check is.
@@ -142,18 +147,33 @@ refusal is gone (Owed item 1).*
   | `customers` (record) | every declared relation | `can_read`, `can_update`, `can_delete` |
   | `customers_collection` | every declared relation | `can_list`, `can_create` |
 
-  - Each `can_<operation>` is the union of the relations whose `permits`
-    include the operation.
+  - Each `can_<operation>` is held by whoever holds a relation whose
+    `permits` include the operation. One such relation is written as that
+    relation (`computedUserset`), because OpenFGA refuses a union of one.
+    Two or more are a union.
   - Where no relation permits it, it is still defined, as a relation nobody
-    holds (`<first> but not <first>`). A Check therefore answers a denial,
-    not a model error.
+    holds (`<first> but not <first>`). `<first>` is the least relation by
+    name, not by declaration order, so reordering a declaration does not
+    change the model. A Check therefore answers a denial, not a model
+    error, even for a holder of `<first>`.
   - Neither type defines the other's operations, so inside OpenFGA too a
     record can't answer `can_list`, and a collection can't answer
     `can_read`.
   - Nothing links the two types. Holding `viewer` on the collection grants
     nothing on any record, and the reverse holds too.
-  - A declared relation may not be named `can_<operation>`, because it would
-    then be the computed relation.
+  - The model has one principal type, `user`, matching how the front binds a
+    subject. Direct relations accept a concrete `user` only. Computed
+    relations accept no direct tuple.
+  - Reserved names, refused by validation and by the translator:
+    - A managed resource may not be named `user`, `self` or `this`.
+    - A declared relation may not be named `self`, `this`, or any of the
+      five `can_<operation>` names.
+    - A duplicate type or relation is refused, never overwritten.
+  - A configuration that declares nothing is unmanaged.
+    `authorization_model` returns `None` for it, never a principal-only
+    model.
+  - The translator validates its input again, because the configuration's
+    fields are public and a value built in code skips document parsing.
 - A `can_list` allow authorizes the collection response that model defines.
   It does not filter rows. `ListObjects`, row filtering and their pagination
   are a later refinement.
@@ -258,10 +278,12 @@ Accepting this decision does not make these true.
 1. ~~**The collection model contract (§2a).**~~ Built 2026-10-12: the
    per-resource collection type and its `can_list` and `can_create`
    relations, in the model writer (`fabric-fga-model`), with tests. The
-   refusals in `DataAuthorization::decide` and in `FrontCheck` have given way
-   to a collection Check. The written model is proven against a real OpenFGA
-   only by a test that is skipped unless one is provided
-   (`FABRIC_TEST_OPENFGA_PORT`); CI does not run it.
+   written model is proven against OpenFGA `v1.19.0`, pinned by digest, in
+   CI's `authorization-model` job. That job runs in required mode, so a
+   missing service fails it rather than skipping it. With that proof, the
+   refusals in `DataAuthorization::decide` and in `FrontCheck` have given
+   way to a collection Check. Nothing writes the model to a live store
+   (item 3).
 2. **Where the policy comes from.** Only the composition root can supply
    `TenantPolicies`, and it supplies none. Before M3, the posture and each
    client's relation-declaring resources must reach the runtime through
@@ -324,25 +346,37 @@ Accepting this decision does not make these true.
 - `crates/fabric-core/src/collection_object.rs`: the collection is
   `<resource>_collection:<resource>`, its type is a valid resource name, a
   resource too long for one is refused, and a collision is detected.
-- `crates/fabric-client-model/src/authorization/validation_tests.rs`: a
-  resource spelled like another's collection, a resource too long to name its
-  collection, and a relation named `can_<operation>` are refused.
+- `crates/fabric-client-model/src/authorization/validation_tests.rs`, these
+  are refused:
+  - a collision with another resource's collection, in either order;
+  - a 53-byte managed resource (a 52-byte one is accepted, and a 63-byte
+    name stays valid outside managed authorization);
+  - a resource named `user`, `self` or `this`;
+  - a relation named `self`, `this` or `can_<operation>`.
 - `crates/fabric-fga-model/src/translate/translate_tests.rs`:
   - ADR 0013's example translates to exactly a record type and a collection
     type;
   - neither type defines the other's operations;
   - the collection type is the one the runtime asks about;
-  - an operation no relation permits is defined and held by nobody;
+  - an operation no relation permits is defined and held by nobody, built
+    from the least relation by name;
+  - one contributor is never a union of one;
+  - reordered input writes the same model;
+  - an empty configuration is `None`;
+  - these are refused rather than translated, even when built in code:
+    zero relations, reserved names, every `can_*` name, a duplicate
+    relation, and a 53-byte managed resource (52 bytes is accepted);
   - a declaration validation refuses is not translated.
-- `crates/fabric-fga-model/tests/model_against_openfga.rs`, against a real
-  OpenFGA, **skipped unless `FABRIC_TEST_OPENFGA_PORT` is set**:
-  - the service accepts the model;
-  - a collection grant answers `can_list`;
-  - a record `owner` grant answers neither `can_list` nor `can_create`;
-  - a collection grant answers nothing about a record;
-  - a cross-kind question is refused;
-  - an operation no relation permits is a denial;
-  - a computed relation cannot be written as a tuple.
+- `crates/fabric-fga-model/tests/model_against_openfga.rs`, run against a
+  pinned, disposable OpenFGA by the required CI job `authorization-model`.
+  `FABRIC_REQUIRE_OPENFGA=1` turns a missing service into a failure, and
+  `ci_runs_the_pinned_server_in_required_mode` holds `ci.yml` to the pin:
+  - `one_and_several_contributing_relations_resolve`;
+  - `nobody_denies_even_a_holder_of_the_first_relation_on_record_and_collection`;
+  - `record_and_collection_grants_never_answer_for_each_other`, including
+    refused cross-kind questions;
+  - `resources_with_the_same_relation_names_share_no_permission`;
+  - `a_computed_permission_cannot_be_granted_by_a_tuple`.
 - `crates/fabric-fga-check/src/front_check/front_check_tests.rs`, against a
   fake front on `127.0.0.1` through the test-only plaintext path:
   - a `200` allow carries the caller's token and `can_<operation>` unchanged;

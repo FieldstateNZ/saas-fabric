@@ -32,6 +32,13 @@
 //! which `fabric-fga-check` reads too. The control plane writes what the
 //! runtime asks, and neither plane depends on the other.
 //!
+//! # No configuration, no model
+//!
+//! A client that declares no authorization is unmanaged, and
+//! [`authorization_model`] returns `None` for it, never a model holding only
+//! the principal type that something could later mistake for one to
+//! activate.
+//!
 //! # Nothing calls this yet
 //!
 //! It is a pure translation with no transport. Writing the model through the

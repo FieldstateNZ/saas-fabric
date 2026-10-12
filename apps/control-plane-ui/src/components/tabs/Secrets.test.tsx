@@ -20,6 +20,7 @@ const ACME: Client = {
   realm: 'acme',
   revision: 'abc',
   lifecycle: SAVED_INTENT,
+  projection: { state: 'consistent' },
 }
 
 const VALUE = 'a-value-that-must-not-persist'

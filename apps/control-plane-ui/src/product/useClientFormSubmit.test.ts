@@ -13,7 +13,7 @@ vi.mock('../api/catalogue', () => ({
 }))
 
 const existing: ClientProductResponse = {
-  client: { id: 'acme', displayName: 'Acme', hosts: [], realm: 'acme', revision: 'r1', lifecycle: SAVED_INTENT },
+  client: { id: 'acme', displayName: 'Acme', hosts: [], realm: 'acme', revision: 'r1', lifecycle: SAVED_INTENT, projection: { state: 'consistent' } },
   product: {
     legalName: 'Acme Ltd',
     region: 'New Zealand',
@@ -24,7 +24,7 @@ const existing: ClientProductResponse = {
     activity: [],
   },
   resolved: [],
-  reconciliation: { status: 'applied', observedAtUnix: null, detail: null, handEdits: [] },
+  reconciliation: { status: 'applied', observedAtUnix: null, detail: null, handEdits: [], withheld: [] },
 }
 
 /**

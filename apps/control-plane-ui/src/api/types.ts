@@ -8,9 +8,11 @@
  */
 
 import type { ClientLifecycle } from './lifecycle-types'
+import type { ProjectionCheck } from './projection-types'
 import type { Publication } from './publication-types'
 import type { Reconciliation } from './reconciliation-types'
 
+export type { ProjectedClientDivergence, ProjectedClientField, ProjectionCheck } from './projection-types'
 export type { HandEdit, Reconciliation, ReconciliationStatus } from './reconciliation-types'
 
 /** One client, as the list and detail views render it. */
@@ -28,6 +30,8 @@ export interface Client {
   readonly revision: string
   /** Saved intent, a usable client, or retired. */
   readonly lifecycle: ClientLifecycle
+  /** Whether its stored projected identity clients are still their projection. */
+  readonly projection: ProjectionCheck
 }
 
 /** Which kind of callback an application client is entitled to. */
@@ -82,6 +86,8 @@ export interface Identity {
   readonly apiVersion: string
   readonly revision: string
   readonly reconciliation: Reconciliation
+  /** Whether the projected clients in `clients` are still their projection. */
+  readonly projection: ProjectionCheck
 }
 
 /**

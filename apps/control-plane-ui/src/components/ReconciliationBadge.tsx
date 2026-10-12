@@ -9,6 +9,9 @@ const EXPLANATION: Record<Reconciliation['status'], string> = {
   handEdited:
     'Someone edited this in the identity provider in a way SaaS Fabric does not support. ' +
     'It has been left in place, not overwritten. Undo the edit there, or re-assert the configuration.',
+  withheld:
+    "A projected application's stored configuration no longer matches what SaaS Fabric projects for it, " +
+    'so it was not applied, and the identity provider was left as it was for it. Everything else is in effect.',
 }
 
 /** Each hand edit, as an operator would describe it. */
@@ -43,6 +46,15 @@ export function ReconciliationBadge({ reconciliation }: { reconciliation: Reconc
           {reconciliation.handEdits.map((edit) => (
             <li key={`${edit.client}:${edit.field}`}>
               <code>{edit.client}</code> {HAND_EDIT[edit.field]}
+            </li>
+          ))}
+        </ul>
+      )}
+      {reconciliation.withheld.length > 0 && (
+        <ul className="badge__withheld">
+          {reconciliation.withheld.map((client) => (
+            <li key={client}>
+              <code>{client}</code> was not applied
             </li>
           ))}
         </ul>

@@ -188,7 +188,34 @@ body {
   border-left-color: var(--pending);
 }
 
-.badge__hand-edits {
+.badge--withheld {
+  border-left-color: var(--pending);
+}
+
+.badge__hand-edits,
+.badge__withheld {
+  margin: 0.5rem 0 0;
+  padding-left: 1.25rem;
+}
+
+/* A stored inconsistency, not a provider state: shown above the badge. */
+.projection-notice {
+  margin: 0 0 0.75rem;
+  padding: 0.75rem 1rem;
+  border-left: 4px solid var(--pending);
+  background: var(--surface);
+}
+
+.projection-notice p {
+  margin: 0;
+}
+
+.projection-flag {
+  display: block;
+  color: var(--pending);
+}
+
+.projection-notice ul {
   margin: 0.5rem 0 0;
   padding-left: 1.25rem;
 }

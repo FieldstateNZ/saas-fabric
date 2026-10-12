@@ -75,9 +75,20 @@ impl AuditFile {
         })
     }
 
+    /// Appends one line and syncs it, as [`Self::append`], refusing before
+    /// anything is appended if the file is now one of `forbidden`: the
+    /// target's identities read inside the publication lock.
+    pub(super) fn append_apart(&self, record: &Value, forbidden: &[Identity]) -> io::Result<()> {
+        self.append_checked(record, Some(forbidden))
+    }
+
     /// Appends one line and syncs it; creates the file first if needed,
     /// never through a link, and syncs its directory so the file survives.
     pub(super) fn append(&self, record: &Value) -> io::Result<()> {
+        self.append_checked(record, None)
+    }
+
+    fn append_checked(&self, record: &Value, forbidden: Option<&[Identity]>) -> io::Result<()> {
         let mut line = serde_json::to_vec(record).map_err(io::Error::other)?;
         line.push(b'\n');
         let mut file = self
@@ -96,6 +107,13 @@ impl AuditFile {
         let file = file
             .as_mut()
             .ok_or_else(|| io::Error::other("the audit log is not open"))?;
+        if let Some(forbidden) = forbidden {
+            if forbidden.contains(&identity(&file.metadata()?)) {
+                return Err(io::Error::other(
+                    "the audit log is now a published file; nothing was appended",
+                ));
+            }
+        }
         file.write_all(&line)?;
         file.sync_all()
     }

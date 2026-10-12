@@ -43,19 +43,22 @@ impl KubernetesRuntimePublication {
 #[async_trait]
 impl HeldRecovery for KubernetesRuntimePublication {
     /// Reads the tenants object, the other two, then the tenants object
-    /// again: unstable when its `resourceVersion` moved in between.
+    /// again. Stable only when every object present carries a non-blank
+    /// `resourceVersion` and the tenants object's did not move: freshness
+    /// that cannot be known is never reported as stable. Two absent reads
+    /// are stable, and the diagnosis reports nothing published.
     async fn observe(&self) -> Result<HeldObservation, PublicationError> {
         let tenants = self.fetch(DocumentKind::Tenants).await?;
         let data_sources = self.fetch(DocumentKind::DataSources).await?;
         let catalog = self.fetch(DocumentKind::Catalog).await?;
         let again = self.fetch(DocumentKind::Tenants).await?;
-        let version = |object: &Option<ConfigMap>| {
-            object
-                .as_ref()
-                .map(|object| object.metadata.resource_version.clone())
-        };
+        let versioned = [&tenants, &data_sources, &catalog, &again]
+            .into_iter()
+            .flatten()
+            .all(|object| version(object).is_some());
+        let stable = versioned && tenants.as_ref().map(version) == again.as_ref().map(version);
         Ok(HeldObservation {
-            stable: version(&tenants) == version(&again),
+            stable,
             observation: observation(tenants.as_ref(), data_sources.as_ref(), catalog.as_ref()),
         })
     }
@@ -72,6 +75,15 @@ impl HeldRecovery for KubernetesRuntimePublication {
     fn describe(&self) -> String {
         RuntimePublication::describe(self)
     }
+}
+
+/// An object's `resourceVersion`, when it has a non-blank one.
+fn version(object: &ConfigMap) -> Option<&str> {
+    object
+        .metadata
+        .resource_version
+        .as_deref()
+        .filter(|version| !version.trim().is_empty())
 }
 
 fn observation(

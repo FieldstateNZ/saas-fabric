@@ -28,8 +28,10 @@ pub(super) fn identity(_metadata: &Metadata) -> Identity {
     Identity(0, 0)
 }
 
-/// Every file the filesystem publisher holds beside these payloads: the
-/// payloads, their manifests, the record, the registry and the lock.
+/// Every file the filesystem publisher holds or reserves beside these
+/// payloads: the payloads, their manifests, the record, the registry, the
+/// lock, and the staging sibling each write goes through, which a restore
+/// clears and replaces.
 pub(super) fn published_files(tenants: &Path, data_sources: &Path, catalog: &Path) -> Vec<PathBuf> {
     let beside = |payload: &Path, name: &str| payload.parent().unwrap_or_else(|| Path::new(".")).join(name);
     let lock = format!(
@@ -39,7 +41,7 @@ pub(super) fn published_files(tenants: &Path, data_sources: &Path, catalog: &Pat
             .map(|name| name.to_string_lossy())
             .unwrap_or_default()
     );
-    vec![
+    let held = [
         tenants.to_path_buf(),
         data_sources.to_path_buf(),
         catalog.to_path_buf(),
@@ -48,8 +50,18 @@ pub(super) fn published_files(tenants: &Path, data_sources: &Path, catalog: &Pat
         beside(catalog, DocumentKind::Catalog.manifest_file()),
         beside(tenants, PUBLICATION_RECORD_FILE),
         beside(tenants, ISSUER_REGISTRY_FILE),
-        beside(tenants, &lock),
-    ]
+    ];
+    let staging = held.iter().map(|path| {
+        let name = path
+            .file_name()
+            .map(|name| name.to_string_lossy())
+            .unwrap_or_default();
+        beside(path, &format!(".{name}.tmp"))
+    });
+    let mut files: Vec<PathBuf> = staging.collect();
+    files.extend(held);
+    files.push(beside(tenants, &lock));
+    files
 }
 
 /// The identities of every published file that exists.
@@ -62,8 +74,9 @@ pub(super) fn identities(paths: &[PathBuf]) -> Vec<Identity> {
 }
 
 /// Reads the source through one handle, refusing one that is not a regular
-/// file or is any published file.
-pub(super) fn read_source(path: &Path, published: &[Identity]) -> Result<(Vec<u8>, Identity), String> {
+/// file or is any published file. The handle is returned so the source can
+/// be checked again, by what it is, inside the publication lock.
+pub(super) fn read_source(path: &Path, published: &[Identity]) -> Result<(Vec<u8>, File), String> {
     let mut file = File::open(path).map_err(|error| format!("--from cannot be opened: {error}"))?;
     let metadata = file
         .metadata()
@@ -78,5 +91,5 @@ pub(super) fn read_source(path: &Path, published: &[Identity]) -> Result<(Vec<u8
     let mut bytes = Vec::new();
     file.read_to_end(&mut bytes)
         .map_err(|error| format!("--from cannot be read: {error}"))?;
-    Ok((bytes, source))
+    Ok((bytes, file))
 }

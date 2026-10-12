@@ -291,6 +291,27 @@ async fn a_source_that_is_a_published_file_is_refused_with_no_effect() {
 }
 
 #[tokio::test]
+async fn a_source_at_a_reserved_staging_path_is_refused_and_kept() {
+    // Review 5490404649's probe: `--from .tenants.json.tmp` holding the
+    // exact recovery bytes was accepted, and clearing stale staging then
+    // deleted the operator's recovery copy.
+    let dir = torn().await;
+    let staging = dir.published(".tenants.json.tmp");
+    std::fs::copy(dir.ops("tenants.json"), &staging).unwrap();
+    let before = files(&dir);
+
+    let (restore, _) = dir.restore(&staging, "ops");
+
+    assert_eq!(restore.status.code(), Some(2), "{restore:?}");
+    assert_eq!(files(&dir), before);
+    assert_eq!(
+        std::fs::read(&staging).unwrap(),
+        std::fs::read(dir.ops("tenants.json")).unwrap()
+    );
+    assert!(!dir.ops("audit.jsonl").exists());
+}
+
+#[tokio::test]
 async fn restore_refuses_an_audit_log_beside_the_published_files() {
     let dir = torn().await;
     let before = files(&dir);

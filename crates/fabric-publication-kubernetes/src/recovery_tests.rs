@@ -156,3 +156,55 @@ async fn a_record_that_moved_while_read_is_unstable_and_never_clear() {
         .any(|problem| problem.kind == fabric_runtime_publication::ProblemKind::Unstable));
     task.join().unwrap();
 }
+
+#[tokio::test]
+async fn objects_without_a_resource_version_are_never_stable() {
+    // Review 5490404649: two tenants reads that both lacked a version
+    // compared equal and were reported stable.
+    let unversioned = |version: &str| {
+        let mut object: serde_json::Value = serde_json::from_str(&tenants(version, GOOD)).unwrap();
+        object["metadata"]
+            .as_object_mut()
+            .unwrap()
+            .remove("resourceVersion");
+        if !version.is_empty() {
+            object["metadata"]["resourceVersion"] = version.into();
+        }
+        object.to_string()
+    };
+    for version in ["", "  "] {
+        let (client, _token, task) = fake(vec![
+            (200, unversioned(version)),
+            (200, data_sources(GOOD)),
+            (200, catalog()),
+            (200, unversioned(version)),
+        ]);
+        let adapter = KubernetesRuntimePublication::with_client(client, NS);
+
+        let held = adapter.observe().await.unwrap();
+
+        assert!(!held.stable, "version {version:?}");
+        assert!(!fabric_runtime_publication::diagnose(&held).clear);
+        task.join().unwrap();
+    }
+}
+
+#[tokio::test]
+async fn nothing_published_is_stable_and_reports_no_record() {
+    let (client, _token, task) = fake(vec![
+        (404, "{}".into()),
+        (404, "{}".into()),
+        (404, "{}".into()),
+        (404, "{}".into()),
+    ]);
+    let adapter = KubernetesRuntimePublication::with_client(client, NS);
+
+    let held = adapter.observe().await.unwrap();
+
+    assert!(held.stable);
+    assert_eq!(
+        fabric_runtime_publication::diagnose(&held).record,
+        fabric_runtime_publication::RecordState::Absent
+    );
+    task.join().unwrap();
+}

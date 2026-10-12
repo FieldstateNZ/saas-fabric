@@ -9,7 +9,7 @@ use serde_json::json;
 
 use super::audit::AuditLog;
 use super::audit_file::AuditFile;
-use super::identity::{identities, published_files, read_source};
+use super::identity::{identities, identity, published_files, read_source};
 use super::run::{failure, outcome, Outcome};
 
 /// One restore, as asked for.
@@ -39,7 +39,11 @@ pub(super) async fn restore(
         .iter()
         .map(|path| path.parent().unwrap_or_else(|| Path::new(".")).to_path_buf())
         .collect();
-    let forbidden = [published_identities, vec![source]].concat();
+    let source_identity = match source.metadata() {
+        Ok(metadata) => identity(&metadata),
+        Err(error) => return failure("restore", &format!("--from cannot be examined: {error}")),
+    };
+    let forbidden = [published_identities, vec![source_identity]].concat();
     let log = match AuditFile::open(&request.audit, &directories, &forbidden) {
         Ok(log) => log,
         Err(error) => return failure("restore", &error),
@@ -53,6 +57,8 @@ pub(super) async fn restore(
         from: request.from.display().to_string(),
         at_unix_seconds: request.at_unix_seconds,
         log,
+        published,
+        source,
     };
     let operation_id = request.operation_id;
     match adapter.restore(request.document, &offered, &audit).await {
@@ -92,3 +98,7 @@ pub(super) async fn restore(
         }
     }
 }
+
+#[cfg(test)]
+#[path = "restore_tests.rs"]
+mod tests;

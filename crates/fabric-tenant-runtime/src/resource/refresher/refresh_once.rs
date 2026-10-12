@@ -3,7 +3,7 @@
 use std::time::Duration;
 
 use crate::logging;
-use crate::resource::{RegistryResource, ResourceRegistry, ResourceSource};
+use crate::resource::{ApplyReport, RegistryResource, ResourceRegistry, ResourceSource};
 use crate::SourceError;
 
 /// Reloads one registry from its source, once, giving up after `timeout`.
@@ -22,31 +22,35 @@ pub(super) async fn refresh_once<T: RegistryResource>(
         return;
     };
 
-    apply_loaded(registry, &source.describe(), loaded);
+    let _ = apply_loaded(registry, &source.describe(), loaded);
 }
 
 /// Applies what one load produced, or leaves the registry untouched when it
 /// produced nothing -- the rule every reload shares, whatever read it.
+/// What the apply did, when it applied anything.
 pub(super) fn apply_loaded<T: RegistryResource>(
     registry: &ResourceRegistry<T>,
     origin: &str,
     loaded: Result<Vec<T>, SourceError>,
-) {
+) -> Option<ApplyReport> {
     match loaded {
-        Ok(resources) => {
-            if let Err(refused) = registry.apply_all(resources) {
+        Ok(resources) => match registry.apply_all(resources) {
+            Ok(report) => Some(report),
+            Err(refused) => {
                 // Only reachable while the registry has never loaded — a prime
                 // that was refused, and a source still publishing the payload
                 // that got it refused. The registry stayed unprimed, which is
                 // the whole point; this says so out loud.
                 logging::first_load_refused::<T>(origin, &refused);
+                None
             }
-        }
+        },
         Err(error) => {
             // Deliberately does not touch the registry. The last good snapshot
             // keeps serving; a momentarily unreadable source must not
             // deprovision everything.
             logging::refresh_failed::<T>(origin, &error);
+            None
         }
     }
 }

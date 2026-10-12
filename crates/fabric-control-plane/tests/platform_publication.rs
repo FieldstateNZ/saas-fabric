@@ -68,6 +68,7 @@ fn sink(dir: &TempDir) -> PublicationSink {
             dir.path().join("catalog.json"),
         )),
         issuer_origin: None,
+        readers: None,
     }
 }
 
@@ -532,6 +533,7 @@ async fn a_pass_already_running_answers_409_publication_running() {
         PublicationSink {
             target: Arc::new(gated),
             issuer_origin: None,
+            readers: None,
         },
     );
 
@@ -587,4 +589,138 @@ async fn the_trigger_needs_an_operator() {
     .await;
 
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+/// A reader observer that answers with whatever the test last told it: every
+/// replica reports `report`, at `desired` replicas.
+#[derive(Default)]
+struct ToldReaders {
+    told: std::sync::Mutex<Option<(u32, Option<fabric_core::ReaderGenerationReport>)>>,
+}
+
+#[async_trait::async_trait]
+impl fabric_platform_management::ReaderObserver for ToldReaders {
+    async fn sample(&self) -> fabric_platform_management::ReaderSample {
+        use fabric_platform_management::{MemberState, ProbeOutcome, ReaderMember, SampleOutcome};
+        let told = *self.told.lock().unwrap();
+        let (desired, report) = told.unwrap_or((0, None));
+        let members = report
+            .map(|report| {
+                (0..desired)
+                    .map(|index| ReaderMember {
+                        pod: format!("fabric-api-{index}"),
+                        replica_set: "fabric-api-7d9".to_owned(),
+                        state: MemberState::Probed(ProbeOutcome::Reported(report)),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        fabric_platform_management::ReaderSample {
+            observed_at_unix_seconds: FIXED_CLOCK_UNIX_SECONDS,
+            outcome: SampleOutcome::Observed {
+                desired_replicas: desired,
+                rollout_observed: true,
+                members,
+            },
+        }
+    }
+}
+
+async fn published_with(readers: Option<Arc<ToldReaders>>) -> (Router, Value, TempDir) {
+    let dir = TempDir::new("publication-readers");
+    let (platform, fake) = platform_binding().await;
+    let sink = PublicationSink {
+        readers: readers.map(|readers| readers as Arc<dyn fabric_platform_management::ReaderObserver>),
+        ..sink(&dir)
+    };
+    let plane = control_plane_with_publication(platform, sink);
+    fake.seed(
+        DesiredRevision::new("data-sources-1"),
+        vec![declared_data_source()],
+    );
+    fake.seed_placements(
+        DesiredRevision::new("placements-1"),
+        vec![placement("primary", 1)],
+    );
+    publish_one_application_with_a_resource(&plane.router).await;
+    let (status, body) = post_publication(&plane.router).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    (plane.router, body, dir)
+}
+
+#[tokio::test]
+async fn with_no_reader_observer_the_readers_are_unobserved_and_no_update_is_complete() {
+    let (router, posted, _dir) = published_with(None).await;
+    for body in [posted, get_platform(&router).await["publication"].clone()] {
+        let readiness = &body["readiness"];
+        assert_eq!(readiness["documents"]["met"], true, "{body}");
+        assert_eq!(readiness["readers"]["state"], "unobserved", "{body}");
+        assert!(readiness["readers"]["reasons"][0]
+            .as_str()
+            .unwrap()
+            .contains("no reader observation is configured"));
+        assert_eq!(readiness["readers"]["expected"]["generation"], 1, "{body}");
+        assert_eq!(readiness["readers"]["observedAtUnixSeconds"], Value::Null);
+        assert_eq!(readiness["updateComplete"], false, "{body}");
+    }
+}
+
+#[tokio::test]
+async fn the_stamped_record_is_the_one_on_the_target_and_matching_readers_complete_the_update() {
+    let readers = Arc::new(ToldReaders::default());
+    let (router, posted, dir) = published_with(Some(Arc::clone(&readers))).await;
+    let expected = posted["readiness"]["readers"]["expected"].clone();
+    assert_eq!(expected["generation"], 1);
+    let digest = fabric_core::RecordDigest::parse(expected["recordSha256"].as_str().unwrap()).unwrap();
+    assert!(dir.path().join("publication.json").exists());
+
+    let report = |generation: u64, digest, origin| {
+        fabric_core::ReaderGenerationReport::new(generation, digest, origin)
+    };
+    *readers.told.lock().unwrap() = Some((2, Some(report(1, digest, fabric_core::ServedOrigin::Published))));
+    let body = get_platform(&router).await;
+    let readiness = &body["publication"]["readiness"];
+    assert_eq!(readiness["readers"]["state"], "applied", "{body}");
+    assert_eq!(readiness["readers"]["members"][0]["finding"], "matches", "{body}");
+    assert_eq!(readiness["readers"]["members"][0]["replicaSet"], "fabric-api-7d9");
+    assert_eq!(
+        readiness["readers"]["observedAtUnixSeconds"],
+        FIXED_CLOCK_UNIX_SECONDS
+    );
+    assert_eq!(readiness["updateComplete"], true, "{body}");
+
+    *readers.told.lock().unwrap() = Some((
+        2,
+        Some(report(1, digest, fabric_core::ServedOrigin::LastKnownGood)),
+    ));
+    let held = get_platform(&router).await;
+    assert_eq!(
+        held["publication"]["readiness"]["readers"]["state"], "pending",
+        "{held}"
+    );
+    assert_eq!(held["publication"]["readiness"]["updateComplete"], false);
+
+    let other = fabric_core::RecordDigest::from_bytes([0; 32]);
+    *readers.told.lock().unwrap() = Some((2, Some(report(1, other, fabric_core::ServedOrigin::Published))));
+    let diverged = get_platform(&router).await;
+    assert_eq!(
+        diverged["publication"]["readiness"]["readers"]["state"], "unobserved",
+        "{diverged}"
+    );
+    assert_eq!(
+        diverged["publication"]["readiness"]["readers"]["members"][0]["finding"],
+        "wrongDigest"
+    );
+}
+
+#[tokio::test]
+async fn at_zero_replicas_the_documents_gate_still_stands_and_there_are_no_readers() {
+    let readers = Arc::new(ToldReaders::default());
+    let (router, _posted, _dir) = published_with(Some(readers)).await;
+    let body = get_platform(&router).await;
+    let readiness = &body["publication"]["readiness"];
+    assert_eq!(readiness["documents"]["met"], true, "{body}");
+    assert_eq!(readiness["readers"]["state"], "noReaders", "{body}");
+    assert_eq!(readiness["readers"]["desiredReplicas"], 0);
+    assert_eq!(readiness["updateComplete"], false, "{body}");
 }

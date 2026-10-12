@@ -3,7 +3,7 @@
 use std::collections::BTreeSet;
 
 use fabric_core::TenantId;
-use fabric_runtime_publication::{PublishedRevisions, RegistryGeneration, RuntimeSnapshot};
+use fabric_runtime_publication::{PublishedRevisions, RecordStamp, RegistryGeneration, RuntimeSnapshot};
 
 use super::issuer_registry_source::Excluded;
 
@@ -17,6 +17,9 @@ pub struct ReadinessEvidence {
     pub registry: Option<RegistryEvidenceSummary>,
     /// The connector every published DataSource names.
     pub connectors: BTreeSet<String>,
+    /// The publication record the target holds after the pass, which every
+    /// replica's report is compared with (G7).
+    pub record: RecordStamp,
 }
 
 /// The registry a pass published, summarised.
@@ -32,12 +35,12 @@ pub struct RegistryEvidenceSummary {
 
 impl ReadinessEvidence {
     /// The evidence an accepted `snapshot` leaves: the revisions it was
-    /// accepted at, the registry generation the target stamped, and the
-    /// tenants the registry source excluded.
+    /// accepted at, the registry generation and record the target stamped,
+    /// and the tenants the registry source excluded.
     #[must_use]
     pub fn of(
         snapshot: &RuntimeSnapshot,
-        registry: Option<RegistryGeneration>,
+        (registry, record): (Option<RegistryGeneration>, RecordStamp),
         excluded: Vec<Excluded>,
     ) -> Self {
         let summary = snapshot
@@ -66,6 +69,7 @@ impl ReadinessEvidence {
                 .iter()
                 .map(|data_source| data_source.connector.as_str().to_owned())
                 .collect(),
+            record,
         }
     }
 }

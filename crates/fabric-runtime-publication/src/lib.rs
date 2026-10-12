@@ -107,7 +107,7 @@ pub use registry::{
     RegistryGeneration, RegistryIssuer, RegistryPlan, RegistryRefusal, ISSUER_REGISTRY_FILE,
     REGISTRY_SCHEMA_VERSION,
 };
-pub use report::{DocumentOutcome, PublicationReport, RegistryOutcome};
+pub use report::{DocumentOutcome, PublicationReport, RecordStamp, RegistryOutcome};
 pub use resource_history::ResourceHistory;
 pub use snapshot::{DocumentInput, Emptying, RuntimeSnapshot};
 

@@ -404,6 +404,25 @@ covers every placed tenant. A gate that reports all three is listed under
 >
 > Raising replicas stays a deliberate operator action.
 
+> **Amendment (2026-10-12, G7).** Reader evidence now sits beside the three
+> gates, per the G7 disposition on
+> [#108](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6118073758).
+>
+> - **The documents gate is unchanged.** It is still publisher evidence, so
+>   a runtime at zero replicas is raised against it with no bootstrap
+>   cycle.
+> - **The readers row.** It holds a sample of every replica that could
+>   serve, from every replica set of the runtime Deployment, against the
+>   record the last accepted pass stamped. The answer is `applied`,
+>   `pending`, `unobserved` or `noReaders`.
+> - **`updateComplete`.** It is true only when the documents gate is met
+>   and the readers are applied. It is never true at zero replicas.
+>
+> With no reader target configured, which is every environment today, the
+> readers are unobserved. Live use of the replicas' reader-generation
+> listener is not approved. Scaling stays a deliberate operator action, and
+> nothing scales, repairs or rolls back on this evidence.
+
 ## What is built first
 
 This decision is delivered in slices, each ending in something an operator
@@ -610,5 +629,8 @@ remains of O6 is listed in ADR 0018. None of this is verified live.
 - **O7. The controller does not attempt placement on each pass.** Placement
   happens only on an explicit request (part 2).
 - **O8. The readiness gate reports three gates, from publisher evidence
-  only (part 5, D01-18).** It does not observe connectors or what an edge or
-  a runtime applied. Those remain the platform's check. Not verified live.
+  only (part 5, D01-18).** It does not observe connectors or what an edge
+  applied. Those remain the platform's check. What the runtime's replicas
+  serve is reported beside the gates since G7. That report is built in
+  source, but unobserved until a reader target is approved and configured.
+  Not verified live.

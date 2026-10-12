@@ -41,6 +41,8 @@ mod identifier_error;
 mod ids;
 mod logging;
 mod operation;
+mod reader_generation;
+mod record_digest;
 
 /// The character-set rules behind the identifier newtypes.
 ///
@@ -61,3 +63,8 @@ pub use ids::{
 };
 pub use logging::{event_id, EventType};
 pub use operation::OperationKind;
+pub use reader_generation::{
+    ReaderGenerationReport, ReportRefusal, ServedOrigin, READER_GENERATION_CONTRACT,
+    READER_GENERATION_MAX_BYTES, READER_GENERATION_PATH,
+};
+pub use record_digest::{NotADigest, RecordDigest};

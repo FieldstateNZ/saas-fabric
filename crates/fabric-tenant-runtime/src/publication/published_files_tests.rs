@@ -93,6 +93,7 @@ async fn documents_matching_the_record_are_read_as_one_generation() {
 
     let PublishedState::Generation {
         generation,
+        record_sha256,
         origin,
         data_sources,
         tenants,
@@ -101,6 +102,8 @@ async fn documents_matching_the_record_are_read_as_one_generation() {
         panic!("expected a complete generation, got {loaded:?}");
     };
     assert_eq!(generation, 4);
+    let held_record = std::fs::read(dir.path().join(super::record::PUBLICATION_RECORD_FILE)).unwrap();
+    assert_eq!(record_sha256, super::digest::sha256_digest(&held_record));
     assert_eq!(origin, super::GenerationOrigin::Published);
     assert_eq!(data_sources.len(), 1);
     assert_eq!(bound_to(&tenants), "pg-1");

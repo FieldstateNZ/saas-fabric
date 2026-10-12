@@ -94,6 +94,7 @@ fn sink(dir: &TempDir) -> PublicationSink {
             dir.path().join("catalog.json"),
         )),
         issuer_origin: Some(IssuerOrigin::parse("https://identity.example.invalid").unwrap()),
+        readers: None,
     }
 }
 

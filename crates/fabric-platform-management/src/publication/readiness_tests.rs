@@ -25,6 +25,10 @@ fn evidence(registry: Option<RegistryEvidenceSummary>) -> ReadinessEvidence {
         revisions: published(),
         registry,
         connectors: BTreeSet::from(["postgres-alpha".to_owned()]),
+        record: fabric_runtime_publication::RecordStamp {
+            generation: 3,
+            sha256: fabric_core::RecordDigest::from_bytes([3; 32]),
+        },
     }
 }
 

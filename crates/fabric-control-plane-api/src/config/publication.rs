@@ -44,6 +44,18 @@ pub struct PublicationConfig {
     /// start rather than publishing issuers no token will match.
     #[serde(default)]
     pub issuer_origin: Option<String>,
+
+    /// The runtime Deployment whose replicas report which generation they
+    /// serve, and the port of their reader-generation listener (G7).
+    ///
+    /// Absent, the default, observes nothing and every reader answer is
+    /// unobserved. Stated, the control plane reads that Deployment and its
+    /// replica sets and pods with its own read-only service account, and
+    /// asks each ready pod on that port with no credential. Using it needs
+    /// the runtime's listener, the read grants and a `NetworkPolicy` that
+    /// no environment has been approved to set.
+    #[serde(default)]
+    pub readers: Option<fabric_deployment_kubernetes::ReaderTarget>,
 }
 
 /// A minute — the same default the platform sweep uses, and for the same

@@ -114,7 +114,8 @@ function Configured({ publication }: { publication: Publication }) {
 
         <p className="support-note">
           What the publication target holds and what the last pass did — not whether the runtime has
-          reloaded.
+          reloaded. Readers is a timestamped sample of what each replica reported serving, not a promise
+          about later requests.
         </p>
       </div>
     </Panel>

@@ -1080,7 +1080,9 @@ execution of eventual deletion, and any live identity or session change. ADR
 [#108 comment 6117881889](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6117881889);
 disposed for source design and preparation only in
 [#108 comment 6118073758](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6118073758).
-Nothing is built yet.
+Built in source in [#157](https://github.com/FieldstateNZ/saas-fabric/pull/157);
+not wired, not approved for live use and not verified live (see the last
+bullet).
 - **Option A is chosen:** "the control plane pulls a minimal per-pod report
   through the existing read-only Deployment/ReplicaSet/Pod observer
   boundary." No runtime write RBAC, `TokenReview`, standing human or
@@ -1122,6 +1124,22 @@ Nothing is built yet.
   readiness-gated activation, update completion and any withdrawal-applied
   claim require applied-reader evidence. No automatic scaling, forced repair
   or new rollback authority.
+- **Built in source (#157).** `fabric-core`'s four-key
+  `ReaderGenerationReport`, taken from the installed resolution view
+  (`RuntimeResolver::served_generation`) and served by `fabric-api`'s
+  off-by-default `reader_generation_listen` on `GET /reader-generation`
+  only. Every `PublicationReport` stamps the record it leaves held. The
+  read-only `KubernetesReaderObserver`, configured by an optional
+  `[platform_management.publication.readers]` target, samples every
+  replica set's pods with an anonymous, bounded, non-redirecting probe.
+  `readers::assess` answers `applied`, `pending`, `unobserved` or
+  `noReaders`, and the readiness row and console show it beside the
+  documents gate with `updateComplete`. No environment configures a target,
+  so every environment reports `unobserved`. Still owed for live use: the
+  selectors, port, read grants and NetworkPolicies above, for review. No
+  withdrawal-applied claim exists, because withdrawal is not built. See
+  [`m2-publication-gap-report.md`](m2-publication-gap-report.md) "Reader
+  generation reporting (G7)".
 
 **Owed after acceptance.** These are not built at the base of the amendment.
 Each is tracked against [#112](https://github.com/FieldstateNZ/saas-fabric/issues/112).
@@ -1136,7 +1154,7 @@ live.
 | O3 | **Implemented, not verified live.** The publication record carries `resources`, the highest revision each tenant binding and DataSource was ever published at. The publisher refuses a resource absent from the held document that is offered at or below that revision (`ResourceRevisionNotAdvanced`). A declaration is written above the published revision. History starts with the first record that carries it. The platform contract must accept the new key before activation | `fabric-runtime-publication/src/resource_history.rs`, `resource_revisions.rs`; `fabric-platform-management/src/data_sources/plan.rs`; `plan_tests.rs::a_data_source_retired_and_declared_again_at_or_below_its_last_revision_is_refused`; `data_sources/plan_tests.rs::an_id_removed_and_declared_again_starts_above_the_revision_it_was_last_published_at` |
 | O4 | **Implemented, not verified live.** `compose` refuses a published tenant or logical binding with no record left (`PlacementRemoved`), and records that no longer reach the published revision or that reach it with a changed binding (`PlacementLowered`). The publisher refuses a dropped tenant (`TenantRemoved`) unless the whole document is emptied with intent. Not detected: one record lowered while another of the same tenant is raised in the same write | `publication/placement_history.rs`; `snapshot_tests.rs`; `plan_tests.rs::a_held_tenant_dropped_from_the_offer_is_refused` |
 | O5 | **Characterized, not verified live; no Git revert is claimed as a rollback.** Reverts of `placements.yaml` and `data-sources.yaml` are refused and leave every published file unchanged. A catalogue revert is not refused: the older definition is published forward at the next catalogue revision, and a revert leaving no release makes the pass wait. A client revert reaches the published documents only through the issuer registry. A console tag read before either revert is refused, and a console restore is conditional and audited. The revert itself is never audited. The Git adapter's revision is the blob's hash, so a revert to identical bytes makes an earlier tag current again. Findings open on #108: a freed release number is issued again for another definition; a tombstone, an application assignment or a client's creation can be undone in Git, which the console refuses, with no audit record | `fabric-control-plane/tests/platform_publication_revert.rs`, `catalogue_revert.rs`, `client_document_revert.rs`; `fabric-client-git/tests/desired_state_repository.rs::a_revert_to_identical_bytes_brings_the_earlier_revision_back_and_a_write_held_at_it_is_accepted`, `::a_catalogue_revert_brings_the_earlier_revision_back_and_a_write_held_at_it_is_accepted` |
-| O6 | #112 gaps. #136 makes each process resolve a request against one generation's tenants and data sources (G1b, with a deterministic isolation test), keeps readers off a retirement until its unbinding (G2) and off an interrupted publication (G3), and gives G6 a reader-floor handshake with N/N+1 tests. G8 is partly addressed after #136: an entry that no tenant binds is refused, the controller keeps the last published catalogue, and a runtime takes its catalogue from the same read and record as the generation it primes. Still owed: G1b across replicas (G7); G2's publisher waiting for readers; G3's "incomplete" on the panel; G4 (`Lease`); G5's publisher hold and publisher-side recovery (the reader's persisted last-known-good, its hold and fail-closed rules and its recovery command are built, off by default, and wait on a platform reader mount); G6 (dual-key path, per-row tests, CI check on shape changes); G7 (option A disposed for source-only preparation, not built and not approved for live use; see "G7: reader-generation evidence" above); the rest of G8 (an entry that some tenant does not bind, catalogue refresh in a running replica, the Data tab) | [`m2-publication-gap-report.md`](m2-publication-gap-report.md) "Still deferred" |
+| O6 | #112 gaps. #136 makes each process resolve a request against one generation's tenants and data sources (G1b, with a deterministic isolation test), keeps readers off a retirement until its unbinding (G2) and off an interrupted publication (G3), and gives G6 a reader-floor handshake with N/N+1 tests. G8 is partly addressed after #136: an entry that no tenant binds is refused, the controller keeps the last published catalogue, and a runtime takes its catalogue from the same read and record as the generation it primes. G1b across replicas is reported in source since G7 (#157): a replica's served generation, sampled by the control plane and held to the publisher's record stamp. Still owed: G2's publisher waiting for readers; G3's "incomplete" on the panel; G4 (`Lease`); G5's publisher hold and publisher-side recovery (the reader's persisted last-known-good, its hold and fail-closed rules and its recovery command are built, off by default, and wait on a platform reader mount); G6 (dual-key path, per-row tests, CI check on shape changes); G7's live wiring (built in source in #157, not approved for live use; see "G7: reader-generation evidence" above); the rest of G8 (an entry that some tenant does not bind, catalogue refresh in a running replica, the Data tab) | [`m2-publication-gap-report.md`](m2-publication-gap-report.md) "Still deferred" |
 | O7 | The controller does not attempt placement on each pass. Placement happens only on an explicit `POST` | `fabric-control-plane/src/handlers/placements/post.rs` is the only production caller of `Placements::place` |
 | O8 | **Publisher half implemented, not verified live (D01-4, D01-18).** The readiness report names three gates: documents, identity and connectors. The issuer registry is published with the tenants document, generation-stamped and named by the publication record. Still owed: the platform contract accepts the carrier, edge and runtime apply one generation with applied evidence. Pending identity evidence excludes a client, fail closed (#108 option (a)) | `fabric-runtime-publication/src/registry.rs`; `fabric-platform-management/src/publication/readiness.rs`; `fabric-control-plane/src/service/issuer_registry_source.rs`; ADR 0018 "The issuer registry" |
 

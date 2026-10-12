@@ -103,6 +103,7 @@ pub fn plan_publication(
     let recorded = held_record.as_ref().and_then(PublicationRecord::registry);
     let registry = crate::registry::decide(recorded, held.registry.as_deref(), snapshot)?;
     let documents = [&data_sources, &catalog, &tenants];
+    let held_record = held_record.zip(held.record.as_deref());
     let record = record::decide(held_record, documents, history, registry.as_ref())?;
 
     Ok(PublicationPlan {

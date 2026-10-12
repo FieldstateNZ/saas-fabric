@@ -2,7 +2,9 @@
 //! (D01-18), as Fabric evidences them, and what the generated issuer
 //! registry leaves out.
 
-use fabric_platform_management::{GateStatus, ReadinessReport, RegistryApplication};
+use fabric_platform_management::{GateStatus, ReaderApplication, ReadinessReport, RegistryApplication};
+
+use super::ReadersRow;
 
 /// The three gates, named as the platform contract names them. Publisher
 /// evidence only: an operator still raises replicas deliberately, and the
@@ -22,6 +24,13 @@ pub struct ReadinessRow {
     pub excluded_from_registry: Vec<ExcludedRow>,
     /// Whether any edge or runtime is known to apply the registry.
     pub registry_application: ApplicationRow,
+    /// Which generation the runtime's replicas serve, beside the documents
+    /// gate: that gate stays publisher evidence, so a runtime at zero
+    /// replicas can still be raised against it.
+    pub readers: ReadersRow,
+    /// The documents gate met and every replica that could serve found on
+    /// the published generation. Never true at zero replicas.
+    pub update_complete: bool,
 }
 
 /// One gate.
@@ -57,9 +66,12 @@ pub struct ApplicationRow {
     pub detail: &'static str,
 }
 
-impl From<ReadinessReport> for ReadinessRow {
-    fn from(report: ReadinessReport) -> Self {
+impl ReadinessRow {
+    /// The gates of `report`, with what `readers` were found serving.
+    pub(crate) fn of(report: ReadinessReport, readers: ReaderApplication) -> Self {
         Self {
+            update_complete: fabric_platform_management::update_complete(&report, &readers),
+            readers: readers.into(),
             documents: report.documents.into(),
             identity: report.identity.into(),
             connectors: report.connectors.into(),

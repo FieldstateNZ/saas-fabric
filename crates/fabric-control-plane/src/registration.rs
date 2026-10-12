@@ -96,6 +96,7 @@ pub fn build_control_plane(
             publisher,
             publication: Arc::clone(&publication_state),
             data_sources,
+            readers: publication.as_ref().and_then(|sink| sink.readers.clone()),
             ..binding
         }
     });

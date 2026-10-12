@@ -88,7 +88,7 @@ pub fn establish(
     budget::validate(config, http_timeout_seconds, request_timeout_seconds)?;
 
     // Beside the budget check, for the same "fail loudly at startup" reason.
-    let publication = publication::build_sink(config.publication.as_ref())?;
+    let publication = publication::build_sink(config.publication.as_ref(), clock)?;
 
     // Anonymous: a chart repository serves its index to anybody, so there is
     // no credential here to be conflated with the platform application's
@@ -142,6 +142,7 @@ pub fn establish(
             // function -- see `PlatformBinding::publisher`'s own rustdoc.
             publisher: None,
             publication: Arc::new(fabric_platform_management::PublicationState::new()),
+            readers: None,
         }),
         publication,
     })

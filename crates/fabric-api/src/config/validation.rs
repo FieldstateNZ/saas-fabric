@@ -2,6 +2,7 @@
 
 mod issuers;
 mod last_known_good;
+mod reader_generation_listen;
 
 use std::collections::BTreeSet;
 
@@ -27,6 +28,7 @@ impl AppConfig {
         self.validate_connectors()?;
         self.validate_state_paths()?;
         last_known_good::validate(self)?;
+        reader_generation_listen::validate(self)?;
         health_detail_role::validate(&self.health_detail_role)?;
         issuers::validate(&self.token, &self.identity)?;
         self.validate_timeouts()

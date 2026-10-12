@@ -10,7 +10,7 @@ mod publication;
 mod render;
 
 pub(crate) use diagnostics::DiagnosticRow;
-pub(crate) use publication::{pass_outcome_word, PublicationRow};
+pub(crate) use publication::{observe_readers, pass_outcome_word, PublicationRow};
 
 /// An environment's composition, as the console shows it.
 #[derive(Debug, serde::Serialize)]

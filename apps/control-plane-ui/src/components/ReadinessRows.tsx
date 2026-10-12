@@ -1,5 +1,6 @@
 import type { ExcludedTenant, ExclusionKind, Gate, Readiness } from '../api/publication-types'
 import { Status } from '../console/Status'
+import { ReaderRows } from './ReaderRows'
 
 /**
  * The three readiness gates (D01-18), the bound tenants the generated issuer
@@ -12,34 +13,37 @@ import { Status } from '../console/Status'
  */
 export function ReadinessRows({ readiness }: { readiness: Readiness }) {
   return (
-    <dl className="facts">
-      <dt>Documents gate</dt>
-      <dd>
-        <GateCell gate={readiness.documents} />
-      </dd>
+    <>
+      <dl className="facts">
+        <dt>Documents gate</dt>
+        <dd>
+          <GateCell gate={readiness.documents} />
+        </dd>
 
-      <dt>Identity gate</dt>
-      <dd>
-        <GateCell gate={readiness.identity} />
-      </dd>
+        <dt>Identity gate</dt>
+        <dd>
+          <GateCell gate={readiness.identity} />
+        </dd>
 
-      <dt>Connectors gate</dt>
-      <dd>
-        <GateCell gate={readiness.connectors} />
-      </dd>
+        <dt>Connectors gate</dt>
+        <dd>
+          <GateCell gate={readiness.connectors} />
+        </dd>
 
-      <dt>Excluded from registry</dt>
-      <dd>
-        {readiness.excludedFromRegistry.length === 0
-          ? 'None'
-          : readiness.excludedFromRegistry.map(excluded).join('; ')}
-      </dd>
+        <dt>Excluded from registry</dt>
+        <dd>
+          {readiness.excludedFromRegistry.length === 0
+            ? 'None'
+            : readiness.excludedFromRegistry.map(excluded).join('; ')}
+        </dd>
 
-      <dt>Registry applied</dt>
-      <dd>
-        <Status value="pending">Unobserved</Status> — {readiness.registryApplication.detail}
-      </dd>
-    </dl>
+        <dt>Registry applied</dt>
+        <dd>
+          <Status value="pending">Unobserved</Status> — {readiness.registryApplication.detail}
+        </dd>
+      </dl>
+      <ReaderRows readers={readiness.readers} updateComplete={readiness.updateComplete} />
+    </>
   )
 }
 

@@ -134,6 +134,17 @@ impl ApplyReport {
 
         added == 0 && updated == 0 && removed == 0
     }
+
+    /// Whether every incoming resource was taken as offered, none stale,
+    /// invalid, divergent or duplicated: only then does the registry hold
+    /// exactly the set given, as a replica reporting a generation needs (G7).
+    #[must_use]
+    pub const fn took_every_resource(&self) -> bool {
+        self.stale_ignored == 0
+            && self.invalid_rejected == 0
+            && self.divergent_payload == 0
+            && self.duplicate_rejected == 0
+    }
 }
 
 #[cfg(test)]

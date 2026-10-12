@@ -5,7 +5,7 @@ use axum::extract::State;
 use axum::Json;
 use fabric_platform_management::PassResult;
 
-use crate::handlers::platform::body::{pass_outcome_word, PublicationRow};
+use crate::handlers::platform::body::{observe_readers, pass_outcome_word, PublicationRow};
 use crate::state::ControlPlaneState;
 use crate::{audit, ControlPlaneError, Operator};
 
@@ -62,11 +62,12 @@ pub(crate) async fn publish_runtime_state(
             // recorded this pass; minting a second, later timestamp here
             // would make this response disagree with what `GET
             // /api/platform` reports for the same pass).
+            let readers = observe_readers(platform).await;
             Ok(Json(PublicationRow::at(
                 publisher,
                 &platform.publication,
-                at_unix_seconds,
-                &outcome,
+                (at_unix_seconds, &outcome),
+                readers,
             )))
         }
     }

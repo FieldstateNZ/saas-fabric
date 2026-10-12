@@ -62,6 +62,7 @@ fn sink(dir: &TempDir) -> PublicationSink {
             dir.path().join("catalog.json"),
         )),
         issuer_origin: None,
+        readers: None,
     }
 }
 

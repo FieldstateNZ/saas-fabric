@@ -8,6 +8,7 @@ use fabric_tenant_runtime::{build_published_runtime, LastKnownGoodStore, Publish
 
 use crate::catalogue::HostCatalogue;
 use crate::config::AppConfig;
+use crate::reader_generation::ReaderGenerationListener;
 use crate::startup::background_tasks::{stop_refreshers, BackgroundTasks};
 use crate::startup::{serving, token_reader};
 
@@ -18,6 +19,10 @@ pub struct Application {
 
     /// The address to bind.
     pub listen: String,
+
+    /// The separate listener serving this replica's served generation, only
+    /// when `reader_generation_listen` is set (G7).
+    pub reader_generation: Option<ReaderGenerationListener>,
 
     /// The refreshers and the connector retry loop. Held so they can be
     /// stopped on shutdown; dropping them would orphan the tasks.
@@ -76,10 +81,12 @@ pub async fn build(config: &AppConfig) -> Result<Application, String> {
         status,
     } = build_published_runtime(&config.tenant_runtime, Arc::new(published)).await?;
 
+    let reader_generation = ReaderGenerationListener::configured(config, &runtime);
     match serving::build(config, &runtime, catalogue, &identity, status).await {
         Ok((router, connector_retry)) => Ok(Application {
             router,
             listen: config.listen.clone(),
+            reader_generation,
             tasks: BackgroundTasks::new(refresh, connector_retry),
         }),
         Err(error) => {

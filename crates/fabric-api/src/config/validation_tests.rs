@@ -297,3 +297,36 @@ fn a_last_known_good_directory_aliasing_the_published_one_is_refused_however_it_
 
     let _ = std::fs::remove_dir_all(&root);
 }
+
+fn with_reader_listener(address: &str) -> AppConfig {
+    AppConfig {
+        reader_generation_listen: Some(address.to_owned()),
+        ..config_with(vec![connector("pg")])
+    }
+}
+
+#[test]
+fn the_reader_generation_listener_is_off_unless_configured() {
+    assert_eq!(AppConfig::default().reader_generation_listen, None);
+    assert!(config_with(vec![connector("pg")]).validate().is_ok());
+}
+
+#[test]
+fn a_reader_generation_listener_on_a_port_of_its_own_is_accepted() {
+    assert!(with_reader_listener("0.0.0.0:9091").validate().is_ok());
+    assert!(with_reader_listener("[::]:9091").validate().is_ok());
+}
+
+#[test]
+fn a_reader_generation_listener_must_be_an_explicit_socket_apart_from_the_main_one() {
+    for (address, expected) in [
+        ("reader:9091", "explicit ip:port"),
+        ("9091", "explicit ip:port"),
+        ("0.0.0.0:0", "ephemeral"),
+        ("0.0.0.0:8080", "port of its own"),
+        ("127.0.0.1:8080", "port of its own"),
+    ] {
+        let error = with_reader_listener(address).validate().unwrap_err();
+        assert!(error.contains(expected), "{address}: {error}");
+    }
+}

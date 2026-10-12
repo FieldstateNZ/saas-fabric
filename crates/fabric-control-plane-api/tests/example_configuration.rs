@@ -253,6 +253,42 @@ fn a_platform_management_section_with_a_publication_block_parses() {
         .expect("the section was stated, so it must be Some");
     assert_eq!(publication.namespace, "platform-system");
     assert_eq!(publication.interval_seconds, 30);
+    assert!(
+        publication.readers.is_none(),
+        "reader observation is off unless stated"
+    );
+}
+
+#[test]
+fn a_stated_reader_target_names_the_runtime_deployment_and_its_port_and_nothing_else() {
+    let config: PlatformManagementConfig = serde_json::from_value(serde_json::json!({
+        "environment": "lucentroot",
+        "publication": {
+            "namespace": "platform-system",
+            "readers": {"namespace": "fabric-runtime", "deployment": "fabric-api", "port": 9091},
+        },
+    }))
+    .expect("a stated reader target must parse");
+    let readers = config.publication.unwrap().readers.unwrap();
+    assert_eq!(
+        (
+            readers.namespace.as_str(),
+            readers.deployment.as_str(),
+            readers.port
+        ),
+        ("fabric-runtime", "fabric-api", 9091)
+    );
+
+    let error = serde_json::from_value::<PlatformManagementConfig>(serde_json::json!({
+        "environment": "lucentroot",
+        "publication": {
+            "namespace": "platform-system",
+            "readers": {"namespace": "fabric-runtime", "deployment": "fabric-api", "port": 9091,
+                        "url": "http://elsewhere"},
+        },
+    }))
+    .expect_err("a reader target takes no address: pods are found through the API server");
+    assert!(error.to_string().contains("url"), "{error}");
 }
 
 #[test]

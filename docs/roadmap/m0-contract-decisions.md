@@ -165,12 +165,20 @@ What is built:
 - **ADR 0024 slice 1, Fabric side.** `GET /api/operator` is the probe for a
   gateway session. It answers `401 operator_refused` when it refuses a
   forwarded bearer (`crates/fabric-control-plane/src/handlers/get_operator.rs:15-33`).
-- **ADR 0024 slice 2: not built.**
-  - `GET/POST /api/session` is mounted only when `sign_in` is configured
-    (`crates/fabric-control-plane/src/routes.rs:79-82`).
-  - LucentRoot still configures it: platform
-    `applications/core/saas-fabric-control-plane/overlays/lucentroot/control-plane.toml:54-64`
-    says "`/api/session` returns this value … retires … in ADR 0024 slice 2".
+- **ADR 0024 slice 2: built in part (D01-9, 2026-10-12).**
+  - `GET/POST /api/session`, the `SignInSurface` port, the Keycloak adapter's
+    code redemption and the operator posture's `redirect_uri` are removed.
+    `tests/boundary.rs::the_control_plane_redeems_no_authorization_code_for_anybody`
+    pins the route as gone;
+    `example_configuration.rs::a_configuration_still_stating_the_retired_redirect_uri_refuses_to_load`
+    pins the configuration break.
+  - The console is session-free: no PKCE, no token, no `Authorization`
+    header; it probes `/api/operator` and navigates to the gateway's sign-in.
+  - **Platform action owed:** LucentRoot still states `redirect_uri`
+    (`applications/core/saas-fabric-control-plane/overlays/lucentroot/control-plane.toml`,
+    whose comment already says it "retires alongside that endpoint in ADR
+    0024 slice 2"). It must be dropped in the change that takes this release,
+    which is also when the console depends on gateway sign-in alone.
   - No `/api/user/current` route exists in `crates/`.
 - **ADR 0024 slices 3–5: not built.** `apps/app-shell` has no sign-in and does
   not load modules at runtime. The runtime has no `/v1/identity` route.
@@ -300,27 +308,38 @@ Options:
 *Recommendation:* **A**. Owner: **Brett**.
 
 **U2.6: the loopback workbench, and retiring `/api/session`** (**D01-9**).
-ADR 0024 §2 retires `/api/session`; that part is decided. ADR 0021's owed
-decision 1, keep or remove the loopback workbench, is still open.
+**Disposed 2026-10-11 and built 2026-10-12.** ADR 0024 §2 retires
+`/api/session`; ADR 0021's owed decision 1 asked whether to keep the loopback
+workbench.
 
-Sequencing:
-- Draft PR #101 (`codex/disposable-dogfood`, head `8cd1c5f`) builds its trial
-  around console sign-in through `/api/session`. Its
-  `examples/disposable-dogfood/ci_smoke.py:96` defines a
-  `sign_in_through_console` stage, and lines `:401-402` call `/api/session`.
-- So retiring `/api/session` (ADR 0024 slice 2) and removing the workbench must
-  be sequenced with PR101.
-- PR102 (anonymous catalogue-write tests at the operator boundary) and PR107
-  (identity role edits in the console) touch this area too. They are tracked
-  in #109.
+Disposition ([#108 comment](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6109518415)):
+retire the workbench and `/api/session` only after moving the disposable
+test and runbook to the accepted gateway flow or explicitly parking that
+profile; keep local automated tests possible; do not silently invalidate
+#101/#111.
 
-Options:
-- **A.** Keep the workbench, with guard rails, and amend the control-plane
-  architecture.
-- **B.** Remove it, so local work needs the `hosting/` Envoy and Keycloak.
+What was done:
+- **The disposable dogfood profile (#101, #111) is parked, not moved.** No
+  gateway flow exists that could be built and tested offline: ADR 0024 slice
+  1's local half is not built, and adding a gateway to the trial would add a
+  confidential client, its secret and a cookie key, which this change was not
+  authorized to introduce. The profile stays pinned to `bb864f4`, which still
+  serves `/api/session`; its runbook and every activation packet say it is
+  parked, unsupported and not part of any deploy
+  (`examples/disposable-dogfood/README.md`, "Parked (D01-9)").
+- **Its offline tests still run, now on every pull request.** CI's `scripts`
+  job runs `scripts/tests`, which previously ran only on the profile's own
+  branch workflow. `scripts/tests/test_dogfood_parking.py` proves the parking:
+  the pinned commit serves the route, the working tree does not, and no
+  release, image or hosting workflow refers to the profile.
+- **Then the workbench and `/api/session` were removed**, with the console's
+  PKCE sign-in, its `preview:ui` entry, and `redirect_uri`; see "Identity
+  route and session ownership" above for what is built and the platform
+  action owed. ADR 0021 (amendment 2026-10-12) and ADR 0024 ("Implementation
+  status") record it.
 
-*Recommendation:* **B**, after PR101 has moved to the gateway flow or been
-parked. Owner: **Brett**.
+Reviving the profile means moving its sign-in stage and readiness checks to
+the gateway flow once the local gateway exists, in one reviewed change.
 
 **U2.7: who configures tenant end-user sessions for client instances**
 (**D01-26**). This is an engineering ownership choice under an existing policy,
@@ -925,6 +944,7 @@ this document's ADR amendments act on. The comment holds the others.
 | D01-19a | Explicit incomplete state until provisioning, identity and publication readiness is met; saved intent is distinguished from a usable client | ADR 0021 amendment 2026-10-11 ("The states") |
 | D01-10, D01-10a | Layered authorization. Scopes and roles only for the isolated synthetic trial; OpenFGA Check on relation-declaring resources from M3 and for every tenant beyond the trial. Designed and tested now; no deployment or standing access | ADR 0027 (Proposed) §1–§4, §6; "Owed" |
 | D01-12 | No data-path administrator bypass; scopes cannot be disabled outside tests; coarse platform-operator controls retained within their current boundary | ADR 0027 §5 |
+| D01-9 | Retire the loopback workbench and `/api/session` only after the disposable test and runbook move to the gateway flow or the profile is explicitly parked; keep local automated tests possible; do not silently invalidate #101/#111. Parked, then removed | ADR 0021 amendment 2026-10-12; ADR 0024 "Implementation status"; ADR 0010 (superseded flow); `examples/disposable-dogfood/README.md` "Parked (D01-9)"; U2.6 above |
 | D01-19c | Activity is a bounded view, not the audit trail. A durable audit source with integrity and size tests; authoritative history is never silently pruned. Retention, storage activation and customer-data commitments stay separate | ADR 0028 (Proposed) §1–§5; "Deferred, and not decided here" |
 
 **D01-14 and D01-19a: what stays open.** Built: the state machine, its
@@ -984,7 +1004,7 @@ IDs are not reused.
 | D01-4 | Identity | Generator for the issuer-to-tenant registry (ADR 0019 §G4a) | Fabric publisher, one generator; gateway sub-choice open |
 | D01-5 | Identity | Accept ADR 0019; the platform owns the §G edge; clarify the client-route comment | Accept as written |
 | D01-6 | Identity | How operator master-realm accounts come to exist (broker / create / `admin` only / `[]`); sub-choice 6b, revocation (formerly D01-7); accepting PR93's interim | `admin` interim, brokering as target; Brett names the upstream |
-| D01-9 | Session | Keep or remove the loopback workbench as `/api/session` retires (ADR 0021 owed 1); sequence with PR101 | Remove, after PR101 is settled |
+| D01-9 | Session | Keep or remove the loopback workbench as `/api/session` retires (ADR 0021 owed 1); sequence with PR101 | **Disposed 2026-10-11, built 2026-10-12:** the dogfood profile is parked at its pinned commit with its offline tests in CI; then the workbench and `/api/session` are removed. See [Dispositions recorded](#dispositions-recorded) |
 | D01-10 | Authorization | Data-path enforcement: scopes only / OpenFGA check / layered; sub-choice 10a, deploying OpenFGA (formerly D01-11) | **Disposed 2026-10-11:** layered; scopes only for the isolated trial; Check on relation-declaring resources from M3 and for every tenant beyond the trial. Designed and tested, not wired (ADR 0027). Collections: a distinct tenant-bound check per resource, refused until the model contract exists (§2a). Transport: verified TLS, plaintext only on a test loopback path (§2b) |
 | D01-12 | Authorization | The administrator-role bypass and `require_scopes = false`; operator granularity | **Disposed 2026-10-11:** bypass and toggle removed; health detail role retained as the coarse operator control (ADR 0027 §5) |
 | D01-13 | Authorization | Where entitlements are enforced | Applications enforce; Fabric previews |

@@ -132,8 +132,6 @@ impl ControlPlaneError {
                 crate::SecretsError::Refused => "secret_store_refused",
                 crate::SecretsError::Unavailable => "secret_store_unavailable",
             },
-            Self::SignInRefused => "sign_in_refused",
-            Self::SignInUnavailable => "sign_in_unavailable",
             Self::RepositoryDenied => "repository_denied",
             Self::RepositoryRejected => "repository_rejected",
             Self::InvalidDataSource(_) => "invalid_data_source",

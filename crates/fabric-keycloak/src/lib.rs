@@ -51,7 +51,7 @@ mod wire;
 
 pub use config::KeycloakConfig;
 pub use factory::KeycloakProviderFactory;
-pub use operator::RealmSignIn;
+pub use operator::OperatorRealmKeys;
 pub use provider::KeycloakIdentityProvider;
 
 /// The event-ID domain number for this crate. See `fabric_core::event_id`.

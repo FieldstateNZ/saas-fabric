@@ -2,8 +2,10 @@
 
 - **Status:** Proposed. Owed decisions 2 and 3 are disposed and built by
   the [2026-10-11 amendment](#amendment-2026-10-11-a-clients-lifecycle-d01-14-d01-19a);
+  owed decision 1 is disposed by the
+  [2026-10-12 amendment](#amendment-2026-10-12-the-loopback-workbench-is-retired-d01-9);
   acceptance follows ADR 0023 through its own reviewed change (D01-19d).
-- **Date:** 2026-09-16; amended 2026-10-11
+- **Date:** 2026-09-16; amended 2026-10-11 and 2026-10-12
 - **Applies to:** `fabric-client-model`, `fabric-client-git`,
   `fabric-control-plane`, `fabric-control-plane-api`, `apps/control-plane-ui`,
   and the `saas-fabric-clients` repository that holds what they write
@@ -105,8 +107,7 @@ realm (`account`, `account-console`, `admin-cli`, `broker`, `realm-management`,
 and the Keycloak adapter's when one is configured. The application id becomes a
 client id in every realm it is assigned to (§4), and Keycloak accepts a second
 client under a name it already holds, beside the real one. The deployment's own
-ids are computed where the deployment is composed, and the workbench composes
-none (§7). These checks run when an application is created, not when the
+ids are computed where the deployment is composed. These checks run when an application is created, not when the
 catalogue is read, so a catalogue already holding such an id stays readable.
 
 **Some catalogue rules hold on every save and every read.** The settings'
@@ -376,6 +377,10 @@ ADR 0008 already describes.
 
 ### 7. A persistent local repository, and a loopback workbench
 
+> **Amendment (2026-10-12, D01-9).** The loopback workbench below is retired;
+> see [the amendment](#amendment-2026-10-12-the-loopback-workbench-is-retired-d01-9).
+> `LocalClientRepository` and `local_directory` are unchanged.
+
 **`local_directory` persists.** It now opens `LocalClientRepository`, in
 `fabric-control-plane-api`, instead of holding documents in memory:
 
@@ -613,7 +618,8 @@ repository is single-process by its lock, and is a development mode only.
 
 ## Decisions owed to the product owner
 
-1. **Keep or remove the loopback workbench.** Keep it, and the control-plane
+1. **Keep or remove the loopback workbench.** *Disposed 2026-10-12 (D01-9):
+   removed; see the amendment below.* Keep it, and the control-plane
    architecture's "no development shortcut" is amended to name it and its guard
    rails. Remove it, and working on the console locally needs a Keycloak again,
    as that document says. Either answer should be recorded rather than left to
@@ -853,4 +859,34 @@ the user-only parts stay open.
   authorized.
 - **Removing one application from a client** (owed decision 3's first half)
   is still refused.
+
+## Amendment (2026-10-12): the loopback workbench is retired (D01-9)
+
+**Disposition.** [#108](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6109518415),
+D01-9: retire the workbench and `/api/session` only after the disposable
+dogfood test and runbook have moved to the gateway flow or been explicitly
+parked, keeping local automated tests possible.
+
+**What was removed.** `fabric-control-plane-api/examples/console_workbench.rs`;
+the console's `preview/` entry, `preview.html` and `npm run preview:ui`. §7's
+guard-rail table described code that no longer exists. The control-plane
+architecture's "there is no development shortcut … local development therefore
+needs a Keycloak" stands again without an exception, and this record's
+contradiction table row for it is resolved in that document's favour.
+
+**What stays.** `LocalClientRepository` (`local_directory`) and
+`LocalAuditTrail`, which a deployment's own configuration selects and which
+have their own integration tests. `testing::AcceptingOperator`, which every
+control-plane integration test drives; with the workbench gone, only tests
+populate it.
+
+**Local automated tests.** Unchanged in reach: `cargo test --workspace` drives
+the real router with `AcceptingOperator`, and `npm test` drives the console
+with the network stubbed. Interactive work against a live API needs the
+gateway in front of the console (ADR 0024 slice 1's local half), which is not
+built yet.
+
+**The disposable dogfood profile** was built around `/api/session`. It is
+parked rather than moved; why, and what that keeps running, is in
+`examples/disposable-dogfood/README.md`, "Parked (D01-9)".
 

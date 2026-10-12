@@ -5,7 +5,7 @@
 - **Applies to:** a new crate, `fabric-component`; `fabric-client-model` (the
   catalogue and its envelope), `fabric-registry`, `fabric-platform-management`,
   `fabric-platform-git`, `fabric-control-plane`, `fabric-openbao`,
-  `fabric-control-plane-api` (and its console workbench),
+  `fabric-control-plane-api` (and its console workbench, retired 2026-10-12 by D01-9),
   `apps/control-plane-ui`, `scripts/check_architecture.py`, this repository's
   `component.yaml`, `README.md`, `.github/workflows/release.yml`, and
   `docs/architecture/{packaging,control-plane,client-desired-state,crate-dependencies}.md`;
@@ -802,7 +802,7 @@ public images, not about any private registry or private image.
   release with a described component is refused as a malformed product, which
   stops that client's product and identity routes, and the activity listing,
   which fails whole. An unreadable catalogue also stalls runtime publication and
-  stops the workbench opening. Every release that carries a component descriptor
+  stopped the (since retired) workbench opening. Every release that carries a component descriptor
   reads every format this decision introduces, because the attach step lands
   last, and in-product rollback of a described component offers only versions
   with a component descriptor — so it cannot reach a build that refuses them. It

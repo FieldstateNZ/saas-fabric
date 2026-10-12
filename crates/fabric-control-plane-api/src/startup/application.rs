@@ -84,7 +84,7 @@ pub async fn build(config: &ControlPlaneAppConfig) -> Result<Application, String
     let reserved_realms = reserved_names::realms(&config.control_plane, &config.identity_provider)?;
     let reserved_client_ids = reserved_names::client_ids(&config.control_plane, &config.identity_provider);
 
-    let (keys, sign_in) = operator_keys::establish(&config.control_plane.operator)?;
+    let keys = operator_keys::establish(&config.control_plane.operator)?;
 
     let audit = audit::recorder(&config.audit_trail, &clock)?;
     let stores = integration::build_stores(config, &clock)?;
@@ -111,7 +111,6 @@ pub async fn build(config: &ControlPlaneAppConfig) -> Result<Application, String
             audit,
             keys,
             identity_provider,
-            sign_in,
             git_integration: integrations.clients,
             client_secrets: integrations.client_secrets,
 

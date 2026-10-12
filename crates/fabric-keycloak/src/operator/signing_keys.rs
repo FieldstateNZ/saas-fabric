@@ -5,9 +5,9 @@
 //! this crate's promise that no caller needs to know where a realm keeps
 //! anything.
 
-use crate::RealmSignIn;
+use crate::OperatorRealmKeys;
 
-impl RealmSignIn {
+impl OperatorRealmKeys {
     /// Reads the document in which this realm publishes its signing keys.
     ///
     /// Returns the document as it was served. Parsing it is a JOSE concern

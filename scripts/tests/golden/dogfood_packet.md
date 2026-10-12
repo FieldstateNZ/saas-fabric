@@ -1,6 +1,7 @@
 # Disposable dogfood activation packet
 
 Status: NOT AUTHORIZED until a named authorizer approves this exact packet (by its sha256 below) for one activation.
+PARKED (D01-9): unsupported and not part of any deploy. Its sign-in drives the retired /api/session, served only by its pinned source commit; reviving it means moving it to the gateway flow first.
 This profile is NOT WorkSpec, runtime or tenant acceptance. Off-host backup is not a gate for it.
 
 ## Source and images
@@ -105,4 +106,4 @@ If activate fails after anything was created it rolls back itself and prints one
 - "ROLLBACK NOT VERIFIED": keep the gate. The receipt and credential are kept; recover with `reset --yes` (by hand
   when there is no receipt) and continue at cleanup step 1. Nothing in this trial is persisted, so there is
   nothing to restore.
-packet-sha256: 304f412f7d1eb45e7288ca5a0c3e52e133ae8cbdae9f3c1844ab9e0862950254
+packet-sha256: 701c75b1a8fe1f549113dc36d676e32e094aa563139be0bb2b43023bee05de66

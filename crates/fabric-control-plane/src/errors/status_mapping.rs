@@ -32,15 +32,11 @@ impl ControlPlaneError {
     #[must_use]
     pub fn status(&self) -> StatusCode {
         match self {
-            // A refused redemption joins an unauthenticated request at 401,
-            // and for the same reason: in both cases the operator holds no
-            // usable identity and their next step is to sign in. A refused
-            // *bearer* joins them at the status but not the remedy -- that
-            // is exactly what `canRetry: false` exists for -- so `code()`,
-            // not this match, is what tells a console which case it has.
-            Self::Unauthenticated(_) | Self::OperatorRefused | Self::SignInRefused => {
-                StatusCode::UNAUTHORIZED
-            }
+            // A refused bearer joins an unauthenticated request at the status
+            // but not the remedy: signing in at the gateway again cannot fix a
+            // token the control plane refuses, so `code()`, not this match, is
+            // what tells a console which case it has.
+            Self::Unauthenticated(_) | Self::OperatorRefused => StatusCode::UNAUTHORIZED,
             // 404: for this deployment, none of these exists -- a client,
             // the connection surface, or the publication target. Not a 403
             // (no grant would fix an absence) and not a 503 (no wait would
@@ -132,13 +128,11 @@ impl ControlPlaneError {
                 StatusCode::UNPROCESSABLE_ENTITY
             }
 
-            // Three failures, one 503, not all for the same reason. Two are
-            // transient and carry `Retry-After`; a platform waiting for an
-            // operator does not, retrying will not connect it. The code
-            // below tells all three apart.
-            Self::RepositoryUnavailable | Self::SignInUnavailable | Self::IntegrationNotConfigured => {
-                StatusCode::SERVICE_UNAVAILABLE
-            }
+            // Two failures, one 503, not for the same reason. One is transient
+            // and carries `Retry-After`; a platform waiting for an operator
+            // does not, retrying will not connect it. The code below tells
+            // them apart.
+            Self::RepositoryUnavailable | Self::IntegrationNotConfigured => StatusCode::SERVICE_UNAVAILABLE,
 
             // A pass already holds the publication guard; try again once it
             // releases -- not a wait-out-an-outage 503.

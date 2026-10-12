@@ -51,6 +51,11 @@ names.
 
 ### The console never meets the identity provider
 
+> **Superseded (ADR 0024 §2; retired 2026-10-12, D01-9).** The flow below —
+> `/api/session`, the console's PKCE pair and its in-memory token — is gone.
+> The gateway signs operators in and forwards the bearer this posture
+> verifies; the console holds nothing.
+
 The console's content security policy is `default-src 'self'` and its contract
 is that it talks to the control-plane API and nothing else. A browser may
 navigate to another origin, but it may not `fetch` one — so the console cannot

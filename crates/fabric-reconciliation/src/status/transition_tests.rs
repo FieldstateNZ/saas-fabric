@@ -182,3 +182,31 @@ fn correcting_a_client_withheld_at_the_same_revision_is_drift() {
         ReconciliationStatus::Drifted
     );
 }
+
+#[test]
+fn failed_outranks_withheld_which_outranks_hand_edited() {
+    let edit = crate::HandEdit {
+        client: web(),
+        field: crate::HandEditedField::ClientDisabled,
+    };
+    let failed = ReconciliationOutcome::failed(&ProviderError::NotPermitted)
+        .holding(vec![edit.clone()])
+        .withholding(vec![web()]);
+    let withheld = ReconciliationOutcome::applied(1)
+        .holding(vec![edit])
+        .withholding(vec![web()]);
+
+    assert_eq!(
+        status_for(None, &revision("abc"), &failed),
+        ReconciliationStatus::Failed
+    );
+    assert_eq!(
+        status_for(None, &revision("abc"), &withheld),
+        ReconciliationStatus::Withheld
+    );
+    assert_eq!(
+        withheld.hand_edits().len(),
+        1,
+        "held edits are kept beside withheld"
+    );
+}

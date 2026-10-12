@@ -22,7 +22,7 @@ use std::time::Duration;
 use axum::body::Body;
 use axum::Router;
 use fabric_client_model::{ClientId, ClientRevision, OidcClientId, RealmName};
-use fabric_control_plane::{AuditStream, AuditTrail as _};
+use fabric_control_plane::{AuditStream, AuditTrail as _, ClientRepository as _};
 use fabric_reconciliation::testing::FakeIdentityProvider;
 use fabric_reconciliation::{ObservedOidcClient, ReconciliationStatus};
 use http::{header, Response, StatusCode};
@@ -57,7 +57,10 @@ async fn reported_projection(router: &Router) -> Value {
         .unwrap()["projection"]
         .clone();
     let overview = get(router, "/api/clients/newco").await["projection"].clone();
-    let identity = get(router, "/api/clients/newco/identity").await["projection"].clone();
+    let identity = get(router, "/api/clients/newco/identity").await;
+    let revision = identity["revision"].clone();
+    assert_eq!(get(router, "/api/clients/newco").await["revision"], revision);
+    let identity = identity["projection"].clone();
     assert_eq!(listed, overview);
     assert_eq!(overview, identity);
     identity
@@ -184,6 +187,10 @@ async fn a_projected_entry_removed_in_git_is_reported_as_missing() {
 async fn a_sweep_withholds_a_diverged_entry_and_converges_the_rest() {
     let (plane, provider) = converged_newco().await;
     let before = analytics_in_provider(&provider);
+    let realm = RealmName::try_new("newco").unwrap();
+    let mut drifted = provider.realm(&realm).unwrap();
+    drifted.roles.clear();
+    provider.seed_realm(realm.clone(), drifted);
     hand_edit_in_git(&plane, |text| {
         add_extra_callback(&text).replace(
             "  product:\n",
@@ -201,12 +208,16 @@ async fn a_sweep_withholds_a_diverged_entry_and_converges_the_rest() {
         before,
         "the Git edit is not converged into the identity provider"
     );
-    let realm = provider.realm(&RealmName::try_new("newco").unwrap()).unwrap();
+    let realm = provider.realm(&realm).unwrap();
     assert!(
         realm
             .clients
             .contains_key(&OidcClientId::try_new("manual").unwrap()),
         "a hand-declared client beside it still converges"
+    );
+    assert!(
+        !realm.roles.is_empty(),
+        "realm-role drift beside it is still corrected"
     );
     let identity = get(&plane.router, "/api/clients/newco/identity").await;
     assert_eq!(identity["reconciliation"]["status"], "withheld", "{identity}");
@@ -337,6 +348,116 @@ async fn an_unverifiable_projection_is_reported_withheld_and_refuses_reassertion
     assert_eq!(
         support::json(response).await["error"]["code"],
         "desired_state_invalid"
+    );
+    assert_eq!(reasserted_audits(&plane).await, 0);
+}
+
+/// Removes `newco`'s declared identity clients from the stored text.
+fn without_identity_clients(text: &str) -> String {
+    let start = text.find("    clients:\n").unwrap();
+    let end = text.find("  product:\n").unwrap();
+    format!("{}    clients: []\n{}", &text[..start], &text[end..])
+}
+
+#[tokio::test]
+async fn reordered_callbacks_are_consistent_and_converge() {
+    let (plane, _provider) = converged_newco().await;
+    hand_edit_in_git(&plane, |text| {
+        text.replace(
+            &format!("- https://newco.example.com/callback\n        - {CALLBACK}"),
+            &format!("- {CALLBACK}\n        - https://newco.example.com/callback"),
+        )
+    })
+    .await;
+    let stored = plane.repository.get(&newco()).await.unwrap();
+    assert_eq!(
+        stored.document.client().identity.clients[0].redirect.uris()[0].as_str(),
+        CALLBACK,
+        "the edit must really have reordered the callbacks"
+    );
+
+    assert_eq!(
+        reported_projection(&plane.router).await,
+        json!({"state": "consistent"})
+    );
+    sweep(&plane.router).await;
+    let identity = get(&plane.router, "/api/clients/newco/identity").await;
+    assert_eq!(identity["reconciliation"]["status"], "applied", "{identity}");
+}
+
+#[tokio::test]
+async fn an_unverifiable_projection_with_nothing_to_withhold_is_still_not_ready() {
+    let (plane, _provider) = converged_newco().await;
+    hand_edit_in_git(&plane, |text| {
+        without_identity_clients(&text).replace("    region: NZ\n", "    region: [NZ]\n")
+    })
+    .await;
+
+    assert_eq!(
+        reported_projection(&plane.router).await,
+        json!({"state": "unverifiable", "unverified": []})
+    );
+    sweep(&plane.router).await;
+    let client = get(&plane.router, "/api/clients/newco").await;
+    let identity_unmet = client["lifecycle"]["unmet"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|unmet| unmet["condition"] == "identity")
+        .cloned()
+        .unwrap_or_else(|| panic!("an unverifiable projection is never ready: {client}"));
+    assert!(identity_unmet["detail"]
+        .as_str()
+        .unwrap()
+        .contains("cannot be checked against their projection"));
+}
+
+#[tokio::test]
+async fn a_reassertion_onto_a_diverged_entry_keeps_the_existing_refusal_order_and_touches_nothing() {
+    let (plane, provider) = converged_newco().await;
+    let revision = hand_edit_in_git(&plane, |text| add_extra_callback(&text)).await;
+    let status_before = plane.statuses.report(&newco());
+    provider.clear_calls();
+
+    let anonymous = send(
+        &plane.router,
+        http::Request::builder()
+            .method("POST")
+            .uri("/api/clients/newco/identity/reassertion")
+            .header(header::IF_MATCH, format!("\"{revision}\""))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(anonymous.status(), StatusCode::UNAUTHORIZED);
+    let unconditional = send(
+        &plane.router,
+        as_operator("POST", "/api/clients/newco/identity/reassertion")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(unconditional.status(), StatusCode::PRECONDITION_REQUIRED);
+    let stale = reassert(&plane.router, "stale").await;
+    assert_eq!(stale.status(), StatusCode::CONFLICT);
+    assert_eq!(support::json(stale).await["error"]["code"], "revision_conflict");
+    let diverged = reassert(&plane.router, &revision).await;
+    assert_eq!(diverged.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        support::json(diverged).await["error"]["code"],
+        "projected_client_diverged"
+    );
+
+    assert!(
+        provider.calls().is_empty(),
+        "no provider observation or write: {:?}",
+        provider.calls()
+    );
+    assert_eq!(plane.statuses.report(&newco()), status_before, "no status write");
+    assert_eq!(
+        plane.repository.get(&newco()).await.unwrap().revision.as_str(),
+        revision,
+        "no desired-state write"
     );
     assert_eq!(reasserted_audits(&plane).await, 0);
 }

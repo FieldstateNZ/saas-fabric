@@ -99,3 +99,54 @@ async fn withholding_a_client_that_is_not_declared_withholds_nothing() {
     assert!(outcome.withheld().is_empty());
     assert_eq!(outcome.status(), ReconciliationStatus::Applied);
 }
+
+/// Riley's acceptance case on #108: a withheld entry beside a consistent
+/// projected client, a hand-declared one and realm-role drift. Everything
+/// but the withheld entry converges, and no call of any kind names it.
+#[tokio::test]
+async fn mixed_clients_and_realm_role_drift_converge_and_nothing_targets_the_withheld_entry() {
+    let manual = OidcClient {
+        id: OidcClientId::try_new("manual").unwrap(),
+        ..web_client()
+    };
+    let mut client = acme_with_portal();
+    client.identity.clients.push(manual.clone());
+    let (reconciler, provider) = reconciler();
+    reconciler.reconcile(&client, &[]).await;
+    let realm = acme().identity.realm;
+    let mut current = provider.realm(&realm).unwrap();
+    current.roles.clear();
+    current.clients.remove(&manual.id);
+    provider.seed_realm(realm.clone(), current);
+    remove_mapper(&provider, &web_client().id);
+    remove_mapper(&provider, &portal().id);
+    let portal_before = provider.realm(&realm).unwrap().clients[&portal().id].clone();
+
+    provider.clear_calls();
+    let outcome = reconciler.reconcile(&client, &[portal().id]).await;
+
+    let calls = provider.calls();
+    assert!(
+        calls
+            .iter()
+            .any(|call| call.starts_with("create_realm_role:acme:")),
+        "{calls:?}"
+    );
+    assert!(
+        calls.contains(&"update_oidc_client:acme:web".to_owned()),
+        "{calls:?}"
+    );
+    assert!(
+        calls.contains(&"create_oidc_client:acme:manual".to_owned()),
+        "{calls:?}"
+    );
+    assert!(
+        calls.iter().all(|call| !call.ends_with(":portal")),
+        "no call of any kind targets the withheld client: {calls:?}"
+    );
+    assert_eq!(
+        provider.realm(&realm).unwrap().clients[&portal().id],
+        portal_before
+    );
+    assert_eq!(outcome.withheld(), [portal().id]);
+}

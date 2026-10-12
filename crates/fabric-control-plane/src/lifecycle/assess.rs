@@ -75,7 +75,10 @@ pub(crate) fn derive(
     let client = stored.document.client();
     let readiness = Readiness::new(
         evidence::provisioning(client, facts),
-        evidence::identity(service.reconciliation(stored).status),
+        evidence::identity(
+            service.reconciliation(stored).status,
+            &stored.document.projection_check(),
+        ),
         evidence::publication(client, facts),
     );
     ClientLifecycle::derive(&client.lifecycle, readiness)

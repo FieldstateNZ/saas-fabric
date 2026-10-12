@@ -447,3 +447,65 @@ async fn pending_identity_after_a_write_or_a_restart_excludes_then_reconciliatio
 
     assert_eq!(generations, [1, 2, 3, 4, 5]);
 }
+
+/// D01-19b: a client whose projected identity client was withheld, or whose
+/// stored projection cannot be computed even with nothing to withhold, is
+/// not ready and is left out of the registry. Its tenant binding stays
+/// published: exclusion is from what Fabric publishes, not a revocation.
+#[tokio::test]
+async fn a_withheld_or_unverifiable_projection_is_not_registered_and_its_binding_stays_published() {
+    let dir = TempDir::new("issuer-registry-projection");
+    let (platform, fake) = platform_binding().await;
+    let plane = control_plane_with_publication(platform, sink(&dir));
+    let globex = plane.repository.insert(&client_document("globex")).unwrap();
+    let initech = plane.repository.insert(&client_document("initech")).unwrap();
+    let unreadable = ClientDocument::parse(&format!(
+        "{}  product:\n    region: [nz]\n",
+        client_document("umbrella").render().unwrap()
+    ))
+    .unwrap();
+    assert!(unreadable.product().is_err());
+    let umbrella = plane.repository.insert(&unreadable).unwrap();
+    fake.seed(DesiredRevision::new("ds-1"), vec![declared_data_source()]);
+    fake.seed_placements(
+        DesiredRevision::new("pl-1"),
+        vec![placement("globex"), placement("initech"), placement("umbrella")],
+    );
+    publish_one_application_with_a_resource(&plane.router).await;
+
+    applied(&plane, "globex", &globex);
+    plane.statuses.record(
+        &ClientId::try_new("initech").unwrap(),
+        initech,
+        &ReconciliationOutcome::converged()
+            .withholding(vec![
+                fabric_client_model::OidcClientId::try_new("analytics").unwrap()
+            ]),
+        1,
+    );
+    applied(&plane, "umbrella", &umbrella);
+    let pass = publish(&plane.router).await;
+
+    assert_eq!(registered(&dir), [(issuer("globex"), "globex".to_owned())]);
+    let excluded: BTreeMap<String, String> = pass["readiness"]["excludedFromRegistry"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| {
+            (
+                entry["tenant"].as_str().unwrap().to_owned(),
+                entry["detail"].as_str().unwrap().to_owned(),
+            )
+        })
+        .collect();
+    assert!(excluded["initech"].contains("was withheld"), "{pass}");
+    assert!(
+        excluded["umbrella"].contains("cannot be checked against their projection"),
+        "{pass}"
+    );
+    assert_eq!(
+        tenants_published(&dir),
+        ["globex", "initech", "umbrella"],
+        "a tenant binding is not withdrawn by this"
+    );
+}

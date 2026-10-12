@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 
 use fabric_client_model::lifecycle::Evidence;
-use fabric_client_model::{Client, ClientDocument};
+use fabric_client_model::{Client, ClientDocument, ProjectionCheck};
 use fabric_core::{BindingRevision, DataSourceId, LogicalDataSourceName, TenantId};
 use fabric_platform_management::{IsolationModelDocument, PlacementRecord, PublishedTenants};
 use fabric_reconciliation::ReconciliationStatus;
@@ -127,11 +127,29 @@ fn no_platform_or_unreadable_placements_is_never_provisioned_or_published() {
 
 #[test]
 fn identity_is_met_only_when_in_effect_at_this_revision() {
-    assert_eq!(identity(ReconciliationStatus::Applied), Evidence::Met);
-    assert_eq!(identity(ReconciliationStatus::Drifted), Evidence::Met);
-    assert!(is_unmet(&identity(ReconciliationStatus::Pending)));
-    assert!(is_unmet(&identity(ReconciliationStatus::Failed)));
-    assert!(is_unmet(&identity(ReconciliationStatus::HandEdited)));
+    let consistent = ProjectionCheck::Consistent;
+    assert_eq!(
+        identity(ReconciliationStatus::Applied, &consistent),
+        Evidence::Met
+    );
+    assert_eq!(
+        identity(ReconciliationStatus::Drifted, &consistent),
+        Evidence::Met
+    );
+    assert!(is_unmet(&identity(ReconciliationStatus::Pending, &consistent)));
+    assert!(is_unmet(&identity(ReconciliationStatus::Failed, &consistent)));
+    assert!(is_unmet(&identity(ReconciliationStatus::HandEdited, &consistent)));
+    assert!(is_unmet(&identity(ReconciliationStatus::Withheld, &consistent)));
+}
+
+#[test]
+fn an_unverifiable_projection_is_never_in_effect_even_with_nothing_withheld() {
+    let unverifiable = ProjectionCheck::Unverifiable {
+        unverified: Vec::new(),
+    };
+
+    assert!(is_unmet(&identity(ReconciliationStatus::Applied, &unverifiable)));
+    assert!(is_unmet(&identity(ReconciliationStatus::Drifted, &unverifiable)));
 }
 
 #[test]

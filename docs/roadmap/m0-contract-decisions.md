@@ -1020,8 +1020,11 @@ a complete D01-19b. Built:
 
 No permission, credential or service-account scope changed.
 
-The owed follow-up is built and under review. Its defaults are asked on
-[#108](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6117200254):
+The owed follow-up is built and under review. Its defaults were asked on
+[#108](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6117200254)
+and accepted in the
+[engineering disposition](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6117388945),
+for source design only:
 - read-time reporting: `projection` (`consistent`, `diverged` with each
   `{client, field}`, or `unverifiable`) on `GET /api/clients`,
   `GET /api/clients/{clientId}` and `GET /api/clients/{clientId}/identity`,
@@ -1029,7 +1032,10 @@ The owed follow-up is built and under review. Its defaults are asked on
   edited Git.
 - refusing projection-based convergence: a sweep withholds each diverged or
   unverifiable projected entry. The entry is neither written nor corrected,
-  and the client is reported as the new `withheld` status.
+  and the client is reported as the new `withheld` status. `withheld`, and
+  an `unverifiable` projection even with nothing withheld, leave identity
+  readiness unmet. Nothing already published, no session and no provider
+  access is revoked.
 - refusing re-assertion: a re-assertion onto a diverged entry answers `409
   projected_client_diverged` before any provider call, and is not audited.
 

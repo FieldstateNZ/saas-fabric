@@ -156,10 +156,49 @@ fn a_projection_that_cannot_be_computed_is_unverifiable_and_withholds_the_assign
     assert_eq!(check.withheld(), [reports()]);
 }
 
+const MANUAL: &str = "    - id: manual\n      type: oidc\n      pkce: s256\n      redirect:\n        strategy: claimedHttps\n        uris:\n        - https://manual.example.com/callback\n  product:\n";
+
 #[test]
-fn an_unreadable_product_section_withholds_every_declared_client() {
-    let document = edited(|text| text.replace("    region: au\n", "    region: [au]\n"));
+fn readable_assignments_withhold_only_the_assigned_clients() {
+    let document = edited(|text| {
+        text.replace("  product:\n", MANUAL)
+            .replace("  hosts:\n  - acme.example.com\n", "  hosts: []\n")
+            .replace(
+                "          domain: '{client}.reports.example.com'\n",
+                "          domain: ''\n",
+            )
+    });
+
+    assert_eq!(document.projection_check().withheld(), [reports()]);
+}
+
+#[test]
+fn an_unreadable_product_section_withholds_every_declared_client_hand_declared_included() {
+    let document = edited(|text| {
+        text.replace("  product:\n", MANUAL)
+            .replace("    region: au\n", "    region: [au]\n")
+    });
 
     assert!(document.product().is_err());
-    assert_eq!(document.projection_check().withheld(), [reports()]);
+    assert_eq!(
+        document.projection_check().withheld(),
+        [reports(), OidcClientId::try_new("manual").unwrap()]
+    );
+}
+
+#[test]
+fn an_unreadable_product_section_with_no_declared_client_is_still_unverifiable() {
+    let document = edited(|text| {
+        let start = text.find("    clients:\n").unwrap();
+        let end = text.find("  product:\n").unwrap();
+        format!("{}{}", &text[..start], &text[end..]).replace("    region: au\n", "    region: [au]\n")
+    });
+
+    assert_eq!(
+        document.projection_check(),
+        ProjectionCheck::Unverifiable {
+            unverified: Vec::new()
+        },
+        "never inferred as a safe empty projection"
+    );
 }

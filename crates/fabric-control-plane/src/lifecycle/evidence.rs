@@ -7,7 +7,7 @@
 //! condition unmet, with the reason.
 
 use fabric_client_model::lifecycle::Evidence;
-use fabric_client_model::Client;
+use fabric_client_model::{Client, ProjectionCheck};
 use fabric_core::TenantId;
 use fabric_reconciliation::ReconciliationStatus;
 
@@ -49,7 +49,14 @@ pub(crate) fn provisioning(client: &Client, facts: &PlatformFacts) -> Evidence {
 /// product has deliberately not overwritten it (D01-19b). Nor does
 /// `withheld`: a projected client whose stored entry is not its projection
 /// was not converged at all.
-pub(crate) fn identity(status: ReconciliationStatus) -> Evidence {
+///
+/// A stored projection that cannot be computed is never in effect, whatever
+/// the status: nothing shows that what was converged is the projection,
+/// even when no declared client was there to withhold.
+pub(crate) fn identity(status: ReconciliationStatus, projection: &ProjectionCheck) -> Evidence {
+    if matches!(projection, ProjectionCheck::Unverifiable { .. }) {
+        return unmet("the stored projected identity clients cannot be checked against their projection");
+    }
     match status {
         ReconciliationStatus::Applied | ReconciliationStatus::Drifted => Evidence::Met,
         ReconciliationStatus::HandEdited => {

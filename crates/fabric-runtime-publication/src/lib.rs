@@ -50,6 +50,7 @@
 
 mod canonical;
 mod catalogue_bindings;
+mod completeness;
 mod digest;
 mod document;
 mod document_revision;
@@ -81,6 +82,10 @@ mod verdict;
 mod verdict_tests;
 
 pub use catalogue_bindings::unbound_catalogue_entries;
+pub use completeness::{
+    CompletenessGap, GapKind, ObservedDocument, PublicationCompleteness, RecordedPart, TargetObservation,
+    UnobservedReason,
+};
 pub use document::{
     data_sources_canonical_json, tenants_canonical_json, CatalogDocument, ConfigurationBindingDocument,
     ConnectionSelectorDocument, DataResidencyDocument, DataSourceCapabilitiesDocument, DataSourceDocument,

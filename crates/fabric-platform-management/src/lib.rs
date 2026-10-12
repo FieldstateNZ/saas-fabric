@@ -70,10 +70,11 @@ pub use placements::{
 };
 pub use policy::UpdatePolicy;
 pub use publication::{
-    compose, placements_retained, Accepted, CatalogueSourceError, ComposeError, Excluded, Exclusion,
-    GateStatus, IssuerRegistrySource, LastPass, PassOutcome, PassResult, PublicationState, PublishedTenants,
-    ReadinessEvidence, ReadinessReport, Registrations, RegistryApplication, RegistryEvidence,
-    RegistryEvidenceSummary, RegistrySourceError, RuntimeCatalogueSource, RuntimePublisher, WaitingReason,
+    compose, incompleteness, placements_retained, Accepted, CatalogueSourceError, CompletenessObservation,
+    ComposeError, Excluded, Exclusion, GateStatus, IssuerRegistrySource, LastPass, PassOutcome, PassResult,
+    PublicationState, PublishedTenants, ReadinessEvidence, ReadinessReport, Registrations,
+    RegistryApplication, RegistryEvidence, RegistryEvidenceSummary, RegistrySourceError,
+    RuntimeCatalogueSource, RuntimePublisher, WaitingReason,
 };
 pub use readers::{
     assess as assess_readers, update_complete, Finding, MemberFinding, MemberState, ProbeFailure,

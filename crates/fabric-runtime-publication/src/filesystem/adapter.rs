@@ -18,9 +18,9 @@ use super::lock::PublicationLock;
 use super::paths::DocumentPaths;
 use super::write::{write_if_needed, write_record_if_needed, write_registry_if_needed};
 use crate::{
-    plan_publication, DocumentKind, DocumentPlan, PublicationError, PublicationReport, PublishedResources,
-    PublishedRevisions, RegistryOutcome, RuntimePublication, RuntimeSnapshot, ISSUER_REGISTRY_FILE,
-    PUBLICATION_RECORD_FILE,
+    plan_publication, DocumentKind, DocumentPlan, PublicationCompleteness, PublicationError,
+    PublicationReport, PublishedResources, PublishedRevisions, RegistryOutcome, RuntimePublication,
+    RuntimeSnapshot, ISSUER_REGISTRY_FILE, PUBLICATION_RECORD_FILE,
 };
 
 /// Publishes the runtime's three documents to a local filesystem, matching
@@ -118,6 +118,14 @@ impl RuntimePublication for FilesystemRuntimePublication {
             }),
             record: plan.record.stamp,
         })
+    }
+
+    async fn inspect(&self) -> PublicationCompleteness {
+        super::inspect::inspect(
+            [&self.tenants, &self.data_sources, &self.catalog],
+            &self.record,
+            &self.registry,
+        )
     }
 
     fn describe(&self) -> String {

@@ -96,10 +96,11 @@ impl RuntimePublisher {
 
         let outcome = self.run_pass().await;
         let accepted = self.take_accepted();
+        let completeness = self.inspect_target().await;
 
         self.log_pass(&outcome);
         let at_unix_seconds = self.clock.now_unix_seconds();
-        state.record(at_unix_seconds, outcome.clone(), accepted);
+        state.record(at_unix_seconds, outcome.clone(), accepted, completeness);
 
         PassResult::Ran {
             at_unix_seconds,

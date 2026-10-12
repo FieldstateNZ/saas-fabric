@@ -1287,8 +1287,13 @@ ADR 0023's list and `docs/roadmap/m0-contract-decisions.md`.
   - G2: since #136 a reader never applies a retirement before the unbinding
     that preceded it. The publisher still does not wait for readers;
   - G3: since #136 an interrupted publication leaves readers on the previous
-    complete generation. The files themselves are still left mixed, and the
-    panel does not show the publication as incomplete;
+    complete generation. The files themselves are still left mixed. Since
+    the G3 disposition on #108, every pass ends by inspecting the target
+    against its held record (`RuntimePublication::inspect`), and the panel
+    shows `complete`, `incomplete`, `unpublished` or `unobserved` beside
+    the last pass. Only `complete` at the accepted record lets the documents
+    gate be met. Source
+    only; not verified live;
   - G4: since #132 the window for overlapping writers is narrowed but not
     closed. The filesystem adapter holds an exclusive advisory lock beside
     the tenants file from its read to its last write, and refuses a second

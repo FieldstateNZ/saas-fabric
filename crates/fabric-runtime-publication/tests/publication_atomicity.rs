@@ -29,8 +29,8 @@ use std::time::{Duration, Instant};
 use fabric_core::{BindingRevision, DataSourceId, LogicalDataSourceName, TenantId};
 use fabric_runtime_publication::{
     ConnectionName, ConnectionSelectorDocument, DataSourceDocument, DocumentInput, DocumentKind,
-    DocumentOutcome, DocumentRevision, FieldName, IsolationModelDocument, PublicationError,
-    PublishedRevisions, RuntimePublication as _, RuntimeSnapshot, TenantBindingDocument,
+    DocumentOutcome, DocumentRevision, FieldName, IsolationModelDocument, PublicationCompleteness,
+    PublicationError, PublishedRevisions, RuntimePublication as _, RuntimeSnapshot, TenantBindingDocument,
     TenantDataBindingDocument, TenantDataBindings, PUBLICATION_RECORD_FILE,
 };
 use fabric_tenant_runtime::{ResolveError, RuntimeResolver};
@@ -398,6 +398,35 @@ async fn an_interrupted_publication_leaves_readers_on_the_previous_complete_gene
 
         sampler.stop_and_check(blocked).await;
     }
+}
+
+/// G3's panel state beside the reader. While an interrupted publication
+/// leaves the target incomplete, `inspect` says so against the record the
+/// target still holds, and a reader that refreshes keeps serving that
+/// record's generation whole. Completeness is about the target only: it
+/// neither moves a reader nor claims one applied anything.
+#[tokio::test]
+async fn an_incomplete_target_is_reported_while_readers_stay_on_the_last_complete_generation() {
+    let stack = support::build_stack(&support::base_snapshot(1)).await;
+    let PublicationCompleteness::Complete { record } = stack.dir.publisher().inspect().await else {
+        panic!("the base generation is complete");
+    };
+    std::fs::create_dir(stack.dir.path().join(".tenants.json.tmp")).unwrap();
+
+    stack
+        .dir
+        .publisher()
+        .publish(&acme_moves_to_second_data_source())
+        .await
+        .unwrap_err();
+
+    let inspected = stack.dir.publisher().inspect().await;
+    assert!(
+        matches!(&inspected, PublicationCompleteness::Incomplete { record: held, .. } if *held == record),
+        "{inspected:?}"
+    );
+    refresh(&stack).await;
+    serves_the_base_generation(&stack).await;
 }
 
 /// The documents an interrupted publication left behind are still at mixed

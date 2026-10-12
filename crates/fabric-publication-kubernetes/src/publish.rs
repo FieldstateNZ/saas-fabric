@@ -6,9 +6,9 @@
 
 use async_trait::async_trait;
 use fabric_runtime_publication::{
-    plan_publication, DocumentKind, DocumentManifest, DocumentOutcome, DocumentPlan, PublicationError,
-    PublicationReport, PublishedResources, PublishedRevisions, RegistryOutcome, RuntimePublication,
-    RuntimeSnapshot,
+    plan_publication, DocumentKind, DocumentManifest, DocumentOutcome, DocumentPlan, PublicationCompleteness,
+    PublicationError, PublicationReport, PublishedResources, PublishedRevisions, RegistryOutcome,
+    RuntimePublication, RuntimeSnapshot,
 };
 
 use crate::client::Client;
@@ -122,6 +122,10 @@ impl RuntimePublication for KubernetesRuntimePublication {
             }),
             record: plan.record.stamp,
         })
+    }
+
+    async fn inspect(&self) -> PublicationCompleteness {
+        crate::inspect::inspect(&self.client, &self.namespace).await
     }
 
     fn describe(&self) -> String {

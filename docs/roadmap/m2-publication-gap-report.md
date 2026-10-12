@@ -16,7 +16,9 @@
   under [Release rollback floor](#release-rollback-floor-d01-21). The
   reader's persisted last-known-good generation, its hold and fail-closed
   rules and its recovery command (G5, reader side) follow under
-  [Persisted last-known-good](#persisted-last-known-good-g5). Test names in the gap sections are as first
+  [Persisted last-known-good](#persisted-last-known-good-g5). G3's panel
+  state, the target's observed completeness, follows under
+  [Publication completeness (G3)](#publication-completeness-g3). Test names in the gap sections are as first
   written; see [Engineering fixes](#engineering-fixes),
   [Reader generations](#reader-generations) and the section after it for
   what changed and what each test is now called.
@@ -550,7 +552,7 @@ D01-2 is untouched.
 |---|---|---|---|
 | G1a | One refresh loop reloads data sources, then tenants, on every pass (`fabric-tenant-runtime` `ResourceRefresher::spawn_in_order`). Option 1 of G1a; option 2 (defer a binding whose DataSource is not loaded) is not taken, because it would serve a binding the publisher has replaced instead of failing closed, which changes the reader behaviour ADR 0018 part 3 states. Each reload is abandoned after one refresh interval, so a hung data-sources load cannot hold back tenant refreshes; a panic in either reload stops both. No wire shape or consumption rule changes, but this edits `crates/fabric-tenant-runtime/src`, which ADR 0018's Consequences (`:765-770`) ask to keep frozen, and replaces the public `RuntimeHandles { tenants, data_sources }` fields with `refresh_now()`/`shutdown()`, a breaking API change for in-workspace callers only (`fabric-api`). It needs explicit reviewer sign-off against ADR 0018 | `publication_atomicity.rs::a_reader_applies_new_data_sources_before_the_tenants_that_name_them`; `registration_tests.rs::every_refresh_reloads_data_sources_before_tenant_bindings`, `::a_hung_data_source_load_does_not_hold_back_tenant_refreshes` | `publication_atomicity.rs::current_behaviour_a_reader_can_apply_tenants_that_reach_it_before_the_data_sources_they_name` (per-volume skew, G1b). Also residual, untested: a publication that lands between the two reads of one pass, so the reader takes old data sources and new tenants until the next pass; reading tenants first would instead break G2's retirement order. Both are G1b (D01-1) |
 | G3 | The controller re-offers an `Unwritable` snapshot at once, up to twice, in the same pass (`fabric-platform-management` `protocol.rs`); the pass outcome still reports documents the interrupted offer wrote (`report_outcome.rs`) | `protocol_tests.rs::an_interrupted_publication_is_reoffered_at_once_and_completes`, `::an_interruption_that_persists_is_reported_after_the_retry_budget`, `::a_divergence_and_an_interruption_in_one_pass_each_use_their_own_budget`; `publisher_tests.rs::a_pass_interrupted_part_way_is_completed_in_the_same_pass_and_reports_every_write` | Both G3 tests unchanged: the adapters still leave mixed revisions until the re-offer |
-| G4 (filesystem) | `publish` holds an exclusive advisory lock on `.{tenants file}.lock` from `read_held` to the last write; a second publication is refused with `Unwritable`, nothing written (`filesystem/lock.rs`). Also removes the shared temp-path collision for publishers through the adapter | `filesystem/concurrency_tests.rs::a_second_publisher_is_refused_while_the_first_holds_the_lock`, `::the_lock_is_released_after_every_publication` | `::current_behaviour_two_publishers_that_bypass_the_lock_can_publish_a_dangling_binding`, `::current_behaviour_two_publishers_that_bypass_the_lock_at_one_revision_both_succeed_and_the_last_wins` |
+| G4 (filesystem) | `publish` holds an exclusive advisory lock on `.{tenants file}.lock` from `read_held` to the last write; a second publication is refused with `Unwritable`, nothing written (`filesystem/lock.rs`). Also removes the shared temp-path collision for publishers through the adapter | `filesystem/concurrency_tests.rs::a_second_publisher_is_refused_while_the_first_holds_the_lock`, `::the_lock_is_released_after_every_publication`. Since the follow-up to #163, the lock is unlocked explicitly when released, not only closed. A process spawned from another thread inherits the locked open file description until it execs, and that copy used to keep the lock held, refusing the next sequential publication: `::a_copy_of_the_lock_inherited_by_a_spawned_process_does_not_outlive_the_publication`; `publication_lock_and_spawned_processes.rs` | `::current_behaviour_two_publishers_that_bypass_the_lock_can_publish_a_dangling_binding`, `::current_behaviour_two_publishers_that_bypass_the_lock_at_one_revision_both_succeed_and_the_last_wins` |
 | G4a | `atomic_write` creates its staging file with `create_new`, so a second writer of the same document is refused with `AlreadyExists` and neither truncates nor writes into the first writer's file; it never removes a staging file it did not create. `publish` clears a staging file a crashed writer left (`remove_stale_staging`) while it holds the G4 lock | `atomic_write_tests.rs::a_second_writer_cannot_stage_over_the_first_and_one_whole_document_is_published`, `::a_second_writer_cannot_truncate_the_first_writers_staged_bytes` (both flipped from `current_behaviour_overlapping_writers_*`), `::a_refused_writer_does_not_remove_the_staging_file_it_found`, `::a_staging_file_left_by_a_crashed_writer_is_cleared_by_remove_stale_staging`; `filesystem/concurrency_tests.rs::a_staging_file_left_by_a_crashed_writer_does_not_block_the_next_publication` | None: a second writer is refused, not interleaved |
 | G4 (Kubernetes) | Before the first write, re-read every object the plan read but will not write; refuse `Unwritable` if its `resourceVersion` moved (`fabric-publication-kubernetes` `confirm.rs`). Narrows the write-skew window; cannot close it | `concurrency_tests.rs::a_writer_whose_read_only_object_moved_before_it_writes_is_refused`; `publish_tests.rs::a_held_object_is_replaced_at_the_version_it_was_read_and_an_unchanged_one_is_left` (asserts the re-reads) | `concurrency_tests.rs::current_behaviour_writers_overlapping_after_their_checks_can_leave_a_dangling_binding_in_the_cluster` |
 
@@ -1139,6 +1141,109 @@ Still deferred after this change: G7's live wiring (above), G5's publisher
 hold and publisher-side recovery, the platform reader mount, G4 `Lease`,
 G6's remaining items, G2's publisher wait, G3's panel state, withdrawal,
 and the platform contract follow-ups. O5 is characterized since #159.
+
+## Publication completeness (G3)
+
+The disposition on [#108](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6119949193)
+takes the six defaults asked in
+[#108 comment 6119681433](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6119681433),
+with one correction: completeness is inspected at the adapter, not inferred
+from `current()`. That is because `current()` falls back to the record's
+revision when a manifest is lost and never checks a digest. This change is
+source only. Nothing is wired differently in any environment, and none of it
+is verified live.
+
+- **The retry is unchanged.** It is #132's: `publish_with_retry` re-offers
+  an `Unwritable` snapshot at once, up to twice, with no delay, and retries
+  no other refusal. Atomic writes, CAS, divergence handling and monotonic
+  revisions are untouched.
+- **The inspection (`RuntimePublication::inspect`).** Each adapter reads,
+  without a lock and without writing:
+  - the held record;
+  - every payload and manifest;
+  - the issuer registry, when the record names one;
+  - the record again.
+
+  The answer comes from one shared rule, `TargetObservation::assess`:
+  - **Complete:** every part is at the record's revision and SHA-256.
+  - **Incomplete:** a part is missing, its manifest is missing or
+    unreadable, or its revision or digest differs from the record. The
+    answer names the part and the gap, never its bytes.
+  - **Unpublished:** no record is held.
+  - **Unobserved:** a part could not be read, the record moved between the
+    two reads, or the record does not parse.
+
+  The filesystem adapter brackets with two reads of `publication.json`. The
+  Kubernetes adapter reads the tenants `ConfigMap` before and after the
+  other two. It treats a moved `resourceVersion` as unstable, and an
+  object with a missing or blank one as unobserved.
+- **When it is inspected.** Every publication pass ends with one
+  inspection, whatever the pass decided. That includes an `Unwritable`
+  that outlived its re-offers, and a pass that offered nothing.
+  `PublicationState` keeps the last inspection beside, not inside, the
+  last pass's outcome. A failed pass that wrote nothing can therefore
+  still observe `complete`.
+- **No target read on `GET`.** `GET /api/platform` renders the recorded
+  inspection and never reads the target.
+- **Restarts and clearing.** A restarted control plane holds no
+  inspection, so it reports `unobserved` until a pass inspects. Neither a
+  restart nor elapsed time clears `incomplete`, and only a verified
+  `complete` does.
+- **Readiness.** The documents gate is met only when the accepted
+  evidence names all three documents **and** the last inspection is
+  `complete` at exactly the accepted record, generation and digest.
+  Every other state makes it unmet, with a sanitised reason, and makes
+  `updateComplete` false.
+- **Another coherent generation is held, not adopted.** A target observed
+  complete at another record still reads `complete` on the completeness
+  row. The documents gate stays unmet, with a reason naming both records,
+  until a pass accepts matching evidence. That holds back the accepted
+  pass's identity, connector and G7 reader evidence from certifying a
+  generation they do not describe (review 5488114355, P2). The evidence
+  and the observation are read under both locks together, so they come
+  from one moment.
+- **The panel.** The publication row gains `completeness`: `state`,
+  `observedAtUnixSeconds`, the record inspected against, and `reason`. The
+  console shows it as its own **Completeness** row, under **Last pass**.
+- **Completeness is not reader evidence.** Readers keep their last complete
+  generation (#136). Completeness says nothing about what they applied.
+
+| Acceptance (#108 disposition) | Guard | Tests |
+|---|---|---|
+| Partial writes after exhausted retries make the documents gate unmet | `publisher.rs::publish_once` (`inspect_target`); `documents_gate.rs` | `publisher_tests.rs::an_interruption_that_outlives_its_reoffers_leaves_the_target_incomplete_and_the_documents_gate_unmet`; `platform_publication.rs::a_pass_that_leaves_the_target_part_written_shows_it_incomplete_and_holds_the_documents_gate`; `publication_completeness.rs::a_publication_interrupted_part_way_is_incomplete_until_it_is_completed` |
+| A refusal that wrote nothing leaves a complete target `complete` while the last pass reads `failed` | completeness kept apart from `LastPass` (`state.rs`) | `publisher_tests.rs::a_refusal_that_wrote_nothing_leaves_a_complete_target_complete_while_the_pass_reads_failed`; `platform_publication.rs::a_pass_refused_before_it_wrote_anything_leaves_a_complete_target_complete` |
+| A missing payload or manifest despite fallback revisions | `completeness/observation.rs` | `publication_completeness.rs::a_lost_payload_is_incomplete_though_its_manifest_still_reports_the_revision`, `::a_lost_manifest_is_incomplete_though_current_falls_back_to_the_records_revision`; `completeness_tests.rs::a_manifest_for_another_document_or_that_does_not_parse_is_unreadable` |
+| Equal revisions with a wrong digest | `completeness/observation.rs::payload_gap` | `publication_completeness.rs::equal_revisions_with_other_bytes_are_incomplete`; Kubernetes `inspect_tests.rs::an_object_left_by_an_interrupted_publication_is_incomplete` |
+| Issuer registry mismatch | the registry is checked when the record names one | `publication_completeness.rs::an_issuer_registry_the_record_names_is_held_to_its_digest` |
+| Unavailable or unstable inspection is `unobserved` | `filesystem/inspect.rs`; Kubernetes `inspect.rs` | `publication_completeness.rs::a_part_that_cannot_be_read_leaves_the_target_unobserved`, `::a_record_this_publisher_cannot_read_leaves_the_target_unobserved`; `completeness_tests.rs::a_record_that_moved_while_the_target_was_read_is_unstable_whatever_the_parts_say`; Kubernetes `inspect_tests.rs::a_tenants_object_that_moved_during_the_inspection_is_unstable`, `::an_object_the_cluster_cannot_supply_leaves_it_unobserved`, `::a_tenants_object_with_no_resource_version_to_bracket_by_is_unobserved`, `::no_objects_are_unpublished` |
+| A restart followed by an observation | `PublicationState` starts with no inspection | `publisher_tests.rs::a_restart_knows_nothing_until_a_pass_inspects_and_does_not_clear_an_incomplete_target`; `platform_publication.rs::a_restarted_control_plane_shows_completeness_unobserved_until_a_pass_inspects_the_target` |
+| Retry recovery | #132's `publish_with_retry`, unchanged | `publisher_tests.rs::an_interruption_the_immediate_reoffer_completes_leaves_the_target_complete`; existing `protocol_tests.rs` G3 tests |
+| Only verified coherence clears the condition | `state.rs::record` replaces the observation only with another inspection | `publisher_tests.rs::only_an_inspection_that_finds_the_target_whole_clears_an_incomplete_target`; `readiness_tests.rs::the_documents_gate_needs_the_target_observed_whole_and_says_why_it_is_not`, `::a_complete_target_does_not_stand_in_for_an_accepted_pass` |
+| A target complete at another record is held: a newer generation, or the same generation with another digest; the same accepted record after a zero-write failure is still met; old accepted or G7-reader evidence cannot certify a new target | `documents_gate.rs::record_mismatch`; `state.rs::readiness` reads the evidence and the observation under both locks | `readiness_tests.rs::a_target_complete_at_another_record_holds_the_documents_gate_and_says_which`; `assess_tests.rs::readers_applied_to_the_accepted_record_cannot_certify_a_target_complete_at_another`; `publisher_tests.rs::a_refusal_that_wrote_nothing_leaves_a_complete_target_complete_while_the_pass_reads_failed` |
+| `GET` performs no extra target reads | `body/publication/completeness_row.rs` renders `PublicationState` | `platform_publication.rs::a_pass_that_leaves_the_target_part_written_shows_it_incomplete_and_holds_the_documents_gate` (counts every port call across the `GET`), `::a_restarted_control_plane_shows_completeness_unobserved_until_a_pass_inspects_the_target` |
+| The readers' last complete generation stays installed | #136's record-gated reader, unchanged | `publication_atomicity.rs::an_incomplete_target_is_reported_while_readers_stay_on_the_last_complete_generation` |
+| No payload or sensitive detail in responses | gaps are typed; read errors are dropped | `completeness_tests.rs::what_an_operator_reads_names_the_part_and_never_its_bytes`; the first `platform_publication.rs` test above checks the body names neither the changed label nor the staging path |
+| The console shows the state apart from the last pass | `CompletenessCell.tsx` | `PublicationPanel.test.tsx` "completeness" (three cases) |
+
+Limits:
+
+- **The target is still left mixed.** A publication that is interrupted
+  and then outlives its re-offers still leaves the files or objects mixed
+  until a later pass completes them. This change reports that state. It
+  does not prevent it. Preventing it needs one transaction across three
+  documents, as before.
+- **A completing pass reads `unchanged`.** When a pass finds the documents
+  already written by an interrupted one, it writes only the record. The
+  last-pass outcome counts documents, not the record, so that pass reads
+  `unchanged`. Only the completeness row shows the generation completing.
+- **The inspection is per process and per pass.** No schedule beyond the
+  existing publication schedule inspects the target, and nothing is kept
+  across a restart.
+
+Still deferred after this change: G7's live wiring, G5's publisher hold and
+publisher-side recovery, the platform reader mount, G4 `Lease`, G6's
+remaining items, G2's publisher wait, withdrawal, the O5 continuity and
+issuance guards, and the platform contract follow-ups.
 
 ## Not covered here
 

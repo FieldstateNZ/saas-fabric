@@ -42,7 +42,7 @@ use crate::PublicationError;
 /// a tenants directory the lock file cannot be created in reports
 /// `Unwritable` ahead of any refusal the plan would have made.
 pub(super) struct PublicationLock {
-    _file: File,
+    file: File,
 }
 
 impl PublicationLock {
@@ -62,10 +62,30 @@ impl PublicationLock {
             .map_err(|cause| unwritable(tenants, cause))?;
 
         match file.try_lock() {
-            Ok(()) => Ok(Self { _file: file }),
+            Ok(()) => Ok(Self { file }),
             Err(TryLockError::WouldBlock) => Err(unwritable(tenants, PublicationInProgress)),
             Err(TryLockError::Error(cause)) => Err(unwritable(tenants, cause)),
         }
+    }
+}
+
+/// Unlocks explicitly rather than relying on the close. The lock belongs to
+/// the open file description, and a process spawned from another thread
+/// while it is held inherits a copy of that description until it execs.
+/// Closing only this copy would leave the lock held by the child for that
+/// moment, refusing the next publication through this adapter.
+impl Drop for PublicationLock {
+    fn drop(&mut self) {
+        let _ = self.file.unlock();
+    }
+}
+
+#[cfg(test)]
+impl PublicationLock {
+    /// Another handle on the locked open file description: what a process
+    /// spawned while the lock is held inherits until it execs.
+    pub(super) fn inherited_copy(&self) -> std::io::Result<File> {
+        self.file.try_clone()
     }
 }
 

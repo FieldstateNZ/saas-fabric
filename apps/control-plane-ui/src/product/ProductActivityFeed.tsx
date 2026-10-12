@@ -6,7 +6,8 @@ import { describe } from '../hooks/useClients'
 import { ActivityTable } from './ActivityTable'
 
 /**
- * The platform-wide activity feed, shown on the Reconciliation page.
+ * The platform-wide activity feed, shown on the Reconciliation page: the
+ * newest actions the API returns, and how many older ones it left out.
  *
  * `generation` is a caller-supplied refresh key (unused by the console
  * today, but load-bearing for a future caller that wants to force a reload
@@ -16,7 +17,8 @@ import { ActivityTable } from './ActivityTable'
  */
 export function ProductActivityFeed({ generation = 0 }: { generation?: number }) {
   const [refresh, setRefresh] = useState(0)
-  const [activity, setActivity] = useState<ProductActivity[]>([])
+  const [activity, setActivity] = useState<readonly ProductActivity[]>([])
+  const [omitted, setOmitted] = useState(0)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
@@ -26,6 +28,7 @@ export function ProductActivityFeed({ generation = 0 }: { generation?: number })
       (value) => {
         if (active) {
           setActivity(value.activity)
+          setOmitted(value.omitted)
           setError(null)
         }
       },
@@ -56,7 +59,7 @@ export function ProductActivityFeed({ generation = 0 }: { generation?: number })
           {error}
         </p>
       )}
-      <ActivityTable activity={activity} />
+      <ActivityTable activity={activity} omitted={omitted} />
     </>
   )
 }

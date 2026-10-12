@@ -8,10 +8,10 @@
  */
 import { request } from './client'
 import type {
+  ActivityView,
   CatalogueCommand,
   ClientProductRequest,
   ClientProductResponse,
-  ProductActivity,
   StoredCatalogue,
 } from './catalogue-types'
 import type { RuntimeCatalogue } from './runtime-catalogue-types'
@@ -75,9 +75,9 @@ export function saveProduct(
   })
 }
 
-/** The platform's recorded product and identity activity. The API already sorts it newest first. */
-export function getActivity(): Promise<{ activity: ProductActivity[] }> {
-  return request<{ activity: ProductActivity[] }>('/api/activity')
+/** The platform's most recent product and identity activity, newest first and bounded by the API. */
+export function getActivity(): Promise<ActivityView> {
+  return request<ActivityView>('/api/activity')
 }
 
 /** Who the control plane believes is making these requests. */

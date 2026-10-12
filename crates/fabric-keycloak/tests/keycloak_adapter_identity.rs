@@ -551,3 +551,50 @@ async fn a_custom_scheme_strategy_is_refused_by_the_adapter_not_written_empty() 
         "a client this adapter cannot write must never reach Keycloak at all"
     );
 }
+
+#[tokio::test]
+async fn only_the_declared_callbacks_are_written() {
+    // The in-process half of D12. Keycloak refusing an unregistered
+    // `redirect_uri` at authorization time is the platform's §G14 run; what
+    // this adapter owes is that the realm is told exactly the declared set.
+    // The other wire tests check that the declared set is present. This one
+    // checks that nothing else is: no extra callback, no duplicate, no
+    // wildcard derived from one, and no second list for post-logout or web
+    // origins that could drift from it.
+    let keycloak = FakeKeycloak::start(Arc::new(|_: &RecordedRequest| (201, String::new()))).await;
+    let declared = ["http://127.0.0.1/callback", "http://localhost/callback"];
+    let client = OidcClient {
+        id: OidcClientId::try_new("slipway").unwrap(),
+        protocol: ClientProtocol::Oidc,
+        pkce: PkceMethod::S256,
+        redirect: RedirectStrategy::try_new(
+            RedirectStrategyKind::Development,
+            declared
+                .iter()
+                .map(|uri| RedirectUri::try_new(*uri).unwrap())
+                .collect(),
+        )
+        .unwrap(),
+    };
+
+    provider(&keycloak)
+        .create_oidc_client(&realm(), &client)
+        .await
+        .unwrap();
+
+    let body: serde_json::Value = serde_json::from_str(&created_client_body(&keycloak)).unwrap();
+    let written: Vec<&str> = body["redirectUris"]
+        .as_array()
+        .expect("the declaration carries its callbacks")
+        .iter()
+        .map(|uri| uri.as_str().expect("a callback is a string"))
+        .collect();
+
+    assert_eq!(written.len(), declared.len(), "{written:?}");
+    assert_eq!(
+        written.into_iter().collect::<BTreeSet<_>>(),
+        declared.into_iter().collect::<BTreeSet<_>>()
+    );
+    assert_eq!(body["attributes"]["post.logout.redirect.uris"], "+");
+    assert!(body.get("webOrigins").is_none(), "{body}");
+}

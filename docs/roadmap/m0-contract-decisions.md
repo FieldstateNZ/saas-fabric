@@ -200,9 +200,9 @@ What is built:
   - **Not verified:** whether a master-realm user named `brett@fieldstate.nz`
     exists today, and whether the roster caused the Oct-3 `Degraded`.
 
-### Runtime tenant identity (ADR 0019, Proposed)
+### Runtime tenant identity (ADR 0019, Accepted as amended 2026-10-12, D01-5)
 
-**Proposed, built: the runtime half.** ADR 0019 §2 is in code:
+**Built: the runtime half.** ADR 0019 §2 is in code:
 - the issuer names the tenant;
 - the token's tenant claim must agree;
 - an empty registry refuses to start.
@@ -217,8 +217,17 @@ Tests:
 - `::a_tenant_claim_that_disagrees_with_its_issuer_is_refused` (:165)
 - `crates/fabric-identity/src/config.rs::a_runtime_with_no_trusted_issuers_refuses_to_start` (:197)
 
-**Proposed, not built: the edge half.** This is the §G checklist, G1–G17
-(`docs/decisions/0019-…:1255-1283`).
+The runtime's half of §1 under D01-5's single-route model is tested in
+`crates/fabric-api/tests/edge_trust_contract.rs`:
+- `the_runtime_serves_no_path_into_tenant_data_but_the_data_api`: with an
+  admitted bearer, every shell-, module-, session- or tenant-prefixed path a
+  client route could reach answers `404`, and no connector is reached;
+- `every_data_api_route_refuses_a_request_that_carries_no_bearer`: every
+  method on every `/v1/data` path shape answers `401` before a connector;
+- `the_edge_leeway_ceiling_is_the_smallest_downstream_allowance`: §G7's 30 s.
+
+**Accepted, not built: the edge half.** This is the §G checklist, G1–G17
+(`docs/decisions/0019-…:1318-1337`). D01-5 gives it to the platform.
 - The platform runtime `HTTPRoute`
   (`applications/core/saas-fabric/base/httproute.yaml`) has no JWT policy and
   uses the host `fabric.invalid`.
@@ -226,7 +235,9 @@ Tests:
   get routes "created by OpenTofu in the client's own namespace". It does not
   say whether those routes reach `/v1/data`. That conflicts with G1 ("one
   route per runtime service … no per-tenant route") only if they do.
-  **Ambiguous, not verified.**
+  **D01-5 settles the intent: they do not** (ADR 0019, amendment
+  2026-10-12). **Platform action owed:** say so in that comment. What the
+  routes actually do is not verified.
 - The runtime config has no `[identity]` section, so the runtime would refuse
   to start even with its documents published (`trusted_issuer.rs:111`).
 - The runtime is held at `replicas: 0`
@@ -246,13 +257,21 @@ Options:
 *Recommendation:* **A**. The runtime half is built and tested against the
 single-route model. Owner: **Brett**.
 
+*Disposed 2026-10-11, built 2026-10-12:* **A**. ADR 0019 is accepted as
+amended. The amendment states that client UI routes add no path into
+`/v1/data`, guarded or not, and the runtime's half is tested (above). Still
+open: how a browser surface on a client instance reaches the Data API, given
+that ADR 0024 keeps tokens out of the browser
+([#108 question](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6116923424)). Live JWT and trust configuration stays behind its
+separate security gate. See [Dispositions recorded](#dispositions-recorded).
+
 **U2.2: the generator for the issuer-to-tenant registry (ADR 0019 §G4a)**
 (**D01-4**). Nothing generates it: see #70 and `README.md:455-457`. ADR 0023
 rejected "a fourth document, now" (`docs/decisions/0023-…:387`).
 
 | Option | Shape | For | Against |
 |---|---|---|---|
-| A | **The Fabric publisher generates both lists** from client realms and placements: the runtime registry inside the published tenants document (an ADR 0018 `v2` change), and the gateway's issuer allow-list | One generator, one change, as G4a requires; the realm list is already Fabric's | Schema change to a `deny_unknown_fields` document. Reverses ADR 0023's Consequence that the registry "is still configuration" (`0023-…:373-376`). A Fabric-written gateway object widens the publisher's RBAC. If the platform renders the allow-list instead, from a list Fabric publishes, that risks breaking G4a's "in the same change" (`0019-…:1268`) |
+| A | **The Fabric publisher generates both lists** from client realms and placements: the runtime registry inside the published tenants document (an ADR 0018 `v2` change), and the gateway's issuer allow-list | One generator, one change, as G4a requires; the realm list is already Fabric's | Schema change to a `deny_unknown_fields` document. Reverses ADR 0023's Consequence that the registry "is still configuration" (`0023-…:373-376`). A Fabric-written gateway object widens the publisher's RBAC. If the platform renders the allow-list instead, from a list Fabric publishes, that risks breaking G4a's "in the same change" (`0019-…:1322`) |
 | B | **Platform composition** generates both per client (the D01-3 Application) | Matches ADR 0025's boundary: the edge belongs to the platform | Two repositories must agree on the tenant list, while Fabric's placement is the source of truth for which tenants exist |
 | C | Hand-maintained `[identity].trusted_issuers` and gateway list | Fastest route to one trial tenant | Exactly the drift G4a forbids |
 
@@ -921,6 +940,7 @@ this document's ADR amendments act on. The comment holds the others.
 | D01-2 | Amend ADR 0023 before acceptance. Taking an already-declared compatible dedicated source is distinct from provisioning a new one, and no automatic provisioning is claimed. Platform wiring and control-plane data ownership are preserved, stale console documentation is fixed (`README.md`, `docs/architecture/control-plane.md`), and activation stays explicit and readiness-gated. #112's remaining gaps go to bounded PRs | ADR 0023 status, part 2, part 4, part 5, amendment, "Owed" |
 | D01-27 | Placements roll forward only. Referenced data sources change through revision-bumping writes. No blind placement revert or removal. Catalogue and client restoration keeps conditional writes and audit evidence. Break-glass Git effects are characterized in tests before they are claimed as rollback | ADR 0018 part 10; ADR 0023 amendment |
 | D01-19d | Reviewed amendments and acceptance go in order: 0023, then 0021, then 0026. Each owed item is reconciled with the disposition, and an unimplemented guarantee is never marked verified just because an ADR is accepted | ADR 0023 status |
+| D01-5 | Keep ADR 0019's single-runtime-route model and the platform-owned G1–G17 edge. Client UI routes add no alternate unguarded `/v1/data` path. Prepare the acceptance and implementation tests. Live JWT and trust configuration stays behind the separately scoped security gate | ADR 0019 status, amendment 2026-10-12 ("client routes"), §G1; `identity-edge-test-matrix.md` A9, A10a, D4, D12 |
 | D01-14 | Tombstone first, explicit retained state, confirmed deletion as a separate operation. No destructive action or retention period is approved. State machine and refusal tests; retention and customer-data choices surfaced separately. Withdrawal from the runtime is deferred | ADR 0021 amendment 2026-10-11 ("The rules", "Withdrawal is deferred", "Deferred, and how each is bounded") |
 | D01-19a | Explicit incomplete state until provisioning, identity and publication readiness is met; saved intent is distinguished from a usable client | ADR 0021 amendment 2026-10-11 ("The states") |
 | D01-10, D01-10a | Layered authorization. Scopes and roles only for the isolated synthetic trial; OpenFGA Check on relation-declaring resources from M3 and for every tenant beyond the trial. Designed and tested now; no deployment or standing access | ADR 0027 (Proposed) §1–§4, §6; "Owed" |
@@ -982,7 +1002,7 @@ IDs are not reused.
 | D01-2 | Publication | Accept or amend ADR 0023: resolve the non-shared placement contradiction (`:222-228`/`:370-372` vs `:230-235`, implemented by `select.rs:44-47`); §5 against D01-18; fix the stale `README.md:451-454` | **Disposed 2026-10-11:** amend, then accept. See [Dispositions recorded](#dispositions-recorded) |
 | D01-3 | Provisioning | Per-client platform composition, three sub-choices: (a) databases, schemas and connector processes; (b) client instance resources (formerly D01-8); (c) application component deployment (formerly D01-17) | Platform composition per client for all three |
 | D01-4 | Identity | Generator for the issuer-to-tenant registry (ADR 0019 §G4a) | Fabric publisher, one generator; gateway sub-choice open |
-| D01-5 | Identity | Accept ADR 0019; the platform owns the §G edge; clarify the client-route comment | Accept as written |
+| D01-5 | Identity | Accept ADR 0019; the platform owns the §G edge; clarify the client-route comment | **Disposed 2026-10-11:** accept as written; the platform owns G1–G17; client UI routes add no `/v1/data` path. Accepted as amended, runtime half tested. Browser path asked on #108. See [Dispositions recorded](#dispositions-recorded) |
 | D01-6 | Identity | How operator master-realm accounts come to exist (broker / create / `admin` only / `[]`); sub-choice 6b, revocation (formerly D01-7); accepting PR93's interim | `admin` interim, brokering as target; Brett names the upstream |
 | D01-9 | Session | Keep or remove the loopback workbench as `/api/session` retires (ADR 0021 owed 1); sequence with PR101 | Remove, after PR101 is settled |
 | D01-10 | Authorization | Data-path enforcement: scopes only / OpenFGA check / layered; sub-choice 10a, deploying OpenFGA (formerly D01-11) | **Disposed 2026-10-11:** layered; scopes only for the isolated trial; Check on relation-declaring resources from M3 and for every tenant beyond the trial. Designed and tested, not wired (ADR 0027). Collections: a distinct tenant-bound check per resource, refused until the model contract exists (§2a). Transport: verified TLS, plaintext only on a test loopback path (§2b) |

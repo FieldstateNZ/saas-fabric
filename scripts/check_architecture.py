@@ -585,6 +585,11 @@ def check_dependency_direction(graph: Graph) -> list[Failure]:
             "fabric-connector",
             "fabric-connector-ndc",
             "fabric-data-api",
+            # A dev edge only, for ADR 0019 G7's skew inequality in
+            # `tests/edge_trust_contract.rs`: the front door's tolerance
+            # against this host's leeway. Both are runtime-plane crates, and
+            # no production build of this host links the front door.
+            "fabric-fga-auth",
         },
         # The control plane. A separate graph, sharing only `fabric-core`.
         #

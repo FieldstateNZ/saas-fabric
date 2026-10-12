@@ -1,7 +1,16 @@
 # ADR 0019 — The edge proves the token, the issuer names the tenant, and a public client proves its code
 
-- **Status:** Proposed
-- **Date:** 2026-09-06
+- **Status:** Accepted as amended (2026-10-12, under the D01-5 disposition in
+  [#108](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6109518415)).
+  Acceptance covers the decision as written, with §1's single-runtime-route
+  model as clarified by the
+  [D01-5 amendment](#amendment-2026-10-12-d01-5-client-routes). It verifies
+  nothing on the platform's side. §G is `saas-fabric-platform`'s, and only
+  G16 has evidence (Keycloak 26.0.8, `docs/verification.md`). Accepting this
+  decision activates no gateway resource, JWT policy or trust configuration.
+  Live JWT and trust configuration stays behind its separately scoped
+  security gate.
+- **Date:** 2026-09-06; amended 2026-10-11 (D01-4) and 2026-10-12 (D01-5)
 - **Applies to:** `fabric-identity`, `fabric-client-model`, `fabric-keycloak`,
   `fabric-reconciliation`, `fabric-control-plane`, `fabric-api`,
   `fabric-data-api`, `apps/control-plane-ui`, and the ingress the
@@ -173,6 +182,35 @@ issuers?* — and never *which tenant is this?* That second question is decided
 at the runtime, by the binding in §2, from the same verified string. Splitting
 the two is what keeps the edge a per-service artefact while the tenant boundary
 stays a per-tenant fact.
+
+#### Amendment (2026-10-12, D01-5): client routes
+
+> The single-runtime-route model stands, and the edge is the platform's
+> (§G1–§G17). Platform composition also creates routes per client host: a
+> client instance's shell, its modules and its gateway sign-in session
+> (ADR 0024 §1, ADR 0025). **None of them routes to a runtime service's
+> `/v1/data/*`.** G1 already says no other route reaches the protected
+> path, and a client route is another route. One that did reach it would be
+> a second edge, and nothing would keep its policy in step with G1's. It
+> would be no less a second edge for carrying a JWT policy of its own.
+>
+> The runtime proves its half of this in
+> `crates/fabric-api/tests/edge_trust_contract.rs`:
+> - it serves nothing a client route could reach instead: no shell, no
+>   module, no identity or session route, and no tenant-prefixed or
+>   re-versioned copy of `/v1/data`;
+> - every route under `/v1/data` refuses a request with no bearer before
+>   any connector is reached, so a path that skipped the edge is still
+>   refused here.
+>
+> **Not decided here.** ADR 0024 keeps tokens out of the browser, so a
+> browser surface on a client instance has no bearer of its own to present
+> to G1's route. Two answers would each change what G1 means. One is a
+> single route that lists every client host under one policy. The other is
+> an application backend that calls G1's route with the forwarded bearer.
+> Neither is chosen ([#108](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6116923424)). So is
+> whether ADR 0024's planned runtime `/v1/identity` joins G1's route. Until
+> one is chosen, nothing in this repository builds or describes such a path.
 
 **Every claim SaaS Fabric does not check on this path is checked before SaaS
 Fabric, by the ingress, and the ingress is the only thing permitted to reach a
@@ -1121,6 +1159,11 @@ planned in this repository can meet that. §G is the checklist that PR
 implements; who writes it, and when, is a question this ADR raises and cannot
 answer.
 
+> **Amendment (2026-10-12, D01-5).** The owner is `saas-fabric-platform`. It
+> implements G1–G17, and its runtime route's comment is to say that client
+> routes do not reach `/v1/data`. When that work lands is still open, and M2
+> still depends on it.
+
 **A cross-tenant token stops working, and some deployments stop starting.** §2
 makes the issuer registry required configuration on the Data API path: a runtime
 with no registrations refuses to start, at `build_identity`, which is step 1 of
@@ -1272,7 +1315,7 @@ this repository. The row-by-row evidence expected for each is in
 
 | # | Obligation | Concrete value |
 |---|---|---|
-| G1 | **Route.** One gateway route per tenant runtime service, terminating `/v1/data/*`, with the JWT policy below attached. One route serves **many tenants**; there is no per-tenant route. No other route reaches the runtime's protected path | path prefix `/v1/data` (`crates/fabric-data-api/src/routes.rs:21`); `/health` and `/ready` (`crates/fabric-api/src/health/routes.rs:15-16`) stay outside it |
+| G1 | **Route.** One gateway route per tenant runtime service, terminating `/v1/data/*`, with the JWT policy below attached. One route serves **many tenants**; there is no per-tenant route. No other route reaches the runtime's protected path | path prefix `/v1/data` (`crates/fabric-data-api/src/routes.rs:21`); `/health` and `/ready` (`crates/fabric-api/src/health/routes.rs:15-16`) stay outside it. A client instance's UI routes are not routes into `/v1/data` (D01-5) |
 | G2 | **JWKS.** Per-issuer JWKS URI, fetched and refreshed by the gateway, reachable from the gateway's own network position — not necessarily the public issuer URL | one per registered issuer |
 | G3 | **Algorithm allow-list, per issuer.** Never read from the token header. `none` and every HMAC algorithm refused | e.g. `["RS256"]` per issuer; **not** a single global list, and **not** `fabric-identity`'s private `RS256/384/512` |
 | G4 | **Issuer allow-list = the registered issuer set.** Exact-match `iss` against the set of issuers registered for the tenants this route serves. The edge decides membership only; the **runtime's registry decides the tenant** (§2) | exact strings, no prefixes, no patterns |

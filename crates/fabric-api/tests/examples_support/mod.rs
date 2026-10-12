@@ -3,6 +3,7 @@
 #![allow(dead_code, clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 pub mod probe_connector;
+pub mod served;
 pub mod stub_connector;
 
 use std::path::PathBuf;

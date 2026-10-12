@@ -26,14 +26,13 @@ workbench that once served this surface with a fixed test operator is retired
 | Environments | Inspect current deployment; declare, correct or remove the data sources it can place a tenant on (ADR 0023 part 1, part 2); view the derived runtime catalogue, or the conflict that stops it from being derived (ADR 0023 part 3); register links to other independently authenticated operator consoles. |
 | Integrations | Existing Git application installation, repository selection and platform connection workflows. |
 | Reconciliation | Trigger the existing identity reconciler with operator authority and inspect each client's latest outcome. Passes are observations and are not recorded as activity. |
-| Settings | Persist platform display name, new-client defaults and show authenticated operator identity. |
+| Settings | Persist platform display name, new-client defaults and show the signed-in operator's display name from `/api/user/current`. |
 
 ## API and storage
 
 Authenticated additions: GET/POST `/api/catalogue`, GET `/api/catalogue/runtime`
 (the derived runtime catalogue, ADR 0023 part 3), POST `/api/clients`,
-GET/PUT `/api/clients/{id}/product`, GET `/api/activity`, GET `/api/operator`,
-GET `/api/user/current`,
+GET/PUT `/api/clients/{id}/product`, GET `/api/activity`, GET `/api/user/current`,
 GET `/api/platform/data-sources`, PUT `/api/platform/data-sources/{dataSourceId}`,
 DELETE `/api/platform/data-sources/{dataSourceId}`, GET `/api/clients/{clientId}/placements`,
 POST `/api/clients/{clientId}/placements/{logical}` (ADR 0023 part 2).

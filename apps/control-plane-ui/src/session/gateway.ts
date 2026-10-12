@@ -14,8 +14,8 @@
  * signed in", and on this instance it answers only for a verified operator:
  * no bearer is `401 unauthenticated`, a refused one `401 operator_refused`,
  * exactly as every other route. A `200` must also carry a complete
- * `CurrentUser` (`current-user.ts`); anything else is thrown rather than
- * read as a session.
+ * `CurrentUser` (`api/current-user-types.ts`); anything else is thrown
+ * rather than read as a session.
  * Asking it costs nothing *irreversible*: no navigation is risked.
  * It is not free of side effects any more, though -- a
  * `200` drops the query string, the way completing a redirect always has, and

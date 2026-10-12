@@ -1294,8 +1294,10 @@ ADR 0023's list and `docs/roadmap/m0-contract-decisions.md`.
     but will not write, and refuses with `Unwritable` if any
     `resourceVersion` has moved (`confirm.rs`, using `get` only, so the RBAC
     above is unchanged). Still open: a writer that bypasses the lock, and
-    Kubernetes writers that overlap after their checks. A `Lease` would
-    close this, but it needs RBAC verbs this ADR does not grant;
+    Kubernetes writers that overlap after their checks. A `Lease` could
+    coordinate cooperating Kubernetes publishers; closing their overlap also
+    requires a shared ownership and lease-loss/fencing protocol. It would
+    need RBAC verbs this ADR does not grant;
   - G5: since #112's last-known-good change, a reader with
     `tenant_runtime.last_known_good_dir` set persists each complete
     generation it reads and, at start, primes from that copy when no

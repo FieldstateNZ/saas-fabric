@@ -12,11 +12,10 @@ interface SignInProps {
   readonly error: string | null
   /** Whether the button belongs on screen at all.
    *
-   *  `false` for the one state where offering it would be dishonest: the
-   *  gateway already signed this operator in and the control plane refused
-   *  that sign-in, so the console's own sign-in flow is not the flow that
-   *  ended and clicking it could not fix anything -- the message already
-   *  says what will (ask an operator to check the client or the role). */
+   *  `false` where offering it would be dishonest: the gateway already
+   *  signed this operator in and the control plane refused that sign-in, so
+   *  signing in again could not fix anything -- the message already says
+   *  what will (ask an operator to check the client or the role). */
   readonly canRetry: boolean
   readonly onSignIn: () => void
 }

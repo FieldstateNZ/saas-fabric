@@ -15,30 +15,27 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use fabric_control_plane::{KeyHolder, OperatorConfig, SignInSurface};
-use fabric_keycloak::RealmSignIn;
+use fabric_control_plane::{KeyHolder, OperatorConfig};
+use fabric_keycloak::OperatorRealmKeys;
 
 mod refresh;
 
 /// How long to wait for the provider's key document.
 const FETCH_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// Builds the operator posture's key set and sign-in surface.
+/// Builds the operator posture's key set and starts keeping it current.
 ///
-/// OIDC is the only posture, so this always returns a sign-in surface and
-/// starts the key refresh. The `Option` in the return type is the seam a
-/// harness uses to compose an authenticator directly and skip sign-in; nothing
-/// this function builds ever leaves it `None`.
+/// The bearer the posture verifies arrives from the gateway (ADR 0024 §2), so
+/// the keys are all this process needs from the realm: it redeems no code and
+/// tells no browser where to sign in.
 ///
 /// # Errors
 ///
-/// Returns a message if the sign-in adapter cannot be built. **Not** if the
+/// Returns a message if the key reader cannot be built. **Not** if the
 /// provider is unreachable: a control plane that refuses to start because its
 /// identity provider is down is a control plane that cannot be used to
 /// diagnose why its identity provider is down.
-pub(super) fn establish(
-    config: &OperatorConfig,
-) -> Result<(Arc<KeyHolder>, Option<Arc<SignInSurface>>), String> {
+pub(super) fn establish(config: &OperatorConfig) -> Result<Arc<KeyHolder>, String> {
     let keys = KeyHolder::empty();
 
     // Irrefutable: there is one posture. Left as a destructure rather than
@@ -47,40 +44,26 @@ pub(super) fn establish(
     let OperatorConfig::Oidc {
         issuer,
         reachable_at,
-        client_id,
-        redirect_uri,
         jwks_refresh_seconds,
         ..
     } = config;
 
-    // One URL unless a deployment states two, which it does when the address
-    // the browser uses is not one this pod can resolve.
+    // One URL unless a deployment states two, which it does when the issuer a
+    // token names is not an address this pod can resolve.
     let reachable_at = if reachable_at.trim().is_empty() {
         issuer
     } else {
         reachable_at
     };
 
-    let realm = Arc::new(RealmSignIn::new(
-        issuer,
-        reachable_at,
-        client_id,
-        redirect_uri,
-        FETCH_TIMEOUT,
-    )?);
-
-    let surface = Arc::new(SignInSurface {
-        provider: Arc::clone(&realm) as Arc<dyn fabric_control_plane::OperatorSignIn>,
-        client_id: client_id.clone(),
-        redirect_uri: redirect_uri.clone(),
-    });
+    let realm = Arc::new(OperatorRealmKeys::new(reachable_at, FETCH_TIMEOUT)?);
 
     refresh::spawn(
-        Arc::clone(&realm) as Arc<dyn refresh::SigningKeySource>,
+        realm as Arc<dyn refresh::SigningKeySource>,
         Arc::clone(&keys),
         Duration::from_secs(*jwks_refresh_seconds),
         issuer.clone(),
     );
 
-    Ok((keys, Some(surface)))
+    Ok(keys)
 }

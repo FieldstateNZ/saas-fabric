@@ -56,6 +56,8 @@ h1, h2, h3, p { overflow-wrap: anywhere; }
 .status--pending { color: #8a6a23; background: #ecddb7; }
 .status--failed { color: #a8443a; background: #efd5ce; }
 .status--drifted { color: #755486; background: #e9dfed; }
+/* A held hand edit (D01-19b) waits on a person, like `pending` waits on a pass, so it shares the amber. */
+.status--handEdited { color: #8a6a23; background: #ecddb7; }
 /* Mirrors `pending`'s colour: a publication pass that found nothing ready resolves on its own once desired state gives it something to do. */
 .status--waiting { color: #8a6a23; background: #ecddb7; }
 /* Mirrors `failed`'s colour: a publication pass the platform refused needs a person to act, the same as a reconciliation failure does. */

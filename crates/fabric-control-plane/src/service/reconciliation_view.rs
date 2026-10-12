@@ -27,6 +27,7 @@ pub(super) fn resolve(
             status: report.status,
             observed_at_unix: Some(report.observed_at_unix),
             detail: report.detail.clone(),
+            hand_edits: report.hand_edits.clone(),
         },
 
         // Either nothing has been reconciled for this client at all, or what
@@ -35,6 +36,7 @@ pub(super) fn resolve(
             status: ReconciliationStatus::Pending,
             observed_at_unix: None,
             detail: None,
+            hand_edits: Vec::new(),
         },
     }
 }

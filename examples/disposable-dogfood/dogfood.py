@@ -66,6 +66,15 @@ TEMPLATES = HERE / "templates"
 # anything under .out/) can never enter a build context.
 PINNED_COMMIT = "bb864f4cb5204d176c511a83b540fb7e90c66c16"
 
+# Parked by D01-9 (#108): its sign-in stage drives `/api/session`, which main
+# has retired in favour of the gateway (ADR 0024) and which only PINNED_COMMIT
+# still serves. Re-pinning to a later commit breaks that stage; reviving the
+# profile means moving it to the gateway flow first. README, "Parked (D01-9)".
+PARKED = (
+    "PARKED (D01-9): unsupported and not part of any deploy. Its sign-in drives the retired /api/session, "
+    "served only by its pinned source commit; reviving it means moving it to the gateway flow first."
+)
+
 # The only Docker daemon this launcher may talk to, as observed READ-ONLY
 # (`docker info`) before this file was written. Every Docker-touching command
 # verifies all three fields first and refuses any other daemon.
@@ -2645,6 +2654,7 @@ def packet_text(profile: Profile, lock: Lock, rendered: Rendered) -> str:
         "# Disposable dogfood activation packet",
         "",
         "Status: NOT AUTHORIZED until a named authorizer approves this exact packet (by its sha256 below) for one activation.",
+        PARKED,
         "This profile is NOT WorkSpec, runtime or tenant acceptance. Off-host backup is not a gate for it.",
         "",
         "## Source and images",

@@ -5,7 +5,7 @@ import type { ReactNode } from 'react'
  *
  * `value` drives the colour, via a `status--{value}` class. `console.css`
  * defines one for each reconciliation status (`applied`, `pending`,
- * `failed`, `drifted`), one for `connected`, one for `published` —
+ * `failed`, `drifted`, `handEdited`), one for `connected`, one for `published` —
  * deliberately not a reconciliation status, and styled to not look like
  * one; see the comment on `.status--published` — and one each for the two
  * publication-pass outcomes that need a colour of their own, `waiting`

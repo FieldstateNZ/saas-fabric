@@ -11,6 +11,7 @@ mod client_rules;
 mod client_rules_tests;
 mod oidc_client;
 mod pkce_method;
+mod projected_client_divergence;
 mod redirect_strategy;
 mod redirect_uri;
 pub mod required_roles;
@@ -24,6 +25,7 @@ use crate::{RealmName, RoleName};
 pub use client_rules::CUSTOM_SCHEME_PHASE;
 pub use oidc_client::{ClientProtocol, OidcClient};
 pub use pkce_method::PkceMethod;
+pub use projected_client_divergence::{ProjectedClientDivergence, ProjectedClientField};
 pub use redirect_strategy::{RedirectStrategy, RedirectStrategyKind};
 pub use redirect_uri::{AppScheme, RedirectUri, RedirectUriKind};
 

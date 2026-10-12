@@ -24,7 +24,7 @@ const existing: ClientProductResponse = {
     activity: [],
   },
   resolved: [],
-  reconciliation: { status: 'applied', observedAtUnix: null, detail: null },
+  reconciliation: { status: 'applied', observedAtUnix: null, detail: null, handEdits: [] },
 }
 
 /**

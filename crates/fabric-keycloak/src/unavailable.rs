@@ -7,7 +7,7 @@
 
 use async_trait::async_trait;
 use fabric_client_model::{OidcClient, RealmName, RoleName};
-use fabric_reconciliation::{IdentityProvider, ObservedRealm, ProviderError};
+use fabric_reconciliation::{HeldEdits, IdentityProvider, ObservedRealm, ProviderError};
 
 /// Refuses every operation, with the reason it exists.
 pub(crate) struct Unavailable {
@@ -63,6 +63,7 @@ impl IdentityProvider for Unavailable {
         &self,
         _realm: &RealmName,
         _client: &OidcClient,
+        _held: &HeldEdits,
     ) -> Result<(), ProviderError> {
         Err(self.refusal())
     }

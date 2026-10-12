@@ -182,18 +182,43 @@ async fn the_api_never_offers_a_way_to_reach_the_identity_provider() {
 }
 
 #[tokio::test]
+async fn the_control_plane_redeems_no_authorization_code_for_anybody() {
+    // ADR 0024 §2 retired `GET`/`POST /api/session`: sign-in belongs to the
+    // gateway, which forwards the token it was issued. A control plane that
+    // still answered here would be a second sign-in path, and the one that
+    // puts a token in the browser.
+    let plane = control_plane();
+
+    for method in ["GET", "POST"] {
+        for request in [
+            http::Request::builder().method(method).uri("/api/session"),
+            support::as_operator(method, "/api/session"),
+        ] {
+            let response = send(&plane.router, request.body(Body::empty()).unwrap()).await;
+
+            assert_eq!(
+                response.status(),
+                http::StatusCode::NOT_FOUND,
+                "{method} /api/session is served, and it should not be"
+            );
+        }
+    }
+}
+
+#[tokio::test]
 async fn the_reconciliation_status_vocabulary_is_the_documented_one() {
-    // The UI branches on these four strings. A rename would change what an
+    // The UI branches on these five strings. A rename would change what an
     // operator is shown without changing anything that fails to compile.
     let names: Vec<&str> = [
         ReconciliationStatus::Pending,
         ReconciliationStatus::Applied,
         ReconciliationStatus::Failed,
         ReconciliationStatus::Drifted,
+        ReconciliationStatus::HandEdited,
     ]
     .iter()
     .map(|status| status.as_str())
     .collect();
 
-    assert_eq!(names, ["pending", "applied", "failed", "drifted"]);
+    assert_eq!(names, ["pending", "applied", "failed", "drifted", "handEdited"]);
 }

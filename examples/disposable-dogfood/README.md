@@ -13,6 +13,49 @@ signing in, or the firewall gate isolating anything is a design statement
 checked against source and unit tests, not an observation. The unit tests
 prove the tool *refuses* without evidence; they do not prove the network.
 
+## Parked (D01-9)
+
+**This profile is parked: documented, unsupported, and not part of any
+deploy.** [D01-9](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6109518415)
+retired the loopback workbench and `GET`/`POST /api/session` once this profile
+had moved to the accepted gateway flow or been explicitly parked. It was
+parked, not moved, because there is no gateway flow to move it to that could
+be built and tested offline:
+
+- Its sign-in stage (`ci_smoke.py`, `sign_in_through_console`) and its
+  readiness checks (`status`, `evaluate_session_config`) drive the console's
+  own PKCE sign-in through `/api/session`. Main serves neither any more: the
+  console signs in only through the gateway (ADR 0024 §2).
+- The gateway flow needs a gateway running the OIDC authorization-code flow in
+  front of the console. ADR 0024 slice 1's local half (the `hosting/` Envoy's
+  OAuth2 filter) is not built, and adding one here would add a confidential
+  client, its secret and a cookie key to the trial: credentials and gateway
+  configuration D01-9's PR was not authorized to introduce. A fake gateway
+  that injected a token would prove the control plane's bearer check, which
+  `cargo test` already proves, and nothing about this profile's sign-in.
+
+**What parking means.**
+
+- **Pinned, and the pin is what keeps it coherent.** The profile builds from
+  `git archive bb864f4…` (`PINNED_COMMIT`), whose control plane and console
+  still carry `/api/session`. Re-pinning to a later commit breaks its sign-in
+  stage; the profile refuses any other `source_commit` already.
+- **Unsupported.** No new work targets it, and every activation packet it
+  prints now says so directly under its status line. Activation still needs separate
+  authorization, as below; parking adds no path to it.
+- **Not part of any deploy.** Its workflow runs only on a push to
+  `codex/disposable-dogfood` or a manual dispatch; no release, image or
+  hosting workflow refers to this directory.
+- **Its offline tests still run, on every pull request.** `scripts/tests`
+  (generator, validator, canaries, packet, runbook and `ci_smoke` seams) now
+  runs in CI's `offline script and dogfood tests` job, and
+  `scripts/tests/test_dogfood_parking.py` proves the parking itself: the
+  pinned commit serves `/api/session`, the working tree does not, and no
+  deploy refers to the profile.
+- **Reviving it** means moving its sign-in stage and readiness checks to the
+  gateway flow, re-pinning, and removing this section, in one reviewed change
+  once the local gateway exists.
+
 ## What this profile is not
 
 **This profile is NOT WorkSpec acceptance, NOT runtime acceptance and NOT

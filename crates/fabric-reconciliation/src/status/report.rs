@@ -2,6 +2,7 @@
 
 use fabric_client_model::ClientRevision;
 
+use crate::provider::HandEdit;
 use crate::status::ReconciliationStatus;
 
 /// What is known about a client's reconciliation, as of the last thing that
@@ -42,4 +43,8 @@ pub struct ReconciliationReport {
     /// credential in it, which is what makes this field safe to show an
     /// operator.
     pub detail: Option<String>,
+
+    /// The unsupported hand edits the last pass left in place. Non-empty
+    /// exactly when `status` is `HandEdited`.
+    pub hand_edits: Vec<HandEdit>,
 }

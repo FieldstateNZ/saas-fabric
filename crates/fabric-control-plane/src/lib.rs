@@ -79,7 +79,6 @@ mod resolution;
 mod routes;
 mod secrets_service;
 mod service;
-mod sign_in;
 mod state;
 pub mod testing;
 
@@ -124,7 +123,6 @@ pub use resolution::{ResolutionParts, SelectionRefusal, Unusable};
 pub use routes::API_PREFIX;
 pub use secrets_service::SecretsService;
 pub use service::ClientService;
-pub use sign_in::{IssuedToken, OperatorSignIn, SignInError, SignInSurface};
 
 /// The event-ID domain number for this crate. See `fabric_core::event_id`.
 pub(crate) const DOMAIN_ID: u32 = 10;

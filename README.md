@@ -230,7 +230,10 @@ nothing.
 
 Because it observes before it acts, a realm changed outside SaaS Fabric is
 reported as `drifted` rather than silently corrected — the one signal that says
-something else is editing the realms the platform owns.
+something else is editing the realms the platform owns. A hand edit that only
+narrows a client, such as disabling it, is not corrected at all. It is reported
+as `handEdited` and left in place until an operator undoes it or re-asserts
+the projection, an audited action (D01-19b).
 
 Two capabilities skip that indirection on purpose. A client secret write
 reaches OpenBao directly and reports success or failure from that one call
@@ -410,10 +413,11 @@ repository outright (`mode = "git"`) is still supported, and is what the
 integration tests drive.
 
 Pull request #69 (merged) adds the product catalogue, client creation and
-per-client product configuration, all as desired-state writes, and a loopback
-workbench for developing the console against them — implemented, though
-[ADR 0021](docs/decisions/0021-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md),
-which governs them, is still **Proposed**. Pull request #71 (merged) lets a
+per-client product configuration, all as desired-state writes — implemented,
+though [ADR 0021](docs/decisions/0021-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md),
+which governs them, is still **Proposed**. The loopback workbench it also
+added is retired, with `/api/session`: the console signs in only through the
+gateway (ADR 0024, D01-9). Pull request #71 (merged) lets a
 keyed update or delete reach a real `ndc-postgres` procedure — see
 [ADR 0020](docs/decisions/0020-keyed-writes-name-their-key-arguments.md).
 

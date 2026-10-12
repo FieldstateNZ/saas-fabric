@@ -5,13 +5,14 @@
  * they call one origin: the SaaS Fabric control-plane API. There is no code
  * path from this application to an identity provider, to a Git host, or to any
  * other platform service — and no credential for any of them ever reaches the
- * browser.
+ * browser. Not even the operator's own: the gateway holds the session in
+ * cookies and forwards the bearer upstream (ADR 0024 §2), so a request here
+ * carries no `Authorization` header at all.
  *
  * That is not a convention. `scripts/check_architecture.py` fails the build if
  * anything under `src/` names another platform service's API.
  */
-import { clearRedirectCount, isBehindGateway, redirectToGatewaySignIn } from '../session/gateway'
-import { currentToken, forgetToken } from '../session/session'
+import { clearRedirectCount, redirectToGatewaySignIn } from '../session/gateway'
 import { ControlPlaneError, refusalFromBody } from './errors'
 import type {
   Candidate,
@@ -166,14 +167,6 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers)
   headers.set('Accept', 'application/json')
 
-  // The operator's own token, when this deployment signs operators in. Under
-  // the trusted-header posture there is none and the proxy has already said
-  // who is calling, so an absent token is not an error here.
-  const token = currentToken()
-  if (token !== null) {
-    headers.set('Authorization', `Bearer ${token}`)
-  }
-
   const response = await fetch(path, { ...init, headers })
 
   // A `200` from `/api/operator` cannot prove a session works -- a lying
@@ -184,25 +177,13 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
 
   if (!response.ok) {
-    // An expired or rejected token is not a failure of the request the
-    // operator made, and the two ways this console gets a token call for two
-    // different recoveries.
+    // The cookie session the gateway held has ended. Only a document
+    // navigation can start the gateway's sign-in again: a `fetch` cannot
+    // follow a redirect to an OIDC provider the way a top-level navigation
+    // can. `redirectToGatewaySignIn` does that at most once, however many
+    // panels are asking at the same moment.
     if (response.status === 401) {
-      if (isBehindGateway()) {
-        // Behind the gateway (ADR 0024) this console never held a token to
-        // forget -- the cookie session the gateway held has simply ended.
-        // Only a document navigation can start the gateway's sign-in again: a
-        // `fetch` cannot follow a redirect to an OIDC provider the way a
-        // top-level navigation can. `redirectToGatewaySignIn` is the one that
-        // knows how to do that at most once, however many panels are asking
-        // at the same moment.
-        redirectToGatewaySignIn()
-      } else {
-        // Standalone: forgetting the token is what lets the shell notice and
-        // offer to sign in again, rather than showing an error on every panel
-        // at once.
-        forgetToken(token)
-      }
+      redirectToGatewaySignIn()
     }
 
     throw await refusal(response)

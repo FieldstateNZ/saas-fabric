@@ -145,9 +145,9 @@ operation leaves no commit. Git history stays a second copy of attribution
 `[audit_trail]` defaults to `mode = "disabled"`. Records then reach the log
 pipeline only, as before, and startup logs
 `control_plane.audit_trail_disabled`. The only storage on offer is
-`mode = "local_directory"`, which startup warns is development only. The
-loopback console workbench records to `<workbench data>/audit`, a local
-development path. No deployed environment is changed by this ADR.
+`mode = "local_directory"`, which startup warns is development only. (The
+loopback console workbench, which recorded to `<workbench data>/audit`, is
+retired: D01-9, 2026-10-12.) No deployed environment is changed by this ADR.
 
 ## What the chain does and does not prove
 

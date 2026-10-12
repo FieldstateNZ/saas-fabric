@@ -10,21 +10,7 @@ does, and what is still missing underneath it, is in [PHASE_ONE.md](PHASE_ONE.md
 The decisions it makes, and the ones still owed, are in
 [ADR 0021](../../docs/decisions/0021-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md), which is proposed.
 
-`npm run preview:ui` is **not** a sample-data preview. It serves the console on
-`127.0.0.1:5174` and proxies `/api` to the loopback workbench API on
-`127.0.0.1:8082`, adding the test-operator header to every request. It needs that
-API running, and every save is a real write to the workbench's local storage:
-
-```bash
-# Terminal 1, from the repository root — the workbench API.
-cargo run -p fabric-control-plane-api --example console_workbench
-
-# Terminal 2 — the console against it.
-npm run preview:ui --prefix apps/control-plane-ui
-# http://127.0.0.1:5174
-```
-
-The sections below describe the API and security contracts that remain in place.
+## Running it
 
 ```bash
 # Terminal 1 — the control-plane API, with development adapters.
@@ -35,7 +21,8 @@ npm install --prefix apps/control-plane-ui
 npm run dev --prefix apps/control-plane-ui
 ```
 
-Then open <http://localhost:5173>.
+Then open <http://localhost:5173>. Without a gateway in front, that page stops
+at the sign-in screen: see [Development identity](#development-identity).
 
 ## What it talks to
 
@@ -86,6 +73,7 @@ reality.
 | Applied | This configuration is in effect. |
 | Failed | This configuration could not be applied. |
 | Drifted | Something changed this outside SaaS Fabric. It has been corrected. |
+| HandEdited | Someone edited this in the identity provider in a way SaaS Fabric does not support. It has been left in place, not overwritten. The badge lists each edit, and **Re-assert configuration** overwrites them after a confirmation (D01-19b). |
 
 A save answers `pending`, every time, because at that moment it is true.
 
@@ -155,8 +143,7 @@ src/
   hooks/        loading and saving for those panels
   product/      the catalogue, application definitions and client workflows; component/ is
                 the component editor, its version picker and declared views (ADR 0026)
-  session/      sign-in: PKCE, the pending session, silent renewal
-preview/        the loopback workbench entry and proxy; not in the production build
+  session/      the gateway probe, the redirect to its sign-in, and the route kept across it
 ```
 
 Navigation uses hash URLs without an additional router dependency. The server
@@ -165,17 +152,23 @@ reads stay mounted while navigating; per-client editors retain their own hooks.
 
 ## Development identity
 
-The production console uses OIDC bearer authentication. `npm run dev` proxies
-API calls to `VITE_CONTROL_PLANE` (default `http://localhost:8081`), with no
-gateway in front of it, so it still drives the console's own sign-in flow
-("How the console signs in" in `docs/architecture/control-plane.md`) rather
-than the gateway session ADR 0024 adds.
+The console signs nobody in. The gateway does (ADR 0024 §2): it runs the
+authorization-code flow against the platform realm, keeps the session in its
+own cookies and forwards the access token to the control plane as a bearer.
+The console asks `GET /api/operator` whether that happened and, when it has
+not, offers a button that navigates to `/` for the gateway to answer with the
+realm's login. It holds no token, generates no PKCE pair, and calls no sign-in
+route — `/api/session` is retired.
 
-For a standalone local workbench with persistent storage, see [PHASE_ONE.md](PHASE_ONE.md).
-That explicit loopback-only example renders the console directly, with no
-sign-in gate at all — its proxy asserts a fixed test operator on every
-request instead — so nothing it accepts can be authorised or converged. It is
-excluded from the production entry and from every image. It is also proposed
-rather than settled: the control-plane architecture says local development
-needs a Keycloak, and [ADR 0021](../../docs/decisions/0021-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md) records the contradiction and leaves keeping the workbench
-to the product owner.
+So `npm run dev`, which proxies `/api` to `VITE_CONTROL_PLANE` (default
+`http://localhost:8081`) with nothing in front, renders the sign-in screen and
+no further: nothing forwards a bearer. Working against a live API needs the
+gateway on the local development path, which is ADR 0024 slice 1's local half
+(the `hosting/` Envoy's OAuth2 filter for the control-plane host) and is not
+built yet. Until it is, the console is developed against its tests: every
+panel, hook and the gateway probe itself are covered by `npm test` with the
+network stubbed, and the control plane's routes by `cargo test`.
+
+The loopback workbench that used to stand in for this — an example API that
+accepted a fixed test operator from a proxy header — is retired (D01-9), with
+the `preview:ui` entry that drove it.

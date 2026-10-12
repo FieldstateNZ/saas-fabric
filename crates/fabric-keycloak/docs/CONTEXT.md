@@ -26,6 +26,11 @@ Three items, deliberately:
 - `AdminCredential::new(impl Into<String>)`. No `Display`; `Debug` prints
   `AdminCredential(redacted)`. `expose()` is `pub(crate)` and named to be
   conspicuous.
+- `OperatorRealmKeys::new(reachable_at, timeout)` + `signing_keys()` — reads
+  the platform realm's JWKS document for the control plane's operator posture.
+  Nothing else of operator sign-in lives here: the gateway runs the
+  authorization-code flow and forwards the bearer (ADR 0024 §2), so there is
+  no code redemption and no authorization endpoint.
 
 Everything else — `wire::*`, `admin::*` — is `pub(crate)`.
 
@@ -57,7 +62,10 @@ Everything else — `wire::*`, `admin::*` — is `pub(crate)`.
   entirely, and do appear in this crate's own tests, in
   `scripts/e2e-services.sh`, and in ADR 0014.
 - `provider::declaration` — builds the representation a create or update
-  sends, from an `OidcClient` and the adapter's configured audience. Refuses
+  sends, from an `OidcClient`, the adapter's configured audience and the
+  `HeldEdits` the reconciler decided not to overwrite (D01-19b): a held
+  disable or standard-flow switch-off is written as off, and a held removed
+  callback is left out. A create and a re-assertion pass none. Refuses
   (`ProviderError::Rejected`) a `customScheme` client that reached the adapter
   despite model validation refusing it upstream.
 - `provider::observe` / `provider::observe::clients` / `provider::mutate` —

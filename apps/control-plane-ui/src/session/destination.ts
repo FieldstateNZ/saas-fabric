@@ -1,8 +1,9 @@
 /**
  * Where to send the browser back to after the identity provider's redirect.
  *
- * `session.ts` sends the browser away entirely for sign-in, so whatever hash
- * route the operator was on is gone the moment that navigation starts. This
+ * Signing in at the gateway sends the browser away entirely, and the hash is
+ * never sent to a server, so whatever route the operator was on is gone the
+ * moment that navigation starts. This
  * remembers it across the round trip, and only ever hands back an internal
  * console route — never a value that could send the browser somewhere else.
  */
@@ -34,4 +35,9 @@ export function consumeDestination(): string {
   }
 
   return destination?.startsWith('#/') ? destination : ''
+}
+
+/** Drops the query string, restoring the remembered hash route. */
+export function clearQuery(): void {
+  window.history.replaceState({}, '', window.location.pathname + consumeDestination())
 }

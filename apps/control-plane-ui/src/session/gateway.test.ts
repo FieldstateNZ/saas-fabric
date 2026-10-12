@@ -1,5 +1,5 @@
 /**
- * `gatewaySession`, `isBehindGateway`, and `redirectToGatewaySignIn` in
+ * `gatewaySession` and `redirectToGatewaySignIn` in
  * isolation -- what `useSession.test.ts` and `src/api/client.test.ts` cover
  * is how the rest of the console reacts to what this module decides.
  */
@@ -9,7 +9,6 @@ import { rememberDestination } from './destination'
 import {
   clearRedirectCount,
   gatewaySession,
-  isBehindGateway,
   redirectToGatewaySignIn,
   resetGatewayStateForTests,
 } from './gateway'
@@ -67,18 +66,16 @@ afterEach(() => {
 })
 
 describe('gatewaySession', () => {
-  it('reports signed-in on 200, and remembers it for isBehindGateway', async () => {
+  it('reports signed-in on 200', async () => {
     answering(200)
 
     expect(await gatewaySession()).toBe('signed-in')
-    expect(isBehindGateway()).toBe(true)
   })
 
   it('reports no session for a plain 401', async () => {
     answering(401)
 
     expect(await gatewaySession()).toBe('no-session')
-    expect(isBehindGateway()).toBe(false)
   })
 
   it('reports no session for a 403 too', async () => {
@@ -106,7 +103,6 @@ describe('gatewaySession', () => {
     answeringWith(401, errorBody('operator_refused'))
 
     expect(await gatewaySession()).toBe('refused')
-    expect(isBehindGateway()).toBe(false)
   })
 
   it('reports no session, not a refusal, for a 401 that just means no bearer at all', async () => {

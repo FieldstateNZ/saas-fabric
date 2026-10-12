@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 
 use fabric_client_model::{OidcClient, RedirectStrategyKind, CUSTOM_SCHEME_PHASE};
-use fabric_reconciliation::ProviderError;
+use fabric_reconciliation::{HeldEdits, ProviderError};
 
 use crate::wire::{
     AudienceMapper, NewClientRepresentation, AUDIENCE_MAPPER_CONFIG_KEY, AUDIENCE_MAPPER_TYPE,
@@ -24,6 +24,12 @@ use crate::wire::{
 /// [`crate::KeycloakConfig::audience`] for why it lives in this adapter's own
 /// configuration rather than in the document.
 ///
+/// `held` is the unsupported hand edits this write must leave as the
+/// provider holds them (D01-19b): a held disable or standard-flow switch-off
+/// is written as off, and a held removed callback is left out. Empty for a
+/// create and for an operator's re-assertion, which write the declaration
+/// whole.
+///
 /// # Errors
 ///
 /// Returns [`ProviderError::Rejected`] if the client's redirect strategy is
@@ -34,6 +40,7 @@ use crate::wire::{
 pub(super) fn declaration<'a>(
     client: &'a OidcClient,
     audience: &'a str,
+    held: &HeldEdits,
 ) -> Result<NewClientRepresentation<'a>, ProviderError> {
     match client.redirect.kind() {
         RedirectStrategyKind::ClaimedHttps
@@ -65,14 +72,12 @@ pub(super) fn declaration<'a>(
 
     Ok(NewClientRepresentation {
         client_id: client.id.as_str(),
-        enabled: true,
+        enabled: !held.client_disabled,
         protocol: "openid-connect",
         public_client: true,
-        standard_flow_enabled: true,
-        redirect_uris: client
-            .redirect
-            .uris()
-            .iter()
+        standard_flow_enabled: !held.standard_flow_disabled,
+        redirect_uris: held
+            .redirect_uris_to_write(client.redirect.uris())
             .map(|uri| uri.as_str().to_owned())
             .collect(),
         attributes,

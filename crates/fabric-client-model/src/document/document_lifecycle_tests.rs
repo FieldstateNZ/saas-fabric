@@ -108,3 +108,83 @@ fn a_hand_written_tombstone_parses_as_retired() {
 
     assert!(document.lifecycle().is_retired());
 }
+
+// Restorations as stored.
+
+const RESTORED: &str = "    restorations:\n      - tombstone:\n          at: 100\n          by: o\n          reason: r\n        at: 150\n        by: p\n        reason: renewed\n";
+
+#[test]
+fn a_restoration_is_written_and_read_back_and_other_sections_survive() {
+    let record = LifecycleRecord::default()
+        .tombstone(100, "operator-1", "Contract ended")
+        .unwrap()
+        .restore(150, "operator-3", "Contract renewed")
+        .unwrap();
+
+    let written = acme().with_lifecycle(&record).unwrap();
+    let reread = ClientDocument::parse(&written.render().unwrap()).unwrap();
+
+    assert_eq!(reread.lifecycle(), &record);
+    assert!(!reread.lifecycle().is_retired());
+    assert!(reread.render().unwrap().contains("invoicing: true"));
+    assert_ne!(
+        reread.render().unwrap(),
+        acme().render().unwrap(),
+        "a restored document never reads as the one before its tombstone"
+    );
+}
+
+#[test]
+fn a_hand_written_restoration_in_order_parses() {
+    let document = with_lifecycle(RESTORED).unwrap();
+
+    assert_eq!(document.lifecycle().restorations.len(), 1);
+    assert!(!document.lifecycle().is_retired());
+}
+
+#[test]
+fn a_restoration_before_the_tombstone_it_reverses_is_refused() {
+    let error = with_lifecycle(&RESTORED.replace("at: 150", "at: 50")).unwrap_err();
+
+    assert!(
+        matches!(error, DesiredStateError::InvalidField { .. }),
+        "{error:?}"
+    );
+}
+
+#[test]
+fn restorations_out_of_order_are_refused() {
+    let second = "      - tombstone:\n          at: 120\n          by: o\n          reason: r\n        at: 160\n        by: p\n        reason: renewed\n";
+    let error = with_lifecycle(&format!("{RESTORED}{second}")).unwrap_err();
+
+    assert!(
+        matches!(error, DesiredStateError::InvalidField { .. }),
+        "{error:?}"
+    );
+}
+
+#[test]
+fn a_tombstone_before_the_last_restoration_is_refused() {
+    let tombstone = "    tombstone:\n      at: 140\n      by: o\n      reason: r\n";
+    let error = with_lifecycle(&format!("{tombstone}{RESTORED}")).unwrap_err();
+
+    assert!(
+        matches!(error, DesiredStateError::InvalidField { .. }),
+        "{error:?}"
+    );
+}
+
+#[test]
+fn a_restoration_with_a_blank_reason_or_unknown_key_is_refused() {
+    let blank = with_lifecycle(&RESTORED.replace("reason: renewed", "reason: ' '")).unwrap_err();
+    assert!(
+        matches!(blank, DesiredStateError::InvalidField { .. }),
+        "{blank:?}"
+    );
+
+    let misspelt = with_lifecycle(&RESTORED.replace("by: p", "restoredBy: p")).unwrap_err();
+    assert!(
+        matches!(misspelt, DesiredStateError::Malformed { .. }),
+        "{misspelt:?}"
+    );
+}

@@ -19,8 +19,12 @@
 //! whole.
 
 mod integration;
+mod lifecycle;
 
 pub(crate) use integration::*;
+pub(crate) use lifecycle::{
+    restore_completion_failed, restore_reservation_refused, restore_write_unconfirmed,
+};
 
 use fabric_client_model::ClientId;
 use fabric_core::{event_id, EventType};

@@ -18,11 +18,15 @@
 //! the authenticator as an `Option`, and the configured posture is what
 //! builds it for every image this repository ships. Only tests populate it.
 
+mod lifecycle_continuity;
+
 use std::sync::Arc;
 
 use http::HeaderMap;
 
 use crate::operator::{Operator, OperatorAuthError, OperatorAuthenticator, OperatorToken};
+
+pub use lifecycle_continuity::{ContinuityEvent, InMemoryLifecycleContinuity};
 
 /// The header this authenticator reads.
 ///

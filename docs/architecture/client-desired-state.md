@@ -467,7 +467,9 @@ untyped `spec.identity` once did.
 Recorded by
 [ADR 0021's 2026-10-11 amendment](../decisions/0021-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md#amendment-2026-10-11-a-clients-lifecycle-d01-14-d01-19a)
 (D01-14). What an operator has decided about the client's lifecycle: nothing,
-a tombstone, or a tombstone and a deletion confirmation.
+a tombstone, or a tombstone and a deletion confirmation, beside every
+tombstone an operator reversed
+([restore amendment](../decisions/0021-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md#amendment-2026-10-12-restoring-a-tombstone-d01-14-held)).
 
 ```yaml
 spec:
@@ -479,6 +481,11 @@ spec:
     deletionConfirmed:
       at: 1760227200
       by: brett@example.com
+    restorations:             # oldest first; only ever grows
+      - tombstone: { at: 1750000000, by: brett@example.com, reason: Paused }
+        at: 1755000000
+        by: brett@example.com
+        reason: Resumed
 ```
 
 | Path | Required | Rule |
@@ -486,11 +493,17 @@ spec:
 | `spec.lifecycle` | no | absent reads as saved intent, which every document written before it existed is |
 | `spec.lifecycle.tombstone.reason` | with a tombstone | non-blank, at most 512 bytes, no control characters |
 | `spec.lifecycle.deletionConfirmed` | no | only beside a tombstone, and not earlier than it |
+| `spec.lifecycle.restorations` | no | each entry not earlier than the tombstone it reverses or the entry before it, and the current tombstone not earlier than the last; both reasons follow the tombstone reason rule |
 
-**Written only by the control plane's two lifecycle writes**,
-`POST /api/clients/{clientId}/tombstone` and
-`POST /api/clients/{clientId}/deletion-confirmation`. Each is a separate
-commit, so the tombstone and the confirmation never land together.
+**Written only by the control plane's three lifecycle writes**,
+`POST /api/clients/{clientId}/tombstone`,
+`POST /api/clients/{clientId}/deletion-confirmation` and
+`POST /api/clients/{clientId}/restoration`. Each is a separate commit, so the
+tombstone and the confirmation never land together. A restoration moves the
+tombstone into `restorations` and never removes it. Every restore is held
+until the protected continuity store exists, so no deployment writes one
+today. A `restorations` entry written into Git by hand is not refused yet
+(O5).
 
 **Unknown keys are refused**, unlike `spec`'s other unmodelled sections. A
 misspelt `tombstoned:` would otherwise read as an active client.

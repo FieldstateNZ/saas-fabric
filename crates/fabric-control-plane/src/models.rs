@@ -35,7 +35,7 @@ pub(crate) use client_response::{ClientListResponse, ClientResponse};
 pub(crate) use current_user_response::CurrentUserResponse;
 pub(crate) use identity_request::IdentityRequest;
 pub(crate) use identity_response::IdentityResponse;
-pub(crate) use lifecycle_request::{DeletionConfirmationRequest, TombstoneRequest};
+pub(crate) use lifecycle_request::{DeletionConfirmationRequest, RestorationRequest, TombstoneRequest};
 pub(crate) use lifecycle_response::LifecycleResponse;
 pub(crate) use operator_response::OperatorResponse;
 pub(crate) use projection_response::ProjectionResponse;

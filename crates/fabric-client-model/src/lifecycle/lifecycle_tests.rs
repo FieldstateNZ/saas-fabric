@@ -294,3 +294,114 @@ fn a_refusal_says_what_was_refused_and_that_state_is_retained() {
         "the client is tombstoned, so placement is refused; its state is retained"
     );
 }
+
+// Restoring a tombstone (D01-14, #108 comment 6113749198 item 3).
+
+fn restored() -> LifecycleRecord {
+    tombstoned()
+        .restore(150, "operator-3", "Contract renewed")
+        .unwrap()
+}
+
+#[test]
+fn a_restored_client_is_saved_intent_until_evidence_makes_it_ready() {
+    let record = restored();
+
+    assert!(!record.is_retired());
+    assert_eq!(record.deletion_confirmed, None);
+    assert_eq!(
+        ClientLifecycle::derive(&record, identity_pending()).state(),
+        LifecycleState::Incomplete
+    );
+    assert_eq!(
+        ClientLifecycle::derive(&record, all_met()),
+        ClientLifecycle::Ready
+    );
+}
+
+#[test]
+fn a_restoration_keeps_the_tombstone_it_reverses() {
+    let record = restored();
+
+    assert_eq!(
+        record.restorations,
+        [Restoration {
+            tombstone: tombstoned().tombstone.unwrap(),
+            at: 150,
+            by: "operator-3".to_owned(),
+            reason: "Contract renewed".to_owned(),
+        }]
+    );
+}
+
+#[test]
+fn history_only_grows_through_a_second_tombstone_and_restoration() {
+    let again = restored()
+        .tombstone(200, "operator-1", "Contract ended again")
+        .unwrap();
+    assert_eq!(
+        again.restorations.len(),
+        1,
+        "a tombstone keeps earlier restorations"
+    );
+
+    let twice = again.restore(250, "operator-3", "Renewed again").unwrap();
+    let reversed: Vec<u64> = twice.restorations.iter().map(|r| r.tombstone.at).collect();
+    assert_eq!(reversed, [100, 200]);
+
+    let confirmed = again
+        .confirm_deletion(&id("acme"), &id("acme"), 300, "operator-2")
+        .unwrap();
+    assert_eq!(
+        confirmed.restorations.len(),
+        1,
+        "a confirmation keeps earlier restorations"
+    );
+}
+
+#[test]
+fn only_a_tombstoned_client_can_be_restored() {
+    assert_eq!(
+        LifecycleRecord::default().restore(150, "o", "r"),
+        Err(LifecycleRefusal::RestoreRequiresTombstone)
+    );
+    assert_eq!(
+        restored().restore(160, "o", "r"),
+        Err(LifecycleRefusal::RestoreRequiresTombstone)
+    );
+}
+
+#[test]
+fn a_client_whose_deletion_is_confirmed_is_not_restored() {
+    assert_eq!(
+        deletion_confirmed().restore(300, "o", "r"),
+        Err(LifecycleRefusal::DeletionConfirmedNotRestorable)
+    );
+}
+
+#[test]
+fn a_restoration_needs_an_acceptable_reason() {
+    for (reason, detail) in [
+        ("  ", "a restoration needs a reason"),
+        (&"x".repeat(513), "a restoration reason must be at most 512 bytes"),
+        (
+            "line\nbreak",
+            "a restoration reason must not contain control characters",
+        ),
+    ] {
+        assert_eq!(
+            tombstoned().restore(150, "o", reason),
+            Err(LifecycleRefusal::InvalidRestorationReason { detail })
+        );
+    }
+    let trimmed = tombstoned().restore(150, "o", "  Renewed  ").unwrap();
+    assert_eq!(trimmed.restorations[0].reason, "Renewed");
+}
+
+#[test]
+fn deletion_cannot_be_confirmed_for_a_restored_client() {
+    assert_eq!(
+        restored().confirm_deletion(&id("acme"), &id("acme"), 200, "o"),
+        Err(LifecycleRefusal::DeletionRequiresTombstone)
+    );
+}

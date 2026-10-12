@@ -29,9 +29,9 @@ use crate::{logging, ControlPlaneConfig};
 /// # Errors
 ///
 /// Returns a message if the operator posture cannot be built — a blank issuer,
-/// client or role, or a supplied authenticator presenting a blank role. Each means the API would be reachable by nobody or by
-/// everybody, and finding that out at startup beats finding it out when an
-/// operator cannot sign in.
+/// client or role, or a supplied authenticator presenting a blank role. Each
+/// means the API would be reachable by nobody or by everybody, and finding
+/// that out at startup beats finding it out when an operator cannot sign in.
 pub fn build_control_plane(
     config: &ControlPlaneConfig,
     deps: ControlPlaneDeps,
@@ -43,6 +43,7 @@ pub fn build_control_plane(
         keys,
         identity_provider,
         declaration_ledgers,
+        lifecycle_continuity,
         git_integration,
         client_secrets: secret_store,
         operators,
@@ -71,8 +72,7 @@ pub fn build_control_plane(
     let platform_sweeps = Arc::new(fabric_platform_management::SweepState::default());
     let health = Arc::new(crate::IntegrationHealth::new());
 
-    // Built whether or not a publisher exists: see
-    // `PlatformBinding::publication`'s own rustdoc.
+    // Built whether or not a publisher exists: see `PlatformBinding::publication`.
     let publication_state = Arc::new(PublicationState::new());
 
     let service = Arc::new(ClientService::new(
@@ -84,9 +84,8 @@ pub fn build_control_plane(
         Arc::new(reserved_client_ids),
     ));
 
-    // The publisher is built here, not passed in whole: it needs the client
-    // desired-state binding and the client service, which only this
-    // function has in scope beside the platform binding.
+    // The publisher is built here, not passed in whole: it needs the client binding
+    // and service, which only this function has in scope beside the platform binding.
     let platform = platform.map(|binding| {
         let publisher = publication
             .as_ref()
@@ -129,6 +128,7 @@ pub fn build_control_plane(
         git_integration,
         identity_provider,
         declaration_ledgers,
+        lifecycle_continuity,
         public_base_url: config.public_base_url.clone(),
         desired_state: Arc::clone(repository),
         health: Arc::clone(&health),

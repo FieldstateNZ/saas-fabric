@@ -688,3 +688,58 @@ async fn a_projected_entry_missing_in_git_is_not_ready_and_not_registered_after_
     publish(&plane.router).await;
     assert_eq!(registered(&dir), [(issuer("initech"), "initech".to_owned())]);
 }
+
+/// D01-14 restore: a restored client is saved intent, so its issuer comes
+/// back only once identity is applied at the restored revision, in a new
+/// generation; the registry generation never goes back, and the tenant
+/// binding the tombstone left published is untouched throughout.
+#[tokio::test]
+async fn a_restored_client_is_registered_again_only_once_identity_is_applied_at_its_new_revision() {
+    let dir = TempDir::new("issuer-registry-restore");
+    let (plane, globex) = ready_plane(&dir).await;
+    plane
+        .continuity
+        .as_ref()
+        .unwrap()
+        .enroll(&ClientId::try_new("globex").unwrap());
+    applied(&plane, "globex", &globex);
+    publish(&plane.router).await;
+    assert_eq!(registered(&dir), [(issuer("globex"), "globex".to_owned())]);
+    let bound = std::fs::read_to_string(dir.path().join("tenants.json")).unwrap();
+
+    let retired = write(
+        &plane.router,
+        "POST",
+        "/api/clients/globex/tombstone",
+        globex.as_str(),
+        &json!({"reason": "Contract ended"}),
+    )
+    .await;
+    publish(&plane.router).await;
+    assert_eq!(registered(&dir), []);
+    let generation = registry(&dir)["generation"].as_u64().unwrap();
+
+    let restored = write(
+        &plane.router,
+        "POST",
+        "/api/clients/globex/restoration",
+        &retired,
+        &json!({"reason": "Contract renewed"}),
+    )
+    .await;
+    let pending = publish(&plane.router).await;
+    assert_eq!(registered(&dir), [], "pending identity is not routable");
+    assert_eq!(registry(&dir)["generation"].as_u64().unwrap(), generation);
+    let exclusion = pending["readiness"]["excludedFromRegistry"][0].clone();
+    assert_eq!(exclusion["kind"], "notReady", "{exclusion}");
+
+    applied(&plane, "globex", &ClientRevision::try_new(&restored).unwrap());
+    publish(&plane.router).await;
+    assert_eq!(registered(&dir), [(issuer("globex"), "globex".to_owned())]);
+    assert_eq!(registry(&dir)["generation"].as_u64().unwrap(), generation + 1);
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("tenants.json")).unwrap(),
+        bound,
+        "the binding was never withdrawn, so nothing republished it"
+    );
+}

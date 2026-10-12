@@ -38,10 +38,10 @@ impl ControlPlaneState {
         let tenant = TenantId::try_new(client.id.as_str()).ok();
         let withdrawal = retired.then(|| withdrawal(tenant.as_ref(), &facts.publication));
 
-        LifecycleResponse::new(lifecycle, withdrawal)
+        LifecycleResponse::new(lifecycle, withdrawal, client.lifecycle.restorations.clone())
     }
 
-    async fn platform_facts(&self) -> PlatformFacts {
+    pub(crate) async fn platform_facts(&self) -> PlatformFacts {
         let Some(platform) = &self.platform else {
             return PlatformFacts::not_managed();
         };

@@ -142,7 +142,13 @@ edits and secret writes are deliberately not guarded (remediation).
 a retired tenant stays published (withdrawal deferred). `lifecycle/withdrawal.rs`
 reports `withdrawal` (`pending`/`refused`/`unobserved`/`notPublished`) for retired
 clients from `PublicationState` evidence only; never "withdrawn". Nothing here deletes
-anything.
+anything. Restore (`service/restore.rs`, `POST .../restoration`): CAS, then
+`LifecycleRecord::restore` (tombstone kept in `restorations`), then
+`lifecycle/retained.rs`, then a reservation in the `LifecycleContinuity` port
+(`lifecycle_continuity.rs`), then the write, completion and audit S20. No deployment
+has a store, so every restore is held (`503 lifecycle_continuity_unavailable`, codes in
+`errors/status_mapping/restore.rs`); `testing::InMemoryLifecycleContinuity` is
+test-only.
 
 ## Audit trail (ADR 0028, D01-19c)
 

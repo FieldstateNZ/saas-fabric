@@ -121,6 +121,45 @@ describe('the lifecycle status', () => {
     expect(screen.getByText('Withdrawal pending: still published')).toBeInTheDocument()
   })
 
+  it('shows a restored client as saved intent, keeping the tombstone it reversed', () => {
+    render(
+      <LifecycleStatus
+        lifecycle={lifecycle({
+          unmet: [{ condition: 'identity', detail: 'identity has not been applied at this revision yet' }],
+          restorations: [
+            { tombstone: TOMBSTONE, at: 1_700_000_200, by: 'riley@example.com', reason: 'Contract renewed' },
+          ],
+        })}
+      />,
+    )
+
+    expect(screen.getByText('Saved, not usable yet')).toBeInTheDocument()
+    expect(screen.getByRole('list', { name: 'Not ready yet' })).toHaveTextContent(
+      'Identity: identity has not been applied at this revision yet',
+    )
+    const note = screen.getByText(/Restored .* by riley@example\.com: Contract renewed\./)
+    expect(note).toHaveTextContent('(Contract ended) is kept in its history.')
+    expect(screen.queryByText('Ready')).not.toBeInTheDocument()
+  })
+
+  it('keeps earlier restorations on a client retired again', () => {
+    render(
+      <LifecycleStatus
+        lifecycle={{
+          ...tombstoned({ state: 'pending', detail: 'still carried' }),
+          restorations: [
+            { tombstone: { ...TOMBSTONE, at: 1_600_000_000 }, at: 1_650_000_000, by: 'o', reason: 'Renewed' },
+          ],
+        }}
+      />,
+    )
+
+    expect(screen.getByText('Retirement recorded')).toBeInTheDocument()
+    expect(screen.getByText(/Contract ended\. Its state is retained\./)).toBeInTheDocument()
+    expect(screen.getByText(/Restored .* by o: Renewed\./)).toBeInTheDocument()
+    expectNoServingClaim()
+  })
+
   it('renders only the pill when compact', () => {
     render(<LifecycleStatus lifecycle={SAVED_INTENT} compact />)
 

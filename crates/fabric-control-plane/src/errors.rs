@@ -330,6 +330,13 @@ pub enum ControlPlaneError {
     #[error(transparent)]
     Lifecycle(#[from] fabric_client_model::LifecycleRefusal),
 
+    /// A restore was refused before anything was written: the continuity
+    /// store is absent, unavailable or disagrees, or the client's placements
+    /// were not retained (D01-14 restore). See
+    /// `errors::status_mapping::restore`.
+    #[error(transparent)]
+    Restore(#[from] crate::RestoreRefusal),
+
     /// This deployment converges no identity provider.
     #[error("this platform converges no identity provider")]
     ConvergenceUnavailable,

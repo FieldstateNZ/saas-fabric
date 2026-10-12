@@ -66,6 +66,13 @@ export function LifecycleStatus({
           <strong>{WITHDRAWAL[lifecycle.withdrawal.state]}</strong>: {lifecycle.withdrawal.detail}.
         </p>
       )}
+      {lifecycle.restorations.map((restoration) => (
+        <p className="lifecycle__note" key={`${String(restoration.tombstone.at)}-${String(restoration.at)}`}>
+          Restored {when(restoration.at)} by {restoration.by}: {restoration.reason}. Retirement recorded{' '}
+          {when(restoration.tombstone.at)} by {restoration.tombstone.by} ({restoration.tombstone.reason}) is kept
+          in its history.
+        </p>
+      ))}
       {lifecycle.deletionConfirmed !== null && (
         <p className="lifecycle__note">
           Deletion confirmed {when(lifecycle.deletionConfirmed.at)} by {lifecycle.deletionConfirmed.by}. This

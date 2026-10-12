@@ -1,7 +1,5 @@
-//! What the host hands in to build the control plane.
-//!
-//! Past 120 lines because each dependency's reason for being here, or for
-//! being optional, is stated beside it; that is the file's whole purpose.
+//! What the host hands in to build the control plane. Past 120 lines because
+//! each dependency's reason for being here, or optional, is stated beside it.
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -38,6 +36,10 @@ pub struct ControlPlaneDeps {
     /// Each client's declaration ledger (D01-15). `None` in every deployment
     /// until a protected continuity store exists; see `DeclarationLedgers`.
     pub declaration_ledgers: Option<Arc<dyn crate::DeclarationLedgers>>,
+
+    /// Where a restoration is reserved before it is written (D01-14). `None` in every
+    /// deployment until a protected continuity store exists: every restore is held.
+    pub lifecycle_continuity: Option<Arc<dyn crate::LifecycleContinuity>>,
 
     /// The Git connection flow, when this deployment manages its own.
     pub git_integration: Option<Arc<crate::GitIntegrationService>>,

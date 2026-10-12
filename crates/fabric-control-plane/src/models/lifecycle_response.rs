@@ -1,6 +1,6 @@
 //! What a client's lifecycle looks like on the wire.
 
-use fabric_client_model::lifecycle::{DeletionConfirmation, Tombstone, Unmet};
+use fabric_client_model::lifecycle::{DeletionConfirmation, Restoration, Tombstone, Unmet};
 use fabric_client_model::{ClientLifecycle, LifecycleState};
 
 use crate::lifecycle::Withdrawal;
@@ -15,6 +15,9 @@ use crate::lifecycle::Withdrawal;
 /// `withdrawal` is null unless retirement is recorded, and then reports
 /// publication evidence only. A recorded tombstone is never, on its own, a
 /// claim that the tenant stopped being served.
+///
+/// `restorations` lists every tombstone an operator reversed, oldest first,
+/// in every state: a restored client shows it was once retired.
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct LifecycleResponse {
@@ -32,11 +35,19 @@ pub(crate) struct LifecycleResponse {
 
     /// Whether a retired client's tenant is still published.
     pub(crate) withdrawal: Option<Withdrawal>,
+
+    /// Every reversed tombstone, oldest first.
+    pub(crate) restorations: Vec<Restoration>,
 }
 
 impl LifecycleResponse {
-    /// Renders `lifecycle`, with the withdrawal evidence for a retired one.
-    pub(crate) fn new(lifecycle: ClientLifecycle, withdrawal: Option<Withdrawal>) -> Self {
+    /// Renders `lifecycle`, with the withdrawal evidence for a retired one
+    /// and the recorded restorations.
+    pub(crate) fn new(
+        lifecycle: ClientLifecycle,
+        withdrawal: Option<Withdrawal>,
+        restorations: Vec<Restoration>,
+    ) -> Self {
         let state = lifecycle.state();
         let (unmet, tombstone, deletion_confirmed) = match lifecycle {
             ClientLifecycle::Incomplete { unmet } => (unmet, None, None),
@@ -53,6 +64,7 @@ impl LifecycleResponse {
             tombstone,
             deletion_confirmed,
             withdrawal,
+            restorations,
         }
     }
 }

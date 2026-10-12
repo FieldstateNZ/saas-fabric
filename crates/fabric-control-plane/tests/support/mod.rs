@@ -16,7 +16,7 @@ use std::time::Instant;
 use axum::body::Body;
 use axum::Router;
 use fabric_client_model::{ClientDocument, ClientRevision};
-use fabric_control_plane::testing::AcceptingOperator;
+use fabric_control_plane::testing::{AcceptingOperator, InMemoryLifecycleContinuity};
 use fabric_control_plane::{
     build_control_plane, AuditRecorder, ControlPlaneConfig, ControlPlaneDeps, DeclarationLedgers,
     DesiredStateBinding, IdentityProviderFactory, InMemoryAuditTrail, InMemoryClientRepository,
@@ -32,6 +32,7 @@ use http::{header, Request, Response};
 use tower::ServiceExt as _;
 
 pub mod described_registry;
+pub mod lifecycle;
 pub mod newco;
 pub mod platform_fixture;
 pub mod projected;
@@ -135,6 +136,11 @@ pub struct TestControlPlane {
     /// within one test; a second plane over the same provider is a restart.
     pub ledger: Option<Arc<InMemoryDeclarationLedger>>,
 
+    /// The lifecycle continuity store a restore reserves in, when the plane
+    /// has one. In memory and test-only; no deployment has one, so every
+    /// deployment holds a restore.
+    pub continuity: Option<Arc<InMemoryLifecycleContinuity>>,
+
     /// The durable audit trail every operation records to, so a test can read
     /// back what was audited and verify its chain.
     pub audit: Arc<InMemoryAuditTrail>,
@@ -213,7 +219,7 @@ pub const SECRET_VALUE: &str = "a-value-that-must-not-leak";
 /// Builds a control plane holding one client.
 pub fn control_plane() -> TestControlPlane {
     build(
-        Some(Arc::new(InMemoryDeclarationLedger::new())),
+        Continuity::both(),
         None,
         None,
         None,
@@ -227,7 +233,7 @@ pub fn control_plane() -> TestControlPlane {
 /// registry routes.
 pub fn control_plane_with_registries(registries: Arc<RegistryService>) -> TestControlPlane {
     build(
-        Some(Arc::new(InMemoryDeclarationLedger::new())),
+        Continuity::both(),
         None,
         None,
         None,
@@ -246,7 +252,7 @@ pub fn control_plane_with_resolution(
     platform: Option<PlatformBinding>,
 ) -> TestControlPlane {
     build(
-        Some(Arc::new(InMemoryDeclarationLedger::new())),
+        Continuity::both(),
         None,
         platform,
         None,
@@ -328,7 +334,7 @@ impl RegistryConnector for NoConnector {
 /// caller of this function.
 pub fn control_plane_with_identity_provider(provider: Arc<FakeIdentityProvider>) -> TestControlPlane {
     build(
-        Some(Arc::new(InMemoryDeclarationLedger::new())),
+        Continuity::both(),
         Some(Arc::new(FakeIdentityProviderFactory(provider))),
         None,
         None,
@@ -342,7 +348,7 @@ pub fn control_plane_with_identity_provider(provider: Arc<FakeIdentityProvider>)
 /// `/api/platform/*` against something other than "nothing is managed".
 pub fn control_plane_with_platform(platform: PlatformBinding) -> TestControlPlane {
     build(
-        Some(Arc::new(InMemoryDeclarationLedger::new())),
+        Continuity::both(),
         None,
         Some(platform),
         None,
@@ -358,7 +364,7 @@ pub fn control_plane_with_platform(platform: PlatformBinding) -> TestControlPlan
 /// something other than "nothing is configured".
 pub fn control_plane_with_publication(platform: PlatformBinding, sink: PublicationSink) -> TestControlPlane {
     build(
-        Some(Arc::new(InMemoryDeclarationLedger::new())),
+        Continuity::both(),
         None,
         Some(platform),
         Some(sink),
@@ -377,7 +383,7 @@ pub fn control_plane_with_publication_and_identity_provider(
     provider: Arc<FakeIdentityProvider>,
 ) -> TestControlPlane {
     build(
-        Some(Arc::new(InMemoryDeclarationLedger::new())),
+        Continuity::both(),
         Some(Arc::new(FakeIdentityProviderFactory(provider))),
         Some(platform),
         Some(sink),
@@ -406,7 +412,7 @@ pub fn accepting_operators() -> SuppliedOperators {
 /// presents.
 pub fn control_plane_with_operators(operators: SuppliedOperators) -> TestControlPlane {
     build(
-        Some(Arc::new(InMemoryDeclarationLedger::new())),
+        Continuity::both(),
         None,
         None,
         None,
@@ -416,12 +422,34 @@ pub fn control_plane_with_operators(operators: SuppliedOperators) -> TestControl
     )
 }
 
+/// What a plane keeps outside desired state, standing in for the protected
+/// continuity store: D01-15's declaration ledger and the lifecycle store a
+/// restore reserves in. Both in memory, so each stands for a durable store
+/// only within one test.
+struct Continuity {
+    ledger: Option<Arc<InMemoryDeclarationLedger>>,
+    lifecycle: Option<Arc<InMemoryLifecycleContinuity>>,
+}
+
+impl Continuity {
+    /// Both, empty.
+    fn both() -> Self {
+        Self {
+            ledger: Some(Arc::new(InMemoryDeclarationLedger::new())),
+            lifecycle: Some(Arc::new(InMemoryLifecycleContinuity::new())),
+        }
+    }
+}
+
 /// Shared by every constructor above; only what lends the identity
 /// provider's authority, which platform is bound, where it publishes,
 /// which registries it has and who it accepts as an operator differ between
 /// them.
 fn build(
-    ledger: Option<Arc<InMemoryDeclarationLedger>>,
+    Continuity {
+        ledger,
+        lifecycle: continuity,
+    }: Continuity,
     identity_provider: Option<Arc<dyn IdentityProviderFactory>>,
     platform: Option<PlatformBinding>,
     publication: Option<PublicationSink>,
@@ -468,6 +496,9 @@ fn build(
             declaration_ledgers: ledger
                 .clone()
                 .map(|ledger| Arc::new(InMemoryLedgers(ledger)) as Arc<dyn DeclarationLedgers>),
+            lifecycle_continuity: continuity
+                .clone()
+                .map(|continuity| continuity as Arc<dyn fabric_control_plane::LifecycleContinuity>),
             git_integration: None,
 
             // The posture is verified by its own tests. These drive everything
@@ -490,6 +521,7 @@ fn build(
         statuses: services.statuses,
         binding,
         ledger,
+        continuity,
         audit,
     }
 }
@@ -515,7 +547,10 @@ pub fn control_plane_with_identity_provider_and_no_ledger(
     provider: Arc<FakeIdentityProvider>,
 ) -> TestControlPlane {
     build(
-        None,
+        Continuity {
+            ledger: None,
+            lifecycle: Some(Arc::new(InMemoryLifecycleContinuity::new())),
+        },
         Some(Arc::new(FakeIdentityProviderFactory(provider))),
         None,
         None,
@@ -611,4 +646,25 @@ impl Drop for TempDir {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.path);
     }
+}
+
+/// As [`control_plane_with_publication`] (or [`control_plane`] when `platform`
+/// is `None`), with no lifecycle continuity store: what every deployment is
+/// today, so every restore is held.
+pub fn control_plane_with_no_continuity(
+    platform: Option<PlatformBinding>,
+    publication: Option<PublicationSink>,
+) -> TestControlPlane {
+    build(
+        Continuity {
+            ledger: Some(Arc::new(InMemoryDeclarationLedger::new())),
+            lifecycle: None,
+        },
+        None,
+        platform,
+        publication,
+        no_registries(),
+        no_resolution(),
+        accepting_operators(),
+    )
 }

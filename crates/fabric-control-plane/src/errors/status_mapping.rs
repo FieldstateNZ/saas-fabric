@@ -7,6 +7,7 @@ mod lifecycle;
 mod messages;
 mod platform;
 mod registry;
+mod restore;
 mod selection;
 #[cfg(test)]
 mod selection_tests;
@@ -70,6 +71,9 @@ impl ControlPlaneError {
 
             // The lifecycle's own refusals, next door for the same reason.
             Self::Lifecycle(refusal) => lifecycle::status(refusal),
+
+            // A refused restore's own statuses, next door for the same reason.
+            Self::Restore(refusal) => refusal.status(),
 
             // 428, not 400. The request is well-formed; what is missing is the
             // precondition that makes it safe to apply, and 428 is the status

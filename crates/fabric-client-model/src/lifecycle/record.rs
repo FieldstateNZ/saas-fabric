@@ -1,24 +1,24 @@
 //! What desired state records about a client's lifecycle (`spec.lifecycle`),
-//! and the two operator transitions that write it.
+//! and the three operator transitions that write it.
 //!
-//! In the 121-150 band: the record and the two transitions that are the only
-//! way to produce a new one. Splitting a transition from the record it moves
-//! would put the rule "deletion follows a tombstone" in a different file from
-//! the field that holds the tombstone.
+//! In the 121-150 band: the record and the three transitions that are the
+//! only way to produce a new one. Splitting a transition from the record it
+//! moves would put "deletion follows a tombstone" or "a restoration keeps its
+//! tombstone" apart from the fields that hold them. Invariants: `invariants`.
+
+mod invariants;
 
 use serde::{Deserialize, Serialize};
 
-use super::entries::{DeletionConfirmation, Tombstone};
+use super::entries::{DeletionConfirmation, Restoration, Tombstone};
 use super::refusal::LifecycleRefusal;
 use crate::ClientId;
-
-/// The longest tombstone reason accepted, in bytes.
-const MAX_REASON: usize = 512;
+use invariants::{check_reason, Reasoned};
 
 /// A client's recorded lifecycle (D01-14).
 ///
-/// Absent from a document means neither entry is present: the client is
-/// saved intent, and whether it is usable is derived from evidence
+/// Absent from a document means no entry is present: the client is saved
+/// intent, and whether it is usable is derived from evidence
 /// ([`super::ClientLifecycle::derive`]), never recorded here.
 ///
 /// `deny_unknown_fields`, unlike the rest of `spec`: a misspelt `tombstoned:`
@@ -35,6 +35,11 @@ pub struct LifecycleRecord {
     /// only: nothing is deleted when this is written.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deletion_confirmed: Option<DeletionConfirmation>,
+
+    /// Every tombstone an operator reversed, oldest first. Only ever grows:
+    /// a restoration moves the tombstone here rather than erasing it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub restorations: Vec<Restoration>,
 }
 
 impl LifecycleRecord {
@@ -44,7 +49,7 @@ impl LifecycleRecord {
         self.tombstone.is_some()
     }
 
-    /// Tombstones an active client.
+    /// Tombstones an active client, keeping every earlier restoration.
     ///
     /// # Errors
     ///
@@ -59,7 +64,8 @@ impl LifecycleRecord {
         if self.tombstone.is_some() {
             return Err(LifecycleRefusal::AlreadyTombstoned);
         }
-        let reason = check_reason(reason)?;
+        let reason = check_reason(Reasoned::Tombstone, reason)
+            .map_err(|detail| LifecycleRefusal::InvalidReason { detail })?;
 
         Ok(Self {
             tombstone: Some(Tombstone {
@@ -68,6 +74,7 @@ impl LifecycleRecord {
                 reason,
             }),
             deletion_confirmed: None,
+            restorations: self.restorations.clone(),
         })
     }
 
@@ -77,7 +84,7 @@ impl LifecycleRecord {
     ///
     /// [`LifecycleRefusal::ConfirmationMismatch`] when `confirming` is not
     /// `client`, [`LifecycleRefusal::DeletionRequiresTombstone`] for a client
-    /// that was never tombstoned, and
+    /// that is not tombstoned, and
     /// [`LifecycleRefusal::DeletionAlreadyConfirmed`] for a second
     /// confirmation.
     pub fn confirm_deletion(
@@ -93,46 +100,51 @@ impl LifecycleRecord {
         if self.deletion_confirmed.is_some() {
             return Err(LifecycleRefusal::DeletionAlreadyConfirmed);
         }
-        let Some(tombstone) = &self.tombstone else {
+        if self.tombstone.is_none() {
             return Err(LifecycleRefusal::DeletionRequiresTombstone);
-        };
+        }
 
         Ok(Self {
-            tombstone: Some(tombstone.clone()),
             deletion_confirmed: Some(DeletionConfirmation {
                 at,
                 by: by.to_owned(),
             }),
+            ..self.clone()
         })
     }
 
-    /// The invariants a stored record must keep, checked when a document is
-    /// read so a hand edit cannot confirm deletion without a tombstone.
-    pub(crate) fn check(&self) -> Result<(), &'static str> {
-        match (&self.tombstone, &self.deletion_confirmed) {
-            (None, Some(_)) => Err("deletionConfirmed requires a tombstone"),
-            (Some(tombstone), Some(deletion)) if deletion.at < tombstone.at => {
-                Err("deletionConfirmed must not precede the tombstone")
-            }
-            (Some(tombstone), _) => check_reason(&tombstone.reason)
-                .map(|_| ())
-                .map_err(|_| "tombstone.reason is invalid"),
-            (None, None) => Ok(()),
+    /// Reverses the current tombstone, moving it into
+    /// [`restorations`](Self::restorations) with who reversed it and why.
+    ///
+    /// # Errors
+    ///
+    /// [`LifecycleRefusal::DeletionConfirmedNotRestorable`] once deletion is
+    /// confirmed, [`LifecycleRefusal::RestoreRequiresTombstone`] for a client
+    /// that is not tombstoned, and
+    /// [`LifecycleRefusal::InvalidRestorationReason`] for a blank, oversized
+    /// or control-character reason.
+    pub fn restore(&self, at: u64, by: &str, reason: &str) -> Result<Self, LifecycleRefusal> {
+        if self.deletion_confirmed.is_some() {
+            return Err(LifecycleRefusal::DeletionConfirmedNotRestorable);
         }
+        let Some(tombstone) = &self.tombstone else {
+            return Err(LifecycleRefusal::RestoreRequiresTombstone);
+        };
+        let reason = check_reason(Reasoned::Restoration, reason)
+            .map_err(|detail| LifecycleRefusal::InvalidRestorationReason { detail })?;
+
+        let mut restorations = self.restorations.clone();
+        restorations.push(Restoration {
+            tombstone: tombstone.clone(),
+            at,
+            by: by.to_owned(),
+            reason,
+        });
+
+        Ok(Self {
+            tombstone: None,
+            deletion_confirmed: None,
+            restorations,
+        })
     }
-}
-
-fn check_reason(reason: &str) -> Result<String, LifecycleRefusal> {
-    let trimmed = reason.trim();
-    let detail = if trimmed.is_empty() {
-        "a tombstone needs a reason"
-    } else if trimmed.len() > MAX_REASON {
-        "a tombstone reason must be at most 512 bytes"
-    } else if trimmed.chars().any(char::is_control) {
-        "a tombstone reason must not contain control characters"
-    } else {
-        return Ok(trimmed.to_owned());
-    };
-
-    Err(LifecycleRefusal::InvalidReason { detail })
 }

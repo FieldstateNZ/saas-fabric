@@ -1,0 +1,21 @@
+[package]
+name = "fabric-fga-model"
+description = "Translates a client's declared authorization into the authorization model a tenant's store is pinned to (ADR 0013, ADR 0027)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+fabric-core.workspace = true
+fabric-client-model.workspace = true
+
+serde.workspace = true
+
+[dev-dependencies]
+reqwest.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+
+[lints]
+workspace = true

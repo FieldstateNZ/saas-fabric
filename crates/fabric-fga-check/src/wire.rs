@@ -9,7 +9,8 @@ pub(crate) struct CheckBody<'a> {
     /// The computed relation, `can_<operation>`.
     pub(crate) relation: &'a str,
 
-    /// `resource:id`.
+    /// `resource:id` for a record, `resource_collection:resource` for a
+    /// collection.
     pub(crate) object: &'a str,
 }
 

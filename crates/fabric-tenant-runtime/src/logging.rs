@@ -19,7 +19,14 @@ mod lifecycle_events;
 /// Reading the published documents as one generation.
 mod generation_events;
 
+/// The persisted last-known-good copy.
+mod last_known_good_events;
+
 pub(crate) use generation_events::{generation_applied, generation_held, generation_timed_out};
+pub(crate) use last_known_good_events::{
+    last_known_good_persist_failed, last_known_good_persisted, last_known_good_refused,
+    last_known_good_served, last_known_good_superseded,
+};
 pub(crate) use lifecycle_events::{
     first_load_refused, primed, refresh_failed, refresh_timed_out, refresher_started, refresher_stopped,
     snapshot_applied,

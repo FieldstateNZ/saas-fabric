@@ -13,7 +13,10 @@
   placement and catalogue guards, and Git-revert characterization tests
   follow, under [Revision history, placements and the catalogue](#revision-history-placements-and-the-catalogue)
   (O3, O4, O5, G8). The release rollback floor (D01-21, #124) follows
-  under [Release rollback floor](#release-rollback-floor-d01-21). Test names in the gap sections are as first
+  under [Release rollback floor](#release-rollback-floor-d01-21). The
+  reader's persisted last-known-good generation, its hold and fail-closed
+  rules and its recovery command (G5, reader side) follow under
+  [Persisted last-known-good](#persisted-last-known-good-g5). Test names in the gap sections are as first
   written; see [Engineering fixes](#engineering-fixes),
   [Reader generations](#reader-generations) and the section after it for
   what changed and what each test is now called.
@@ -75,7 +78,7 @@ Against #112's acceptance criteria:
 | Published tenant, data-source and catalogue revisions form a consistent contract | **Not met** across documents. Met within one document only while there is a single writer (G4a) | G1, G2, G4, G4a, G7, G8 |
 | Compatible readers precede schema activation | **Not met.** No mechanism and no version handshake | G6 |
 | Interrupted publication cannot expose mixed revisions | **Not met.** It can, and so can uninterrupted publication | G1, G3 |
-| Last-known-good and failure behaviour are explicit | **Partly met.** The reader side is explicit in code; restart, publisher and rollback behaviour are not | G5 |
+| Last-known-good and failure behaviour are explicit | **Partly met.** The reader side is explicit in code, including across a restart when a last-known-good directory is configured (off by default; no platform mount yet). Publisher hold and publisher-side recovery are not | G5 |
 | Catalogue selection is not claimed to deploy a product | **Met in the README** (`README.md:468-470`). Console copy was not audited | — |
 
 ## What is atomic today
@@ -839,6 +842,160 @@ Still deferred after this change: G5 (persisted last-known-good, a recovery
 command, failure semantics), G4 `Lease`, G7, G6's remaining items, G2's
 publisher wait, G3's panel state, O5 for the catalogue and client documents,
 and both platform contract follow-ups.
+
+## Persisted last-known-good (G5)
+
+G5's reader side, under D01-1's disposition (#108): runtime documents roll
+forward only, and failure behaviour is explicit. #139 left G5 out because
+it needs a writable reader volume, which is a platform mount change, and
+because its failure semantics fall under D01-1. This change builds the
+Fabric side and leaves the mount as a follow-up. None of it is verified
+live, and it is **off by default**.
+
+- **The copy.** With `[tenant_runtime] last_known_good_dir` set, the reader
+  (`PublishedFiles::with_last_known_good`) persists every complete
+  generation it reads, with its catalogue, to `last-known-good.json` in that
+  directory: the record and the exact tenants, data-sources and catalogue
+  bytes it names, plus the record's own SHA-256. One file, so one rename
+  replaces it whole. It is written by staging a uniquely named sibling with
+  `create_new`, writing, `fsync`, rename, then `fsync` of the directory. A
+  write stopped at any step leaves the previous copy whole; a staging file
+  left by a crash is cleared at the next start. A generation whose
+  catalogue lags the record is applied as before and persisted on a later
+  pass, once the catalogue matches. `fabric-api` refuses a directory that
+  is empty or holds a published file: the reader never writes where the
+  publisher does.
+- **Validation, before anything is chosen, raised or persisted.** A
+  published generation and the copy are both checked whole
+  (`ParsedGeneration::validate`), not only by digest: the record and every
+  digest match (plus the record's own digest, for the copy), the reader
+  floor admits this reader, both documents decode through the real
+  decoders, every resource passes its own validation, no key appears twice,
+  every binding names a DataSource the generation carries, and the catalogue
+  passes the host's own decoder (`fabric-api`'s `catalogue::HostCatalogue`,
+  the one startup uses, handed to the runtime as a `CatalogueCheck` so the
+  runtime plane never links `fabric-data-api`). A published generation that
+  fails is refused as `SourceError::Unusable`: the copy's bytes and the
+  floor stay as they were, or, with no copy, the prime fails. Review of
+  98e9ab1 found the first version chose and persisted on digests alone, so
+  a higher publication with matching-hash malformed tenants overwrote a
+  valid copy and then failed the prime.
+- **A refused copy is kept.** It is reported and left in place, byte for
+  byte, even when a valid publication is served instead; the reader never
+  repairs, replaces or deletes it. Only an audited discard removes it, after
+  which the next validated generation is persisted.
+- **Physical separation.** `check_separation` resolves every path through
+  the filesystem component by component (symlinks, then `..` as the kernel
+  takes it), including directories that do not exist yet through their
+  existing ancestors, and refuses a copy directory that is, contains, or
+  sits inside the directory of any published file (tenants, data sources,
+  catalogue, record), whether named directly or through a symlinked file.
+  `fabric-api` runs it at configuration, and the reader runs it again
+  before every write. Review of 98e9ab1 found the first version compared
+  paths lexically, so a symlink alias of the published directory and a
+  published file named `last-known-good.json` let the copy overwrite it.
+- **Hold and fail-closed rules** (`last_known_good/choice.rs`):
+
+  | When | Published files | Valid copy | Applied |
+  |---|---|---|---|
+  | Start | complete generation N | none, or M ≤ N | N, persisted |
+  | Start | complete generation N | M > N | M: a generation never goes back |
+  | Start | torn, mismatched, unreadable, above this reader, or no record | M | M, held |
+  | Start | torn, mismatched, unreadable or above this reader | none | nothing: the prime fails (fail closed) |
+  | Start | no record | none | each document on its own, as before |
+  | Running | complete generation ≥ the highest served or persisted | — | applied at once, persisted |
+  | Running | complete generation below it, or no record after a recorded one | — | held: `SourceError::Regressed` |
+  | Running | torn, mismatched, unreadable, above this reader | — | held, as before |
+
+  Roll forward only: the moment a published generation at or above the
+  copy validates, it wins.
+- **Readiness and observability.** A replica serving its copy is **ready**
+  (it serves a complete generation it once validated, and pulling it would
+  turn a torn volume into an outage) and **degraded**. The detailed `/ready`
+  body gains `publication`: the generation served, its origin
+  (`published` or `last_known_good` with `held_because`), `held_passes`,
+  `last_hold`, and the copy's state (`disabled`, `absent`, `stored`,
+  `refused`, `persist_failed`). The minimal body is unchanged. There is no
+  metrics exporter in this workspace, so the metric source is the log
+  events with stable IDs: `runtime.last_known_good_persisted` (2006),
+  `_superseded` (2007), `_served` (2208, error level), `_refused` (2209),
+  `_persist_failed` (2210), beside the existing `runtime.generation_*`
+  events.
+- **Recovery command.** `fabric-api last-known-good inspect | validate |
+  discard --dir <dir>` runs before configuration and telemetry, with no
+  network. `inspect` and `validate` write nothing; `validate` exits 1 unless
+  a reader would serve the copy. `discard` requires `--operator` and
+  `--reason`, appends a JSON line to `audit.jsonl` (who, why, when, the file
+  digest and the stated generation) and syncs it before moving the copy
+  aside to `last-known-good.json.discarded-<time>-<digest>`. Nothing is
+  written in its place. No action writes, restores or promotes a copy, so
+  the command cannot fabricate a generation.
+
+| Item | Guard | Tests |
+|---|---|---|
+| A generation that matches its digests but cannot be served never displaces, raises or replaces anything | `parsed_generation.rs::ParsedGeneration::validate`, called from `holder.rs` before `choice.rs`; `store.rs::verify` for the copy | `holder_tests.rs::at_start_an_unservable_higher_generation_holds_the_copy_and_leaves_its_bytes`, `::at_start_an_unservable_generation_with_no_copy_fails_closed_and_writes_nothing`, `::on_refresh_an_unservable_generation_is_held_without_raising_the_floor_or_touching_the_copy`, `::after_a_held_refresh_a_restart_still_starts_from_the_copy_and_a_later_valid_generation_wins` (each over malformed tenants, a binding to an absent DataSource, a tenant with no binding, malformed data sources and an undecodable catalogue, all with matching digests); `last_known_good_restart.rs::a_higher_generation_whose_tenants_match_their_digest_but_do_not_decode_never_displaces_the_copy`, `::a_running_replica_holds_against_a_higher_generation_whose_catalogue_the_host_cannot_decode`; `store_tests.rs::a_copy_that_matches_its_digests_but_cannot_be_served_is_refused_and_reported_invalid`; `last_known_good_command.rs::validate_fails_on_a_self_consistent_copy_whose_catalogue_the_host_cannot_decode` |
+| A refused copy is kept until discarded | `holder/accept.rs` | `holder_tests.rs::a_refused_copy_is_kept_byte_for_byte_beside_a_valid_publication_until_it_is_discarded` |
+| Physical separation | `separation.rs::check_separation`, from `fabric-api` `config/validation/last_known_good.rs` and `holder/accept.rs` | `separation_tests.rs` (symlink aliases, `..` taken after a symlink, `..` through a missing directory, prospective directories, a published file named like the copy, a published file symlinked into the copy's directory, a Kubernetes-style `..data` mount); `holder_tests.rs::a_copy_directory_aliased_onto_the_published_directory_is_never_written_into`, `::a_published_file_named_like_the_copy_under_an_aliased_directory_is_left_untouched`; `validation_tests.rs::a_last_known_good_directory_aliasing_the_published_one_is_refused_however_it_is_named` |
+| Restart on a torn volume serves the copy | `last_known_good/holder.rs::at_start`, `choice.rs::at_start` | `fabric-runtime-publication/tests/last_known_good_restart.rs::a_replica_restarting_on_a_torn_volume_serves_its_last_known_good_generation` (real publisher and reader; asserts the copy's catalogue is the one served); `choice_tests.rs::at_start_a_torn_volume_is_held_against_with_a_valid_copy`, `::at_start_a_lost_record_is_held_against_with_a_copy_and_read_per_document_without_one` |
+| No copy and a torn volume fails closed | `choice.rs::at_start` | `last_known_good_restart.rs::a_restart_on_a_torn_volume_with_no_last_known_good_fails_closed` (and unprimed, 503, with `fail_fast_on_prime = false`); `choice_tests.rs::at_start_a_torn_volume_with_no_copy_fails_closed`; `fabric-api/tests/last_known_good_command.rs::discard_audits_moves_the_copy_aside_and_a_restart_on_a_torn_volume_then_fails_closed` |
+| A corrupted copy is refused | `last_known_good/store.rs::verify` | `last_known_good_restart.rs::a_corrupted_last_known_good_is_refused_left_in_place_and_the_restart_fails_closed`; `store_tests.rs::a_copy_whose_document_no_longer_matches_its_digest_is_refused`, `::a_copy_whose_record_was_altered_is_refused_by_the_records_own_digest`, `::a_copy_whose_record_requires_a_newer_reader_is_refused`, `::a_copy_in_a_format_this_reader_does_not_know_is_refused`, `::a_truncated_copy_is_refused_as_malformed` |
+| A stale copy loses to a newer published generation | `choice.rs::at_start`, `::on_refresh` | `last_known_good_restart.rs::a_stale_last_known_good_loses_to_a_newer_published_generation_and_is_replaced`, `::a_replica_holding_last_known_good_rolls_forward_the_moment_a_newer_generation_validates`; `choice_tests.rs::at_start_a_newer_published_generation_beats_the_copy`, `::at_start_a_published_generation_below_the_copy_does_not_roll_the_replica_back` |
+| Roll forward only while running | `choice.rs::on_refresh` | `last_known_good_restart.rs::a_running_replica_holds_against_a_complete_generation_below_the_one_it_holds`; `choice_tests.rs::on_refresh_a_lower_generation_or_a_lost_record_is_held_against` |
+| Atomic write under interruption | `last_known_good/atomic_replace.rs` | `atomic_replace_tests.rs::a_write_stopped_before_the_rename_leaves_the_previous_copy_whole_and_cleans_up` (stopped after the write and after the `fsync`), `::a_write_stopped_after_the_rename_has_published_the_whole_new_copy`, `::a_staging_file_left_by_a_crash_never_reaches_the_copy_and_is_cleared_at_start`; `store_tests.rs::an_interrupted_persist_leaves_the_previous_copy_valid`, `::a_generation_read_without_its_catalogue_is_not_persisted` |
+| Recovery command | `fabric-api` `recovery/`, `LastKnownGoodStore::inspect`, `::discard` | `last_known_good_command.rs` (the built binary): `inspect_and_validate_report_a_copy_the_reader_persisted_and_write_nothing`, `validate_fails_on_a_corrupted_copy_and_on_no_copy`, `discard_needs_an_operator_and_a_reason_and_touches_nothing_without_them`, `discard_audits_moves_the_copy_aside_and_a_restart_on_a_torn_volume_then_fails_closed`, `an_unknown_action_is_a_usage_error_and_no_action_can_write_a_copy`; `store_tests.rs::discarding_audits_first_then_moves_the_copy_aside_and_writes_nothing_in_its_place`, `::a_refused_copy_can_be_discarded_too`, `::discarding_nothing_changes_nothing_and_audits_nothing`, `::inspecting_reports_absent_valid_and_refused_copies_and_writes_nothing`; `recovery/arguments_tests.rs` |
+| Off by default | `RuntimeConfig::last_known_good_dir` (`None`) | `config.rs::the_last_known_good_copy_is_off_unless_a_directory_is_configured`; `last_known_good_restart.rs::without_a_last_known_good_directory_the_reader_writes_nothing_and_behaves_as_before`; `publication_atomicity.rs::current_behaviour_last_known_good_does_not_survive_a_reader_restart` (unchanged: no directory) |
+| Readiness | `fabric-api` `health/readiness_state.rs::is_degraded`, `readiness_body.rs` | `readiness_state_tests.rs::a_replica_serving_its_last_known_good_copy_is_degraded_even_with_every_connector_healthy`; `readiness_body_tests.rs::the_detailed_body_says_which_generation_is_served_from_where_and_why_it_is_held`, `::the_minimal_body_says_nothing_about_the_publication`; `readiness_probe.rs::an_administrator_sees_what_diagnosis_needs` |
+| The copy is apart from the published files | `fabric-api` `config/validation/last_known_good.rs` | `validation_tests.rs::the_last_known_good_directory_may_not_be_where_the_published_files_are` |
+
+Limits of this change:
+
+- **Platform mount (follow-up, cross-repository).** No platform deployment
+  mounts a writable reader directory, so the copy is off everywhere. The
+  follow-up in `saas-fabric-platform`: mount an `emptyDir` (survives a
+  container restart, which is the crash loop G5 describes) or a
+  per-replica volume (also survives rescheduling) at a path outside the
+  published `ConfigMap` mounts, and set
+  `tenant_runtime.last_known_good_dir` to it. A pod rescheduled onto a new
+  `emptyDir` starts with no copy and fails closed on a torn volume, as
+  before. Not made here.
+- **The publisher side of G5 is unchanged.** No pre-publication hold
+  (D01-1, and D01-18 against ADR 0023 §5). A held tenants or data-sources
+  document the publisher cannot parse still blocks every later
+  publication as `Unreadable`, and there is still no supported recovery
+  command for it; `fabric-api last-known-good` covers only the reader's
+  own copy.
+- **No maximum hold age.** A replica holds its copy until a published
+  generation at or above it validates or an operator discards it. It
+  reports degraded and logs at error level the whole time; nothing
+  escalates further.
+- **Running replicas keep what they serve.** The copy matters only at
+  start. A replica that holds a generation in memory refuses a lower one
+  only when a directory is configured; without one, behaviour is as before.
+- **Replicas may hold different copies.** Each replica persists what it
+  read, so after a restart two replicas can serve different generations
+  until the published files converge. Nothing reports this across replicas
+  (G7).
+- **Stricter than a reader without a copy.** With a directory configured,
+  a generation in which any one resource fails validation is held whole;
+  without one, the registry still applies the valid resources and keeps
+  its held copy of the others, as before.
+- **A discard under a running replica.** The command is meant for a
+  crash-looping or stopped replica. A running replica that already
+  persisted the discarded generation does not write it again until a newer
+  generation validates, and its readiness keeps reporting `stored` until
+  then. (A refused copy discarded under a running replica is noticed: the
+  next validated generation is persisted.)
+- **Separation is checked, not locked.** The directory is resolved at
+  configuration and again before every write; an alias created between
+  that check and the rename is not excluded.
+- **No metrics exporter.** Readiness detail and log events only; the
+  platform panel does not show `held_passes` (G5's `refresh_failed` counts
+  on the panel remain owed).
+
+Still deferred after this change: G5's publisher hold and publisher-side
+recovery, the platform reader mount above, G4 `Lease`, G7, G6's remaining
+items, G2's publisher wait, G3's panel state, O5 for the catalogue and
+client documents, and the platform contract follow-ups.
 
 ## Not covered here
 

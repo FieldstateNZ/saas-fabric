@@ -4,8 +4,9 @@ use std::sync::Arc;
 
 use axum::Router;
 use fabric_identity::build_identity;
-use fabric_tenant_runtime::{build_published_runtime, PublishedFiles, PublishedRuntime};
+use fabric_tenant_runtime::{build_published_runtime, LastKnownGoodStore, PublishedFiles, PublishedRuntime};
 
+use crate::catalogue::HostCatalogue;
 use crate::config::AppConfig;
 use crate::startup::background_tasks::{stop_refreshers, BackgroundTasks};
 use crate::startup::{serving, token_reader};
@@ -57,20 +58,25 @@ pub async fn build(config: &AppConfig) -> Result<Application, String> {
     //    here on a failure has something to clean up.
     //    The catalogue is read in the same read the runtime primes from, so
     //    it is that generation's, not one published a moment later (G8).
+    //    With a last-known-good directory configured, the generation is also
+    //    persisted there, and a start with no complete published generation
+    //    primes from it instead of failing (G5).
+    let published = PublishedFiles::new(&config.tenants_path, &config.data_sources_path)
+        .with_catalogue(&config.catalog_path);
+    let published = match &config.tenant_runtime.last_known_good_dir {
+        Some(directory) => {
+            published.with_last_known_good(LastKnownGoodStore::new(directory), Arc::new(HostCatalogue))
+        }
+        None => published,
+    };
     let PublishedRuntime {
         resolver: runtime,
         handles: refresh,
         catalogue,
-    } = build_published_runtime(
-        &config.tenant_runtime,
-        Arc::new(
-            PublishedFiles::new(&config.tenants_path, &config.data_sources_path)
-                .with_catalogue(&config.catalog_path),
-        ),
-    )
-    .await?;
+        status,
+    } = build_published_runtime(&config.tenant_runtime, Arc::new(published)).await?;
 
-    match serving::build(config, &runtime, catalogue, &identity).await {
+    match serving::build(config, &runtime, catalogue, &identity, status).await {
         Ok((router, connector_retry)) => Ok(Application {
             router,
             listen: config.listen.clone(),

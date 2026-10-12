@@ -34,6 +34,7 @@ fn runtime_config() -> RuntimeConfig {
     RuntimeConfig {
         refresh_interval_seconds: 3600,
         fail_fast_on_prime: true,
+        ..RuntimeConfig::default()
     }
 }
 

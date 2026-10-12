@@ -48,8 +48,9 @@ pub(super) async fn readiness(
     };
     let connectors = ConnectorFacts::from(outcomes.as_slice());
 
+    let publication = state.publication.report();
     let ready = is_ready(&tenants, &data_sources, &connectors);
-    let degraded = is_degraded(&connectors);
+    let degraded = is_degraded(&connectors, &publication);
 
     logging::connectors_swept(&outcomes);
 
@@ -60,7 +61,13 @@ pub(super) async fn readiness(
     };
 
     let body = if may_see_detail(&state, &headers) {
-        readiness_body::detailed(ready, degraded, &tenants, &data_sources, &outcomes)
+        readiness_body::detailed(
+            ready,
+            degraded,
+            (&tenants, &data_sources),
+            &publication,
+            &outcomes,
+        )
     } else {
         readiness_body::minimal(ready)
     };

@@ -1,8 +1,25 @@
 //! The readiness state machine, over both of its inputs: what the registries
 //! hold, and what the connector sweep found.
 
+use fabric_tenant_runtime::{GenerationOrigin, LastKnownGoodState, ReaderReport, Serving};
+
 use super::readiness_facts::{ConnectorFacts, RegistryFacts};
 use super::readiness_state::{is_degraded, is_ready};
+
+/// A replica serving `generation`, read from `origin`.
+fn serving(generation: u64, origin: GenerationOrigin) -> ReaderReport {
+    ReaderReport {
+        serving: Serving::Generation { generation, origin },
+        held_passes: 0,
+        last_hold: None,
+        last_known_good: LastKnownGoodState::Stored { generation },
+    }
+}
+
+/// A replica serving a published generation.
+fn published() -> ReaderReport {
+    serving(4, GenerationOrigin::Published)
+}
 
 /// A primed registry holding `count` resources.
 const fn holding(count: usize) -> RegistryFacts {
@@ -58,7 +75,7 @@ fn data_sources_ahead_of_the_first_tenant_are_ready() {
 #[test]
 fn primed_with_every_connector_healthy_is_ready_and_not_degraded() {
     assert!(is_ready(&holding(3), &holding(4), &answered(3, 3)));
-    assert!(!is_degraded(&answered(3, 3)));
+    assert!(!is_degraded(&answered(3, 3), &published()));
 }
 
 #[test]
@@ -66,7 +83,7 @@ fn primed_with_some_connectors_down_is_still_ready_but_reported_degraded() {
     // The core policy decision of §34/§35: partial connector failure does not
     // pull an otherwise-useful replica out of rotation.
     assert!(is_ready(&holding(3), &holding(4), &answered(3, 1)));
-    assert!(is_degraded(&answered(3, 1)));
+    assert!(is_degraded(&answered(3, 1), &published()));
 }
 
 #[test]
@@ -74,7 +91,7 @@ fn primed_with_every_connector_down_is_not_ready() {
     // Zero working connectors leaves this replica able to serve nothing, the
     // same situation an unprimed registry describes.
     assert!(!is_ready(&holding(3), &holding(4), &answered(3, 0)));
-    assert!(is_degraded(&answered(3, 0)));
+    assert!(is_degraded(&answered(3, 0), &published()));
 }
 
 #[test]
@@ -89,7 +106,10 @@ fn a_connector_that_did_not_answer_in_time_keeps_the_replica_ready() {
     };
 
     assert!(is_ready(&holding(3), &holding(4), &slow));
-    assert!(is_degraded(&slow), "unknown still needs an operator's attention");
+    assert!(
+        is_degraded(&slow, &published()),
+        "unknown still needs an operator's attention"
+    );
 }
 
 #[test]
@@ -109,5 +129,22 @@ fn no_connectors_configured_is_a_defensive_edge_case_that_still_reads_as_ready()
     // never happens in practice — covered so the formula's behaviour at the
     // boundary is a decision, not an accident.
     assert!(is_ready(&holding(3), &holding(4), &answered(0, 0)));
-    assert!(!is_degraded(&answered(0, 0)));
+    assert!(!is_degraded(&answered(0, 0), &published()));
+}
+
+#[test]
+fn a_replica_serving_its_last_known_good_copy_is_degraded_even_with_every_connector_healthy() {
+    let held = serving(
+        4,
+        GenerationOrigin::LastKnownGood {
+            held_because: "data-sources is not the one generation 5 names".to_owned(),
+        },
+    );
+
+    assert!(is_degraded(&answered(3, 3), &held));
+}
+
+#[test]
+fn a_replica_serving_a_published_generation_with_every_connector_healthy_is_not_degraded() {
+    assert!(!is_degraded(&answered(3, 3), &published()));
 }

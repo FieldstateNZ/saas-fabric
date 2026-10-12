@@ -4,6 +4,7 @@
 use super::connector_health::{ConnectorHealth, ConnectorOutcome};
 use super::readiness_body::{detailed, minimal};
 use super::readiness_facts::RegistryFacts;
+use fabric_tenant_runtime::{GenerationOrigin, LastKnownGoodState, ReaderReport, ReaderStatus, Serving};
 
 fn outcome(id: &str, health: ConnectorHealth) -> ConnectorOutcome {
     ConnectorOutcome {
@@ -47,7 +48,13 @@ fn the_detailed_body_carries_a_reason_only_where_there_is_one() {
         outcome("sqlserver-primary", ConnectorHealth::Unknown),
     ];
 
-    let body = detailed(false, true, &holding(3), &holding(4), &outcomes);
+    let body = detailed(
+        false,
+        true,
+        (&holding(3), &holding(4)),
+        &ReaderStatus::default().report(),
+        &outcomes,
+    );
 
     assert_eq!(body["tenants"], serde_json::Value::from(3));
     assert_eq!(body["data_sources"], serde_json::Value::from(4));
@@ -67,4 +74,39 @@ fn the_detailed_body_carries_a_reason_only_where_there_is_one() {
     // a timeout up as an answer.
     assert_eq!(connectors[2]["status"], serde_json::Value::from("unknown"));
     assert!(connectors[2].get("reason").is_none());
+}
+
+#[test]
+fn the_detailed_body_says_which_generation_is_served_from_where_and_why_it_is_held() {
+    let publication = ReaderReport {
+        serving: Serving::Generation {
+            generation: 7,
+            origin: GenerationOrigin::LastKnownGood {
+                held_because: "no publication record".to_owned(),
+            },
+        },
+        held_passes: 2,
+        last_hold: Some("tenants is not the one generation 8 names".to_owned()),
+        last_known_good: LastKnownGoodState::Stored { generation: 7 },
+    };
+
+    let body = detailed(true, true, (&holding(1), &holding(1)), &publication, &[]);
+
+    assert_eq!(
+        body["publication"],
+        serde_json::json!({
+            "serving": "generation",
+            "generation": 7,
+            "origin": "last_known_good",
+            "held_because": "no publication record",
+            "held_passes": 2,
+            "last_hold": "tenants is not the one generation 8 names",
+            "last_known_good": { "state": "stored", "generation": 7 },
+        })
+    );
+}
+
+#[test]
+fn the_minimal_body_says_nothing_about_the_publication() {
+    assert!(!minimal(true).to_string().contains("generation"));
 }

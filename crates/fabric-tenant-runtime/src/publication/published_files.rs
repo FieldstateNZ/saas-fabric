@@ -1,14 +1,22 @@
 //! The published documents as mounted files, read as one generation.
+//!
+//! The read itself is in `generation_read`, and turning what the read and
+//! the last-known-good copy decided into a state in `apply_choice`.
+
+mod apply_choice;
+mod generation_read;
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use super::digest::sha256_hex;
-use super::file_reads::{parse, read, read_optional};
-use super::record::{ReaderRecord, PUBLICATION_RECORD_FILE, READER_CONTRACT};
-use super::{PublishedState, PublishedStateSource};
-use crate::{JsonFileSource, ResourceSource as _, SourceError};
+use super::last_known_good::LastKnownGood;
+use super::record::PUBLICATION_RECORD_FILE;
+use super::{CatalogueCheck, LastKnownGoodState, LastKnownGoodStore, PublishedState, PublishedStateSource};
+use crate::SourceError;
+use apply_choice::to_choice;
+use generation_read::Catalogue;
 
 /// The tenants and data-sources files, and the publication record beside the
 /// tenants file.
@@ -22,6 +30,7 @@ pub struct PublishedFiles {
     data_sources: PathBuf,
     record: PathBuf,
     catalog: Option<PathBuf>,
+    last_known_good: Option<LastKnownGood>,
 }
 
 impl PublishedFiles {
@@ -34,6 +43,7 @@ impl PublishedFiles {
             tenants,
             data_sources: data_sources_path.as_ref().to_path_buf(),
             catalog: None,
+            last_known_good: None,
         }
     }
 
@@ -48,22 +58,59 @@ impl PublishedFiles {
         }
     }
 
-    async fn unrecorded(&self) -> PublishedState {
-        PublishedState::Unrecorded {
-            data_sources: JsonFileSource::new(&self.data_sources).load().await,
-            tenants: JsonFileSource::new(&self.tenants).load().await,
+    /// Persists every complete generation read to `store`, and primes from
+    /// it when no published generation at or above it can be applied: see
+    /// the `last_known_good` module for the rules. A generation is persisted
+    /// only with its catalogue, so this needs [`Self::with_catalogue`].
+    /// `catalogue` is the host's own catalogue decoder: no generation is
+    /// chosen, kept or persisted unless the host could serve its catalogue.
+    #[must_use]
+    pub fn with_last_known_good(self, store: LastKnownGoodStore, catalogue: Arc<dyn CatalogueCheck>) -> Self {
+        Self {
+            last_known_good: Some(LastKnownGood::new(store, catalogue)),
+            ..self
         }
+    }
+
+    /// Every file the publisher writes that this reader reads, which the
+    /// last-known-good directory must stay apart from.
+    fn published(&self) -> Vec<&Path> {
+        [&self.tenants, &self.data_sources, &self.record]
+            .into_iter()
+            .chain(self.catalog.as_ref())
+            .map(PathBuf::as_path)
+            .collect()
     }
 }
 
 #[async_trait]
 impl PublishedStateSource for PublishedFiles {
     async fn load(&self) -> Result<PublishedState, SourceError> {
-        Ok(self.read(None).await?.0)
+        let choice = match (&self.last_known_good, &self.catalog) {
+            (Some(held), Some(path)) => {
+                let read = self.read(Catalogue::IfMatching(path)).await;
+                held.on_refresh(read, (&self.describe(), &self.published())).await
+            }
+            (Some(held), None) => {
+                let read = self.read(Catalogue::Skip).await;
+                held.on_refresh(read, (&self.describe(), &self.published())).await
+            }
+            (None, _) => to_choice(self.read(Catalogue::Skip).await, &self.describe()),
+        };
+        Ok(self.apply(choice, false).await?.0)
     }
 
     async fn load_at_start(&self) -> Result<(PublishedState, Option<Vec<u8>>), SourceError> {
-        self.read(self.catalog.as_deref()).await
+        let catalogue = self
+            .catalog
+            .as_deref()
+            .map_or(Catalogue::Skip, Catalogue::Require);
+        let read = self.read(catalogue).await;
+        let choice = match &self.last_known_good {
+            Some(held) => held.at_start(read, (&self.describe(), &self.published())).await,
+            None => to_choice(read, &self.describe()),
+        };
+        self.apply(choice, true).await
     }
 
     fn describe(&self) -> String {
@@ -74,67 +121,10 @@ impl PublishedStateSource for PublishedFiles {
             self.record.display()
         )
     }
-}
 
-impl PublishedFiles {
-    /// One read of the record and the documents it names, `catalog` among
-    /// them when given. Without a record, the documents and the catalogue
-    /// are read as they stand.
-    async fn read(&self, catalog: Option<&Path>) -> Result<(PublishedState, Option<Vec<u8>>), SourceError> {
-        let origin = self.describe();
-        let Some(record) = read_optional(&self.record, &origin).await? else {
-            let catalog = match catalog {
-                Some(path) => Some(read(path, &origin).await?),
-                None => None,
-            };
-            return Ok((self.unrecorded().await, catalog));
-        };
-        let record: ReaderRecord = parse(&record, &origin)?;
-        if record.minimum_reader_contract > READER_CONTRACT {
-            return Err(SourceError::UnsupportedContract {
-                origin,
-                required: record.minimum_reader_contract,
-                supported: READER_CONTRACT,
-            });
-        }
-
-        let data_sources = read(&self.data_sources, &origin).await?;
-        let tenants = read(&self.tenants, &origin).await?;
-        let catalog = match catalog {
-            Some(path) => Some(read(path, &origin).await?),
-            None => None,
-        };
-        if let Some(bytes) = &catalog {
-            if sha256_hex(bytes) != record.documents.catalog.sha256 {
-                return Err(SourceError::IncompleteGeneration {
-                    origin,
-                    generation: record.generation,
-                    document: "catalog",
-                });
-            }
-        }
-        for (document, bytes, named) in [
-            (
-                "data-sources",
-                &data_sources,
-                &record.documents.data_sources.sha256,
-            ),
-            ("tenants", &tenants, &record.documents.tenants.sha256),
-        ] {
-            if sha256_hex(bytes) != *named {
-                return Err(SourceError::IncompleteGeneration {
-                    origin,
-                    generation: record.generation,
-                    document,
-                });
-            }
-        }
-
-        let state = PublishedState::Generation {
-            generation: record.generation,
-            data_sources: parse(&data_sources, &origin)?,
-            tenants: parse(&tenants, &origin)?,
-        };
-        Ok((state, catalog))
+    fn last_known_good(&self) -> LastKnownGoodState {
+        self.last_known_good
+            .as_ref()
+            .map_or(LastKnownGoodState::Disabled, LastKnownGood::state)
     }
 }

@@ -14,15 +14,26 @@
 //! document: the runtime plane may not depend on the publisher's crate.
 
 mod catalogue;
+mod catalogue_check;
+mod complete_generation;
 mod digest;
 mod file_reads;
+mod last_known_good;
+mod parsed_generation;
 mod published_files;
 #[cfg(test)]
 mod published_files_tests;
 mod published_state;
+mod reader_status;
 mod record;
 
 pub use catalogue::startup_catalogue;
+pub use catalogue_check::CatalogueCheck;
+pub use last_known_good::{
+    check_separation, DiscardRequest, Discarded, Inspection, LastKnownGoodRefusal, LastKnownGoodState,
+    LastKnownGoodStore, Verdict, AUDIT_FILE_NAME,
+};
 pub use published_files::PublishedFiles;
-pub use published_state::{PublishedState, PublishedStateSource};
+pub use published_state::{GenerationOrigin, PublishedState, PublishedStateSource};
+pub use reader_status::{ReaderReport, ReaderStatus, Serving};
 pub use record::READER_CONTRACT;

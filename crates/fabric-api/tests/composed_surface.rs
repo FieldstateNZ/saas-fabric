@@ -111,6 +111,7 @@ fn router_with(request_timeout: Duration, connector: Arc<dyn DataConnector>) -> 
 
     let health = health_routes(HealthState {
         runtime,
+        publication: Arc::default(),
         connectors,
         identity,
         administrator_role: config.health_detail_role.clone(),

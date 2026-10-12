@@ -2,7 +2,7 @@
 //! what they hold to resolution in one swap.
 
 use super::ResourceRefresher;
-use crate::publication::{PublishedState, PublishedStateSource};
+use crate::publication::{PublishedState, PublishedStateSource, ReaderStatus, Serving};
 use crate::resolution::PublishedGeneration;
 use crate::resource::{RegistryResource, ResourceRegistry};
 use crate::{logging, DataSource, SourceError, TenantRuntimeBinding};
@@ -27,30 +27,51 @@ impl ResourceRefresher {
         data_sources: &ResourceRegistry<DataSource>,
         tenants: &ResourceRegistry<TenantRuntimeBinding>,
         source: &dyn PublishedStateSource,
+        status: &ReaderStatus,
     ) -> Result<Option<Vec<u8>>, SourceError> {
-        let origin = source.describe();
-        let (state, catalog) = source.load_at_start().await?;
-        match state {
-            PublishedState::Generation {
+        let primed = prime(generation, data_sources, tenants, source, status).await;
+        if let Err(error) = &primed {
+            status.held(error);
+        }
+        primed
+    }
+}
+
+async fn prime(
+    generation: &PublishedGeneration,
+    data_sources: &ResourceRegistry<DataSource>,
+    tenants: &ResourceRegistry<TenantRuntimeBinding>,
+    source: &dyn PublishedStateSource,
+    status: &ReaderStatus,
+) -> Result<Option<Vec<u8>>, SourceError> {
+    let origin = source.describe();
+    let (state, catalog) = source.load_at_start().await?;
+    match state {
+        PublishedState::Generation {
+            generation: number,
+            origin: read_from,
+            data_sources: published_data_sources,
+            tenants: published_tenants,
+        } => {
+            prime_with(data_sources, &origin, Ok(published_data_sources))?;
+            prime_with(tenants, &origin, Ok(published_tenants))?;
+            generation.publish(tenants, data_sources);
+            logging::generation_applied(&origin, number);
+            status.applied(Serving::Generation {
                 generation: number,
-                data_sources: published_data_sources,
-                tenants: published_tenants,
-            } => {
-                prime_with(data_sources, &origin, Ok(published_data_sources))?;
-                prime_with(tenants, &origin, Ok(published_tenants))?;
-                generation.publish(tenants, data_sources);
-                logging::generation_applied(&origin, number);
-                Ok(catalog)
-            }
-            PublishedState::Unrecorded {
-                data_sources: published_data_sources,
-                tenants: published_tenants,
-            } => {
-                let primed_data_sources = prime_with(data_sources, &origin, published_data_sources);
-                let primed_tenants = prime_with(tenants, &origin, published_tenants);
-                generation.publish(tenants, data_sources);
-                primed_data_sources.and(primed_tenants).map(|()| catalog)
-            }
+                origin: read_from,
+            });
+            Ok(catalog)
+        }
+        PublishedState::Unrecorded {
+            data_sources: published_data_sources,
+            tenants: published_tenants,
+        } => {
+            let primed_data_sources = prime_with(data_sources, &origin, published_data_sources);
+            let primed_tenants = prime_with(tenants, &origin, published_tenants);
+            generation.publish(tenants, data_sources);
+            status.applied(Serving::Unrecorded);
+            primed_data_sources.and(primed_tenants).map(|()| catalog)
         }
     }
 }

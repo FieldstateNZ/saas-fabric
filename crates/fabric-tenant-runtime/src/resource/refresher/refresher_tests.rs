@@ -15,6 +15,7 @@ fn config() -> RuntimeConfig {
     RuntimeConfig {
         refresh_interval_seconds: 3600,
         fail_fast_on_prime: true,
+        ..RuntimeConfig::default()
     }
 }
 
@@ -267,6 +268,7 @@ async fn shutdown_stops_the_loop() {
     let config = RuntimeConfig {
         refresh_interval_seconds: 1,
         fail_fast_on_prime: true,
+        ..RuntimeConfig::default()
     };
 
     let handle = ResourceRefresher::spawn(

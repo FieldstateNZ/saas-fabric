@@ -226,6 +226,7 @@ async fn a_publication_above_the_reader_floor_keeps_running_readers_on_their_gen
         &RuntimeConfig {
             refresh_interval_seconds: 3600,
             fail_fast_on_prime: false,
+            ..RuntimeConfig::default()
         },
     )
     .await

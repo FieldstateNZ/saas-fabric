@@ -4,6 +4,8 @@
 //! machine is testable without a runtime, a registry, or a connector anywhere
 //! in sight.
 
+use fabric_tenant_runtime::ReaderReport;
+
 use crate::health::readiness_facts::{ConnectorFacts, RegistryFacts};
 
 /// Whether this replica should report itself ready.
@@ -82,13 +84,23 @@ const fn connectors_can_serve(connectors: &ConnectorFacts) -> bool {
     connectors.total == 0 || connectors.healthy > 0 || connectors.unknown > 0
 }
 
-/// Whether some, but not all, connectors are confirmed healthy.
+/// Whether some, but not all, connectors are confirmed healthy, or the
+/// replica serves its last-known-good copy rather than a published
+/// generation.
 ///
 /// Surfaced separately from [`is_ready`] so an operator can tell "up and fully
 /// healthy" apart from "up, but something needs attention" without scanning
 /// the per-connector list by hand. Unknown counts as degraded: a check that
 /// could not answer inside half a second is itself worth looking at.
+///
+/// # Holding last-known-good is ready, and degraded
+///
+/// A replica that primed from its copy serves a complete generation it once
+/// validated, so pulling it from rotation would turn a torn volume into an
+/// outage: it stays ready. It is not current, though, and stays held until a
+/// published generation at or above the copy validates, so it reports
+/// degraded with the reason in the detail body.
 #[must_use]
-pub(super) const fn is_degraded(connectors: &ConnectorFacts) -> bool {
-    connectors.healthy < connectors.total
+pub(super) const fn is_degraded(connectors: &ConnectorFacts, publication: &ReaderReport) -> bool {
+    connectors.healthy < connectors.total || publication.holding_last_known_good()
 }

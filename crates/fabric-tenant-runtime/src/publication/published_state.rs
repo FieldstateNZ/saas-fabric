@@ -2,6 +2,7 @@
 
 use async_trait::async_trait;
 
+use super::LastKnownGoodState;
 use crate::{DataSource, SourceError, TenantRuntimeBinding};
 
 /// The tenants and data sources one read found, and whether they are known
@@ -13,6 +14,9 @@ pub enum PublishedState {
     Generation {
         /// The record's generation number.
         generation: u64,
+        /// Whether it was read from the published files or from this
+        /// replica's persisted last-known-good copy.
+        origin: GenerationOrigin,
         /// The data-sources document.
         data_sources: Vec<DataSource>,
         /// The tenants document.
@@ -27,6 +31,21 @@ pub enum PublishedState {
         data_sources: Result<Vec<DataSource>, SourceError>,
         /// The tenants document, or why it could not be loaded.
         tenants: Result<Vec<TenantRuntimeBinding>, SourceError>,
+    },
+}
+
+/// Where a complete generation was read from.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(tag = "origin", rename_all = "snake_case")]
+pub enum GenerationOrigin {
+    /// The published files, matching their record.
+    Published,
+    /// The persisted last-known-good copy, because no published generation
+    /// could be applied at start. The replica holds it until a published
+    /// generation at or above it validates.
+    LastKnownGood {
+        /// Why the published files were not used.
+        held_because: String,
     },
 }
 
@@ -63,4 +82,10 @@ pub trait PublishedStateSource: Send + Sync {
 
     /// A short description for logging.
     fn describe(&self) -> String;
+
+    /// What this source's last-known-good copy holds, for readiness.
+    /// [`LastKnownGoodState::Disabled`] unless the source persists one.
+    fn last_known_good(&self) -> LastKnownGoodState {
+        LastKnownGoodState::Disabled
+    }
 }

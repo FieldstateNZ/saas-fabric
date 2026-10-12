@@ -13,7 +13,7 @@ use axum::Router;
 use fabric_connector::{ConnectorRegistry, SecretResolver};
 use fabric_data_api::{build_data_api, DataAuthorization, ResourceCatalog};
 use fabric_identity::IdentityResolver;
-use fabric_tenant_runtime::RuntimeResolver;
+use fabric_tenant_runtime::{ReaderStatus, RuntimeResolver};
 
 use crate::config::AppConfig;
 use crate::health::{health_routes, HealthState};
@@ -34,6 +34,7 @@ pub(super) async fn build(
     runtime: &Arc<RuntimeResolver>,
     primed_catalogue: Option<Vec<u8>>,
     identity: &Arc<IdentityResolver>,
+    publication: Arc<ReaderStatus>,
 ) -> Result<(Router, ConnectorRetryHandle), String> {
     // Before the connectors, so a catalogue refused here leaves nothing
     // running.
@@ -47,7 +48,7 @@ pub(super) async fn build(
     // startup — see `startup::connectors` for the policy (§35).
     let (connectors, connector_retry) = connectors::build(config, &secrets).await?;
 
-    match router(config, catalogue, runtime, identity, connectors) {
+    match router(config, catalogue, (runtime, publication), identity, connectors) {
         Ok(router) => Ok((router, connector_retry)),
         Err(error) => {
             stop_connector_retry(connector_retry).await;
@@ -60,7 +61,7 @@ pub(super) async fn build(
 fn router(
     config: &AppConfig,
     catalogue: ResourceCatalog,
-    runtime: &Arc<RuntimeResolver>,
+    (runtime, publication): (&Arc<RuntimeResolver>, Arc<ReaderStatus>),
     identity: &Arc<IdentityResolver>,
     connectors: ConnectorRegistry,
 ) -> Result<Router, String> {
@@ -80,6 +81,7 @@ fn router(
     // rather than a second opinion about what a token means.
     let health = health_routes(HealthState {
         runtime: Arc::clone(runtime),
+        publication,
         connectors,
         identity: Arc::clone(identity),
         administrator_role: config.health_detail_role.clone(),

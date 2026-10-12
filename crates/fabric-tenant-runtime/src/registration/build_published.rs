@@ -4,7 +4,7 @@
 use std::sync::Arc;
 
 use super::RuntimeHandles;
-use crate::publication::PublishedStateSource;
+use crate::publication::{PublishedStateSource, ReaderStatus};
 use crate::resolution::PublishedGeneration;
 use crate::resource::{ResourceRefresher, ResourceRegistry};
 use crate::{RuntimeConfig, RuntimeResolver};
@@ -20,6 +20,8 @@ pub struct PublishedRuntime {
     /// when the source reads no catalogue, or the prime failed and the
     /// runtime started unprimed: then no generation is held to match.
     pub catalogue: Option<Vec<u8>>,
+    /// What it serves and why, and its last-known-good copy, for readiness.
+    pub status: Arc<ReaderStatus>,
 }
 
 /// Validates configuration, primes both registries from one read of the
@@ -55,9 +57,11 @@ pub async fn build_published_runtime(
     let data_sources = Arc::new(ResourceRegistry::new());
     let tenants = Arc::new(ResourceRegistry::new());
     let generation = Arc::new(PublishedGeneration::default());
+    let status = Arc::new(ReaderStatus::over(Arc::clone(&source)));
 
     let primed =
-        ResourceRefresher::prime_published(&generation, &data_sources, &tenants, source.as_ref()).await;
+        ResourceRefresher::prime_published(&generation, &data_sources, &tenants, source.as_ref(), &status)
+            .await;
     let catalogue = match primed {
         Ok(catalogue) => catalogue,
         Err(error) if config.fail_fast_on_prime => {
@@ -83,6 +87,7 @@ pub async fn build_published_runtime(
             Arc::clone(&data_sources),
             Arc::clone(&tenants),
             source,
+            Arc::clone(&status),
             config,
         ),
     };
@@ -91,5 +96,6 @@ pub async fn build_published_runtime(
         resolver: Arc::new(RuntimeResolver::over_published(tenants, data_sources, generation)),
         handles,
         catalogue,
+        status,
     })
 }

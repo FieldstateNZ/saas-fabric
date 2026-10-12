@@ -148,6 +148,14 @@ guarantee that example has not drifted from the code.
   administrator role's bearer token; the body names which registry is
   unprimed/empty or which connectors are unhealthy. Without that token, only
   the status code is available (by design).
+- **A replica crash-loops on a torn or mismatched published volume** — with
+  `[tenant_runtime] last_known_good_dir` set, it primes from its persisted
+  copy instead (ready, degraded; `/ready`'s detail says why). Inspect the copy
+  with `fabric-api last-known-good inspect --dir <dir>`, check it with
+  `validate`, and if it must not be served, `discard --dir <dir> --operator
+  <you> --reason <why>`: the copy is moved aside after an `audit.jsonl` line
+  is written, and nothing replaces it, so a replica with no valid published
+  generation then fails closed. No command writes or restores a copy.
 - **Adding a connector** — append to `[[connectors]]`
   (`NdcConnectorConfig`); `AppConfig::validate` requires distinct ids and at
   least one entry.

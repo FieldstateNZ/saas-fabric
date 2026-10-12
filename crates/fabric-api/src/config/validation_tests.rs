@@ -251,3 +251,49 @@ fn validate_runs_the_health_detail_role_check() {
 
     assert!(config.validate().is_err());
 }
+
+#[test]
+fn a_last_known_good_directory_apart_from_the_published_files_is_accepted() {
+    let mut config = config_with(vec![connector("postgres")]);
+    config.tenant_runtime.last_known_good_dir = Some(PathBuf::from("/var/lib/fabric/last-known-good"));
+
+    assert!(config.validate().is_ok());
+}
+
+#[test]
+fn the_last_known_good_directory_may_not_be_where_the_published_files_are() {
+    // The reader would be a second writer beside the publisher (ADR 0018).
+    for directory in ["/etc/fabric", "/etc/fabric/catalog.json", ""] {
+        let mut config = config_with(vec![connector("postgres")]);
+        config.tenant_runtime.last_known_good_dir = Some(PathBuf::from(directory));
+
+        assert!(config.validate().is_err(), "{directory:?}");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_last_known_good_directory_aliasing_the_published_one_is_refused_however_it_is_named() {
+    let root = std::env::temp_dir().join(format!("fabric-api-lkg-alias-{}", std::process::id()));
+    let published = root.join("published");
+    std::fs::create_dir_all(&published).unwrap();
+    std::os::unix::fs::symlink(&published, root.join("alias")).unwrap_or(());
+    let mut config = config_with(vec![connector("postgres")]);
+    config.tenants_path = published.join("last-known-good.json");
+    config.data_sources_path = published.join("data-sources.json");
+    config.catalog_path = published.join("catalog.json");
+
+    for directory in [
+        root.join("alias"),
+        root.join("alias/not-yet"),
+        root.join("elsewhere/../published"),
+        root.join("published/./"),
+    ] {
+        config.tenant_runtime.last_known_good_dir = Some(directory.clone());
+        assert!(config.validate().is_err(), "{}", directory.display());
+    }
+    config.tenant_runtime.last_known_good_dir = Some(root.join("lkg"));
+    assert!(config.validate().is_ok());
+
+    let _ = std::fs::remove_dir_all(&root);
+}

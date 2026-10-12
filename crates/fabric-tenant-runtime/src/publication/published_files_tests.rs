@@ -93,6 +93,7 @@ async fn documents_matching_the_record_are_read_as_one_generation() {
 
     let PublishedState::Generation {
         generation,
+        origin,
         data_sources,
         tenants,
     } = loaded
@@ -100,6 +101,7 @@ async fn documents_matching_the_record_are_read_as_one_generation() {
         panic!("expected a complete generation, got {loaded:?}");
     };
     assert_eq!(generation, 4);
+    assert_eq!(origin, super::GenerationOrigin::Published);
     assert_eq!(data_sources.len(), 1);
     assert_eq!(bound_to(&tenants), "pg-1");
 }

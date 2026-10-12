@@ -6,7 +6,7 @@
 //! own.
 
 use fabric_api::config::{AppConfig, CONFIG_PATH_VAR};
-use fabric_api::{contracts, startup, telemetry};
+use fabric_api::{contracts, recovery, startup, telemetry};
 use std::io::Write as _;
 
 #[tokio::main]
@@ -18,6 +18,12 @@ async fn main() -> std::process::ExitCode {
             Ok(()) => std::process::ExitCode::SUCCESS,
             Err(_) => std::process::ExitCode::FAILURE,
         };
+    }
+
+    // The recovery command, also before configuration: an operator runs it
+    // inside a crash-looping replica's pod, against one directory.
+    if recovery::requested(std::env::args().skip(1)) {
+        return recover().await;
     }
 
     telemetry::init();
@@ -43,6 +49,25 @@ async fn main() -> std::process::ExitCode {
 
             std::process::ExitCode::FAILURE
         }
+    }
+}
+
+/// Runs `fabric-api last-known-good ...` and prints its one-line report.
+async fn recover() -> std::process::ExitCode {
+    let action = match recovery::parse(std::env::args().skip(1)) {
+        Ok(action) => action,
+        Err(usage) => {
+            let _ = writeln!(std::io::stderr(), "{usage}");
+            return std::process::ExitCode::from(2);
+        }
+    };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_secs());
+    let outcome = recovery::run(action, now).await;
+    match writeln!(std::io::stdout(), "{}", outcome.report) {
+        Ok(()) => std::process::ExitCode::from(outcome.status),
+        Err(_) => std::process::ExitCode::from(2),
     }
 }
 

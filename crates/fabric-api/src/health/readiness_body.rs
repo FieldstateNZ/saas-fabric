@@ -5,6 +5,7 @@
 //! and cannot acquire a field by accident. See
 //! [`detail_access`](crate::health::detail_access) for why the split exists.
 
+use fabric_tenant_runtime::ReaderReport;
 use serde_json::{json, Value};
 
 use crate::health::connector_health::ConnectorOutcome;
@@ -26,8 +27,8 @@ pub(super) fn minimal(ready: bool) -> Value {
 pub(super) fn detailed(
     ready: bool,
     degraded: bool,
-    tenants: &RegistryFacts,
-    data_sources: &RegistryFacts,
+    (tenants, data_sources): (&RegistryFacts, &RegistryFacts),
+    publication: &ReaderReport,
     outcomes: &[ConnectorOutcome],
 ) -> Value {
     json!({
@@ -37,6 +38,7 @@ pub(super) fn detailed(
         "data_sources_primed": data_sources.primed,
         "tenants": tenants.count,
         "data_sources": data_sources.count,
+        "publication": publication,
         "connectors": outcomes.iter().map(connector).collect::<Vec<Value>>(),
     })
 }

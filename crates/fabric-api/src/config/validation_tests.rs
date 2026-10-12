@@ -251,3 +251,22 @@ fn validate_runs_the_health_detail_role_check() {
 
     assert!(config.validate().is_err());
 }
+
+#[test]
+fn a_last_known_good_directory_apart_from_the_published_files_is_accepted() {
+    let mut config = config_with(vec![connector("postgres")]);
+    config.tenant_runtime.last_known_good_dir = Some(PathBuf::from("/var/lib/fabric/last-known-good"));
+
+    assert!(config.validate().is_ok());
+}
+
+#[test]
+fn the_last_known_good_directory_may_not_be_where_the_published_files_are() {
+    // The reader would be a second writer beside the publisher (ADR 0018).
+    for directory in ["/etc/fabric", "/etc/fabric/catalog.json", ""] {
+        let mut config = config_with(vec![connector("postgres")]);
+        config.tenant_runtime.last_known_good_dir = Some(PathBuf::from(directory));
+
+        assert!(config.validate().is_err(), "{directory:?}");
+    }
+}

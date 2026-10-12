@@ -251,6 +251,47 @@ successful resolve using whatever each registry currently and coherently
 holds, or a clean `MissingDataSource`/`UnboundDataSource` rejection. Neither
 outcome touches, corrupts, or partially updates a registry.
 
+## Last-known-good across a restart (gap G5)
+
+A running reader keeps its last complete generation in memory, which a
+restart loses. Set `[tenant_runtime] last_known_good_dir` to a writable
+directory of the replica's own and the reader also keeps it on disk, in one
+file (`last-known-good.json`): the publication record and the exact tenants,
+data-sources and catalogue bytes it names. Every time a newer published
+generation validates *with its catalogue*, the file is replaced by staging a
+uniquely named sibling with `create_new`, `fsync`ing it, renaming it over the
+file and `fsync`ing the directory. A write stopped at any point leaves the
+previous file whole; a staging file left by a crash is cleared at the next
+start.
+
+The rules (`publication/last_known_good.rs` has the full table):
+
+- **At start**, a valid published generation at or above the copy wins and
+  is persisted. A copy above a valid published generation is served (a
+  generation never goes back). A torn, mismatched or unreadable published
+  set, a record above this reader, or no record, is answered from the copy.
+  With no valid copy, the prime fails, exactly as it did without one:
+  **fail closed**.
+- **Running**, a published generation at or above the highest one served or
+  persisted is applied the moment it validates. A lower one, or a missing
+  record, is held against as `SourceError::Regressed`.
+- **The copy is refused**, never served, if the record or any document does
+  not match its digest, the record's reader floor is above this reader, the
+  format is unknown, or a document does not parse. A refused copy is left
+  where it is.
+- **Readiness**: a replica serving its copy is ready (it serves a generation
+  it once validated) and degraded; `ReaderStatus::report()` says which
+  generation, where from, why it is held, how many passes were held, and the
+  copy's state. There is no metrics exporter in this workspace: the log
+  events `runtime.last_known_good_*` (event IDs 2006, 2007, 2208-2210) are
+  the metric source.
+- **Recovery** is `fabric-api last-known-good inspect | validate | discard`.
+  Only `discard` writes: it appends to `audit.jsonl` and then moves the copy
+  aside. Nothing ever writes a copy except the reader persisting a published
+  generation it validated.
+
+Unset (the default), nothing is written and nothing changes.
+
 ## Getting started
 
 ```rust,ignore

@@ -10,10 +10,10 @@ use std::time::Duration;
 
 use super::refresh_once::apply_loaded;
 use super::{refresh_loop, RefreshHandle, ResourceRefresher};
-use crate::publication::{PublishedState, PublishedStateSource};
+use crate::publication::{PublishedState, PublishedStateSource, ReaderStatus, Serving};
 use crate::resolution::PublishedGeneration;
 use crate::resource::ResourceRegistry;
-use crate::{logging, DataSource, RuntimeConfig, TenantRuntimeBinding};
+use crate::{logging, DataSource, RuntimeConfig, SourceError, TenantRuntimeBinding};
 
 impl ResourceRefresher {
     /// Starts one background loop that, on every pass, reads the published
@@ -32,6 +32,7 @@ impl ResourceRefresher {
         data_sources: Arc<ResourceRegistry<DataSource>>,
         tenants: Arc<ResourceRegistry<TenantRuntimeBinding>>,
         source: Arc<dyn PublishedStateSource>,
+        status: Arc<ReaderStatus>,
         config: &RuntimeConfig,
     ) -> RefreshHandle {
         let description = source.describe();
@@ -48,9 +49,11 @@ impl ResourceRefresher {
                     Arc::clone(&tenants),
                 );
                 let (source, applied) = (Arc::clone(&source), Arc::clone(&applied));
+                let status = Arc::clone(&status);
                 async move {
                     let registries = (generation.as_ref(), data_sources.as_ref(), tenants.as_ref());
-                    refresh_published(registries, source.as_ref(), &applied, timeout).await;
+                    let reader = (source.as_ref(), status.as_ref());
+                    refresh_published(registries, reader, &applied, timeout).await;
                 }
             },
             move || {
@@ -69,20 +72,28 @@ type Registries<'a> = (
 
 async fn refresh_published(
     (generation, data_sources, tenants): Registries<'_>,
-    source: &dyn PublishedStateSource,
+    (source, status): (&dyn PublishedStateSource, &ReaderStatus),
     applied: &AtomicU64,
     timeout: Duration,
 ) {
     let origin = source.describe();
     let Ok(loaded) = tokio::time::timeout(timeout, source.load()).await else {
         logging::generation_timed_out(&origin, timeout.as_secs());
+        status.held(&SourceError::Unreadable {
+            origin,
+            cause: format!("the read outlasted {}s", timeout.as_secs()).into(),
+        });
         return;
     };
 
     match loaded {
-        Err(error) => logging::generation_held(&origin, &error),
+        Err(error) => {
+            logging::generation_held(&origin, &error);
+            status.held(&error);
+        }
         Ok(PublishedState::Generation {
             generation: number,
+            origin: read_from,
             data_sources: published_data_sources,
             tenants: published_tenants,
         }) => {
@@ -92,6 +103,10 @@ async fn refresh_published(
             if applied.swap(number, Ordering::Relaxed) != number {
                 logging::generation_applied(&origin, number);
             }
+            status.applied(Serving::Generation {
+                generation: number,
+                origin: read_from,
+            });
         }
         Ok(PublishedState::Unrecorded {
             data_sources: published_data_sources,
@@ -100,6 +115,7 @@ async fn refresh_published(
             apply_loaded(data_sources, &origin, published_data_sources);
             apply_loaded(tenants, &origin, published_tenants);
             generation.publish(tenants, data_sources);
+            status.applied(Serving::Unrecorded);
         }
     }
 }

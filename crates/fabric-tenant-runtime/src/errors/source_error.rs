@@ -62,6 +62,22 @@ pub enum SourceError {
         supported: u32,
     },
 
+    /// The published files offer less than this replica already holds: a
+    /// complete generation below the one it served or persisted, or no
+    /// record at all after a recorded generation was served. Runtime
+    /// documents roll forward only (D01-1), so a lower generation is not a
+    /// publication but a lost or reverted volume, and is held against.
+    /// Raised only by a reader with a last-known-good directory.
+    #[error("{origin} offers {found}, below generation {held} this replica holds; holding the last complete generation")]
+    Regressed {
+        /// A description of the source, for logs.
+        origin: String,
+        /// The highest generation this replica served or persisted.
+        held: u64,
+        /// What the published files offered instead.
+        found: String,
+    },
+
     /// The source parsed, but **every** resource in it failed validation, so
     /// there was nothing to install.
     ///

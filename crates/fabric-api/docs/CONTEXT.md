@@ -15,7 +15,7 @@ identifier).
 `config/validation/issuers.rs`'s module docs. Nothing in `fabric-data-api`
 calls the Fabric authorization front door yet.
 
-## Public surface (all `pub mod` from `lib.rs`: `config`, `health`, `secrets`,
+## Public surface (all `pub mod` from `lib.rs`: `config`, `contracts`, `health`, `recovery`, `secrets`,
 `startup`, `telemetry`)
 
 - `config::AppConfig` — the whole process configuration
@@ -46,9 +46,21 @@ calls the Fabric authorization front door yet.
 - `config::CONFIG_PATH_VAR: &str = "FABRIC_CONFIG"`.
 - `health::health_routes(state: HealthState) -> axum::Router` — `GET
   /health` (liveness), `GET /ready` (readiness).
-- `health::HealthState { runtime: Arc<RuntimeResolver>, connectors:
-  ConnectorRegistry, identity: Arc<IdentityResolver>, administrator_role:
-  String }` (`Clone`, all fields `pub`).
+- `health::HealthState { runtime: Arc<RuntimeResolver>, publication:
+  Arc<ReaderStatus>, connectors: ConnectorRegistry, identity:
+  Arc<IdentityResolver>, administrator_role: String }` (`Clone`, all fields
+  `pub`). The detailed readiness body carries `publication` (the
+  `ReaderReport`); `degraded` is also true while the replica serves its
+  last-known-good copy.
+- `recovery` — `fabric-api last-known-good <inspect|validate|discard> --dir
+  <dir> [--operator <who> --reason <why>]`, run before configuration or
+  telemetry. `requested(args)`, `parse(args) -> Result<Action, String>`,
+  `run(Action, at_unix_seconds) -> Outcome { report, status }`. Exit 0 / 1
+  (validate: no valid copy; discard: nothing to discard) / 2 (usage or a
+  failed write). No action writes a copy.
+- `config::AppConfig::validate` also refuses a
+  `tenant_runtime.last_known_good_dir` that is empty or holds a published
+  file (`config/validation/last_known_good.rs`).
 - `secrets::EnvSecretResolver` — implements `fabric_connector::SecretResolver`
   by reading `FABRIC_SECRET_<SANITISED_REFERENCE>` from the process
   environment (every non-alphanumeric-ASCII character in the reference

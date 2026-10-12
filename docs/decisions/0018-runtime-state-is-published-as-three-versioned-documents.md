@@ -435,6 +435,18 @@ characterized in tests before it is claimed as an operational rollback.
 | A data-source correction moves its revision to held + 1 | `crates/fabric-platform-management/src/data_sources/plan.rs`; `plan_tests.rs::a_changed_field_moves_the_revision_forward_by_one` |
 | A tenant revision is the sum of its placement records' revisions | `publication/snapshot.rs::compose_tenants`; `snapshot_tests.rs::a_tenants_revision_is_the_sum_of_its_records_own_revisions` |
 
+**Readers roll forward too (2026-10-12, #112 G5).** A reader with a
+last-known-good directory never applies a generation below the highest one
+it served or persisted, and treats a missing record after a recorded
+generation the same way (`SourceError::Regressed`): a lower generation is a
+lost or reverted volume, not a publication. At start it primes from its
+persisted copy only when no published generation at or above the copy
+validates, and the moment one does, that generation wins. The copy is
+checked against its own record and digests and refused, never served, if any
+differ or its reader floor is above the reader. It is discarded only by an
+explicit, audited operator command, which never writes a generation in its
+place. See the `last_known_good` module of `fabric-tenant-runtime`.
+
 The publisher does not yet enforce everything this part requires. The gaps
 are listed under [Owed](#owed-not-yet-built). Since this table was written,
 a data-source declaration is written above the higher of its held revision
@@ -971,6 +983,14 @@ runtime plane at all.
 7. Every mount is a whole-volume mount. **Never `subPath`** — a `subPath` mount
    never sees an update, which would make every rule above true on disk and
    false in the running pod.
+8. **Amended (2026-10-12, #112 G5):** a reader may be given a writable
+   directory of its own, `tenant_runtime.last_known_good_dir`, where it
+   persists its last complete generation. It must not be any of the
+   published directories (the reader never writes where the publisher does;
+   `fabric-api` refuses that configuration), and must survive a container
+   restart: an `emptyDir` survives a crash loop on the same node, a
+   per-replica volume also survives rescheduling. Unset, nothing is written
+   and behaviour is as before. No platform deployment mounts one yet.
 
 ### The Kubernetes adapter
 
@@ -1238,9 +1258,16 @@ ADR 0023's list and `docs/roadmap/m0-contract-decisions.md`.
     complete generation. The files themselves are still left mixed, and the
     panel does not show the publication as incomplete;
   - G4: one writer is assumed, not enforced (no `Lease`);
-  - G5: no pre-publication hold; no last-known-good across a restart; no
-    recovery command for an unparseable held document; failure semantics
-    not stated. Still owed after the release rollback floor;
+  - G5: since #112's last-known-good change, a reader with
+    `tenant_runtime.last_known_good_dir` set persists each complete
+    generation it reads and, at start, primes from that copy when no
+    published generation at or above it can be applied; with no valid copy
+    it fails closed as before. Off by default. Still open: no
+    pre-publication hold at the publisher; no recovery command for a held
+    document the publisher cannot parse (the reader's
+    `fabric-api last-known-good` covers only the reader's own copy); the
+    writable reader volume is not mounted by the platform; not verified
+    live;
   - G6: since #136 the record's `minimum_reader_contract` is the version
     handshake, with reader tests at contract N and N+1 in both directions
     (`reader_compatibility.rs`). Still open: §9's dual-key path is not built,

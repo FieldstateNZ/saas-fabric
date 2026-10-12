@@ -175,6 +175,7 @@ impl PublishedStateSource for Advancing {
         let (data_sources, tenants) = generation(number);
         Ok(PublishedState::Generation {
             generation: number,
+            origin: crate::GenerationOrigin::Published,
             data_sources,
             tenants,
         })
@@ -197,6 +198,7 @@ async fn a_sampler_never_sees_a_mixed_target_while_the_published_generation_adva
     let config = RuntimeConfig {
         refresh_interval_seconds: 1,
         fail_fast_on_prime: true,
+        ..RuntimeConfig::default()
     };
     let crate::PublishedRuntime {
         resolver, handles, ..

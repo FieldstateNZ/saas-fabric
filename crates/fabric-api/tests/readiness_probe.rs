@@ -75,6 +75,7 @@ fn probe_router(
 
     health_routes(HealthState {
         runtime: Arc::new(RuntimeResolver::new(tenant_registry, data_source_registry)),
+        publication: Arc::default(),
         connectors,
         identity,
         administrator_role: ADMINISTRATOR_ROLE.to_owned(),
@@ -342,10 +343,17 @@ async fn an_administrator_sees_what_diagnosis_needs() {
             "data_sources".to_owned(),
             "data_sources_primed".to_owned(),
             "degraded".to_owned(),
+            "publication".to_owned(),
             "ready".to_owned(),
             "tenants".to_owned(),
             "tenants_primed".to_owned(),
         ]
+    );
+
+    assert_eq!(body["publication"]["serving"], Value::from("nothing"));
+    assert_eq!(
+        body["publication"]["last_known_good"]["state"],
+        Value::from("disabled")
     );
 
     let connector = &body["connectors"][0];

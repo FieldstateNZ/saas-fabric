@@ -464,10 +464,12 @@ impl Sampler {
     }
 }
 
-/// Gap G5 (last known good across a restart). A running reader that is
+/// Gap G5 (last known good across a restart), with no last-known-good
+/// directory configured, which is the default. A running reader that is
 /// handed a torn document keeps serving its last complete generation, but
 /// that generation lives only in memory: a reader started afterwards reads
-/// the files as they are and has nothing older to fall back to. The
+/// the files as they are and has nothing older to fall back to. With a
+/// directory configured it does; see `last_known_good_restart.rs`. The
 /// publisher keeps no last-known-good copy either, and it refuses to publish
 /// over a held document it cannot parse even at a newer revision
 /// (`plan.rs`), so recovering needs an operator to repair or remove the

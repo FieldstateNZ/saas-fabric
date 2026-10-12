@@ -1,6 +1,7 @@
 //! Checks that span more than one domain.
 
 mod issuers;
+mod last_known_good;
 
 use std::collections::BTreeSet;
 
@@ -25,6 +26,7 @@ impl AppConfig {
     pub fn validate(&self) -> Result<(), String> {
         self.validate_connectors()?;
         self.validate_state_paths()?;
+        last_known_good::validate(self)?;
         health_detail_role::validate(&self.health_detail_role)?;
         issuers::validate(&self.token, &self.identity)?;
         self.validate_timeouts()

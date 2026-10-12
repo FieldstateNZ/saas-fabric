@@ -1,5 +1,7 @@
 //! Configuration for the runtime plane.
 
+use std::path::PathBuf;
+
 /// How the runtime keeps its reconciled state current.
 ///
 /// One setting pair for both registries. One loop refreshes them both, data
@@ -29,6 +31,19 @@ pub struct RuntimeConfig {
     /// succeeds. Useful where a source may legitimately come up after the
     /// runtime.
     pub fail_fast_on_prime: bool,
+
+    /// A writable directory where the reader persists the last complete
+    /// generation it read, so a restart while the published files are torn
+    /// or mismatched can prime from it instead of failing (gap G5).
+    ///
+    /// Unset (the default) keeps the behaviour before the copy existed: no
+    /// copy is written, and a restart with no complete published generation
+    /// fails its prime. Must be writable by the process, survive a container
+    /// restart (an `emptyDir` does; a pod rescheduled elsewhere starts empty
+    /// unless it is a volume of its own), and must not be the directory the
+    /// published files are in: the reader never writes where the publisher
+    /// does.
+    pub last_known_good_dir: Option<PathBuf>,
 }
 
 impl Default for RuntimeConfig {
@@ -36,6 +51,7 @@ impl Default for RuntimeConfig {
         Self {
             refresh_interval_seconds: 30,
             fail_fast_on_prime: true,
+            last_known_good_dir: None,
         }
     }
 }
@@ -73,5 +89,10 @@ mod tests {
     #[test]
     fn the_default_fails_fast_on_a_bad_prime() {
         assert!(RuntimeConfig::default().fail_fast_on_prime);
+    }
+
+    #[test]
+    fn the_last_known_good_copy_is_off_unless_a_directory_is_configured() {
+        assert_eq!(RuntimeConfig::default().last_known_good_dir, None);
     }
 }

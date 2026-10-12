@@ -96,6 +96,7 @@ async fn every_refresh_reloads_data_sources_before_tenant_bindings() {
     let config = RuntimeConfig {
         refresh_interval_seconds: 1,
         fail_fast_on_prime: true,
+        ..RuntimeConfig::default()
     };
 
     let (_resolver, handles) = build_runtime(&config, tenant_source, data_source_source)
@@ -153,6 +154,7 @@ async fn survive_the_refresh_loop(tenants: Vec<TenantRuntimeBinding>) -> (Arc<Ru
     let config = RuntimeConfig {
         fail_fast_on_prime: false,
         refresh_interval_seconds: 1,
+        ..RuntimeConfig::default()
     };
 
     let data_source_source: Arc<OrderRecordingSource<DataSource>> = Arc::new(OrderRecordingSource {
@@ -338,6 +340,7 @@ async fn a_panicking_tenant_refresh_does_not_leave_data_sources_refreshing() {
     let config = RuntimeConfig {
         fail_fast_on_prime: false,
         refresh_interval_seconds: 1,
+        ..RuntimeConfig::default()
     };
     let data_sources = Arc::new(InMemorySource::new(vec![data_source("shared-01", 1)]));
     let tenants = Arc::new(PanicOnRefreshSource { loads: Mutex::new(0) });
@@ -427,6 +430,7 @@ async fn a_hung_data_source_load_does_not_hold_back_tenant_refreshes() {
     let config = RuntimeConfig {
         refresh_interval_seconds: 1,
         fail_fast_on_prime: true,
+        ..RuntimeConfig::default()
     };
     let tenants = Arc::new(InMemorySource::new(vec![tenant_binding("acme", 1, "shared-01")]));
     let (resolver, handles) = build_runtime(

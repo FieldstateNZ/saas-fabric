@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use fabric_connector::ConnectorRegistry;
 use fabric_identity::IdentityResolver;
-use fabric_tenant_runtime::RuntimeResolver;
+use fabric_tenant_runtime::{ReaderStatus, RuntimeResolver};
 
 /// The state the health endpoints read.
 #[derive(Clone)]
@@ -12,6 +12,12 @@ pub struct HealthState {
     /// The runtime resolver, for the primed state *and contents* of both
     /// registries. Both halves matter — see the `readiness_state` submodule.
     pub runtime: Arc<RuntimeResolver>,
+
+    /// Which generation the runtime serves, where from, and its
+    /// last-known-good copy. A replica serving its copy is ready but
+    /// degraded; one with neither a published generation nor a valid copy
+    /// never primed, and the registries already make it unready.
+    pub publication: Arc<ReaderStatus>,
 
     /// The connectors, to check reachability.
     pub connectors: ConnectorRegistry,

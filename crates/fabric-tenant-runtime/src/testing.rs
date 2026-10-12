@@ -101,3 +101,32 @@ pub(crate) fn shared_tenant_binding(name: &str, revision: u64, bound_to: &str) -
         ),
     )
 }
+
+/// A fresh directory under the process temp dir, removed on drop. The
+/// workspace has no `tempfile`; this is all of it the tests need.
+pub(crate) struct TempDir(std::path::PathBuf);
+
+impl TempDir {
+    /// A new, empty directory whose name starts with `label`.
+    pub(crate) fn new(label: &str) -> Self {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let path = std::env::temp_dir().join(format!(
+            "fabric-{label}-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&path).unwrap();
+        Self(path)
+    }
+
+    /// The directory.
+    pub(crate) fn path(&self) -> &std::path::Path {
+        &self.0
+    }
+}
+
+impl Drop for TempDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}

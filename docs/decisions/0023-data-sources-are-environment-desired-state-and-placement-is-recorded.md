@@ -422,6 +422,27 @@ covers every placed tenant. A gate that reports all three is listed under
 > readers are unobserved. Live use of the replicas' reader-generation
 > listener is not approved. Scaling stays a deliberate operator action, and
 > nothing scales, repairs or rolls back on this evidence.
+>
+> **Amendment (2026-10-12, G3).** The documents gate now also needs the
+> target observed whole, per the G3 disposition on
+> [#108](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6119949193).
+>
+> - **What is inspected.** Every publication pass ends by inspecting the
+>   target against its held record: each document's payload and manifest,
+>   and the issuer registry when the record names it, at the record's
+>   revision and digest.
+> - **When the gate is met.** Only when the result is `complete` at exactly
+>   the record the accepted pass stamped, generation and digest, beside
+>   that pass's evidence that all three documents are published. A target
+>   complete at another record keeps the gate unmet until a pass accepts
+>   it.
+>   `incomplete`, `unpublished`, `unobserved`, or no inspection since the
+>   control plane started, each make it unmet with a reason. Each also
+>   makes `updateComplete` false.
+> - **What this does not change.** The gate is still publisher-side
+>   evidence, so a runtime at zero replicas is still raised against it.
+>   Completeness is about the target, not about what readers applied.
+>   Source only; not verified live.
 
 ## What is built first
 

@@ -7,8 +7,8 @@ mod readiness_tests;
 
 use std::collections::BTreeSet;
 
-use fabric_runtime_publication::PublishedRevisions;
-
+use super::completeness_observation::CompletenessObservation;
+use super::documents_gate::documents;
 use super::issuer_registry_source::Excluded;
 use super::readiness_evidence::{ReadinessEvidence, RegistryEvidenceSummary};
 pub use super::registry_application::RegistryApplication;
@@ -31,7 +31,8 @@ pub enum GateStatus {
 /// action (D01-18).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReadinessReport {
-    /// All three documents published.
+    /// All three documents published, and the target last observed
+    /// holding that generation whole.
     pub documents: GateStatus,
     /// An issuer registry generation published, naming at least one issuer.
     pub identity: GateStatus,
@@ -47,13 +48,15 @@ pub struct ReadinessReport {
 }
 
 impl ReadinessReport {
-    /// The report over `evidence`, or all three gates unmet without it.
+    /// The report over `evidence` and the last completeness observation, or
+    /// all three gates unmet without evidence. The documents gate also needs
+    /// the target observed complete at exactly the evidence's record.
     #[must_use]
-    pub fn of(evidence: Option<&ReadinessEvidence>) -> Self {
+    pub fn of(evidence: Option<&ReadinessEvidence>, observed: Option<&CompletenessObservation>) -> Self {
         let Some(evidence) = evidence else {
             let none = || unmet("no publication pass has been accepted since the control plane started");
             return Self {
-                documents: none(),
+                documents: documents(None, observed),
                 identity: none(),
                 connectors: none(),
                 excluded: Vec::new(),
@@ -61,7 +64,7 @@ impl ReadinessReport {
             };
         };
         Self {
-            documents: documents(&evidence.revisions),
+            documents: documents(Some((&evidence.revisions, evidence.record)), observed),
             identity: identity(evidence.registry.as_ref()),
             connectors: connectors(&evidence.connectors),
             excluded: evidence
@@ -71,23 +74,6 @@ impl ReadinessReport {
                 .unwrap_or_default(),
             application: RegistryApplication::Unobserved,
         }
-    }
-}
-
-fn documents(revisions: &PublishedRevisions) -> GateStatus {
-    let missing: Vec<String> = [
-        ("tenants", revisions.tenants),
-        ("data-sources", revisions.data_sources),
-        ("catalog", revisions.catalog),
-    ]
-    .into_iter()
-    .filter(|(_, revision)| revision.is_none())
-    .map(|(document, _)| format!("{document} is not published"))
-    .collect();
-    if missing.is_empty() {
-        GateStatus::Met
-    } else {
-        GateStatus::Unmet { reasons: missing }
     }
 }
 

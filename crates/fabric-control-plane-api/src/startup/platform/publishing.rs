@@ -299,6 +299,9 @@ mod tests {
         async fn publish(&self, _: &RuntimeSnapshot) -> Result<PublicationReport, PublicationError> {
             unreachable!()
         }
+        async fn inspect(&self) -> fabric_runtime_publication::PublicationCompleteness {
+            unreachable!()
+        }
         fn describe(&self) -> String {
             unreachable!()
         }

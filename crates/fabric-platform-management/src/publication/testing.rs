@@ -6,16 +6,18 @@
 //! refusal the protocol retries, so it stays one file.
 
 mod held;
+mod inspection;
 
 use std::sync::Mutex;
 
 use fabric_runtime_publication::{
-    DocumentKind, DocumentOutcome, PublicationError, PublicationReport, PublishedResources,
-    PublishedRevisions, RecordStamp, RegistryGeneration, RegistryOutcome, RuntimePublication,
+    DocumentKind, DocumentOutcome, PublicationCompleteness, PublicationError, PublicationReport,
+    PublishedResources, PublishedRevisions, RegistryGeneration, RegistryOutcome, RuntimePublication,
     RuntimeSnapshot,
 };
 
 use held::{Scripted, State};
+use inspection::fake_stamp;
 
 /// Records what it was asked to write, and can be told in advance to answer
 /// [`PublicationError::DivergentPayload`] or
@@ -58,18 +60,24 @@ impl FakePublication {
         self.script(document, Scripted::Interrupted { persist: true });
     }
 
+    /// Drops whatever is scripted for `document`.
+    pub(crate) fn unscript(&self, document: DocumentKind) {
+        *self.lock().scripted.slot_mut(document) = None;
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, State> {
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
     fn script(&self, document: DocumentKind, scripted: Scripted) {
-        if let Ok(mut state) = self.state.lock() {
-            *state.scripted.slot_mut(document) = Some(scripted);
-        }
+        *self.lock().scripted.slot_mut(document) = Some(scripted);
     }
 
     /// Every document this fake actually wrote, in call order.
     pub(crate) fn writes(&self) -> Vec<DocumentKind> {
-        self.state
-            .lock()
-            .map(|state| state.writes.clone())
-            .unwrap_or_default()
+        self.lock().writes.clone()
     }
 
     /// How many times `publish` was called at all -- written, settled
@@ -77,20 +85,14 @@ impl FakePublication {
     /// one initial offer plus at most one retry per document in a
     /// three-document snapshot is four, never more.
     pub(crate) fn publish_attempts(&self) -> usize {
-        self.state
-            .lock()
-            .map(|state| state.publish_attempts)
-            .unwrap_or_default()
+        self.lock().publish_attempts
     }
 }
 
 #[async_trait::async_trait]
 impl RuntimePublication for FakePublication {
     async fn current(&self) -> Result<PublishedRevisions, PublicationError> {
-        Ok(self
-            .state
-            .lock()
-            .map_or_else(|poisoned| poisoned.into_inner().held, |state| state.held))
+        Ok(self.lock().held)
     }
 
     /// Nothing: this fake tracks revisions, not content.
@@ -99,10 +101,7 @@ impl RuntimePublication for FakePublication {
     }
 
     async fn publish(&self, snapshot: &RuntimeSnapshot) -> Result<PublicationReport, PublicationError> {
-        let mut state = self
-            .state
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut state = self.lock();
         state.publish_attempts += 1;
 
         for (document, offered) in [
@@ -115,10 +114,11 @@ impl RuntimePublication for FakePublication {
             }
         }
 
-        let data_sources =
-            state.settle_unless_interrupted(DocumentKind::DataSources, snapshot.data_sources.revision)?;
-        let catalog = state.settle_unless_interrupted(DocumentKind::Catalog, snapshot.catalog.revision)?;
-        let tenants = state.settle_unless_interrupted(DocumentKind::Tenants, snapshot.tenants.revision)?;
+        let [data_sources, catalog, tenants] = state.settle_offer([
+            (DocumentKind::DataSources, snapshot.data_sources.revision),
+            (DocumentKind::Catalog, snapshot.catalog.revision),
+            (DocumentKind::Tenants, snapshot.tenants.revision),
+        ])?;
 
         Ok(PublicationReport {
             tenants,
@@ -132,16 +132,11 @@ impl RuntimePublication for FakePublication {
         })
     }
 
+    async fn inspect(&self) -> PublicationCompleteness {
+        self.lock().inspect()
+    }
+
     fn describe(&self) -> String {
         "fake".to_owned()
-    }
-}
-
-/// A record stamp that differs on every attempt: this fake keeps no record.
-fn fake_stamp(attempt: usize) -> RecordStamp {
-    let generation = u64::try_from(attempt).unwrap_or(u64::MAX);
-    RecordStamp {
-        generation,
-        sha256: fabric_core::RecordDigest::from_bytes([u8::try_from(attempt % 256).unwrap_or(0); 32]),
     }
 }

@@ -27,6 +27,7 @@ mod config;
 mod confirm;
 mod errors;
 mod held;
+mod inspect;
 mod object;
 mod publish;
 mod tenants_object;

@@ -250,11 +250,11 @@ fn an_untrustworthy_sample_no_observer_no_stamp_or_an_unobserved_rollout_is_unob
 fn an_update_is_complete_only_with_the_documents_published_and_the_readers_applied() {
     let met = ReadinessReport {
         documents: GateStatus::Met,
-        ..ReadinessReport::of(None)
+        ..ReadinessReport::of(None, None)
     };
     let applied = state_of(1, vec![member("a", "rs", serving())]);
     assert!(update_complete(&met, &applied));
-    assert!(!update_complete(&ReadinessReport::of(None), &applied));
+    assert!(!update_complete(&ReadinessReport::of(None, None), &applied));
     for unfinished in [
         state_of(0, Vec::new()),
         state_of(
@@ -264,5 +264,44 @@ fn an_update_is_complete_only_with_the_documents_published_and_the_readers_appli
         assess(Some(stamp()), None),
     ] {
         assert!(!update_complete(&met, &unfinished), "{:?}", unfinished.state);
+    }
+}
+
+#[test]
+fn readers_applied_to_the_accepted_record_cannot_certify_a_target_complete_at_another() {
+    let accepted = crate::ReadinessEvidence {
+        revisions: fabric_runtime_publication::PublishedRevisions {
+            tenants: Some(fabric_runtime_publication::DocumentRevision::new(1)),
+            data_sources: Some(fabric_runtime_publication::DocumentRevision::new(1)),
+            catalog: Some(fabric_runtime_publication::DocumentRevision::new(1)),
+            registry: None,
+        },
+        registry: None,
+        connectors: std::collections::BTreeSet::new(),
+        record: stamp(),
+    };
+    let observed = |record| crate::CompletenessObservation {
+        at_unix_seconds: 1_000,
+        completeness: fabric_runtime_publication::PublicationCompleteness::Complete { record },
+    };
+    let applied = state_of(1, vec![member("a", "rs", serving())]);
+    assert_eq!(applied.state, ReaderState::Applied);
+
+    let same = ReadinessReport::of(Some(&accepted), Some(&observed(stamp())));
+    assert!(update_complete(&same, &applied));
+
+    for other in [
+        RecordStamp {
+            generation: 6,
+            sha256: digest(6),
+        },
+        RecordStamp {
+            generation: 5,
+            sha256: digest(9),
+        },
+    ] {
+        let report = ReadinessReport::of(Some(&accepted), Some(&observed(other)));
+        assert!(matches!(report.documents, GateStatus::Unmet { .. }), "{other:?}");
+        assert!(!update_complete(&report, &applied), "{other:?}");
     }
 }

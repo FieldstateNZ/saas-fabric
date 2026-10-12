@@ -1290,7 +1290,18 @@ ADR 0023's list and `docs/roadmap/m0-contract-decisions.md`.
     shows `complete`, `incomplete`, `unpublished` or `unobserved` beside
     the last pass. Only `complete` lets the documents gate be met. Source
     only; not verified live;
-  - G4: one writer is assumed, not enforced (no `Lease`);
+  - G4: since #132 the window for overlapping writers is narrowed but not
+    closed. The filesystem adapter holds an exclusive advisory lock beside
+    the tenants file from its read to its last write, and refuses a second
+    publication with `Unwritable` (`filesystem/lock.rs`). Just before its
+    first write, the Kubernetes adapter re-reads every object the plan read
+    but will not write, and refuses with `Unwritable` if any
+    `resourceVersion` has moved (`confirm.rs`, using `get` only, so the RBAC
+    above is unchanged). Still open: a writer that bypasses the lock, and
+    Kubernetes writers that overlap after their checks. A `Lease` could
+    coordinate cooperating Kubernetes publishers; closing their overlap also
+    requires a shared ownership and lease-loss/fencing protocol. It would
+    need RBAC verbs this ADR does not grant;
   - G5: since #112's last-known-good change, a reader with
     `tenant_runtime.last_known_good_dir` set persists each complete
     generation it reads and, at start, primes from that copy when no

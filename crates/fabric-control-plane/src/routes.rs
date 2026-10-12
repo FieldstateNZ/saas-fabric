@@ -64,7 +64,7 @@ pub const API_PREFIX: &str = "/api";
 /// GET        /api/clients/{clientId}/placements               every logical data source, and what is true of each
 /// POST       /api/clients/{clientId}/placements/{logical}     place it                              (If-Match)
 /// GET        /api/clients/{clientId}/secrets                    list its secret paths
-/// GET/PUT/DELETE /api/clients/{clientId}/secrets/entry/{path}  metadata / write / delete a version
+/// GET/PUT/DELETE /api/clients/{clientId}/secrets/entry/{path}  metadata / write a version / delete every version
 /// POST       /api/clients/{clientId}/secrets/reveal             reveal values   (path in the body)
 /// ```
 ///

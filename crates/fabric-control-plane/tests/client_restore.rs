@@ -28,7 +28,8 @@ use axum::body::Body;
 use fabric_client_model::{ClientDocument, ClientId, ClientRevision, LifecycleRecord};
 use fabric_control_plane::testing::ContinuityEvent;
 use fabric_control_plane::{
-    AuditStream, AuditTrail, ChangeContext, ClientRepository, ContinuityRefusal, TransitionKind,
+    AuditStream, AuditTrail, ChangeContext, ClientRepository, ContinuityRefusal, LifecycleContinuity,
+    TransitionKind,
 };
 use fabric_core::{BindingRevision, DataSourceId};
 use fabric_platform_management::{DesiredRevision, PlacementState};
@@ -1034,4 +1035,57 @@ async fn a_restored_client_whose_projection_diverged_in_git_stays_identity_unmet
         callbacks,
         "the diverged entry was withheld, not written"
     );
+}
+
+// Review 5489623418: identical concurrent attempts.
+
+/// Two identical restores reserve the same operation. One writes and its
+/// completion fails; the other loses its CAS and releases its own attempt.
+/// That release proves only that its own attempt wrote nothing, so the
+/// operation stays pending, and the same request recovers it once.
+#[tokio::test]
+async fn a_losing_concurrent_attempt_cannot_clear_the_landed_attempts_pending_operation() {
+    let Published { plane, dir: _dir, .. } = Published::new(true, None).await;
+    let retired = tombstoned(&plane).await;
+    store(&plane).reserve_concurrently();
+    store(&plane).fail_completions(true);
+
+    let (status, body) = restore(&plane, "acme", &retired).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let landed = body["revision"].as_str().unwrap().to_owned();
+    let other = store(&plane).concurrent_attempt().expect("a second attempt");
+
+    // What the losing attempt's service does after its CAS fails.
+    store(&plane).release(&other).await;
+    assert_eq!(continuity_of(&plane, "acme").await["reason"], "pending");
+    store(&plane).release(&other).await;
+    assert_eq!(
+        continuity_of(&plane, "acme").await["reason"],
+        "pending",
+        "a repeated release is stale"
+    );
+
+    store(&plane).fail_completions(false);
+    // A different intent is not the frozen operation, landed or not. (A
+    // different operator is refused the same way; `port_tests.rs` proves it,
+    // since this harness attributes every request to one operator.)
+    let (status, body) = restore_because(&plane, "acme", &retired, "A different reason").await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["error"]["code"], "lifecycle_continuity_pending");
+    assert_eq!(continuity_of(&plane, "acme").await["reason"], "pending");
+
+    let (status, body) = restore(&plane, "acme", &retired).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["revision"], landed.as_str());
+    assert_eq!(body["lifecycle"]["continuity"]["state"], "admitted", "{body}");
+    assert_eq!(restored_audits(&audited(&plane, "acme").await), 1);
+
+    // Recovery is idempotent: the operation is complete, and a stale
+    // release or completion from it touches nothing after.
+    store(&plane).release(&other).await;
+    assert_eq!(
+        store(&plane).complete(&other, &revision(&landed)).await,
+        Err(ContinuityRefusal::StaleCompletion)
+    );
+    assert_eq!(continuity_of(&plane, "acme").await["state"], "admitted");
 }

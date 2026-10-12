@@ -13,6 +13,8 @@
 //! carries. Evidence that cannot be read refuses, and so does a target that
 //! holds no accepted publication at all; "never published" passes only when
 //! the target's own history establishes it.
+//!
+//! In the 121-150 band: the evidence and the one rule set read against it.
 
 use fabric_client_model::Client;
 use fabric_core::TenantId;

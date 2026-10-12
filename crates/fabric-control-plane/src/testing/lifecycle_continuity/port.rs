@@ -1,13 +1,16 @@
 //! The test store's answers: one state machine over one map, so a
 //! completion is only ever its own pending reservation's.
+//!
+//! In the 121-150 band: the port's four answers, kept together.
 
 use async_trait::async_trait;
 use fabric_client_model::{ClientId, ClientRevision};
 
+use super::rules::operation_of;
 use super::{lock, ContinuityEvent, InMemoryLifecycleContinuity};
 use crate::{
-    AcceptedLifecycle, ContinuityRefusal, ContinuityReservation, LifecycleContinuity, PendingTransition,
-    Transition, TransitionKind,
+    AcceptedLifecycle, ContinuityRefusal, ContinuityReservation, LifecycleContinuity, Transition,
+    TransitionKind,
 };
 
 impl InMemoryLifecycleContinuity {
@@ -18,56 +21,6 @@ impl InMemoryLifecycleContinuity {
             });
         }
         Ok(())
-    }
-
-    fn admit(&self, transition: &Transition<'_>) -> Result<ContinuityReservation, ContinuityRefusal> {
-        let mut clients = lock(&self.clients);
-        let frozen = |reservation: ContinuityReservation| PendingTransition {
-            reservation,
-            kind: transition.kind,
-            at_revision: transition.at_revision.cloned(),
-            to: transition.to.clone(),
-            to_record: transition.to_record.clone(),
-            reversing: transition.reversing.cloned(),
-            operator: transition.operator.to_owned(),
-        };
-        let token = || ContinuityReservation::new(format!("{}-{}", transition.client, self.next_operation()));
-        if transition.kind == TransitionKind::Create {
-            if clients.contains_key(transition.client) {
-                return Err(ContinuityRefusal::Resurrection);
-            }
-            let reservation = token();
-            let accepted = AcceptedLifecycle {
-                instance: transition.instance.clone(),
-                sequence: 0,
-                fingerprint: transition.to.clone(),
-                pending: Some(frozen(reservation.clone())),
-            };
-            clients.insert(transition.client.clone(), accepted);
-            return Ok(reservation);
-        }
-        let accepted = clients
-            .get_mut(transition.client)
-            .ok_or(ContinuityRefusal::Unenrolled)?;
-        let follows = *transition.instance == accepted.instance
-            && transition.expected_sequence == Some(accepted.sequence)
-            && transition.from == Some(&accepted.fingerprint)
-            && (transition.kind != TransitionKind::Restore || transition.reversing.is_some());
-        if let Some(held) = &accepted.pending {
-            // Only exactly the frozen transition is handed back; anything
-            // else, however close, is another operation.
-            return if follows && *held == frozen(held.reservation.clone()) {
-                Ok(held.reservation.clone())
-            } else {
-                Err(ContinuityRefusal::Pending)
-            };
-        }
-        if !follows {
-            return Err(ContinuityRefusal::Mismatch);
-        }
-        let reservation = token();
-        accepted.pending = Some(frozen(reservation.clone()));
-        Ok(reservation)
     }
 }
 
@@ -83,7 +36,11 @@ impl LifecycleContinuity for InMemoryLifecycleContinuity {
         if let Some(refusal) = lock(&self.refuse_with).clone() {
             return Err(refusal);
         }
-        let reservation = self.admit(transition)?;
+        let operation = self.admit(transition)?;
+        let reservation = self.attempt(&operation);
+        if std::mem::take(&mut *lock(&self.concurrent_armed)) {
+            *lock(&self.concurrent) = Some(self.attempt(&operation));
+        }
         let reserved = ContinuityEvent::Reserved(
             transition.client.clone(),
             transition.kind,
@@ -114,9 +71,18 @@ impl LifecycleContinuity for InMemoryLifecycleContinuity {
                 accepted
                     .pending
                     .as_ref()
-                    .is_some_and(|held| held.reservation == *reservation)
+                    .is_some_and(|held| held.reservation.id() == operation_of(reservation))
             })
             .ok_or(ContinuityRefusal::StaleCompletion)?;
+        let operation = operation_of(reservation).to_owned();
+        let known = reservation.id() == operation
+            || lock(&self.attempts)
+                .get(&operation)
+                .is_some_and(|outstanding| outstanding.contains(reservation.id()));
+        if !known {
+            return Err(ContinuityRefusal::StaleCompletion);
+        }
+        lock(&self.attempts).remove(&operation);
         if let Some(pending) = accepted.pending.take() {
             accepted.fingerprint = pending.to;
             accepted.sequence += 1;
@@ -126,18 +92,35 @@ impl LifecycleContinuity for InMemoryLifecycleContinuity {
     }
 
     async fn release(&self, reservation: &ContinuityReservation) {
-        let mut clients = lock(&self.clients);
-        let released = clients.iter().find_map(|(client, accepted)| {
-            let pending = accepted.pending.as_ref()?;
-            (pending.reservation == *reservation).then(|| (client.clone(), pending.kind))
-        });
-        if let Some((client, kind)) = released {
-            if kind == TransitionKind::Create {
-                clients.remove(&client);
-            } else if let Some(accepted) = clients.get_mut(&client) {
-                accepted.pending = None;
+        // Only this attempt is released. The operation stays pending while
+        // any other attempt at it may have written.
+        let operation = operation_of(reservation).to_owned();
+        let remaining = {
+            let mut attempts = lock(&self.attempts);
+            let Some(outstanding) = attempts.get_mut(&operation) else {
+                return;
+            };
+            if !outstanding.remove(reservation.id()) {
+                return;
             }
-            lock(&self.events).push(ContinuityEvent::Released(client));
+            outstanding.len()
+        };
+        let mut clients = lock(&self.clients);
+        let Some((client, kind)) = clients.iter().find_map(|(client, accepted)| {
+            let pending = accepted.pending.as_ref()?;
+            (pending.reservation.id() == operation).then(|| (client.clone(), pending.kind))
+        }) else {
+            return;
+        };
+        lock(&self.events).push(ContinuityEvent::Released(client.clone()));
+        if remaining > 0 {
+            return;
+        }
+        lock(&self.attempts).remove(&operation);
+        if kind == TransitionKind::Create {
+            clients.remove(&client);
+        } else if let Some(accepted) = clients.get_mut(&client) {
+            accepted.pending = None;
         }
     }
 }

@@ -60,6 +60,7 @@ impl ClientService {
             expected,
             kind: TransitionKind::Restore,
             action: "Client restored",
+            reason: Some(reason),
             continuity,
         };
         let precondition = |document: &ClientDocument| {

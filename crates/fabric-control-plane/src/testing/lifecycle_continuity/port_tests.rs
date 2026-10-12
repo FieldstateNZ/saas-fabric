@@ -96,7 +96,9 @@ async fn a_pending_transition_is_frozen_and_only_its_exact_replay_is_handed_back
         .reserve(&parts.restoring(&to_print, &to, "o"))
         .await
         .unwrap();
-    assert_eq!(first, replayed);
+    assert_ne!(first, replayed, "a replay is another attempt");
+    let operation = |token: &crate::ContinuityReservation| token.id().split('#').next().unwrap().to_owned();
+    assert_eq!(operation(&first), operation(&replayed), "at the same operation");
 
     let changed = from.restore(2, "o", "another reason").unwrap();
     let changed_print = fingerprint(&changed);
@@ -142,4 +144,41 @@ async fn a_token_completes_or_releases_only_its_own_operation() {
         .unwrap();
     let accepted = store.accepted(&acme()).await.unwrap().unwrap();
     assert_eq!((accepted.sequence, accepted.fingerprint), (1, to_print));
+}
+
+#[tokio::test]
+async fn releasing_one_attempt_keeps_the_operation_while_another_is_outstanding() {
+    let (store, from, to) = tombstoned();
+    let parts = Parts::new(&from);
+    let to_print = fingerprint(&to);
+    let landed = store
+        .reserve(&parts.restoring(&to_print, &to, "o"))
+        .await
+        .unwrap();
+    let lost = store
+        .reserve(&parts.restoring(&to_print, &to, "o"))
+        .await
+        .unwrap();
+    assert_ne!(landed, lost, "every attempt has its own token");
+
+    store.release(&lost).await;
+    let pending = store.accepted(&acme()).await.unwrap().unwrap().pending;
+    assert!(pending.is_some(), "the landed attempt's uncertainty is kept");
+
+    store
+        .complete(&landed, &ClientRevision::try_new("rev-2").unwrap())
+        .await
+        .unwrap();
+    store.release(&lost).await;
+    assert_eq!(
+        store
+            .complete(&lost, &ClientRevision::try_new("rev-3").unwrap())
+            .await,
+        Err(ContinuityRefusal::StaleCompletion)
+    );
+    let accepted = store.accepted(&acme()).await.unwrap().unwrap();
+    assert_eq!(
+        (accepted.sequence, accepted.fingerprint, accepted.pending),
+        (1, to_print, None)
+    );
 }

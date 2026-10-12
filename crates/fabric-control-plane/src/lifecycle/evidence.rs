@@ -5,6 +5,8 @@
 //! not manage, a placements document that could not be read, or a process
 //! that has not completed a publication pass since it started all leave the
 //! condition unmet, with the reason.
+//!
+//! In the 121-150 band: one pure rule per readiness condition, side by side.
 
 use fabric_client_model::lifecycle::Evidence;
 use fabric_client_model::{Client, ProjectionCheck};

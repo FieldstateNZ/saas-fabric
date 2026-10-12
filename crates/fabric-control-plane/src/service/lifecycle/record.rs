@@ -1,24 +1,23 @@
 //! Running one lifecycle write through the continuity store: reserve, write,
-//! complete, and replay or recover a transition the store still holds
-//! pending.
+//! complete, and replay or recover a transition the store holds pending.
 //!
 //! # The partial-success and retry contract
 //!
 //! - A refused reservation writes nothing.
 //! - A document write that lost its revision conclusively did not land, so
-//!   it releases its own reservation and nothing else.
+//!   it releases its own attempt and nothing else. An identical concurrent
+//!   attempt that wrote, or may have, keeps the operation pending.
 //! - Any other failed write may have landed: its reservation stays pending,
 //!   and the client is held.
 //! - A failed completion leaves the written transition pending and the
 //!   client held; the response reports the hold, never a confirmed
 //!   transition.
-//! - The same request sent again, with the same `If-Match`, is the only way
-//!   on. If the document is still at the reviewed revision, the store's
-//!   frozen transition is replayed exactly, and only when the request asks
-//!   for the same thing; anything else is refused as pending. If the
-//!   document carries exactly the pending lifecycle, the write's
-//!   preconditions are checked again against what is true now, and only
-//!   then is the reservation completed. Otherwise it stays pending.
+//! - Only the same request sent again, with the same `If-Match`, goes on
+//!   (`replay`): the frozen transition is replayed exactly, or, when the
+//!   document carries it, its preconditions are checked again before it is
+//!   completed. Any other intent is refused as pending.
+//!
+//! In the 121-150 band: the write and its retry contract are read together.
 
 use fabric_client_model::{ClientDocument, ClientId, ClientRevision, LifecycleRecord, LifecycleRefusal};
 
@@ -48,6 +47,8 @@ pub(super) struct Asked<'a> {
     pub(super) expected: &'a ClientRevision,
     pub(super) kind: TransitionKind,
     pub(super) action: &'static str,
+    /// The reason the request gives, for a write that takes one.
+    pub(super) reason: Option<&'a str>,
     pub(super) continuity: Option<&'a dyn LifecycleContinuity>,
 }
 

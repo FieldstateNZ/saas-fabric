@@ -38,7 +38,7 @@ impl ClientService {
         current: StoredClient,
         precondition: &(dyn Fn(&ClientDocument) -> Result<(), ControlPlaneError> + Sync),
     ) -> Result<Ran, ControlPlaneError> {
-        if frozen.to != LifecycleFingerprint::of_document(&current.document) {
+        if frozen.to != LifecycleFingerprint::of_document(&current.document) || !asks_for(asked, frozen) {
             return Err(ContinuityHold::Pending.into());
         }
         precondition(&current.document)?;
@@ -51,6 +51,25 @@ impl ClientService {
             .map_err(|refusal| ControlPlaneError::from(ContinuityHold::from_refusal(&refusal)))?;
         Ok(Ran::Recovered(current))
     }
+}
+
+/// Whether the retried request asks for the operation `frozen` holds: the
+/// same operator and, for a write that takes one, the same reason.
+fn asks_for(asked: &Asked<'_>, frozen: &PendingTransition) -> bool {
+    let reason = match frozen.kind {
+        TransitionKind::Tombstone => frozen
+            .to_record
+            .tombstone
+            .as_ref()
+            .map(|entry| entry.reason.as_str()),
+        TransitionKind::Restore => frozen
+            .to_record
+            .restorations
+            .last()
+            .map(|entry| entry.reason.as_str()),
+        TransitionKind::ConfirmDeletion | TransitionKind::Create => None,
+    };
+    frozen.operator == asked.operator.subject() && reason == asked.reason.map(str::trim)
 }
 
 /// Whether `fresh` asks for the same write as the frozen `pending` record:

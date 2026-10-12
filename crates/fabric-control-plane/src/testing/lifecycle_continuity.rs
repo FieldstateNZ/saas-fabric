@@ -3,6 +3,8 @@
 //! coordinates no processes, and no deployment builds it (#108).
 //!
 //! The controls are here; the port and its rules are in `port`.
+//!
+//! In the 121-150 band: the store and the controls a test turns.
 
 use std::collections::BTreeMap;
 use std::sync::Mutex;
@@ -10,11 +12,14 @@ use std::sync::Mutex;
 use fabric_client_model::lifecycle::IdentityInstance;
 use fabric_client_model::{ClientId, ClientRevision};
 
-use crate::{AcceptedLifecycle, ContinuityRefusal, LifecycleFingerprint, TransitionKind};
+use crate::{
+    AcceptedLifecycle, ContinuityRefusal, ContinuityReservation, LifecycleFingerprint, TransitionKind,
+};
 
 mod port;
 #[cfg(test)]
 mod port_tests;
+mod rules;
 
 /// What happened, in order.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -30,8 +35,7 @@ pub enum ContinuityEvent {
 /// Runs inside a reservation, standing in for a concurrent writer.
 type ReserveHook = Box<dyn Fn() + Send + Sync>;
 
-/// Enrolls only what a test enrolls or an API creation reserves; anything
-/// else is unenrolled, as an adapter must answer.
+/// Enrolls only what a test enrolls or an API creation reserves.
 #[derive(Default)]
 pub struct InMemoryLifecycleContinuity {
     clients: Mutex<BTreeMap<ClientId, AcceptedLifecycle>>,
@@ -41,6 +45,11 @@ pub struct InMemoryLifecycleContinuity {
     fail_completion: Mutex<bool>,
     on_reserve: Mutex<Option<ReserveHook>>,
     events: Mutex<Vec<ContinuityEvent>>,
+    /// Each pending operation's attempts whose outcome is not known to be
+    /// "nothing written".
+    attempts: Mutex<BTreeMap<String, std::collections::BTreeSet<String>>>,
+    concurrent_armed: Mutex<bool>,
+    concurrent: Mutex<Option<ContinuityReservation>>,
 }
 
 impl InMemoryLifecycleContinuity {
@@ -77,6 +86,18 @@ impl InMemoryLifecycleContinuity {
     /// Fails, or stops failing, every later completion.
     pub fn fail_completions(&self, failing: bool) {
         *lock(&self.fail_completion) = failing;
+    }
+
+    /// Makes the next successful reservation also hand out a second attempt
+    /// at the same operation, as an identical concurrent request would.
+    pub fn reserve_concurrently(&self) {
+        *lock(&self.concurrent_armed) = true;
+    }
+
+    /// The second attempt [`Self::reserve_concurrently`] handed out.
+    #[must_use]
+    pub fn concurrent_attempt(&self) -> Option<ContinuityReservation> {
+        lock(&self.concurrent).clone()
     }
 
     /// Runs `hook` inside every later successful reservation.

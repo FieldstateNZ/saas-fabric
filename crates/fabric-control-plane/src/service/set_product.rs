@@ -1,5 +1,9 @@
 //! Replacing a client's product configuration is a single desired-state
 //! write, over the client's own existing copy of every release it keeps.
+//!
+//! In the 121–150 line band: one method whose refusals — revision,
+//! lifecycle, stored projection divergence, removal — must run in this order
+//! and before anything is resolved, which is easier to check read together.
 
 use fabric_client_model::{
     catalogue::{ClientProductRequest, ProductActivity},
@@ -14,7 +18,9 @@ impl ClientService {
     /// # Errors
     ///
     /// Requires the current revision; refuses a tombstoned client
-    /// ([`ControlPlaneError::Lifecycle`]), destructive removal until
+    /// ([`ControlPlaneError::Lifecycle`]), a stored projected client that no
+    /// longer matches its stored projection
+    /// ([`ControlPlaneError::ProjectedClientDiverged`]), destructive removal until
     /// deprovisioning exists, and a document too large to store.
     pub async fn set_product(
         &self,
@@ -32,6 +38,20 @@ impl ClientService {
             return Err(ControlPlaneError::RevisionConflict);
         }
         crate::lifecycle::require(&current.document, LifecycleUse::Edit)?;
+        // D01-19b: before the request touches anything, the stored projected
+        // entries must still be what the stored document projects. A save
+        // would replace them whole, silently undoing a divergence nobody saw.
+        if let Some(divergence) = current.document.projection_divergence().map_err(|source| {
+            ControlPlaneError::InvalidDesiredState {
+                client: id.clone(),
+                source,
+            }
+        })? {
+            return Err(ControlPlaneError::ProjectedClientDiverged {
+                client: divergence.client,
+                field: divergence.field.as_str(),
+            });
+        }
         // `current` came from the repository, not from this request, so a
         // product section that will not parse is a stored document the
         // platform cannot read — the same failure `GET /api/clients` reports

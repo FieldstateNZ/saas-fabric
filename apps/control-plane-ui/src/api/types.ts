@@ -9,18 +9,9 @@
 
 import type { ClientLifecycle } from './lifecycle-types'
 import type { Publication } from './publication-types'
+import type { Reconciliation } from './reconciliation-types'
 
-/** Where a client's identity stands between what Git says and what exists. */
-export type ReconciliationStatus = 'pending' | 'applied' | 'failed' | 'drifted'
-
-/** What is known about whether a client's desired state has taken effect. */
-export interface Reconciliation {
-  readonly status: ReconciliationStatus
-  /** Seconds since the Unix epoch, or null if it has never been established. */
-  readonly observedAtUnix: number | null
-  /** Why the last attempt failed, if it did. */
-  readonly detail: string | null
-}
+export type { HandEdit, Reconciliation, ReconciliationStatus } from './reconciliation-types'
 
 /** One client, as the list and detail views render it. */
 export interface Client {

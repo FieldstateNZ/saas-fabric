@@ -9,6 +9,7 @@ use axum::Router;
 use crate::handlers;
 use crate::state::ControlPlaneState;
 
+mod identity;
 mod integrations;
 mod lifecycle;
 mod platform;
@@ -32,7 +33,6 @@ pub const API_PREFIX: &str = "/api";
 /// Every path this crate serves is visible here, in one file.
 ///
 /// ```text
-/// GET/POST   /api/session                          sign-in start / redeem a code   (no operator)
 /// POST       /api/reconciliation                    converge every client, as you
 /// One handler set is mounted twice (routes::integrations); each line below is two real routes:
 /// GET/DELETE /api/integrations/{git,platform}             is it connected? / forget it
@@ -60,30 +60,17 @@ pub const API_PREFIX: &str = "/api";
 /// GET        /api/clients/{clientId}                one client's overview and lifecycle
 /// POST       /api/clients/{clientId}/{tombstone,deletion-confirmation}  see routes::lifecycle
 /// GET/PUT    /api/clients/{clientId}/product        its product config / replace it   (If-Match)
-/// GET/PUT    /api/clients/{clientId}/identity       its identity and reconciliation state / replace it
+/// GET/PUT    /api/clients/{clientId}/identity…      its identity / replace it / re-assert it: see routes::identity
 /// GET        /api/clients/{clientId}/placements               every logical data source, and what is true of each
 /// POST       /api/clients/{clientId}/placements/{logical}     place it                              (If-Match)
 /// GET        /api/clients/{clientId}/secrets                    list its secret paths
-/// GET/PUT/DELETE /api/clients/{clientId}/secrets/entry/{path}  metadata / write / delete a version
+/// GET/PUT/DELETE /api/clients/{clientId}/secrets/entry/{path}  metadata / write a version / delete every version
 /// POST       /api/clients/{clientId}/secrets/reveal             reveal values   (path in the body)
 /// ```
 ///
 /// Not here: anything that names a file, edits a document as text, or reaches an identity provider
 /// (§8, ADR 0008). `PUT` means what the Data API does not: a genuine whole-resource replacement.
 pub(crate) fn control_plane_routes(state: ControlPlaneState) -> Router {
-    // Mounted only when the deployment has a sign-in. OIDC always builds one
-    // (`operator_keys::establish` in the host); `None` is a harness wiring an
-    // authenticator directly — the test support module, the loopback
-    // workbench. A route that only ever refuses is one somebody makes work.
-    let session = if state.sign_in.is_some() {
-        Router::new().route(
-            "/session",
-            get(handlers::session_config).post(handlers::redeem_session),
-        )
-    } else {
-        Router::new()
-    };
-
     let clients = Router::new()
         .route("/reconciliation", post(handlers::converge))
         .merge(platform::routes())
@@ -103,10 +90,6 @@ pub(crate) fn control_plane_routes(state: ControlPlaneState) -> Router {
             get(handlers::get_product).put(handlers::put_product),
         )
         .route("/clients/{client_id}", get(handlers::get_client))
-        .route(
-            "/clients/{client_id}/identity",
-            get(handlers::get_identity).put(handlers::put_identity),
-        )
         .route("/clients/{client_id}/placements", get(handlers::list_placements))
         .route(
             "/clients/{client_id}/placements/{logical}",
@@ -140,11 +123,11 @@ pub(crate) fn control_plane_routes(state: ControlPlaneState) -> Router {
         .nest(
             API_PREFIX,
             clients
-                .merge(session)
                 .merge(integrations::client_configuration())
                 .merge(integrations::platform_management())
                 .merge(registries::routes())
-                .merge(lifecycle::routes()),
+                .merge(lifecycle::routes())
+                .merge(identity::routes()),
         )
         .with_state(state)
 }

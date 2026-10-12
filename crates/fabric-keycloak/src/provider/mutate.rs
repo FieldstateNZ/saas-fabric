@@ -1,7 +1,7 @@
 //! Making Keycloak match what was planned.
 
 use fabric_client_model::{OidcClient, OidcClientId, RealmName, RoleName};
-use fabric_reconciliation::ProviderError;
+use fabric_reconciliation::{HeldEdits, ProviderError};
 
 use crate::admin::KeycloakAdmin;
 use crate::provider::declaration::declaration;
@@ -64,7 +64,7 @@ pub(super) async fn create_oidc_client(
         .create(
             "creating an application client",
             admin.paths().clients(realm),
-            &declaration(client, audience)?,
+            &declaration(client, audience, &HeldEdits::default())?,
         )
         .await
 }
@@ -76,12 +76,17 @@ pub(super) async fn create_oidc_client(
 /// [`ClientRepresentation`]. The lookup is not wasted work: it is also what
 /// distinguishes "the client is gone" from "the update failed", and a client
 /// that has disappeared between the observation and the update is created on
-/// the next pass rather than reported as a mystery.
+/// the next pass rather than reported as a mystery — whole, because a client
+/// that no longer exists holds no hand edit to preserve.
+///
+/// `held` is written as the provider holds it (D01-19b), so correcting a
+/// product-owned field does not overwrite an unsupported hand edit beside it.
 pub(super) async fn update_oidc_client(
     admin: &KeycloakAdmin,
     realm: &RealmName,
     client: &OidcClient,
     audience: &str,
+    held: &HeldEdits,
 ) -> Result<(), ProviderError> {
     let Some(internal_id) = internal_id(admin, realm, &client.id).await? else {
         return create_oidc_client(admin, realm, client, audience).await;
@@ -91,7 +96,7 @@ pub(super) async fn update_oidc_client(
         .update(
             "updating an application client",
             admin.paths().client(realm, &internal_id),
-            &declaration(client, audience)?,
+            &declaration(client, audience, held)?,
         )
         .await
 }

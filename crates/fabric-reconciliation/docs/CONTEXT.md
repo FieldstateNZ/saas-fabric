@@ -8,7 +8,7 @@ Converges an identity provider onto a client's desired state. Depends on
 
 - `IdentityProvider` (async trait, `Arc<dyn>`) — `observe_realm(&RealmName) -> Option<ObservedRealm>`,
   `create_realm`, `set_realm_display_name`, `create_realm_role`,
-  `create_oidc_client`, `update_oidc_client`,
+  `create_oidc_client`, `update_oidc_client(realm, client, &HeldEdits)`,
   `configured_audience() -> Option<&str>`, `describe() -> String`. **Every
   create must be idempotent.** **There is no delete.** `configured_audience`
   returning `None` is not "no audience configured yet" in the ordinary sense —
@@ -37,20 +37,32 @@ Converges an identity provider onto a client's desired state. Depends on
   `NoAudienceConfigured`. `is_transient()`. **`detail` must never carry an
   upstream response body or a credential** — the adapter is where that is
   dropped.
-- `IdentityPlan` — `realm()`, `actions() -> &[IdentityAction]`, `is_converged()`.
+- `IdentityPlan` — `realm()`, `actions() -> &[IdentityAction]`, `hand_edits() -> &[HandEdit]`,
+  `is_converged()`. A plan can be converged and still carry hand edits.
 - `IdentityAction` — `CreateRealm{display_name}`, `SetRealmDisplayName{display_name}`,
-  `CreateRealmRole(RoleName)`, `CreateOidcClient(OidcClient)`, `UpdateOidcClient(OidcClient)`.
+  `CreateRealmRole(RoleName)`, `CreateOidcClient(OidcClient)`,
+  `UpdateOidcClient { client: OidcClient, held: HeldEdits }`.
   Ordered: realm first, then roles, then clients.
+- `HandEdit { client: OidcClientId, field: HandEditedField }` (`Display` as
+  `client:field`), `HandEditedField` — `ClientDisabled | StandardFlowDisabled |
+  DeclaredRedirectUriRemoved` (serialised camelCase), `HeldEdits { client_disabled,
+  standard_flow_disabled, removed_redirect_uris }` with `is_empty()`, `fields()`,
+  `redirect_uris_to_write(&[RedirectUri])`. D01-19b; see the README's
+  "What the comparison sorts a difference into".
 - `IdentityReconciler::new(Arc<dyn IdentityProvider>)` —
-  `plan(&Client) -> Result<IdentityPlan, ProviderError>` (observe only),
-  `reconcile(&Client) -> ReconciliationOutcome` (observe, plan, apply).
+  `plan(&Client) -> Result<IdentityPlan, ProviderError>` (observe only, holding),
+  `reconcile(&Client) -> ReconciliationOutcome` (observe, plan, apply; holds
+  unsupported hand edits), `reassert(&Client) -> ReconciliationOutcome` (the same,
+  overwriting them — only an operator's audited request calls this).
 - `ReconciliationOutcome` — `status()` (only `Applied` or `Failed`), `actions()`,
-  `detail()`, `changed_nothing()`. Constructors `converged()`, `applied(n)`,
-  `failed(&ProviderError)` are `pub` so other crates' tests can build one; there
-  is deliberately no constructor for `Pending` or `Drifted`.
-- `ReconciliationStatus` — `Pending | Applied | Failed | Drifted`. `as_str()`,
-  `Display`, `Serialize` (lowercase).
-- `ReconciliationReport { status, revision: ClientRevision, actions, observed_at_unix, detail }`.
+  `detail()`, `changed_nothing()`, `hand_edits()` (held), `overwritten()`
+  (re-assert only). Constructors `converged()`, `applied(n)`,
+  `failed(&ProviderError)`, and builders `holding(..)`, `overwriting(..)`, are
+  `pub` so other crates' tests can build one; there is deliberately no
+  constructor for `Pending`, `Drifted` or `HandEdited`.
+- `ReconciliationStatus` — `Pending | Applied | Failed | Drifted | HandEdited`. `as_str()`,
+  `Display`, `Serialize` (camelCase: `handEdited`; the rest single words).
+- `ReconciliationReport { status, revision: ClientRevision, actions, observed_at_unix, detail, hand_edits }`.
 - `ReconciliationStatusStore` — `report(&ClientId)`, `mark_pending(...)`,
   `record(...) -> ReconciliationStatus`. In-memory, `std::sync::Mutex` with
   poison recovery (no `unwrap`).
@@ -76,16 +88,20 @@ Converges an identity provider onto a client's desired state. Depends on
 6. **Redirect URIs compare as sets.** Order from a provider is arbitrary, so
    reordering is not a difference — but a legitimate extra URI the provider
    holds beyond what is declared is drift too, exactly as an unparseable one
-   is (ADR 0019 §6, D13b).
-7. **`Drifted` is decided by `status::transition`, from the previous report.**
-   Not by the outcome, and not in two places.
+   is (ADR 0019 §6, D13b). A declared URI that is missing is a held hand
+   edit (D01-19b), not drift.
+7. **`Drifted` and `HandEdited` are decided by `status::transition`, from the
+   previous report and the outcome's held edits.** Not in two places.
 8. **The audience is a provider fact, not a document field.** A client
    document has no way to name its own audience — see the design note below —
-   so `matches` never reads one off `OidcClient`.
+   so the comparison never reads one off `OidcClient`.
 9. **A provider that names no audience is refused, not planned against.**
    `IdentityReconciler::plan` returns `ProviderError::NoAudienceConfigured`
    rather than comparing against an empty string or skipping the audience
    term — see `IdentityProvider::configured_audience`'s own rustdoc.
+10. **A held hand edit is never written by an ordinary pass** (D01-19b), and
+    a write that corrects product-owned drift beside one carries it as the
+    provider holds it. Only `reassert` overwrites.
 
 ## Design notes
 
@@ -94,16 +110,17 @@ Converges an identity provider onto a client's desired state. Depends on
 - A declared client is always public, so an observed client held as confidential
   does not match and is corrected. That is the one property that changes what a
   client *is*.
-- **`matches()`'s nine terms** (`plan::diff::matches`): `existing.public`;
-  `existing.unmodellable_redirect_uris == 0`; `existing.redirect_uris ==
-  declared_uris(&declared.redirect)`; `existing.challenge_method ==
-  Some(declared.pkce)`; `existing.audience_mapper.as_deref() ==
-  Some(configured_audience)` (also `None`, hence non-matching, when the
-  provider holds more than one mapper); `existing.other_protocol_mappers ==
-  0` (a client-level mapper nobody declared, added out of band, is the same
-  drift with the same correction); `existing.enabled`;
-  `existing.standard_flow_enabled`;
-  `existing.post_logout_redirect_uris_is_every_registered_uri`.
+- **The comparison** (`plan::classify::compare`) returns `drift` (product-owned:
+  `!public`, `unmodellable_redirect_uris != 0`, an undeclared redirect URI,
+  `challenge_method != Some(declared.pkce)`, `audience_mapper !=
+  Some(configured_audience)`, `other_protocol_mappers != 0`,
+  `!post_logout_redirect_uris_is_every_registered_uri`) and `held`
+  (`!enabled`, `!standard_flow_enabled`, declared URIs missing). Under
+  `HandEditPolicy::Hold` only `drift` writes, carrying `held`; under
+  `Overwrite` either writes, holding nothing.
+- **`HandEdited` is decided by `status::transition`**, before "changed
+  nothing": a pass that held a hand edit is never `Applied`. A previous
+  `HandEdited` at the same revision counts as converged for `Drifted`.
 - **Where the audience comes from, and why.** ADR 0019 §1/§G5: one audience
   string per deployment, equal to the Data API's own required `aud`. It is
   deployment configuration of whichever adapter is doing the writing (the

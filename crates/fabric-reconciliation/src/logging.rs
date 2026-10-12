@@ -15,7 +15,7 @@ use fabric_client_model::Client;
 use fabric_core::{event_id, EventType};
 
 use crate::plan::IdentityPlan;
-use crate::provider::ProviderError;
+use crate::provider::{HandEdit, ProviderError};
 use crate::DOMAIN_ID;
 
 /// The provider already matched the desired state.
@@ -36,15 +36,43 @@ pub(crate) fn already_converged(client: &Client) {
 ///
 /// Info, and logged *before* the calls rather than after: if the process dies
 /// mid-apply, this line is the only record of what it had decided to do.
-pub(crate) fn applying(client: &Client, plan: &IdentityPlan) {
+/// `overwriting` is non-empty only on an operator's re-assertion, and names
+/// the hand edits it is about to write over.
+pub(crate) fn applying(client: &Client, plan: &IdentityPlan, overwriting: &[HandEdit]) {
     tracing::info!(
         event = "reconciliation.applying",
         event_id = event_id(DOMAIN_ID, EventType::Success, 1),
         client_id = %client.id,
         realm = %plan.realm(),
         actions = plan.actions().len(),
+        overwriting = %joined(overwriting),
         "converging client identity"
     );
+}
+
+/// The provider holds hand edits the product does not support, and this pass
+/// left them in place (D01-19b).
+///
+/// Warn: nothing failed, but the provider does not hold what was declared
+/// and nothing will change that until somebody acts.
+pub(crate) fn hand_edits_held(client: &Client, held: &[HandEdit]) {
+    tracing::warn!(
+        event = "reconciliation.hand_edits_held",
+        event_id = event_id(DOMAIN_ID, EventType::Warning, 1),
+        client_id = %client.id,
+        realm = %client.identity.realm,
+        hand_edits = %joined(held),
+        "unsupported hand edits left in place; remove them or re-assert the projection"
+    );
+}
+
+/// `web:clientDisabled,web:standardFlowDisabled`, for one log field.
+fn joined(hand_edits: &[HandEdit]) -> String {
+    hand_edits
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 /// The provider's current state could not be read.

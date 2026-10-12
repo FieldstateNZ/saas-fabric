@@ -23,7 +23,7 @@ const identity: Identity = {
   clients: [],
   revision: 'r',
   apiVersion: 'v2',
-  reconciliation: { status: 'applied', observedAtUnix: null, detail: null },
+  reconciliation: { status: 'applied', observedAtUnix: null, detail: null, handEdits: [] },
 }
 
 describe('identity inventory', () => {

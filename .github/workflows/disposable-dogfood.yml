@@ -1,5 +1,10 @@
 name: Disposable dogfood (build only by default)
 
+# PARKED (D01-9, #108): unsupported and not part of any deploy. The profile's
+# sign-in drives /api/session, which only its pinned source commit still
+# serves; see examples/disposable-dogfood/README.md, "Parked (D01-9)". Its
+# offline tests run on every pull request in ci.yml's `scripts` job.
+#
 # examples/disposable-dogfood on a GitHub-hosted runner that is destroyed when
 # the job ends. Nothing here touches LucentRoot: ci_smoke.py refuses that
 # daemon by ID and by name, and refuses to run anywhere GITHUB_ACTIONS is not

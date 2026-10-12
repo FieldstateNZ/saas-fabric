@@ -1161,6 +1161,111 @@ def check_the_console_widens_its_policy_only_for_the_manifest_post() -> list[Fai
     return failures
 
 
+CLIENT_SECRET_OPERATIONS = {"list", "metadata", "reveal", "write", "delete"}
+
+CLIENT_SECRET_ENDPOINTS = {"data", "metadata"}
+
+# The store's vocabulary for reaching past the current version: reading an
+# older one, soft-deleting, undeleting or destroying one, and changing how many
+# are kept or for how long.
+CLIENT_SECRET_HISTORY = re.compile(
+    r"undelete|destroy|versions|version="
+    r"|max_versions|delete_version_after|cas_required|subkeys"
+    r"|\.query\(",
+)
+
+
+def check_client_secrets_reach_only_the_current_version() -> list[Failure]:
+    """A client's secrets are read and written at their current version only.
+
+    ADR 0017's amendment of 2026-10-12 (D01-25): a secret rolls back by
+    writing the earlier values forward under check-and-set. Fabric offers no
+    historical reveal, no undelete, no per-version delete or destroy, and
+    changes no retention setting.
+
+    Held structurally because each of those is one URL away. The port's
+    operations are a closed set, and the adapter names the store's `data` and
+    `metadata` endpoints with no version selector and none of the store's
+    history or retention vocabulary.
+    """
+    failures = []
+    rule = "Client secrets reach only the current version (ADR 0017, D01-25)"
+
+    port = CRATES / "fabric-control-plane" / "src" / "client_secrets.rs"
+    code = strip_comments_and_docs(port.read_text(encoding="utf-8"))
+    trait = re.search(r"pub trait ClientSecrets\b.*?\n\}", code, flags=re.DOTALL)
+
+    if not trait:
+        failures.append(
+            Failure(
+                rule,
+                f"{port.relative_to(REPO_ROOT)} no longer declares `pub trait ClientSecrets`",
+                "This check reads the port's operations from that trait. If it "
+                "moved, move the check with it rather than letting it pass "
+                "over nothing.",
+            )
+        )
+    else:
+        operations = set(re.findall(r"\basync fn (\w+)", trait.group(0)))
+        if operations != CLIENT_SECRET_OPERATIONS:
+            failures.append(
+                Failure(
+                    rule,
+                    f"`ClientSecrets` declares {sorted(operations)}, not "
+                    f"{sorted(CLIENT_SECRET_OPERATIONS)}",
+                    "A version read, restore, undelete or destroy is option B "
+                    "or C of D01-25, and each needs its own decision and an "
+                    "amendment to ADR 0017 before it exists.",
+                )
+            )
+
+        reveal = re.search(r"async fn reveal\((.*?)\)", trait.group(0), flags=re.DOTALL)
+        if reveal and re.search(r"version|u64", reveal.group(1)):
+            failures.append(
+                Failure(
+                    rule,
+                    "`ClientSecrets::reveal` takes a version",
+                    "Reveal shows the current values. Revealing history widens "
+                    "the one operation that returns a secret to every value it "
+                    "ever held, which D01-25 did not take.",
+                )
+            )
+
+    adapter = CRATES / "fabric-openbao" / "src"
+    sources = [adapter / "client_secrets.rs", *sorted((adapter / "client_secrets").rglob("*.rs"))]
+
+    for path in sources:
+        code = strip_comments_and_docs(path.read_text(encoding="utf-8"))
+        relative = path.relative_to(REPO_ROOT)
+
+        endpoints = set(re.findall(r"/v1/\{\}/(\w+)", code))
+        if endpoints - CLIENT_SECRET_ENDPOINTS:
+            failures.append(
+                Failure(
+                    rule,
+                    f"{relative} names the store's "
+                    f"{sorted(endpoints - CLIENT_SECRET_ENDPOINTS)} endpoint",
+                    "Only `data` and `metadata` are used. The store's `delete`, "
+                    "`undelete` and `destroy` endpoints act on single versions, "
+                    "and `config` sets how many are kept.",
+                )
+            )
+
+        found = {match.group(0) for match in CLIENT_SECRET_HISTORY.finditer(code)}
+        if found:
+            failures.append(
+                Failure(
+                    rule,
+                    f"{relative} names {sorted(found)}",
+                    "A version selector reads a value an operator replaced, and a "
+                    "retention setting decides how long a leaked one stays in "
+                    "the store. Neither is Fabric's to change without a decision.",
+                )
+            )
+
+    return failures
+
+
 CHECKS = (
     ("NDC containment", check_ndc_containment),
     ("Platform-service adapter containment", check_adapter_containment),
@@ -1175,6 +1280,7 @@ CHECKS = (
     # cargo's resolution. `main` calls it with no argument.
     ("The browser gets no platform credentials", check_the_browser_gets_no_platform_credentials),
     ("The console's policy widens for one post", check_the_console_widens_its_policy_only_for_the_manifest_post),
+    ("Client secrets reach only the current version", check_client_secrets_reach_only_the_current_version),
 )
 
 

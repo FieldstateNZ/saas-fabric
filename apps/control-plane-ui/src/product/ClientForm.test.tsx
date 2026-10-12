@@ -42,7 +42,7 @@ const existing: ClientProductResponse = {
     activity: [],
   },
   resolved: [],
-  reconciliation: { status: 'applied', observedAtUnix: null, detail: null },
+  reconciliation: { status: 'applied', observedAtUnix: null, detail: null, handEdits: [] },
 }
 
 /** Fills every required field of the create-client step, so Continue actually submits. */

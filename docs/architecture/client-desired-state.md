@@ -396,10 +396,12 @@ in `spec.identity.clients`, replacing any entry with the same id:
 | the template callback exists only when the release has a hostname template | an assignment with no template and no client host is refused |
 | a release's template holds exactly one `{client}`, checked at publication against a worst-case client id sized to the label the placeholder shares — 63 characters for `{client}.example.com`, 56 for `{client}-portal.example.com` | a template under `.internal` or `.example.test` is refused when it is published, never at assignment; a client id too long for its template's label is refused at assignment |
 | every client host adds a callback, template or not | a client with any `.internal` or loopback host cannot be assigned an application at all, because `claimedHttps` admits public hosts only |
-| the entry is replaced whole on every product save | an edit to its callbacks, strategy or PKCE — through the identity API or by hand — is reverted by the next product save, and the realm converged back |
+| the entry is replaced whole on every product save | the product owns it (D01-19b): an identity edit that would change, add or remove it is refused, `409 projected_client_product_owned`, unless the client is retired or the edit restores the projection; a product save over a stored entry that no longer matches the stored document's own projection, after a hand edit in Git for example, is refused, `409 projected_client_diverged`, and writes nothing |
 
-An identity edit does not project. A projected client that an identity edit
-removes is written back by the next product save.
+An identity edit does not project. On a retired client, where product saves
+are refused, an identity edit to a projected client stays open so a
+compromised callback can still be removed. See
+[ADR 0021's 2026-10-12 amendment](../decisions/0021-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md#amendment-2026-10-12-a-projected-identity-client-is-the-products-d01-19b).
 
 ## `spec.data`
 

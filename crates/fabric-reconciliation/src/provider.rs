@@ -1,12 +1,14 @@
 //! The port an identity provider implements.
 
 mod errors;
+mod hand_edit;
 mod observed;
 
 use async_trait::async_trait;
 use fabric_client_model::{OidcClient, RealmName, RoleName};
 
 pub use errors::ProviderError;
+pub use hand_edit::{HandEdit, HandEditedField, HeldEdits};
 pub use observed::{ObservedOidcClient, ObservedRealm};
 
 /// What SaaS Fabric needs an identity provider to be able to do.
@@ -80,12 +82,24 @@ pub trait IdentityProvider: Send + Sync {
     /// Returns [`ProviderError`] if the client could not be created.
     async fn create_oidc_client(&self, realm: &RealmName, client: &OidcClient) -> Result<(), ProviderError>;
 
-    /// Brings an existing application client in line with the declaration.
+    /// Brings an existing application client in line with the declaration,
+    /// leaving `held` exactly as the provider holds it.
+    ///
+    /// `held` is the unsupported hand edits reconciliation has decided not to
+    /// fight (D01-19b): the adapter writes the declaration with each one
+    /// applied, so a correction to a product-owned field on the same client
+    /// does not silently overwrite them. An empty `held` writes the whole
+    /// declaration, which is what an explicit re-assertion asks for.
     ///
     /// # Errors
     ///
     /// Returns [`ProviderError`] if the client could not be updated.
-    async fn update_oidc_client(&self, realm: &RealmName, client: &OidcClient) -> Result<(), ProviderError>;
+    async fn update_oidc_client(
+        &self,
+        realm: &RealmName,
+        client: &OidcClient,
+        held: &HeldEdits,
+    ) -> Result<(), ProviderError>;
 
     /// The audience string this provider currently writes onto every declared
     /// client's mapper, if it has one configured.

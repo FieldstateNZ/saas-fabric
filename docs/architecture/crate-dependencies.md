@@ -89,7 +89,7 @@ fabric-control-plane   → fabric-core
 fabric-keycloak        → fabric-core
                        → fabric-client-model
                        → fabric-reconciliation      (implements IdentityProvider)
-                       → fabric-control-plane       (implements OperatorSignIn)
+                       → fabric-control-plane       (implements IdentityProviderFactory)
 
 fabric-git-host        → fabric-core
 

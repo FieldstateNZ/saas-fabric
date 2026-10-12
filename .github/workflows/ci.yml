@@ -210,6 +210,25 @@ jobs:
       # the queue time.
       - run: python3 scripts/check_toolchain_pin.py
 
+  # The offline suites for the scripts and the disposable dogfood profile (#101,
+  # #111). They used to run only on that profile's own branch workflow, so a
+  # change on main could break them unseen; D01-9 parked the profile and asks
+  # that its local tests stay runnable, which is only true if something runs
+  # them. Full history, because the parking test reads the pinned source
+  # commit the profile builds from.
+  scripts:
+    name: offline script and dogfood tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python3 -m unittest discover -s scripts/tests -v
+
   architecture:
     name: architectural invariants
     runs-on: ubuntu-latest
@@ -229,8 +248,9 @@ jobs:
       # the runtime and control planes, transport reaching a domain crate, a
       # database driver or Git/Kubernetes client entering the graph at all,
       # X-Tenant-Id being read anywhere, the dependency direction diverging from
-      # docs/architecture/crate-dependencies.md, or the operator console naming
-      # another platform service's API. Needs a toolchain because it reads
+      # docs/architecture/crate-dependencies.md, the operator console naming
+      # another platform service's API, or a client secret operation reaching
+      # past the current version (ADR 0017, D01-25). Needs a toolchain because it reads
       # `cargo metadata` rather than parsing manifests by hand.
       - run: python3 scripts/check_architecture.py
 

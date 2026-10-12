@@ -12,8 +12,10 @@
 //!
 //! That the namespace header is a boundary the store enforces rather than a
 //! prefix this code assembles; that a check-and-set against a superseded
-//! version is refused rather than silently applied; and that a delete removes
-//! every version rather than the newest one.
+//! version is refused rather than silently applied; that a write naming no
+//! version never replaces an existing secret; that rolling back is writing the
+//! earlier values forward as a new version (ADR 0017, D01-25); and that a
+//! delete removes every version rather than the newest one.
 //!
 //! # Running it
 //!
@@ -212,4 +214,133 @@ async fn a_client_with_no_secrets_lists_nothing_rather_than_failing() {
         .expect("an empty boundary lists nothing rather than failing");
 
     assert!(listed.is_empty() || !listed.is_empty(), "listing succeeded");
+}
+
+#[tokio::test]
+async fn rolling_back_writes_the_earlier_values_forward_as_a_new_version() {
+    let Some(secrets) = store() else {
+        return;
+    };
+
+    let acme = namespace("acme");
+    let secret = path("rollback/probe");
+
+    let _ = secrets.delete(&acme, &secret).await;
+
+    secrets
+        .write(&acme, &secret, &values(&[("password", "good")]), None)
+        .await
+        .expect("version 1");
+    secrets
+        .write(&acme, &secret, &values(&[("password", "bad")]), Some(1))
+        .await
+        .expect("version 2");
+
+    // The rollback: the earlier values, against the version being replaced.
+    // Nothing is reset or restored in place, so the number only goes up.
+    let restored = secrets
+        .write(&acme, &secret, &values(&[("password", "good")]), Some(2))
+        .await
+        .expect("a roll forward is an ordinary write");
+    assert_eq!(restored, 3, "the earlier values become the next version");
+
+    assert_eq!(
+        secrets
+            .reveal(&acme, &secret)
+            .await
+            .expect("readable")
+            .revealed()
+            .get("password")
+            .map(String::as_str),
+        Some("good")
+    );
+    assert_eq!(
+        secrets.metadata(&acme, &secret).await.expect("metadata").version,
+        3
+    );
+
+    // Under the same check-and-set as any write: a second operator rolling
+    // back from the same view is refused, not applied on top.
+    assert_eq!(
+        secrets
+            .write(&acme, &secret, &values(&[("password", "good")]), Some(2))
+            .await
+            .expect_err("a roll forward against a superseded version must be refused"),
+        SecretsError::Conflict
+    );
+
+    secrets.delete(&acme, &secret).await.expect("cleaned up");
+}
+
+#[tokio::test]
+async fn a_write_that_names_no_version_never_replaces_an_existing_secret() {
+    let Some(secrets) = store() else {
+        return;
+    };
+
+    let acme = namespace("acme");
+    let secret = path("rollback/unversioned");
+
+    let _ = secrets.delete(&acme, &secret).await;
+
+    secrets
+        .write(&acme, &secret, &values(&[("password", "kept")]), None)
+        .await
+        .expect("created");
+
+    assert_eq!(
+        secrets
+            .write(&acme, &secret, &values(&[("password", "lost")]), None)
+            .await
+            .expect_err("no version means \"this does not exist yet\""),
+        SecretsError::Conflict
+    );
+    assert_eq!(
+        secrets
+            .reveal(&acme, &secret)
+            .await
+            .expect("readable")
+            .revealed()
+            .get("password")
+            .map(String::as_str),
+        Some("kept")
+    );
+
+    secrets.delete(&acme, &secret).await.expect("cleaned up");
+}
+
+#[tokio::test]
+async fn a_deleted_secret_leaves_no_version_behind() {
+    let Some(secrets) = store() else {
+        return;
+    };
+
+    let acme = namespace("acme");
+    let secret = path("rollback/deleted");
+
+    let _ = secrets.delete(&acme, &secret).await;
+
+    secrets
+        .write(&acme, &secret, &values(&[("password", "one")]), None)
+        .await
+        .expect("version 1");
+    secrets
+        .write(&acme, &secret, &values(&[("password", "two")]), Some(1))
+        .await
+        .expect("version 2");
+
+    secrets.delete(&acme, &secret).await.expect("removed");
+
+    // Had only the newest version been marked deleted, the store would carry
+    // on from 3. Starting again at 1 is the store saying it kept no history,
+    // which is also why a delete is not a way to roll back.
+    assert_eq!(
+        secrets
+            .write(&acme, &secret, &values(&[("password", "three")]), None)
+            .await
+            .expect("re-created as new"),
+        1
+    );
+
+    secrets.delete(&acme, &secret).await.expect("cleaned up");
 }

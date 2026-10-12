@@ -6,56 +6,11 @@ surface makes, and the ones still owed to the product owner, are recorded in
 [ADR 0021](../../docs/decisions/0021-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md),
 which is proposed.
 
-## Run the functional local workbench
+## Running it
 
-From the repository root:
-
-```sh
-cargo run -p fabric-control-plane-api --example console_workbench
-```
-
-In another terminal:
-
-```sh
-cd apps/control-plane-ui
-npm ci
-npm run preview:ui
-```
-
-Open http://127.0.0.1:5174. This uses real API handlers and domain validation.
-Writes persist in `.local/workbench/.fabric-state.json`; set
-`FABRIC_WORKBENCH_DATA` to choose another directory. An exclusive file lock
-refuses a second process, and a write replaces a flushed snapshot by rename; the
-directory itself is not flushed.
-Existing local-directory YAML clients are imported only until the first snapshot
-is written; the snapshot then becomes the local development authority.
-
-**A snapshot from before the catalogue envelope is refused.** The workbench will
-not start on a `.fabric-state.json` whose catalogue predates `apiVersion` and
-`kind` — including one at `.local/workbench/.fabric-state.json` from an earlier
-revision of this work. The error names the file, and there is no legacy read
-path. Two ways out, with the workbench stopped:
-
-- **Delete the snapshot.** The workbench's catalogue, and every client created
-  through it, are lost. Top-level `*.yaml` clients in the directory are imported
-  again on the next start.
-- **Wrap the stored catalogue by hand.** In the JSON, `catalogue.text` holds the
-  catalogue's YAML. Put `apiVersion: fabric.fieldstate.nz/v1`, `kind: Catalogue`
-  and `spec:` on lines of their own before it, and indent the old text two spaces
-  under `spec:`. The result must still pass today's catalogue rules — a release
-  template with exactly one `{client}` and a public callback, `options` only on
-  choice fields, among others — or the workbench refuses it as an invalid
-  catalogue instead.
-
-The example API binds to loopback port 8082 and accepts the explicit test operator
-supplied by the local proxy, and refuses a request whose `Host` is not
-`127.0.0.1:8082` or `localhost:8082`, against DNS rebinding. It reserves no realms
-or platform client ids, so creation there refuses only a realm another stored
-client already declares. No external providers are connected, so nothing it
-accepts can be authorised against an identity provider or converged. Production
-continues to use OIDC authentication; the workbench entry and authenticator setup
-are excluded from the production UI bundle, normal server configuration and every
-image.
+See [README.md](README.md), "Running it" and "Development identity". The loopback
+workbench that once served this surface with a fixed test operator is retired
+(D01-9): the console signs in only through the gateway (ADR 0024).
 
 ## Screen behavior
 
@@ -70,7 +25,7 @@ image.
 | Client definition | Edit typed custom fields, defaults and required values; increment shared definition version. |
 | Environments | Inspect current deployment; declare, correct or remove the data sources it can place a tenant on (ADR 0023 part 1, part 2); view the derived runtime catalogue, or the conflict that stops it from being derived (ADR 0023 part 3); register links to other independently authenticated operator consoles. |
 | Integrations | Existing Git application installation, repository selection and platform connection workflows. |
-| Reconciliation | Trigger the existing identity reconciler with operator authority and inspect each client's latest outcome. Passes are observations and are not recorded as activity. In the workbench no identity provider is connected, so a pass is refused as unavailable. |
+| Reconciliation | Trigger the existing identity reconciler with operator authority and inspect each client's latest outcome. Passes are observations and are not recorded as activity. |
 | Settings | Persist platform display name, new-client defaults and show authenticated operator identity. |
 
 ## API and storage

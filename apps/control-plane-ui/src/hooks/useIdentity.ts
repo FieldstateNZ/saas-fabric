@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 
 import { getIdentity, putIdentity } from '../api/client'
 import { isControlPlaneError } from '../api/errors'
+import { reassertIdentity } from '../api/reassertion'
 import type { Identity } from '../api/types'
 import { describe, type Loadable } from './useClients'
 
@@ -11,6 +12,11 @@ export interface IdentityEditor extends Loadable<Identity> {
   save: (roles: readonly string[]) => Promise<void>
   /** Whether a write is in flight. */
   saving: boolean
+  /**
+   * Overwrites the identity provider's unsupported hand edits with the
+   * declared identity, at the revision on screen (D01-19b).
+   */
+  reassert: () => Promise<void>
 }
 
 /**
@@ -60,8 +66,12 @@ export function useIdentity(clientId: string | null): IdentityEditor {
     load()
   }, [load])
 
-  const save = useCallback(
-    async (roles: readonly string[]) => {
+  /**
+   * Runs one write at the revision on screen. Both writes answer with the
+   * client's identity, and both are refused the same way on a conflict.
+   */
+  const write = useCallback(
+    async (perform: (clientId: string, current: Identity) => Promise<Identity>) => {
       const current = state.value
       if (clientId === null || current === null) {
         return
@@ -69,12 +79,7 @@ export function useIdentity(clientId: string | null): IdentityEditor {
 
       setSaving(true)
       try {
-        const updated = await putIdentity(clientId, current.revision, {
-          realm: current.realm,
-          roles,
-          clients: current.clients,
-        })
-        setState({ value: updated, loading: false, error: null })
+        setState({ value: await perform(clientId, current), loading: false, error: null })
       } catch (error: unknown) {
         const message = describe(error)
 
@@ -92,5 +97,15 @@ export function useIdentity(clientId: string | null): IdentityEditor {
     [clientId, load, state.value],
   )
 
-  return { ...state, save, saving }
+  const save = useCallback(
+    (roles: readonly string[]) =>
+      write((id, current) =>
+        putIdentity(id, current.revision, { realm: current.realm, roles, clients: current.clients }),
+      ),
+    [write],
+  )
+
+  const reassert = useCallback(() => write((id, current) => reassertIdentity(id, current.revision)), [write])
+
+  return { ...state, save, saving, reassert }
 }

@@ -38,7 +38,7 @@ const identity: Identity = {
   clients: [],
   apiVersion: 'v2',
   revision: 'r1',
-  reconciliation: { status: 'pending', observedAtUnix: null, detail: null },
+  reconciliation: { status: 'pending', observedAtUnix: null, detail: null, handEdits: [] },
 }
 
 const inventory: Inventory = {
@@ -281,7 +281,7 @@ describe('Console: identity is not re-read on pages that do not show it', () => 
               clients: [],
               apiVersion: 'v2',
               revision: 'r1',
-              reconciliation: { status: 'applied', observedAtUnix: null, detail: null },
+              reconciliation: { status: 'applied', observedAtUnix: null, detail: null, handEdits: [] },
             }),
           )
         }

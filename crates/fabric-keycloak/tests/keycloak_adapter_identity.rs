@@ -17,7 +17,7 @@ use std::sync::Arc;
 use fabric_client_model::{AppScheme, ClientProtocol, OidcClient, OidcClientId, PkceMethod, RealmName};
 use fabric_client_model::{RedirectStrategy, RedirectStrategyKind, RedirectUri};
 use fabric_keycloak::KeycloakIdentityProvider;
-use fabric_reconciliation::{IdentityProvider, ProviderError};
+use fabric_reconciliation::{HeldEdits, IdentityProvider, ProviderError};
 use support::{config_for_tests, FakeKeycloak, RecordedRequest};
 
 /// The audience this test suite's provider is configured with.
@@ -502,7 +502,7 @@ async fn an_update_carries_the_mapper_and_attributes_again() {
         .await
         .unwrap();
     provider
-        .update_oidc_client(&realm(), &web_client())
+        .update_oidc_client(&realm(), &web_client(), &HeldEdits::default())
         .await
         .unwrap();
 

@@ -1,4 +1,8 @@
 //! An in-memory identity provider that behaves like a real one.
+//!
+//! In the 121–150 line band: the type and the surface a test drives — seed,
+//! inject a failure for every call or for one named call, read back the calls.
+//! The surface reconciliation drives is `fake_provider_behaviour`.
 
 use std::collections::BTreeMap;
 use std::sync::{Mutex, MutexGuard, PoisonError};
@@ -21,6 +25,9 @@ pub struct FakeIdentityProvider {
 
     /// A failure to return from the next call, if one has been injected.
     failure: Mutex<Option<ProviderError>>,
+
+    /// A failure to return from one named call only, if one has been injected.
+    failing_call: Mutex<Option<(String, ProviderError)>>,
 
     /// Every call made, in order, as `operation:argument` strings.
     calls: Mutex<Vec<String>>,
@@ -48,6 +55,7 @@ impl FakeIdentityProvider {
         Self {
             realms: Mutex::new(BTreeMap::new()),
             failure: Mutex::new(None),
+            failing_call: Mutex::new(None),
             calls: Mutex::new(Vec::new()),
             audience: audience.into(),
         }
@@ -61,6 +69,13 @@ impl FakeIdentityProvider {
     /// Stops failing.
     pub fn recover(&self) {
         *lock(&self.failure) = None;
+        *lock(&self.failing_call) = None;
+    }
+
+    /// Makes only the call recorded as `call` — `update_oidc_client:acme:web`,
+    /// say — fail, so a test can stop a plan part-way through.
+    pub fn fail_call(&self, call: impl Into<String>, error: ProviderError) {
+        *lock(&self.failing_call) = Some((call.into(), error));
     }
 
     /// Every call made so far, in order.
@@ -92,9 +107,16 @@ impl FakeIdentityProvider {
 
     /// Records a call and returns the injected failure, if any.
     pub(super) fn enter(&self, call: String) -> Result<(), ProviderError> {
+        let named = lock(&self.failing_call)
+            .as_ref()
+            .filter(|(failing, _)| *failing == call)
+            .map(|(_, error)| error.clone());
         lock(&self.calls).push(call);
 
-        lock(&self.failure).clone().map_or(Ok(()), Err)
+        match named {
+            Some(error) => Err(error),
+            None => lock(&self.failure).clone().map_or(Ok(()), Err),
+        }
     }
 }
 

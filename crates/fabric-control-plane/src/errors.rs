@@ -8,7 +8,7 @@ mod realm_unavailable_reason;
 mod response;
 mod status_mapping;
 
-use fabric_client_model::{ClientId, DesiredStateError, RealmName};
+use fabric_client_model::{ClientId, DesiredStateError, OidcClientId, RealmName};
 use fabric_core::LogicalDataSourceName;
 
 pub use realm_unavailable_reason::RealmUnavailableReason;
@@ -177,6 +177,45 @@ pub enum ControlPlaneError {
         current: RealmName,
     },
 
+    /// An identity edit would change, add or remove an application client
+    /// the product projects from an assignment (D01-19b).
+    ///
+    /// The projection is the product's: its callbacks come from the client's
+    /// hosts and the release's hostname template, and a product save writes
+    /// the entry whole. Letting an identity edit change it only for the next
+    /// product save to revert it is the silent fight D01-19b refuses, so the
+    /// edit is refused instead and names the product save as the way to
+    /// change it. A retired client is not refused: product saves are, so an
+    /// identity edit is its only remediation path.
+    #[error(
+        "{client} is projected from an assigned application and owned by the product;          change the client's hosts or assignment instead"
+    )]
+    ProjectedClientProductOwned {
+        /// The projected application client the edit would have changed.
+        client: OidcClientId,
+    },
+
+    /// A product save was refused because a stored projected client no
+    /// longer matches what the stored document itself projects (D01-19b).
+    ///
+    /// Compared against the same stored document — its hosts, client id and
+    /// pinned release snapshots — before the request is applied, so a
+    /// legitimate host change or release upgrade is never mistaken for one.
+    /// The save would have overwritten the stored entry, so nothing is
+    /// written. A fact about the document, not a claim about who edited it.
+    /// Names the client and a field, never a callback.
+    #[error(
+        "the stored identity entry for {client} no longer matches what its assignment projects \
+         ({field}); a product save would overwrite it, so nothing was written. Restore the \
+         projected entry with an identity edit or in Git first"
+    )]
+    ProjectedClientDiverged {
+        /// The projected application client.
+        client: OidcClientId,
+        /// What differs: `missing`, `protocol`, `pkce`, `redirectStrategy` or `redirectUris`.
+        field: &'static str,
+    },
+
     /// A new client would take a realm that is reserved, or already used by
     /// another client.
     ///
@@ -302,14 +341,6 @@ pub enum ControlPlaneError {
     /// [`Self::RepositoryUnavailable`] because nothing was unreachable.
     #[error("the integration changed while this request was being prepared; look again and ask again")]
     IntegrationMoved,
-
-    /// The identity provider refused to redeem an authorization code.
-    #[error("the sign-in could not be completed; start again")]
-    SignInRefused,
-
-    /// The identity provider could not be reached to redeem a code.
-    #[error("the identity provider is unavailable")]
-    SignInUnavailable,
 
     /// A declared data source breaks one of ADR 0023 part 1's rules.
     ///

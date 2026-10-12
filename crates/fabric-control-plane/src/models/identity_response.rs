@@ -1,8 +1,13 @@
 //! What a client's identity looks like on the wire.
 
+use axum::response::{IntoResponse, Response};
+use axum::Json;
 use fabric_client_model::{ClientRevision, OidcClient, RealmName, RoleName};
+use http::header::ETAG;
+use http::{HeaderValue, StatusCode};
 
 use crate::models::ReconciliationResponse;
+use crate::preconditions;
 use crate::repository::StoredClient;
 
 /// A client's identity, plus what is known about whether it has taken effect.
@@ -65,5 +70,23 @@ impl IdentityResponse {
             revision: stored.revision.clone(),
             reconciliation,
         }
+    }
+}
+
+impl IntoResponse for IdentityResponse {
+    /// `200` with the body, and the revision as the `ETag` a following
+    /// conditional write must echo.
+    fn into_response(self) -> Response {
+        let tag = HeaderValue::from_str(&preconditions::entity_tag(&self.revision));
+        let mut response = (StatusCode::OK, Json(self)).into_response();
+
+        // The revision's character set is checked at parse time precisely so
+        // that this cannot fail; if it somehow did, the body still carries
+        // the revision, so the response is degraded rather than broken.
+        if let Ok(tag) = tag {
+            response.headers_mut().insert(ETAG, tag);
+        }
+
+        response
     }
 }

@@ -131,6 +131,7 @@ fn identity_is_met_only_when_in_effect_at_this_revision() {
     assert_eq!(identity(ReconciliationStatus::Drifted), Evidence::Met);
     assert!(is_unmet(&identity(ReconciliationStatus::Pending)));
     assert!(is_unmet(&identity(ReconciliationStatus::Failed)));
+    assert!(is_unmet(&identity(ReconciliationStatus::HandEdited)));
 }
 
 #[test]

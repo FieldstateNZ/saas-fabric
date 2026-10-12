@@ -1,7 +1,7 @@
 # The control plane
 
-- **Status:** Implemented (identity). The product catalogue, client creation
-  and the local workbench are implemented and **Proposed** — see
+- **Status:** Implemented (identity). The product catalogue and client
+  creation are implemented and **Proposed** — see
   [ADR 0021](../decisions/0021-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md)
 - **Related:** [ADR 0008](../decisions/0008-desired-state-is-the-authority.md),
   [ADR 0009](../decisions/0009-operator-identity-is-not-tenant-identity.md),
@@ -93,8 +93,6 @@ may depend on a crate in the other.
 Operator-facing HTTP, in `fabric-control-plane`.
 
 ```text
-GET    /api/session                      where to sign in       (no operator)
-POST   /api/session                      redeem a code          (no operator)
 GET    /api/operator                     who the API authenticated
 POST   /api/reconciliation               converge every client, as you
 GET    /api/integrations/git             can desired state be read?
@@ -141,14 +139,15 @@ GET    /api/clients/{clientId}           one client's overview and lifecycle
 POST   /api/clients/{clientId}/tombstone              record retirement; state retained, still published (If-Match required)
 POST   /api/clients/{clientId}/deletion-confirmation  confirm deletion; intent only    (If-Match required)
 GET    /api/clients/{clientId}/identity  its identity, and reconciliation state
-PUT    /api/clients/{clientId}/identity  replace its identity   (If-Match required)
+PUT    /api/clients/{clientId}/identity  replace its identity   (If-Match required; a projected client is refused unless retired)
+POST   /api/clients/{clientId}/identity/reassertion   overwrite held hand edits in the provider, as you; audited (If-Match required)
 GET    /api/clients/{clientId}/product   its product configuration, and what it resolves to
-PUT    /api/clients/{clientId}/product   replace it             (If-Match required)
+PUT    /api/clients/{clientId}/product   replace it             (If-Match required; refused over a stored projection divergence)
 GET    /api/clients/{clientId}/placements              every logical data source, and what is true of each
 POST   /api/clients/{clientId}/placements/{logical}    place it                       (If-Match required)
 GET    /api/clients/{clientId}/secrets   list its secret paths
 GET    /api/clients/{clientId}/secrets/entry/{path}   metadata, never values
-PUT    /api/clients/{clientId}/secrets/entry/{path}   write a version   (optional If-Match)
+PUT    /api/clients/{clientId}/secrets/entry/{path}   write a version   (expectedVersion in the body; absent means new)
 DELETE /api/clients/{clientId}/secrets/entry/{path}   delete every version
 POST   /api/clients/{clientId}/secrets/reveal         reveal values     (path in the body)
 ```
@@ -455,6 +454,34 @@ routes — and is the only crate that knows OpenBao exists. It authenticates wit
 still no credential for a human to create or transport — which is the whole
 point, since secrets projected *into* a pod are a one-way path and the platform
 now generates credential material of its own.
+
+### A client's secrets: versions, rollback and retention
+
+Recorded in ADR 0017's
+[amendment of 2026-10-12](../decisions/0017-fabric-decides-which-client-secret-boundary-an-operation-reaches.md#amendment-2026-10-12-d01-25-versions-rollback-and-retention)
+(D01-25). In outline:
+
+- **A write names the version it replaces**, as `expectedVersion` in the body.
+  Absent means "this does not exist yet", so it never replaces an existing
+  secret. A mismatch is `409 secret_stale_version`. The adapter always sends
+  the store a check-and-set.
+- **Rolling back is rolling forward.** Write the earlier values, naming the
+  current version. They become the next version. Nothing resets a version
+  number, and the earlier values come from outside Fabric, because reveal reads
+  only the current version. A write replaces every key, so a secret with several
+  keys is rolled back through the API: the console's form takes one key.
+- **Not offered:** reading an older version, undelete, and deleting or
+  destroying one version. `DELETE` removes the secret and every version, and a
+  secret written again afterwards starts at version 1.
+- **Retention is the store's default, and Fabric sets none.** On a mount
+  created with no options, OpenBao keeps the newest 10 versions, with no age
+  limit (measured on 2026-10-12, OpenBao 2.7.1). Earlier values therefore stay
+  in the store after a roll forward. Fabric cannot read them, but the platform
+  credential's policy can. A leaked credential is revoked at its issuer, not by
+  writing over it. The live mount's options are **not verified**, and limits are
+  proposed separately on
+  [#108](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6116824201)
+  before anything changes.
 
 ### Image registries
 
@@ -1299,7 +1326,8 @@ One posture, and a deployment states it.
 
 `mode = "oidc"` is the only posture. The control plane verifies a token
 the platform's own realm issued: the signature against the realm's published
-keys, the issuer matched exactly, the token issued to the console's client, and
+keys, the issuer matched exactly, the token issued to the configured client
+(behind the gateway, the gateway's own — it runs the sign-in), and
 a **realm role** that confers operator authority. Authority therefore lives in
 the identity provider, where joiners and leavers are already handled, rather
 than in a list of names in a deployment.
@@ -1308,18 +1336,16 @@ than in a list of names in a deployment.
 [control_plane.operator]
 mode = "oidc"
 issuer = "https://auth.example.test/realms/master"
-client_id = "saas-fabric-console"
+client_id = "saas-fabric-gateway"
 required_role = "fabric-operator"
-redirect_uri = "https://fabric.example.test/"
 
-# Only when the address the browser uses is not one this pod can resolve.
+# Only when the issuer is not an address this pod can resolve.
 # reachable_at = "http://keycloak-http.identity.svc.cluster.local/realms/master"
 ```
 
 **`issuer` and `reachable_at` are two different questions**, and on a cluster
-they usually have two different answers. The issuer is what appears in a token
-and where a *browser* is sent; `reachable_at` is where this process fetches the
-signing keys and redeems the code. Collapsing them fails in a way that reads as
+they usually have two different answers. The issuer is what appears in a token;
+`reachable_at` is where this process fetches the signing keys. Collapsing them fails in a way that reads as
 something else — every operator refused, and a log saying either that no key
 set arrived or that the token is not from this realm.
 
@@ -1331,25 +1357,17 @@ platform acts on Keycloak with an operator's own bearer
 An operator established by a proxy header could not authorise a realm, so half
 the control plane would not work under it.
 
-Local development therefore needs a Keycloak. The shipped example says so
-rather than faking it.
+Local development therefore needs a Keycloak and the gateway in front of the
+console. The shipped example says so rather than faking it.
 
-**One exception is proposed: the loopback workbench.**
-[ADR 0021](../decisions/0021-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md)
-§7 contradicts the two paragraphs above, and they are left standing beside it
-rather than silently rewritten, because the contradiction is not settled. The
-workbench is not a posture — `mode = "oidc"` is still the only one a deployment
-can state — but it is a development shortcut: an example binary, built into no
-image, that binds `127.0.0.1:8082` and treats any request carrying
-`X-Test-Operator` as the operator `local-workbench`. It refuses, with `421`, a
-request whose `Host` is not `127.0.0.1:8082` or `localhost:8082`, because a
-loopback bind keeps out the network but not a page in a local browser that
-points a name it controls at `127.0.0.1`. The reason given above for refusing a
-shortcut is exactly true of it. It connects no identity provider, no
-sign-in, no secret store and no integration, so nothing it accepts can be
-authorised or converged; what it does allow is working on the catalogue and
-client workflows without a Keycloak. Whether to keep it is owed to the product
-owner.
+**There was one exception, and it is retired.** The loopback workbench — an
+example binary on `127.0.0.1:8082` that treated any request carrying
+`X-Test-Operator` as the operator `local-workbench` — contradicted the two
+paragraphs above
+([ADR 0021](../decisions/0021-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md)
+§7). D01-9 removed it together with `/api/session`
+([#108](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6109518415)).
+`AcceptingOperator` remains, for tests only.
 
 **The realm needs these before the OIDC posture works**, and none of them is
 created by this application — they are realm bootstrap, which
@@ -1359,7 +1377,7 @@ provisions them with the administrator it generated, on every sync:
 
 | What | Why |
 |---|---|
-| A **public** client `saas-fabric-console`, PKCE required, redirect URI set to the console's origin | the console holds no secret, so PKCE is what replaces one |
+| ~~A **public** client `saas-fabric-console`~~ | no longer needed by Fabric: it was the client the console's own PKCE sign-in used, retired with `/api/session` (D01-9). Removing it from the realm is the platform's change to make |
 | A realm role `fabric-operator`, granted to each operator | this is what the control plane checks to let them in |
 | Each operator holding master-realm **`admin`** | this is what *Keycloak* checks when the platform creates a realm as them |
 | A **confidential** client `saas-fabric-gateway`, redirect `<origin>/oauth2/callback`, its secret generated in-cluster | the gateway redeems the code with it (ADR 0024); the control plane pins `azp` to it |
@@ -1379,51 +1397,32 @@ configuration, not a click.
 
 ### How the console signs in
 
-Behind the gateway ([ADR 0024](../decisions/0024-an-instance-is-a-realm-signed-in-at-the-gateway-and-surfaces-are-federated-modules.md)),
-sign-in is not the console's job. Envoy Gateway's OIDC `SecurityPolicy` has
-already run it, holds the session in cookies, and forwards the access token
-upstream as a bearer — so the console starts nothing of its own. It probes
-`GET /api/operator` — after redeeming a code its own PKCE flow may be
-returning with, and before ever attempting a silent sign-in of its own — and
-a `200` is the whole answer: an upstream already authenticates this browser
-(the gateway, in production), so the operator is signed in. A `401` on any
-later `fetch` means that cookie session has ended, and since a `fetch` cannot
-follow a redirect to an identity provider the way a top-level navigation can,
-the console navigates to `/`, where the gateway runs its sign-in again.
-That navigation is counted, and a third page load in a row that signs in
-and is then refused is reported as looping rather than repeated — the
-guard against an upstream that answers `200` without verifying; see
-`gateway.ts`'s own account of the bound and its limits.
+It does not. The gateway does
+([ADR 0024](../decisions/0024-an-instance-is-a-realm-signed-in-at-the-gateway-and-surfaces-are-federated-modules.md)
+§2): Envoy Gateway's OIDC `SecurityPolicy` runs the authorization-code flow
+against the platform realm, holds the session in cookies, and forwards the
+access token upstream as a bearer. The console holds no token, generates no
+PKCE pair, and calls no sign-in route; `GET`/`POST /api/session` and the
+operator posture's `redirect_uri` are retired (D01-9), and a configuration
+still stating `redirect_uri` refuses to load.
 
-What follows is the standalone flow: what the console falls back to when no
-such upstream sits in front of it (the Vite dev proxy at `npm run dev`), and
-it retires once slice 2 gives the shell config-served identity of its own.
-The local workbench (`npm run preview:ui`) is neither case — it renders the
-console directly, with no sign-in gate at all; see the README's "Development
-identity". The console never talks to the identity provider in the standalone
-flow either. It cannot — its policy is `default-src 'self'`, so it may
-*navigate* to another origin but not `fetch` one.
+On load the console probes `GET /api/operator`, and a `200` is the whole
+answer: the gateway already authenticates this browser. A `401` there renders
+a sign-in button that navigates to `/`, where the gateway answers with the
+realm's login; the console never navigates by itself, because with no gateway
+in front that would reload the same page forever. A `401` on any later
+`fetch` means the cookie session has ended, and since a `fetch` cannot follow
+a redirect to an identity provider the way a top-level navigation can, the
+console navigates to `/` for the gateway to run its sign-in again. That
+navigation is counted, and a third page load in a row that signs in and is
+then refused is reported as looping rather than repeated — the guard against
+an upstream that answers `200` without verifying; see `gateway.ts`'s own
+account of the bound and its limits.
 
-```text
-console  → GET /api/session          where do I sign in?
-browser  → provider                  top-level navigation, with a PKCE challenge
-provider → console                   redirect back with code + state
-console  → POST /api/session         code + verifier
-API      → provider                  redeems server-side
-API      → console                   the access token
-```
-
-The browser generates the PKCE verifier and keeps it; the state is compared
-against what the tab stored, so a callback the tab did not start is refused
-before anything is redeemed. The token is held in memory for the life of the
-tab — not `localStorage`, not a cookie, and no refresh token.
-
-**`redirect_uri` must be the console's origin root**, not a path beneath it.
-The console is served by nginx with `try_files $uri $uri/ =404` and
-deliberately has no history fallback, so a redirect to `/callback` would be
-answered with a 404 rather than the application. The provider returns to `/`
-with the code in the query string, which nginx serves as `index.html` and the
-console reads on load.
+With no gateway in front — the Vite dev proxy at `npm run dev` — the console
+stops at the sign-in screen. Putting the gateway on the local development path
+is ADR 0024 slice 1's local half (the `hosting/` Envoy's OAuth2 filter), which
+is not built yet.
 
 ### Errors
 
@@ -1528,7 +1527,7 @@ unconfigured for that operation at run time.
 | Implementation | Crate | Selected by | Durable |
 |---|---|---|---|
 | `GitClientRepository` | `fabric-client-git` | `managed`, once connected, and `git` | a commit per write: `clients/<id>/client.yaml`, and `fabric-catalogue.yaml` at the repository root |
-| `LocalClientRepository` | `fabric-control-plane-api` | `local_directory`, and the workbench ([ADR 0021](../decisions/0021-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md) §7) | one process: `.fabric-state.json`, replaced by rename in a task of its own, so a write finishes even if its request goes away. Open failures are typed, and a snapshot from before the catalogue envelope is refused |
+| `LocalClientRepository` | `fabric-control-plane-api` | `local_directory` ([ADR 0021](../decisions/0021-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md) §7) | one process: `.fabric-state.json`, replaced by rename in a task of its own, so a write finishes even if its request goes away. Open failures are typed, and a snapshot from before the catalogue envelope is refused |
 | `InMemoryClientRepository` | `fabric-control-plane` | tests only | no — but it renders and parses every client document and the catalogue on every write and read, as the durable stores do |
 | `UnconfiguredRepository` | `fabric-control-plane` | `managed`, before a repository is connected | — |
 
@@ -1563,7 +1562,7 @@ role the document does not mention is left alone: a role that exists is a role
 something may already be granted, and removing a line from a YAML file is not
 enough evidence to revoke it.
 
-**Four statuses**, and the fourth is the one worth having:
+**Five statuses**, and the last two are the ones worth having:
 
 | Status | Means |
 |---|---|
@@ -1571,10 +1570,25 @@ enough evidence to revoke it.
 | `Applied` | The provider matches the desired state |
 | `Failed` | The last pass could not converge it |
 | `Drifted` | The provider had stopped matching a desired state already converged |
+| `HandEdited` | The provider holds a hand edit the product does not support, reported and left in place (D01-19b) |
 
 Without `Drifted`, an out-of-band change that reconciliation quietly corrects
 looks exactly like an ordinary pass, and nobody learns that something outside
 SaaS Fabric is editing the realms the platform owns.
+
+`HandEdited` is for the out-of-band change reconciliation deliberately does
+**not** correct. A client disabled, its authorization-code flow switched off,
+or a declared callback removed in Keycloak's own console only narrows the
+client, and overwriting it on every pass would be the silent fight D01-19b
+refuses. The identity response's `reconciliation.handEdits` names each one.
+An operator undoes it in Keycloak, or re-asserts the projection with `POST
+/api/clients/{clientId}/identity/reassertion`, which runs with their own
+authority and is audited. On the fields the adapter manages, an edit that
+widens a client is never held: an undeclared callback or client mapper, a
+confidential switch, or a PKCE or audience change is corrected as before.
+Fields it neither reads nor writes, such as web origins or a client scope's
+mappers, are not evaluated at all. See
+[ADR 0021's 2026-10-12 amendment](../decisions/0021-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md#amendment-2026-10-12-a-projected-identity-client-is-the-products-d01-19b).
 
 A report is only meaningful for the revision it was made against. If an operator
 has written a newer one, the honest answer is `pending` — even though a report

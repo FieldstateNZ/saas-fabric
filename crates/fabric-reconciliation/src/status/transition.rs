@@ -27,12 +27,25 @@ pub(super) fn status_for(
         return ReconciliationStatus::Failed;
     }
 
+    // Before "changed nothing": a pass that held a hand edit changed nothing
+    // *on purpose*, and calling that `applied` is the silence D01-19b
+    // refuses.
+    if !outcome.hand_edits().is_empty() {
+        return ReconciliationStatus::HandEdited;
+    }
+
     if outcome.changed_nothing() {
         return ReconciliationStatus::Applied;
     }
 
-    let corrected_a_converged_client = previous
-        .is_some_and(|report| report.status == ReconciliationStatus::Applied && report.revision == *revision);
+    // `HandEdited` counts as converged here: every product-owned field
+    // matched, so correcting one afterwards is drift like any other.
+    let corrected_a_converged_client = previous.is_some_and(|report| {
+        matches!(
+            report.status,
+            ReconciliationStatus::Applied | ReconciliationStatus::HandEdited
+        ) && report.revision == *revision
+    });
 
     if corrected_a_converged_client {
         ReconciliationStatus::Drifted

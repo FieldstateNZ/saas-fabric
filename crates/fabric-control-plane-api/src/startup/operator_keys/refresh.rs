@@ -2,7 +2,7 @@
 //! process runs, without letting an adapter panic end the schedule.
 //!
 //! Where the loop reads the keys from, and why that is a trait
-//! ([`SigningKeySource`]) rather than `RealmSignIn` directly, is
+//! ([`SigningKeySource`]) rather than `OperatorRealmKeys` directly, is
 //! [`source`]'s module doc, not this one.
 //!
 //! # Surviving a panic

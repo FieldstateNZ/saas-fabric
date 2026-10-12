@@ -430,6 +430,47 @@ async fn for_client_shows_placed_for_an_already_recorded_placement_instead_of_ru
     assert_eq!(outcome, &PlacementOutcome::Placed(existing));
 }
 
+/// What the composed tenant binding binds is every recorded placement of
+/// this tenant, not only the logical data sources its document still names
+/// (G8): a placement outlives its intent, because nothing removes one.
+#[tokio::test]
+async fn for_client_reports_every_logical_data_source_this_tenant_has_recorded_and_no_other_tenants() {
+    let record = |tenant: &str, logical: &str, data_source: &str| PlacementRecord {
+        tenant: TenantId::try_new(tenant).unwrap(),
+        logical: LogicalDataSourceName::try_new(logical).unwrap(),
+        revision: BindingRevision::new(1),
+        data_source: DataSourceId::try_new(data_source).unwrap(),
+        isolation: IsolationModelDocument::Database {},
+        placed_at: "2026-09-18T02:14:00Z".to_owned(),
+    };
+    let (service, _repository) = service(FakeRepository::seeded(
+        vec![
+            declaration("dedicated-a", PlacementClassDocument::Dedicated),
+            declaration("dedicated-b", PlacementClassDocument::Dedicated),
+            declaration("dedicated-c", PlacementClassDocument::Dedicated),
+        ],
+        vec![
+            record("acme", "primary", "dedicated-a"),
+            record("acme", "archive", "dedicated-b"),
+            record("globex", "audit", "dedicated-c"),
+        ],
+        3,
+    ));
+    let mut intents = BTreeMap::new();
+    intents.insert(
+        LogicalDataSourceName::try_new("primary").unwrap(),
+        intent(PlacementClassDocument::Dedicated),
+    );
+
+    let result = service
+        .for_client("lucentroot", "acme", &intents)
+        .await
+        .expect("reads");
+
+    let bound: Vec<String> = result.bound.iter().map(ToString::to_string).collect();
+    assert_eq!(bound, ["archive", "primary"]);
+}
+
 #[tokio::test]
 async fn place_writes_both_documents_in_one_commit_and_returns_the_new_read() {
     let (service, repository) = service(FakeRepository::with_data_sources(vec![declaration(

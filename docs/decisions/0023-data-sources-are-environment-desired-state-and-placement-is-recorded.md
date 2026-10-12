@@ -541,6 +541,18 @@ binding for the resource's logical data source fails closed at the runtime
 (ADR 0018, `UnboundDataSource`). Nothing cross-checks that at assignment;
 surfacing it on the client's Data tab is owed.
 
+> **Amendment (2026-10-12, G8).** The client's Data tab now surfaces it.
+> `GET /api/clients/{clientId}/placements` and the `POST` that places one
+> logical data source both answer `unbound`. It lists every logical data
+> source the environment's derived runtime catalogue names and the client's
+> tenant has no recorded placement for. Each entry gives every resource on
+> it, the application release that declares each, and whether the client's
+> `spec.data` asks for it. The console shows this as "Unreachable
+> resources". It is a report on desired state, not a refusal. Assignment and
+> publication are unchanged, and part 4 still publishes the entry. A
+> catalogue that cannot be derived leaves the placements readable and says
+> why nothing was checked. Source only; not verified live.
+
 **Multiple environments.** A deployment manages one environment and its files.
 A client placed in two environments is two placement records in two
 repositories, and nothing here reconciles them.

@@ -61,6 +61,7 @@ const stored: Placements = {
   environment: 'lucentroot',
   revision: 'rev-1',
   placements: [placeable, placed, refused],
+  unbound: { state: 'checked', dataSources: [] },
 }
 
 function rowFor(logical: string): HTMLElement {

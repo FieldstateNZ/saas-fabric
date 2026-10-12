@@ -22,6 +22,7 @@ mod schema;
 mod selection;
 #[cfg(test)]
 mod selection_tests;
+mod unbound_resources;
 mod validation;
 
 use crate::{ClientRevision, DesiredStateError};
@@ -37,6 +38,7 @@ pub use runtime_catalogue::{CatalogueConflict, DerivedCatalogue, DerivedResource
 use schema::Envelope;
 pub use selection::ComponentSelectionError;
 use serde::{Deserialize, Serialize};
+pub use unbound_resources::UnboundDataSource;
 
 /// A coherent snapshot, committed as one desired-state document.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]

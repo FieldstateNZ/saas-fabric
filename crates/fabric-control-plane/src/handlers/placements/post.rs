@@ -1,16 +1,14 @@
 //! `POST /api/clients/{clientId}/placements/{logical}`
 
 use axum::extract::State;
-use axum::response::{IntoResponse, Response};
-use axum::Json;
+use axum::response::Response;
 use fabric_client_model::LifecycleUse;
 use fabric_platform_management::{DesiredStateError, PlatformError};
-use http::header::ETAG;
-use http::{HeaderMap, HeaderValue};
+use http::HeaderMap;
 
 use crate::extraction::{ClientPath, LogicalDataSourcePath};
-use crate::handlers::placements::body::{self, PlacementsBody};
-use crate::handlers::placements::intent::{to_platform_intent, to_platform_intents};
+use crate::handlers::placements::intent::to_platform_intent;
+use crate::handlers::placements::view::placements_view;
 use crate::state::ControlPlaneState;
 use crate::{preconditions, ControlPlaneError, Operator};
 
@@ -90,29 +88,5 @@ pub(crate) async fn place_data_source(
     // data source the client names -- not only the one just placed. See
     // `handlers::platform::data_sources::put`'s own doc comment for why a
     // write reads again rather than trusting what it just sent.
-    let outcomes = platform
-        .placements
-        .for_client(
-            &platform.environment,
-            client_id.as_str(),
-            &to_platform_intents(intents),
-        )
-        .await?;
-    let revision = body::current_revision(&outcomes)?;
-
-    let response_body = PlacementsBody::of(
-        client_id.as_str(),
-        &platform.environment,
-        revision,
-        intents,
-        &outcomes.entries,
-    );
-
-    let mut response = Json(response_body).into_response();
-
-    if let Ok(tag) = HeaderValue::from_str(&preconditions::platform_entity_tag(revision)) {
-        response.headers_mut().insert(ETAG, tag);
-    }
-
-    Ok(response)
+    placements_view(&state, platform, &client_id, intents).await
 }

@@ -365,9 +365,12 @@ own data-source sub-types rather than re-declared, so a hand-editable
   `select` would place it" and "nothing recorded, and `select` would refuse
   it" are different facts a caller acts on differently.
 - `ClientPlacements { revision: Option<DesiredRevision>, entries:
-  BTreeMap<LogicalDataSourceName, PlacementOutcome> }` — what
-  `Placements::for_client` found, one entry per logical data source asked
-  about.
+  BTreeMap<LogicalDataSourceName, PlacementOutcome>, bound:
+  BTreeSet<LogicalDataSourceName> }` — what `Placements::for_client` found,
+  one entry per logical data source asked about. `bound` is every logical
+  data source the tenant has a recorded placement for, whether or not the
+  document still names it, so it is exactly what the composed tenant
+  binding binds (G8).
 - `Placements { repository: Arc<dyn PlatformRepository>, clock: Arc<dyn
   Clock> }` — `new(repository, clock)`. One field for every port, not two
   separate `Arc`s: `place` needs `write_environment`, which only exists on

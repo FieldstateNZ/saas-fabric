@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use fabric_core::LogicalDataSourceName;
 use fabric_platform_management::{DesiredRevision, PlacementOutcome, PlacementRecord};
 
-use super::{IntentRow, PlacedRow, PlacementRow, PlacementsBody};
+use super::{IntentRow, PlacedRow, PlacementRow, PlacementsBody, UnboundBody};
 use crate::handlers::platform::data_sources::placement;
 
 impl PlacementsBody {
@@ -18,12 +18,15 @@ impl PlacementsBody {
     /// one `outcomes` has nothing for -- which cannot happen in practice,
     /// since both are built from the same map, but a row with `placed` and
     /// `refusal` both absent is what that would mean rather than a panic.
+    /// `unbound` is rendered by [`UnboundBody::checked`], or says why it
+    /// could not be.
     pub(in crate::handlers::placements) fn of(
         client_id: &str,
         environment: &str,
         revision: &DesiredRevision,
         intents: &BTreeMap<LogicalDataSourceName, fabric_client_model::DataIntent>,
         outcomes: &BTreeMap<LogicalDataSourceName, PlacementOutcome>,
+        unbound: UnboundBody,
     ) -> Self {
         Self {
             client_id: client_id.to_owned(),
@@ -33,6 +36,7 @@ impl PlacementsBody {
                 .iter()
                 .map(|(logical, intent)| PlacementRow::of(logical, intent, outcomes.get(logical)))
                 .collect(),
+            unbound,
         }
     }
 }

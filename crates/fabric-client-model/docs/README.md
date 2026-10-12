@@ -96,7 +96,9 @@ of a name; sorted by name; each `DerivedResource` carrying the application
 and version it came from, and `DerivedCatalogue::into_document` dropping
 that provenance for the wire. Two applications' newest releases declaring
 one name is `CatalogueConflict`, reachable only by a hand edit and reported
-rather than resolved.
+rather than resolved. `DerivedCatalogue::unbound_for` names the logical data
+sources a tenant does not bind, with every resource on each, which the
+console shows on a client's Data tab (G8).
 
 ## Two schema versions, and the migrator between them
 

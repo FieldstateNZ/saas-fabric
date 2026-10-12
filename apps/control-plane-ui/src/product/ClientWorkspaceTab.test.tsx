@@ -50,6 +50,7 @@ describe("ClientWorkspaceTab: tab: 'Data'", () => {
       environment: 'lucentroot',
       revision: 'rev-0',
       placements: [],
+      unbound: { state: 'checked', dataSources: [] },
     }
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse(200, empty)))
 

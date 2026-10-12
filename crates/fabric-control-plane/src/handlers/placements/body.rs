@@ -1,12 +1,19 @@
 //! The shape the console reads for a client's data placements.
+//!
+//! In the 121-150 line band: one wire-format body and the rows it is made
+//! of, each mirroring a field the console reads. The `unbound` rows are in
+//! their own file because they render a different read (the catalogue).
 
 mod render;
+mod unbound;
 
 use fabric_platform_management::{
     ClientPlacements, DesiredRevision, DesiredStateError, IsolationModelDocument, PlatformError,
 };
 
 use crate::ControlPlaneError;
+
+pub(crate) use unbound::UnboundBody;
 
 /// The revision every response about a client's placements carries, as
 /// `revision` in the body and as `ETag`.
@@ -28,8 +35,9 @@ pub(super) fn current_revision(placements: &ClientPlacements) -> Result<&Desired
     })
 }
 
-/// Every logical data source a client's document names, and what is true
-/// of each, as the console reads it.
+/// Every logical data source a client's document names, what is true of
+/// each, and the catalogue resources the client cannot reach, as the
+/// console reads it.
 ///
 /// The same shape answers `GET /api/clients/{clientId}/placements` and
 /// `POST /api/clients/{clientId}/placements/{logical}`: a write's response
@@ -53,6 +61,13 @@ pub(crate) struct PlacementsBody {
     /// One entry per logical data source the client's document names,
     /// sorted the same way `spec.data` is.
     pub(crate) placements: Vec<PlacementRow>,
+
+    /// The catalogue resources this client's tenant cannot reach, because
+    /// no placement of it binds their logical data source (G8). Checked
+    /// against the environment's derived runtime catalogue: what the next
+    /// publication offers, which may differ from what a running replica
+    /// serves.
+    pub(crate) unbound: UnboundBody,
 }
 
 /// One logical data source: what the client's document asks for, and what

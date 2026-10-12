@@ -762,7 +762,11 @@ Limits of this change:
     refused, and that refusal holds back the whole pass.
 - **O5, partly.** No test characterizes a Git revert of the catalogue or of
   client documents, or restoring either through the console with conditional
-  writes and audit evidence.
+  writes and audit evidence. **Since then:** both are characterized in
+  `fabric-control-plane/tests/catalogue_revert.rs` and
+  `client_document_revert.rs`, and the Git adapter's revision on a revert
+  in `fabric-client-git/tests/desired_state_repository.rs`. ADR 0018's O5
+  lists what they prove and the findings open on #108.
 
 Still deferred after this change: G4 `Lease` (single-writer enforcement),
 G5 (persisted last-known-good, recovery command, failure semantics), the
@@ -1133,9 +1137,8 @@ Limits:
 
 Still deferred after this change: G7's live wiring (above), G5's publisher
 hold and publisher-side recovery, the platform reader mount, G4 `Lease`,
-G6's remaining items, G2's publisher wait, G3's panel state, O5 for the
-catalogue and client documents, withdrawal, and the platform contract
-follow-ups.
+G6's remaining items, G2's publisher wait, G3's panel state, withdrawal,
+and the platform contract follow-ups. O5 is characterized since #159.
 
 ## Not covered here
 

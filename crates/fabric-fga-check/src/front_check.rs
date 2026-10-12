@@ -8,7 +8,7 @@ use fabric_data_api::{
 };
 
 use crate::wire::{CheckAnswer, CheckBody};
-use crate::{computed_relation, FrontEndpoint};
+use crate::FrontEndpoint;
 
 /// How long to wait for a decision.
 ///
@@ -58,22 +58,27 @@ impl AuthorizationCheck for FrontCheck {
         credential: &CallerCredential,
         question: &CheckQuestion,
     ) -> Result<CheckDecision, CheckFailure> {
-        // The model has no collection object yet (ADR 0027 §2a), so there is
-        // no wire spelling for one. Refused before anything is sent, and never
-        // rewritten as a record.
-        let CheckTarget::Record(object) = &question.target else {
-            return Err(CheckFailure::Internal);
+        let object = match &question.target {
+            CheckTarget::Record(record) if !question.operation.is_collection_operation() => {
+                record.to_string()
+            }
+            CheckTarget::Collection(collection) if question.operation.is_collection_operation() => {
+                collection.to_string()
+            }
+            // An operation asked about the wrong kind of target. The Data API
+            // never builds one; refusing it here, before anything is sent,
+            // keeps a record allow from ever answering a collection question
+            // through this adapter.
+            CheckTarget::Record(_) | CheckTarget::Collection(_) => return Err(CheckFailure::Internal),
         };
-
-        let relation = computed_relation(question.operation);
-        let object = object.to_string();
+        let relation = question.operation.computed_relation();
 
         let response = self
             .http
             .post(self.endpoint.check_url())
             .bearer_auth(credential.bearer())
             .json(&CheckBody {
-                relation: &relation,
+                relation,
                 object: &object,
             })
             .send()

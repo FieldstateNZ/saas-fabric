@@ -24,6 +24,7 @@
 //!
 //! [`LogicalResourceName`]: fabric_core::LogicalResourceName
 
+mod model_names;
 mod relation;
 mod validation;
 #[cfg(test)]

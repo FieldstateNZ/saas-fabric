@@ -63,6 +63,17 @@ a client that linked the verifier would put the trust boundary inside the thing
 that consumes it. Nothing depends on it yet. `fabric-api` composes no Check,
 because no front endpoint is configured.
 
+**`fabric-fga-model` is the model writer, on the control plane** (ADR 0027
+§2a). It translates a client's `spec.authorization` into the authorization
+model a tenant's store is pinned to: a record type and a collection type per
+declared resource. It is a pure translation with no transport, and nothing
+depends on it yet. Writing the model through the front's control-plane
+surface is owed. It has no edge to `fabric-fga-check`, which is in the other
+plane. The two agree because the collection type (`CollectionObject`) and the
+`can_<operation>` relations (`OperationKind::computed_relation`) are spelled
+once, in `fabric-core`, which is where `OperationKind` already sits for the
+same reason (ADR 0013).
+
 ## The control plane
 
 ```
@@ -75,6 +86,10 @@ fabric-client-model    → fabric-core
 
 fabric-reconciliation  → fabric-core
                        → fabric-client-model
+
+fabric-fga-model       → fabric-core
+                       → fabric-client-model       (spec.authorization → the
+                                                    authorization model; ADR 0027)
 
 fabric-control-plane   → fabric-core
                        → fabric-client-model

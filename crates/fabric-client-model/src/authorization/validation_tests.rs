@@ -174,3 +174,142 @@ fn a_relation_reports_what_it_permits() {
     assert!(editor.permits(OperationKind::Update));
     assert!(!editor.permits(OperationKind::Delete));
 }
+
+#[test]
+fn a_resource_spelled_like_another_resources_collection_is_refused() {
+    // `customers`' collection is `customers_collection` in the model
+    // (ADR 0027 §2a); a resource by that name would be the same type.
+    let configuration = AuthorizationConfiguration {
+        resources: vec![
+            ResourceAuthorization {
+                resource: resource("customers_collection"),
+                relations: vec![relation("viewer", &[OperationKind::Read])],
+            },
+            ResourceAuthorization {
+                resource: resource("customers"),
+                relations: vec![relation("viewer", &[OperationKind::List])],
+            },
+        ],
+    };
+
+    let Err(DesiredStateError::InvalidField { field, detail }) = configuration.validate() else {
+        panic!("expected the collision to be refused");
+    };
+
+    assert_eq!(field, "spec.authorization.resources[].resource");
+    assert!(detail.contains("customers_collection"), "{detail}");
+}
+
+#[test]
+fn a_collision_with_another_resources_collection_is_refused_in_either_order() {
+    let customers = ResourceAuthorization {
+        resource: resource("customers"),
+        relations: vec![relation("viewer", &[OperationKind::List])],
+    };
+    let impostor = ResourceAuthorization {
+        resource: resource("customers_collection"),
+        relations: vec![relation("viewer", &[OperationKind::Read])],
+    };
+
+    for resources in [
+        vec![customers.clone(), impostor.clone()],
+        vec![impostor, customers],
+    ] {
+        assert!(matches!(
+            AuthorizationConfiguration { resources }.validate(),
+            Err(DesiredStateError::InvalidField {
+                field: "spec.authorization.resources[].resource",
+                ..
+            })
+        ));
+    }
+}
+
+#[test]
+fn a_resource_named_like_a_collection_is_fine_when_nothing_collides() {
+    let configuration = declaring(
+        "orders_collection",
+        vec![relation("viewer", &[OperationKind::Read])],
+    );
+
+    assert!(configuration.validate().is_ok());
+}
+
+#[test]
+fn a_resource_too_long_to_name_its_collection_is_refused() {
+    let longest = "r".repeat(fabric_core::CollectionObject::MAX_RESOURCE_LENGTH);
+    let too_long = format!("{longest}r");
+
+    assert!(
+        declaring(&longest, vec![relation("viewer", &[OperationKind::List])])
+            .validate()
+            .is_ok()
+    );
+
+    let Err(DesiredStateError::InvalidField { field, .. }) =
+        declaring(&too_long, vec![relation("viewer", &[OperationKind::List])]).validate()
+    else {
+        panic!("expected a resource with no nameable collection to be refused");
+    };
+    assert_eq!(field, "spec.authorization.resources[].resource");
+}
+
+#[test]
+fn a_63_byte_resource_name_is_still_a_resource_name_outside_managed_authorization() {
+    // The 52-byte cap applies only to resources that declare relations here,
+    // because only they generate a collection type. Every other resource
+    // keeps the full 63 bytes.
+    let longest = "r".repeat(fabric_core::naming::MAX_LENGTH);
+
+    assert!(LogicalResourceName::try_new(&longest).is_ok());
+    assert!(
+        declaring(&longest, vec![relation("viewer", &[OperationKind::Read])])
+            .validate()
+            .is_err()
+    );
+}
+
+#[test]
+fn a_resource_cannot_take_the_principal_type_or_a_service_reserved_name() {
+    for name in ["user", "self", "this"] {
+        let Err(DesiredStateError::InvalidField { field, detail }) =
+            declaring(name, vec![relation("viewer", &[OperationKind::Read])]).validate()
+        else {
+            panic!("expected {name} to be refused as a managed resource");
+        };
+        assert_eq!(field, "spec.authorization.resources[].resource");
+        assert!(detail.contains(name), "{detail}");
+        assert!(
+            LogicalResourceName::try_new(name).is_ok(),
+            "{name} stays a valid resource name outside managed authorization"
+        );
+    }
+}
+
+#[test]
+fn a_relation_cannot_take_a_service_reserved_name() {
+    for name in ["self", "this"] {
+        let Err(DesiredStateError::InvalidField { field, .. }) =
+            declaring("customers", vec![relation(name, &[OperationKind::Read])]).validate()
+        else {
+            panic!("expected relation {name} to be refused");
+        };
+        assert_eq!(field, "spec.authorization.resources[].relations[].name");
+    }
+}
+
+#[test]
+fn a_relation_named_like_a_computed_relation_is_refused() {
+    for operation in OperationKind::ALL {
+        let configuration = declaring(
+            "customers",
+            vec![relation(operation.computed_relation(), &[OperationKind::Read])],
+        );
+
+        let Err(DesiredStateError::InvalidField { field, detail }) = configuration.validate() else {
+            panic!("expected {} to be refused", operation.computed_relation());
+        };
+        assert_eq!(field, "spec.authorization.resources[].relations[].name");
+        assert!(detail.contains(operation.computed_relation()), "{detail}");
+    }
+}

@@ -1128,8 +1128,10 @@ extractor. The identity-edit refusal narrows what an existing write accepts.
   names it. The status describes only the remaining declared entries, so it
   can still be `applied`. But the client is reported `diverged` on read and
   its identity readiness stays unmet, so the issuer registry leaves it out.
-  Its tenant binding, last-known-good and generation stay as they were.
-  Nothing is revoked.
+  Its tenant binding and last-known-good stay as they were, and the
+  generation guards and rules are unchanged; the registry's generation
+  number still advances when its registrations change, so this is not a
+  frozen generation and not proof of revocation. Nothing is revoked.
 - **A substituted callback leaves a client with none.** If a declared
   callback is replaced by hand, the undeclared one is product-owned and is
   removed, and the removal of the declared one is held. The client is left

@@ -19,8 +19,12 @@
 //! whole.
 
 mod integration;
+mod lifecycle;
 
 pub(crate) use integration::*;
+pub(crate) use lifecycle::{
+    continuity_completion_failed, continuity_refused, continuity_write_unconfirmed, identity_held,
+};
 
 use fabric_client_model::ClientId;
 use fabric_core::{event_id, EventType};

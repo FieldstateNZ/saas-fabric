@@ -49,7 +49,7 @@ mod secret;
 mod selection;
 
 pub(crate) use identity::{identity_projection_reasserted, identity_updated};
-pub(crate) use lifecycle::{client_deletion_confirmed, client_tombstoned};
+pub(crate) use lifecycle::{client_deletion_confirmed, client_restored, client_tombstoned};
 pub(crate) use product::{catalogue_changed, client_created, product_updated};
 pub(crate) use publication::publication_triggered;
 pub(crate) use registry::{registry_changed, RegistryOperation};

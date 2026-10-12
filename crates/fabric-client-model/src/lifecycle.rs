@@ -5,8 +5,9 @@
 //!  create ──► incomplete ◄──evidence──► ready
 //!                 │                       │
 //!                 └──── tombstone ────────┘
-//!                           ▼
-//!                      tombstoned  (state retained)
+//!                           ▼        ▲
+//!                      tombstoned ───┘ restore: back to incomplete, the
+//!                           │          tombstone kept in `restorations`
 //!                           │ confirm deletion (a separate write)
 //!                           ▼
 //!                   deletionConfirmed  (intent only; nothing is deleted)
@@ -15,12 +16,13 @@
 //! Two of these states are recorded in desired state ([`LifecycleRecord`]):
 //! an operator wrote them. The other two are derived from evidence on every
 //! read ([`Readiness`]), because "usable" is a fact about the platform rather
-//! than something an operator declares. There is no transition out of
-//! tombstoned other than confirming deletion, and none out of deletion
-//! confirmed: restoring a tombstoned client, and what confirmed deletion
-//! eventually removes, are not decided.
+//! than something an operator declares. A restored client is saved intent
+//! again: it is ready only when the evidence says so at its new revision.
+//! There is no transition out of deletion confirmed: what it eventually
+//! removes, and whether it can ever be restored, are not decided.
 
 mod entries;
+mod instance;
 mod readiness;
 mod record;
 mod refusal;
@@ -29,7 +31,8 @@ mod state;
 #[cfg(test)]
 mod lifecycle_tests;
 
-pub use entries::{DeletionConfirmation, Tombstone};
+pub use entries::{DeletionConfirmation, Restoration, Tombstone};
+pub use instance::IdentityInstance;
 pub use readiness::{Evidence, Readiness, ReadinessCondition, Unmet};
 pub use record::LifecycleRecord;
 pub use refusal::{LifecycleRefusal, LifecycleUse};

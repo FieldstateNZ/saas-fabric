@@ -11,4 +11,6 @@ export const SAVED_INTENT: ClientLifecycle = {
   tombstone: null,
   deletionConfirmed: null,
   withdrawal: null,
+  restorations: [],
+  continuity: { state: 'admitted', reason: null, detail: null },
 }

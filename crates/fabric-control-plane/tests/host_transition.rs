@@ -332,6 +332,8 @@ async fn after_a_restart_lost_the_baseline_a_move_is_held_until_reasserted() {
     )
     .await;
     plane.repository.insert(&stored.document).unwrap();
+    // The continuity store is durable across the restart; the ledger is not.
+    plane.enroll("newco").await;
 
     held_whole(&plane, &provider).await;
     reasserted(&plane, &provider).await;

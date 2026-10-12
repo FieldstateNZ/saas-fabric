@@ -301,7 +301,8 @@ async fn registered_globex(label: &str) -> (TempDir, TestControlPlane, ClientRev
     let dir = TempDir::new(label);
     let (platform, fake) = platform_binding().await;
     let plane = control_plane_with_publication(platform, sink(&dir));
-    let revision = plane.repository.insert(&globex_document()).unwrap();
+    plane.repository.insert(&globex_document()).unwrap();
+    let revision = plane.enroll("globex").await;
     fake.seed(DesiredRevision::new("data-sources-1"), vec![data_source()]);
     fake.seed_placements(DesiredRevision::new("placements-1"), vec![placement()]);
     release_workspec(&plane.router).await;
@@ -328,11 +329,14 @@ async fn tombstone(router: &Router, revision: &ClientRevision) -> ClientRevision
     ClientRevision::try_new(body["revision"].as_str().unwrap()).unwrap()
 }
 
-/// Characterizes D01-14's tombstone undone outside the console: nothing
-/// refuses it, nothing audits it, and the issuer is registered again once
-/// identity is applied at the reverted revision.
+/// D01-14's tombstone undone outside the console (O5, #108 comments
+/// 6119161317 item 2 and 6120741272 item 2): the continuity store still holds
+/// the tombstone, so the reverted document is held. It is never identity-
+/// ready, a sweep leaves its provider state alone, and a publication pass is
+/// held rather than registering it or deciding the registry without it. Once
+/// characterized as reinstating the client unaudited (#159).
 #[tokio::test]
-async fn reverting_a_tombstone_reinstates_the_client_and_its_issuer_with_no_audit_record_of_it() {
+async fn reverting_a_tombstone_is_held_and_never_reinstates_the_client_or_its_issuer() {
     let (dir, plane, ready) = registered_globex("client-revert-tombstone").await;
     let router = &plane.router;
     let before_tombstone = plane.repository.get(&globex()).await.unwrap().document;
@@ -342,44 +346,43 @@ async fn reverting_a_tombstone_reinstates_the_client_and_its_issuer_with_no_audi
     assert_eq!(exclusion(&retired).as_deref(), Some("retired"), "{retired}");
     assert!(registered(&dir).is_empty());
     assert_eq!(generation(&dir), 2);
-    let tombstoned_events = |activity: &Value| {
-        activity["activity"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .filter(|event| event["action"] == "Client tombstoned")
-            .count()
-    };
-    assert_eq!(tombstoned_events(&get(router, "/api/activity").await.1), 1);
     let audit_before = audited(&plane, &globex()).await;
     assert_eq!(audit_before, ["control_plane.audit.client_tombstoned"]);
+    let held_documents = published(&dir);
 
     let reverted = commit(&plane, &globex(), &before_tombstone, "tombstone globex").await;
 
-    // The console reads the reverted document as it is: the tombstone is
-    // gone, and so is the activity entry that recorded it. The client is
-    // incomplete only because identity is not applied at the new revision.
+    // The console reads the reverted document as it is, and says it is held.
     let (status, client) = get(router, "/api/clients/globex").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(client["lifecycle"]["state"], "incomplete", "{client}");
-    assert_eq!(client["lifecycle"]["tombstone"], Value::Null, "{client}");
-    assert_eq!(tombstoned_events(&get(router, "/api/activity").await.1), 0);
+    assert_eq!(client["lifecycle"]["continuity"]["state"], "held", "{client}");
+    assert_eq!(
+        client["lifecycle"]["continuity"]["reason"], "mismatch",
+        "{client}"
+    );
 
-    // The new revision has no identity applied at it, so the pass still
-    // leaves globex out, now as not ready rather than retired.
-    let pending = publish(router).await;
-    assert_eq!(exclusion(&pending).as_deref(), Some("notReady"), "{pending}");
+    // Even with identity applied at the reverted revision, nothing reinstates
+    // it: the pass is held and the target keeps every document it accepted.
+    applied(&plane, &reverted);
+    let (_, client) = get(router, "/api/clients/globex").await;
+    assert!(
+        client["lifecycle"]["unmet"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|unmet| unmet["condition"] == "identity"),
+        "{client}"
+    );
+    let held = publish(router).await;
+    assert_eq!(held["lastPass"]["outcome"], "failed", "{held}");
     assert!(registered(&dir).is_empty());
     assert_eq!(generation(&dir), 2);
-
-    // Once reconciliation applies the reverted revision, the issuer is
-    // registered again in a new generation. Nothing in the trail says the
-    // tombstone was undone.
-    applied(&plane, &reverted);
-    let reinstated = publish(router).await;
-    assert_eq!(exclusion(&reinstated), None, "{reinstated}");
-    assert_eq!(registered(&dir), ["globex"]);
-    assert_eq!(generation(&dir), 3);
+    assert_eq!(
+        published(&dir),
+        held_documents,
+        "nothing published, nothing withdrawn"
+    );
     assert_eq!(tenants(&dir), ["globex"]);
     assert_eq!(audited(&plane, &globex()).await, audit_before);
 }
@@ -486,35 +489,40 @@ async fn reverting_an_assignment_removes_what_the_console_refuses_to_remove_and_
     assert_eq!(published(&dir), before);
 }
 
+/// A reverted creation leaves the tenant bound with no client document.
+/// Nothing protected says that identity ended, so leaving its issuer out
+/// would withdraw an accepted registration on Git's word: the pass is held
+/// and the target keeps every document (review 5489320331). Reverting the
+/// revert brings back the attested instance, and the issuer is decided
+/// again.
 #[tokio::test]
-async fn reverting_a_clients_creation_leaves_its_tenant_published_and_takes_its_issuer_out() {
+async fn reverting_a_clients_creation_holds_the_registry_and_keeps_every_published_document() {
     let (dir, plane, _) = registered_globex("client-revert-creation").await;
     let router = &plane.router;
     let created = plane.repository.get(&globex()).await.unwrap().document;
-    let tenants_before = read(&dir, "tenants.json");
+    let accepted = published(&dir);
 
     assert!(plane.repository.remove_by_hand(&globex()));
     let (status, _) = get(router, "/api/clients/globex").await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 
-    // The placement is the platform's record, not the client's, so the
-    // tenant binding stays published. Its issuer leaves the registry in a
-    // new generation, reported as having no client.
     let removed = publish(router).await;
-    assert_eq!(exclusion(&removed).as_deref(), Some("noClient"), "{removed}");
-    assert!(registered(&dir).is_empty());
-    assert_eq!(generation(&dir), 2);
-    assert_eq!(read(&dir, "tenants.json"), tenants_before);
+    assert_eq!(removed["lastPass"]["outcome"], "failed", "{removed}");
+    assert!(
+        removed["lastPass"]["detail"]
+            .as_str()
+            .unwrap()
+            .contains("no client document"),
+        "{removed}"
+    );
+    assert_eq!(published(&dir), accepted, "nothing withdrawn, nothing published");
+    assert_eq!(registered(&dir), ["globex"]);
     assert!(audited(&plane, &globex()).await.is_empty());
 
-    // Reverting the revert brings the document back at a new revision.
-    // Identity is pending there until reconciliation applies it.
     let restored = plane.repository.insert(&created).unwrap();
-    let pending = publish(router).await;
-    assert_eq!(exclusion(&pending).as_deref(), Some("notReady"), "{pending}");
-    assert_eq!(generation(&dir), 2);
     applied(&plane, &restored);
-    publish(router).await;
+    let decided = publish(router).await;
+    assert_ne!(decided["lastPass"]["outcome"], "failed", "{decided}");
     assert_eq!(registered(&dir), ["globex"]);
-    assert_eq!(generation(&dir), 3);
+    assert_eq!(generation(&dir), 1);
 }

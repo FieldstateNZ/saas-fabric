@@ -139,9 +139,10 @@ POST   /api/clients                      create one             (refused if the 
 GET    /api/clients/{clientId}           one client's overview and lifecycle
 POST   /api/clients/{clientId}/tombstone              record retirement; state retained, still published (If-Match required)
 POST   /api/clients/{clientId}/deletion-confirmation  confirm deletion; intent only    (If-Match required)
+POST   /api/clients/{clientId}/restoration            reverse a tombstone; held with 503 until a continuity store exists (If-Match required)
 GET    /api/clients/{clientId}/identity  its identity, and reconciliation state
 PUT    /api/clients/{clientId}/identity  replace its identity   (If-Match required; a projected client is refused unless retired)
-POST   /api/clients/{clientId}/identity/reassertion   overwrite held hand edits in the provider, as you; audited (If-Match required)
+POST   /api/clients/{clientId}/identity/reassertion   overwrite held hand edits in the provider, as you; audited (If-Match required; held while continuity does not confirm the lifecycle)
 GET    /api/clients/{clientId}/product   its product configuration, and what it resolves to
 PUT    /api/clients/{clientId}/product   replace it             (If-Match required; refused over a stored projection divergence)
 GET    /api/clients/{clientId}/placements              every logical data source, and what is true of each
@@ -1811,6 +1812,7 @@ operation, which has already been written.
 | a component version selected, refused or not | `control_plane.audit.component_selected` |
 | a client tombstoned | `control_plane.audit.client_tombstoned` |
 | a client's deletion confirmed | `control_plane.audit.client_deletion_confirmed` |
+| a tombstoned client restored | `control_plane.audit.client_restored` |
 
 The catalogue event names no client, because the catalogue has none: it carries
 `resource = "catalogue"` and the entry the command changed, and takes its

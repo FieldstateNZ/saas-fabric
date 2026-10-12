@@ -53,7 +53,8 @@ deployment has one. That covers all ten events: identity, creation,
 product, catalogue, secret, publication trigger, registry (refusals
 included), component selection (refusals included), and the lifecycle events
 added by #137, `client_tombstoned` (S16) and `client_deletion_confirmed`
-(S17).
+(S17). `client_restored` (S20), added with the D01-14 restore (ADR 0021's
+restore amendment), goes through the same recorder.
 
 **Append-only.** The `AuditTrail` port has `append` and `read`. There is no
 update, delete, truncate or expiry, and an adapter must not offer one by

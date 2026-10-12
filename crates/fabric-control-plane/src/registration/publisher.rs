@@ -12,13 +12,14 @@ use crate::service::{ClientService, DesiredStateCatalogueSource, LifecycleIssuer
 /// The publisher for `binding`'s environment, writing through `sink`: the
 /// catalogue read through the client desired-state binding, and -- when the
 /// sink names an issuer origin -- the issuer registry decided by each
-/// client's lifecycle (D01-4).
+/// client's lifecycle and its continuity admission (D01-4, O5).
 pub(super) fn build(
     binding: &PlatformBinding,
     sink: &PublicationSink,
     repository: &Arc<DesiredStateBinding>,
     service: &Arc<ClientService>,
     clock: &Arc<dyn Clock>,
+    continuity: Option<&Arc<dyn crate::LifecycleContinuity>>,
 ) -> Arc<RuntimePublisher> {
     let catalogue: Arc<dyn RuntimeCatalogueSource> =
         Arc::new(DesiredStateCatalogueSource::new(Arc::clone(repository)));
@@ -33,6 +34,7 @@ pub(super) fn build(
         Some(origin) => publisher.with_issuer_registry(Arc::new(LifecycleIssuerRegistry::new(
             Arc::clone(service),
             origin.clone(),
+            continuity.cloned(),
         ))),
         None => publisher,
     })

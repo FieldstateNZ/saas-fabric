@@ -9,6 +9,9 @@
 //! | `deletion_already_confirmed` | 409 | a second confirmation, or a tombstone after one |
 //! | `deletion_confirmation_mismatch` | 422 | the confirmation names a different client |
 //! | `invalid_tombstone_reason` | 422 | a blank, oversized or control-character reason |
+//! | `client_not_tombstoned` | 409 | a restore of a client that is not tombstoned |
+//! | `deletion_confirmed_not_restorable` | 409 | a restore once deletion is confirmed |
+//! | `invalid_restoration_reason` | 422 | a blank, oversized or control-character restoration reason |
 
 use fabric_client_model::LifecycleRefusal;
 use http::StatusCode;
@@ -17,7 +20,7 @@ use http::StatusCode;
 ///
 /// 409 for every refusal about the client's state: the request was well
 /// formed and is refused because of where the client stands, which only a
-/// different lifecycle operation changes. 422 for the two that are wrong in
+/// different lifecycle operation changes. 422 for those that are wrong in
 /// themselves, whatever state the client is in.
 pub(super) const fn status(refusal: &LifecycleRefusal) -> StatusCode {
     match refusal {
@@ -25,10 +28,12 @@ pub(super) const fn status(refusal: &LifecycleRefusal) -> StatusCode {
         | LifecycleRefusal::NotReady { .. }
         | LifecycleRefusal::AlreadyTombstoned
         | LifecycleRefusal::DeletionRequiresTombstone
-        | LifecycleRefusal::DeletionAlreadyConfirmed => StatusCode::CONFLICT,
-        LifecycleRefusal::ConfirmationMismatch | LifecycleRefusal::InvalidReason { .. } => {
-            StatusCode::UNPROCESSABLE_ENTITY
-        }
+        | LifecycleRefusal::DeletionAlreadyConfirmed
+        | LifecycleRefusal::RestoreRequiresTombstone
+        | LifecycleRefusal::DeletionConfirmedNotRestorable => StatusCode::CONFLICT,
+        LifecycleRefusal::ConfirmationMismatch
+        | LifecycleRefusal::InvalidReason { .. }
+        | LifecycleRefusal::InvalidRestorationReason { .. } => StatusCode::UNPROCESSABLE_ENTITY,
     }
 }
 
@@ -42,5 +47,8 @@ pub(super) const fn code(refusal: &LifecycleRefusal) -> &'static str {
         LifecycleRefusal::DeletionAlreadyConfirmed => "deletion_already_confirmed",
         LifecycleRefusal::ConfirmationMismatch => "deletion_confirmation_mismatch",
         LifecycleRefusal::InvalidReason { .. } => "invalid_tombstone_reason",
+        LifecycleRefusal::RestoreRequiresTombstone => "client_not_tombstoned",
+        LifecycleRefusal::DeletionConfirmedNotRestorable => "deletion_confirmed_not_restorable",
+        LifecycleRefusal::InvalidRestorationReason { .. } => "invalid_restoration_reason",
     }
 }

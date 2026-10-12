@@ -12,6 +12,7 @@
 
 use fabric_client_model::{ClientId, ClientRevision};
 
+use crate::continuity::{admit, Admission};
 use crate::declaration_ledger::reconciler;
 use crate::repository::StoredClient;
 use crate::state::ControlPlaneState;
@@ -35,6 +36,7 @@ pub(crate) async fn sweep(
 
     let clients = reconcile::run(
         state.desired_state.current().as_ref(),
+        state.lifecycle_continuity.as_deref(),
         &reconciler,
         crate::declaration_ledger::for_operator(state, operator).as_ref(),
         state.service.statuses(),
@@ -84,6 +86,9 @@ pub(crate) async fn reassert(
         return Err(ControlPlaneError::RevisionConflict);
     }
     crate::projection::require(&stored.document, client)?;
+    if let Admission::Held(hold) = admit(state.lifecycle_continuity.as_deref(), &stored).await {
+        return Err(hold.into());
+    }
     let reconciler = match crate::declaration_ledger::for_operator(state, operator) {
         Some(ledgers) => ledgers.scope(&reconciler, client, &stored.revision),
         None => reconciler,

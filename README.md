@@ -488,8 +488,12 @@ Not yet built:
   client's document — realm, roles and product configuration — and shows it
   as `incomplete` (saved intent) until provisioning, identity and publication
   are met. A client can be tombstoned, which records retirement and retains
-  its state, and its deletion confirmed as a separate write. Both record
-  intent only: the tenant stays published, and withdrawing it from the
+  its state, and its deletion confirmed as a separate write. A tombstone can
+  be reversed by an explicit, audited restore that keeps it in the client's
+  history. That restore is held in every deployment until the protected
+  continuity store exists, and so, until then, is every client's identity:
+  nothing converges or registers a client the store does not confirm, so a
+  Git revert cannot reinstate a retired one. Tombstone and confirmation record intent only: the tenant stays published, and withdrawing it from the
   runtime is a separate operation not built yet (ADR 0021's 2026-10-11
   amendment). Nothing deletes a
   client's data; what deletion removes, after what retention, is not decided.

@@ -28,7 +28,13 @@ pub(crate) async fn confirm_client_deletion(
 
     let stored = state
         .service
-        .confirm_deletion(&operator, &id, &request.confirm_client_id, &expected)
+        .confirm_deletion(
+            &operator,
+            &id,
+            &request.confirm_client_id,
+            &expected,
+            state.lifecycle_continuity.as_deref(),
+        )
         .await?;
 
     crate::converge::in_background(&state, &operator);

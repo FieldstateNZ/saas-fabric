@@ -39,7 +39,6 @@ pub struct Application {
 ///    Platform Management that reads through their router; then the Git flows,
 ///    each given the binding it drives, so a connection needs no restart. No
 ///    reconciliation loop is spawned: convergence is on request (ADR 0012).
-///
 /// 6. Platform Management, when this deployment manages a platform repository,
 ///    and the sweep that advances it. This one *is* unattended, and
 ///    deliberately: a policy that said `automatic` and waited for a click
@@ -111,8 +110,9 @@ pub async fn build(config: &ControlPlaneAppConfig) -> Result<Application, String
             audit,
             keys,
             identity_provider,
-            // D01-15: no protected continuity store exists yet, so no ledger.
+            // No protected continuity store exists yet: no ledger (D01-15), every restore held.
             declaration_ledgers: None,
+            lifecycle_continuity: None,
             git_integration: integrations.clients,
             client_secrets: integrations.client_secrets,
 

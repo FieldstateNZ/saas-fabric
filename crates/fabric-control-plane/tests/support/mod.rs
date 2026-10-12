@@ -32,6 +32,7 @@ use tower::ServiceExt as _;
 
 pub mod described_registry;
 pub mod platform_fixture;
+pub mod projected;
 pub mod selection;
 
 /// The operator every test authenticates as.

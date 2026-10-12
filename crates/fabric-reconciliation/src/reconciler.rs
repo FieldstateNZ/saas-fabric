@@ -132,9 +132,12 @@ impl IdentityReconciler {
             Ok(()) => ReconciliationOutcome::applied(plan.actions().len())
                 .holding(held)
                 .overwriting(overwritten),
-            Err(error) => {
+            Err(apply::Interrupted { completed, error }) => {
                 logging::apply_failed(client, &error);
-                ReconciliationOutcome::failed(&error)
+                let (confirmed, unconfirmed) = apply::overwrites_after(&plan, completed, &overwritten);
+                ReconciliationOutcome::failed_after(completed, &error)
+                    .overwriting(confirmed)
+                    .unconfirmed(unconfirmed)
             }
         }
     }

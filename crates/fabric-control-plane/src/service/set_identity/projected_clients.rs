@@ -5,7 +5,9 @@ use fabric_client_model::{ClientDocument, IdentityConfiguration, OidcClient};
 use crate::ControlPlaneError;
 
 /// Refuses `requested` if it would change, add or remove an application
-/// client projected from one of `current`'s assignments.
+/// client projected from one of `current`'s assignments — unless the change
+/// restores it to exactly what the stored document projects, which is how
+/// an operator repairs a stored divergence a product save refuses over.
 ///
 /// A projected client is the product's (ADR 0021 §4, D01-19b): a product
 /// save replaces it whole, so an identity edit to it would last only until
@@ -34,12 +36,17 @@ pub(super) fn refuse_projected_change(
             source,
         })?;
 
+    // A document whose own projection cannot be computed gets no restore
+    // exemption: every change to a projected entry is refused, as before.
+    let projection = current.projected_clients().unwrap_or_default();
+
     for assignment in &product.applications {
         let id = assignment.application_id.as_str();
         let before = find(&stored.identity.clients, id);
         let after = find(&requested.clients, id);
+        let restores = after.is_some() && after == find(&projection, id);
 
-        if before != after {
+        if before != after && !restores {
             if let Some(client) = before.or(after) {
                 return Err(ControlPlaneError::ProjectedClientProductOwned {
                     client: client.id.clone(),

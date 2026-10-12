@@ -1,4 +1,6 @@
 //! Publishes assigned applications into the existing identity reconciliation contract.
+mod projection;
+
 use crate::{
     ClientDocument, ClientProtocol, DesiredStateError, OidcClient, OidcClientId, PkceMethod,
     RedirectStrategy, RedirectStrategyKind, RedirectUri,

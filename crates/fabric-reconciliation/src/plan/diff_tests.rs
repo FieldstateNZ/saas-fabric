@@ -420,7 +420,7 @@ fn a_declared_redirect_uri_removed_by_hand_is_held_not_overwritten() {
 /// The post-logout setting is product-owned: the adapter reports only
 /// whether it is still "every registered redirect URI", so a narrowing and a
 /// widening to somewhere nobody declared look the same, and a widening is
-/// never left in place.
+/// not left in place for this managed field.
 #[test]
 fn a_client_whose_post_logout_set_was_changed_is_corrected() {
     let mut realm = converged_realm();

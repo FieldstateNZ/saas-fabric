@@ -69,9 +69,9 @@ A declared client is the product's projection into the provider. Every
 difference between an existing client and its declaration is one of two
 kinds, decided in `plan::classify`:
 
-**Product-owned drift — always corrected with `UpdateOidcClient`.** Each of
-these widens what the client can do, or breaks the edge's contract, so it is
-never left in place:
+**Product-owned drift — corrected with `UpdateOidcClient`.** Each of these
+managed fields, changed, widens what the client can do or breaks the edge's
+contract, so it is not left in place:
 
 - it is no longer **public** — a declared client can never be confidential;
 - the provider holds a redirect URI this model could not parse
@@ -107,7 +107,9 @@ audited request — plans under `HandEditPolicy::Overwrite` and writes the
 declaration over them.
 
 Fields the adapter neither reads nor writes — description, web origins,
-consent, client scopes, token lifespans, themes — are **tolerated**.
+consent, client scopes and their mappers, token lifespans, themes — are
+**unmanaged and not evaluated**: nothing observes them, so nothing here
+attests that an edit to one is safe.
 
 **The audience is provider configuration, not a document field.** A client
 desired-state document has no field to name its own audience — see ADR 0019

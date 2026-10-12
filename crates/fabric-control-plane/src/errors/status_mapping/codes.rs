@@ -52,6 +52,7 @@ impl ControlPlaneError {
             Self::DocumentTooLarge { .. } => "document_too_large",
             Self::RealmImmutable { .. } => "realm_immutable",
             Self::ProjectedClientProductOwned { .. } => "projected_client_product_owned",
+            Self::ProjectedClientDiverged { .. } => "projected_client_diverged",
             Self::RepositoryUnavailable => "repository_unavailable",
             Self::InvalidFlow => "invalid_flow",
             Self::ConvergenceUnavailable => "convergence_unavailable",

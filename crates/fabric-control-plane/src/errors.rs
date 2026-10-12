@@ -195,6 +195,27 @@ pub enum ControlPlaneError {
         client: OidcClientId,
     },
 
+    /// A product save was refused because a stored projected client no
+    /// longer matches what the stored document itself projects (D01-19b).
+    ///
+    /// Compared against the same stored document — its hosts, client id and
+    /// pinned release snapshots — before the request is applied, so a
+    /// legitimate host change or release upgrade is never mistaken for one.
+    /// The save would have overwritten the stored entry, so nothing is
+    /// written. A fact about the document, not a claim about who edited it.
+    /// Names the client and a field, never a callback.
+    #[error(
+        "the stored identity entry for {client} no longer matches what its assignment projects \
+         ({field}); a product save would overwrite it, so nothing was written. Restore the \
+         projected entry with an identity edit or in Git first"
+    )]
+    ProjectedClientDiverged {
+        /// The projected application client.
+        client: OidcClientId,
+        /// What differs: `missing`, `protocol`, `pkce`, `redirectStrategy` or `redirectUris`.
+        field: &'static str,
+    },
+
     /// A new client would take a realm that is reserved, or already used by
     /// another client.
     ///

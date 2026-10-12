@@ -1,8 +1,10 @@
 //! What one reconciliation pass concluded.
 //!
-//! In the 121–150 line band: one type, its constructors and its accessors.
-//! Each pair of fields — what the pass did, and which hand edits it held or
-//! overwrote — is read by the status store and the audit record together.
+//! The hand-edit half of the type's surface — what a pass held, overwrote,
+//! or attempted without confirmation (D01-19b) — is a second `impl` block in
+//! `outcome/hand_edits.rs`, the house split for one type's two audiences.
+
+mod hand_edits;
 
 use crate::provider::{HandEdit, ProviderError};
 use crate::status::ReconciliationStatus;
@@ -31,8 +33,13 @@ pub struct ReconciliationOutcome {
     /// Unsupported hand edits the pass found and left in place (D01-19b).
     hand_edits: Vec<HandEdit>,
 
-    /// Unsupported hand edits an explicit re-assertion overwrote.
+    /// Unsupported hand edits an explicit re-assertion overwrote, as
+    /// confirmed by the provider.
     overwritten: Vec<HandEdit>,
+
+    /// Unsupported hand edits on the client whose update failed: attempted,
+    /// with an effect nobody can confirm.
+    unconfirmed: Vec<HandEdit>,
 }
 
 impl ReconciliationOutcome {
@@ -46,6 +53,7 @@ impl ReconciliationOutcome {
             detail: None,
             hand_edits: Vec::new(),
             overwritten: Vec::new(),
+            unconfirmed: Vec::new(),
         }
     }
 
@@ -58,6 +66,7 @@ impl ReconciliationOutcome {
             detail: None,
             hand_edits: Vec::new(),
             overwritten: Vec::new(),
+            unconfirmed: Vec::new(),
         }
     }
 
@@ -74,22 +83,21 @@ impl ReconciliationOutcome {
             detail: Some(error.to_string()),
             hand_edits: Vec::new(),
             overwritten: Vec::new(),
+            unconfirmed: Vec::new(),
         }
     }
 
-    /// The same outcome, having left these hand edits in place.
+    /// The pass failed after the provider confirmed `completed` actions.
+    ///
+    /// Still `Failed`: the plan did not finish. But the actions before the
+    /// failing one took effect, and the count says so rather than claiming
+    /// the pass changed nothing.
     #[must_use]
-    pub fn holding(mut self, hand_edits: Vec<HandEdit>) -> Self {
-        self.hand_edits = hand_edits;
-        self
-    }
-
-    /// The same outcome, having overwritten these hand edits at an
-    /// operator's explicit request.
-    #[must_use]
-    pub fn overwriting(mut self, overwritten: Vec<HandEdit>) -> Self {
-        self.overwritten = overwritten;
-        self
+    pub fn failed_after(completed: usize, error: &ProviderError) -> Self {
+        Self {
+            actions: completed,
+            ..Self::failed(error)
+        }
     }
 
     /// Whether the pass succeeded.
@@ -98,7 +106,8 @@ impl ReconciliationOutcome {
         self.status
     }
 
-    /// How many changes it made. Zero on a converged or failed pass.
+    /// How many changes it made. Zero on a converged pass; on a failed pass,
+    /// how many the provider confirmed before the failing one.
     #[must_use]
     pub const fn actions(&self) -> usize {
         self.actions
@@ -108,19 +117,6 @@ impl ReconciliationOutcome {
     #[must_use]
     pub fn detail(&self) -> Option<&str> {
         self.detail.as_deref()
-    }
-
-    /// The unsupported hand edits this pass left in place.
-    #[must_use]
-    pub fn hand_edits(&self) -> &[HandEdit] {
-        &self.hand_edits
-    }
-
-    /// The unsupported hand edits this pass overwrote, which only a
-    /// re-assertion does.
-    #[must_use]
-    pub fn overwritten(&self) -> &[HandEdit] {
-        &self.overwritten
     }
 
     /// Whether the provider was already in the desired state.

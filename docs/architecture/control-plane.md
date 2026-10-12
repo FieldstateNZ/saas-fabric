@@ -142,7 +142,7 @@ GET    /api/clients/{clientId}/identity  its identity, and reconciliation state
 PUT    /api/clients/{clientId}/identity  replace its identity   (If-Match required; a projected client is refused unless retired)
 POST   /api/clients/{clientId}/identity/reassertion   overwrite held hand edits in the provider, as you; audited (If-Match required)
 GET    /api/clients/{clientId}/product   its product configuration, and what it resolves to
-PUT    /api/clients/{clientId}/product   replace it             (If-Match required)
+PUT    /api/clients/{clientId}/product   replace it             (If-Match required; refused over a stored projection divergence)
 GET    /api/clients/{clientId}/placements              every logical data source, and what is true of each
 POST   /api/clients/{clientId}/placements/{logical}    place it                       (If-Match required)
 GET    /api/clients/{clientId}/secrets   list its secret paths
@@ -1555,9 +1555,11 @@ client, and overwriting it on every pass would be the silent fight D01-19b
 refuses. The identity response's `reconciliation.handEdits` names each one.
 An operator undoes it in Keycloak, or re-asserts the projection with `POST
 /api/clients/{clientId}/identity/reassertion`, which runs with their own
-authority and is audited. An edit that widens a client is never held: an
-undeclared callback or mapper, a confidential switch, or a PKCE or audience
-change is corrected as before. See
+authority and is audited. On the fields the adapter manages, an edit that
+widens a client is never held: an undeclared callback or client mapper, a
+confidential switch, or a PKCE or audience change is corrected as before.
+Fields it neither reads nor writes, such as web origins or a client scope's
+mappers, are not evaluated at all. See
 [ADR 0021's 2026-10-12 amendment](../decisions/0021-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md#amendment-2026-10-12-a-projected-identity-client-is-the-products-d01-19b).
 
 A report is only meaningful for the revision it was made against. If an operator

@@ -22,6 +22,7 @@ use fabric_control_plane::{AuditStream, AuditTrail as _};
 use fabric_reconciliation::testing::FakeIdentityProvider;
 use http::{header, Response, StatusCode};
 use serde_json::{json, Value};
+use support::projected::newco_with_a_projected_client;
 use support::{as_operator, control_plane, control_plane_with_identity_provider, entity_tag, send, OPERATOR};
 
 const REASSERTED: &str = "control_plane.audit.identity_projection_reasserted";
@@ -180,6 +181,59 @@ async fn reasserting_overwrites_the_hand_edit_and_records_it_in_the_audit_trail(
     );
 }
 
+/// A re-assertion that fails part-way is audited with what it did: the
+/// overwrite the provider confirmed, the one whose call failed, and the count.
+#[tokio::test]
+async fn a_partly_failed_reassertion_audits_the_overwrite_that_took_effect() {
+    let provider = Arc::new(FakeIdentityProvider::new());
+    let plane = control_plane_with_identity_provider(provider.clone());
+    let (revision, identity) = get_identity(&plane.router, "acme").await;
+    let mut two =
+        json!({"realm": identity["realm"], "roles": identity["roles"], "clients": identity["clients"]});
+    let mut admin = identity["clients"][0].clone();
+    admin["id"] = json!("admin");
+    two["clients"].as_array_mut().unwrap().push(admin);
+    let written = put_identity(&plane.router, "acme", &revision, &two).await;
+    assert_eq!(written.status(), StatusCode::OK);
+    tokio::task::yield_now().await;
+    sweep(&plane.router).await;
+
+    let realm = RealmName::try_new("acme").unwrap();
+    let mut state = provider.realm(&realm).unwrap();
+    for client in state.clients.values_mut() {
+        client.enabled = false;
+    }
+    provider.seed_realm(realm, state);
+    provider.fail_call(
+        "update_oidc_client:acme:admin",
+        fabric_reconciliation::ProviderError::Unavailable {
+            detail: "refused mid-plan".to_owned(),
+        },
+    );
+    let (revision, _) = get_identity(&plane.router, "acme").await;
+
+    let response = reassert(&plane.router, "acme", &revision).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        support::json(response).await["reconciliation"]["status"],
+        "failed"
+    );
+    assert!(web_enabled(&provider), "the confirmed overwrite took effect");
+
+    let stream = AuditStream::Client(ClientId::try_new("acme").unwrap());
+    let stored = plane.audit.read(&stream).await.unwrap();
+    let record = stored
+        .entries
+        .iter()
+        .map(fabric_control_plane::AuditEntry::record)
+        .find(|record| record.event() == REASSERTED)
+        .expect("a failed re-assertion is still audited");
+    assert_eq!(record.field("status"), Some("failed"));
+    assert_eq!(record.field("actions"), Some("1"));
+    assert_eq!(record.field("overwritten"), Some("web:clientDisabled"));
+    assert_eq!(record.field("unconfirmed"), Some("admin:clientDisabled"));
+}
+
 #[tokio::test]
 async fn a_reassertion_names_the_revision_it_reviewed() {
     let (plane, provider) = acme_disabled_by_hand().await;
@@ -250,51 +304,6 @@ async fn a_retired_client_can_still_be_reasserted() {
 
     assert_eq!(response.status(), StatusCode::OK);
     assert!(web_enabled(&provider));
-}
-
-/// Publishes `analytics` and creates `newco` assigned to it, so `newco`'s
-/// identity holds one projected client.
-async fn newco_with_a_projected_client(router: &Router) -> String {
-    let mut revision = Value::Null;
-    for command in [
-        json!({"action":"createApplication","id":"analytics","name":"Analytics"}),
-        json!({"action":"saveApplication","id":"analytics","definition":{
-            "name":"Analytics", "description":"Reports", "domain":"{client}.example.com",
-            "components":[{"id":"reports","name":"Reports","kind":"container","reference":"registry.example.com/reports","version":"1.0.0","required":false,"policy":"manual"}],
-            "features":[{"id":"reporting","name":"Reporting","description":"","implementedBy":["reports"]}],
-            "plans":[{"id":"standard","name":"Standard","description":"","features":["reporting"],"configuration":{}}],
-            "fields":[], "navigation":[]}}),
-        json!({"action":"publishApplication","id":"analytics","note":"Initial release"}),
-    ] {
-        let builder = as_operator("POST", "/api/catalogue").header(header::CONTENT_TYPE, "application/json");
-        let builder = match revision.as_str() {
-            Some(revision) => builder.header(header::IF_MATCH, format!("\"{revision}\"")),
-            None => builder.header(header::IF_NONE_MATCH, "*"),
-        };
-        let response = send(router, builder.body(Body::from(command.to_string())).unwrap()).await;
-        let status = response.status();
-        let body = support::json(response).await;
-        assert_eq!(status, StatusCode::OK, "{body}");
-        revision = body["revision"].clone();
-    }
-
-    let created = send(
-        router,
-        as_operator("POST", "/api/clients")
-            .header(header::CONTENT_TYPE, "application/json")
-            .body(Body::from(
-                json!({"id":"newco","configuration":{
-                    "displayName":"Newco","legalName":"Newco Ltd","region":"NZ","timezone":"Pacific/Auckland",
-                    "hosts":["newco.example.com"],"configuration":{},
-                    "applications":[{"applicationId":"analytics","version":1,"planId":"standard","configuration":{}}]}})
-                .to_string(),
-            ))
-            .unwrap(),
-    )
-    .await;
-    assert_eq!(created.status(), StatusCode::CREATED);
-    let (revision, _) = get_identity(router, "newco").await;
-    revision
 }
 
 /// `newco`'s identity, with the projected `analytics` client's callbacks

@@ -3,7 +3,20 @@
 use fabric_client_model::RealmName;
 
 use crate::plan::{IdentityAction, IdentityPlan};
-use crate::provider::{IdentityProvider, ProviderError};
+use crate::provider::{HandEdit, IdentityProvider, ProviderError};
+
+/// A plan that stopped part-way.
+///
+/// Carries how many actions completed before the failing one, because
+/// those took effect: a caller that reported a failed pass as "nothing
+/// changed" would be wrong about every one of them.
+pub(super) struct Interrupted {
+    /// How many actions, from the start of the plan, the provider confirmed.
+    pub(super) completed: usize,
+
+    /// Why the next one failed. Whether it took effect is unknown.
+    pub(super) error: ProviderError,
+}
 
 /// Applies every action in order, stopping at the first failure.
 ///
@@ -19,14 +32,47 @@ use crate::provider::{IdentityProvider, ProviderError};
 /// reason worth stating: every action is additive and idempotent, so the next
 /// pass re-plans against what actually exists and continues from there. There
 /// is no half-applied state that a retry would make worse.
-pub(super) async fn apply(provider: &dyn IdentityProvider, plan: &IdentityPlan) -> Result<(), ProviderError> {
+pub(super) async fn apply(provider: &dyn IdentityProvider, plan: &IdentityPlan) -> Result<(), Interrupted> {
     let realm = plan.realm();
 
-    for action in plan.actions() {
-        apply_one(provider, realm, action).await?;
+    for (completed, action) in plan.actions().iter().enumerate() {
+        apply_one(provider, realm, action)
+            .await
+            .map_err(|error| Interrupted { completed, error })?;
     }
 
     Ok(())
+}
+
+/// Splits the hand edits a re-assertion set out to overwrite by what is
+/// known of each after the plan stopped at `completed` actions.
+///
+/// Returns `(confirmed, unconfirmed)`: hand edits on a client whose update
+/// the provider confirmed, and those on the client whose update failed —
+/// which may or may not have taken effect, so it is claimed as neither.
+/// Edits on clients the plan never reached are in neither list: they are
+/// provably still in place.
+pub(super) fn overwrites_after(
+    plan: &IdentityPlan,
+    completed: usize,
+    overwriting: &[HandEdit],
+) -> (Vec<HandEdit>, Vec<HandEdit>) {
+    let updated = |actions: &[IdentityAction]| -> Vec<HandEdit> {
+        overwriting
+            .iter()
+            .filter(|edit| {
+                actions.iter().any(|action| {
+                    matches!(action, IdentityAction::UpdateOidcClient { client, .. } if client.id == edit.client)
+                })
+            })
+            .cloned()
+            .collect()
+    };
+
+    let confirmed = updated(plan.actions().get(..completed).unwrap_or_default());
+    let failing = updated(plan.actions().get(completed..=completed).unwrap_or_default());
+
+    (confirmed, failing)
 }
 
 /// Performs one action.

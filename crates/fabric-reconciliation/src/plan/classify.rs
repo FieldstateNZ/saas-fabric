@@ -15,14 +15,17 @@
 //! | a declared redirect URI removed | **held** | narrows |
 //!
 //! Everything the adapter neither reads nor writes — description, web
-//! origins, consent, client scopes, token lifespans, themes — is
-//! **tolerated**: no term observes it, and no write carries it.
+//! origins, consent, client scopes and their mappers, token lifespans,
+//! themes — is **unmanaged and not evaluated**. No term observes it and no
+//! write carries it, so nothing here attests that it is safe: an edit to it,
+//! widening or not, is invisible to reconciliation (ADR 0019 defers web
+//! origins; a scope's mappers are a documented limit).
 //!
-//! The rule behind the table: an edit that widens what a client can do is
-//! never left in place, because leaving it is leaving a weaker security
-//! posture than the one declared. An edit that only narrows it is somebody's
-//! decision the product does not support, and overwriting it on every pass
-//! is the "silently fighting" D01-19b refuses.
+//! The rule behind the table, for the managed fields only: an edit that
+//! widens what a client can do is not left in place, because leaving it is
+//! leaving a weaker posture than the one declared. An edit that only narrows
+//! it is somebody's decision the product does not support, and overwriting it
+//! on every pass is the "silently fighting" D01-19b refuses.
 
 use std::collections::BTreeSet;
 

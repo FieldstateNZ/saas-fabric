@@ -420,3 +420,53 @@ async fn reasserting_overwrites_the_hand_edit_and_names_it() {
     assert!(reconciler.reconcile(&acme()).await.changed_nothing());
     assert_eq!(provider.calls(), ["observe_realm:acme"]);
 }
+
+/// A re-assertion that fails part-way says truthfully what it did: the
+/// overwrite the provider confirmed before the failure is reported as
+/// overwritten, the failing call's as unconfirmed, and the pass is still
+/// failed. Nothing is rolled back.
+#[tokio::test]
+async fn a_reassertion_that_fails_part_way_reports_the_overwrite_it_completed() {
+    let mut client = acme();
+    let mut admin = web_client();
+    admin.id = fabric_client_model::OidcClientId::try_new("admin").unwrap();
+    client.identity.clients.push(admin);
+
+    let (reconciler, provider) = reconciler();
+    reconciler.reconcile(&client).await;
+    let realm = client.identity.realm.clone();
+    let mut state = provider.realm(&realm).unwrap();
+    for observed in state.clients.values_mut() {
+        observed.enabled = false;
+    }
+    provider.seed_realm(realm, state);
+    provider.fail_call(
+        "update_oidc_client:acme:admin",
+        ProviderError::Unavailable {
+            detail: "refused mid-plan".to_owned(),
+        },
+    );
+
+    let outcome = reconciler.reassert(&client).await;
+
+    assert_eq!(outcome.status(), ReconciliationStatus::Failed);
+    assert_eq!(outcome.actions(), 1, "the first update was confirmed");
+    assert_eq!(
+        outcome.overwritten(),
+        [HandEdit {
+            client: web_client().id,
+            field: HandEditedField::ClientDisabled,
+        }]
+    );
+    assert_eq!(
+        outcome.unconfirmed_overwrites(),
+        [HandEdit {
+            client: fabric_client_model::OidcClientId::try_new("admin").unwrap(),
+            field: HandEditedField::ClientDisabled,
+        }]
+    );
+    assert!(
+        web_in(&provider).enabled,
+        "the confirmed overwrite took effect and is not undone"
+    );
+}

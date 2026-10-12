@@ -13,9 +13,10 @@ use fabric_client_model::{OidcClientId, RedirectUri};
 /// Which unsupported hand edit a client carries.
 ///
 /// Every variant **narrows** what the client can do. That is what makes it
-/// safe to leave in place: an edit that widened a client — a redirect URI
-/// nobody declared, a confidential secret, a downgraded PKCE method, a mapper
-/// injecting a claim — is product-owned drift and is always corrected.
+/// safe to leave in place: an edit that widened a *managed* field — a
+/// redirect URI nobody declared, a confidential secret, a downgraded PKCE
+/// method, a client mapper injecting a claim — is product-owned drift and is
+/// corrected. Fields the adapter does not read are not evaluated at all.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum HandEditedField {

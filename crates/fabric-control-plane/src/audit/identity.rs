@@ -35,8 +35,17 @@ pub(crate) fn identity_updated(
 ///
 /// Recorded whatever the pass concluded, a failure included: the operator
 /// asked for hand edits to be overwritten, and that request is the decision
-/// worth recording. `overwritten` lists `client:field` pairs — application
-/// client ids and fixed field names, never a URI or any provider text.
+/// worth recording. A failed re-assertion can still have changed something,
+/// so the record says exactly what is known:
+///
+/// - `overwritten`: hand edits on clients whose update the provider
+///   confirmed, including those before a later failure;
+/// - `unconfirmed`: hand edits on the client whose update failed, which may
+///   or may not have taken effect;
+/// - `actions`: how many writes the provider confirmed.
+///
+/// Each list is `client:field` pairs — application client ids and fixed
+/// field names, never a URI or any provider text.
 pub(crate) fn identity_projection_reasserted(
     operator: &Operator,
     client: &ClientId,
@@ -46,12 +55,15 @@ pub(crate) fn identity_projection_reasserted(
 ) -> AuditRecord {
     const EVENT: &str = "control_plane.audit.identity_projection_reasserted";
     const OPERATION: &str = "reassert_identity_projection";
-    let overwritten = outcome
-        .overwritten()
-        .iter()
-        .map(ToString::to_string)
-        .collect::<Vec<_>>()
-        .join(",");
+    let joined = |edits: &[fabric_reconciliation::HandEdit]| {
+        edits
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(",")
+    };
+    let overwritten = joined(outcome.overwritten());
+    let unconfirmed = joined(outcome.unconfirmed_overwrites());
     tracing::info!(
         event = EVENT,
         event_id = event_id(DOMAIN_ID, EventType::Success, 19),
@@ -60,10 +72,14 @@ pub(crate) fn identity_projection_reasserted(
         client_id = %client,
         revision = %revision,
         overwritten = %overwritten,
+        unconfirmed = %unconfirmed,
+        actions = outcome.actions(),
         status = status.as_str(),
         "operator re-asserted a client's identity projection"
     );
     super::client_revision(EVENT, OPERATION, operator, client, revision)
         .with("overwritten", overwritten)
+        .with("unconfirmed", unconfirmed)
+        .with("actions", outcome.actions())
         .with("status", status.as_str())
 }

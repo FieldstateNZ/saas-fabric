@@ -104,7 +104,8 @@ impl ControlPlaneError {
             | Self::IntegrationMoved
             | Self::ClientExists { .. }
             | Self::RealmUnavailable { .. }
-            | Self::ProjectedClientProductOwned { .. } => StatusCode::CONFLICT,
+            | Self::ProjectedClientProductOwned { .. }
+            | Self::ProjectedClientDiverged { .. } => StatusCode::CONFLICT,
 
             // 422, not 413: 413 describes a request body that is itself too
             // large, but the request here can be a small edit — removing one

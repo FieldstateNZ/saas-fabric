@@ -237,6 +237,34 @@ async fn the_lock_is_released_after_every_publication() {
     drop(PublicationLock::acquire(&dir.paths(DocumentKind::Tenants)).unwrap());
 }
 
+/// A process spawned from another thread while a publication holds the
+/// lock inherits the locked open file description until it execs. The lock
+/// must still end with the publication: if only the publication's own
+/// handle were closed, that copy would keep it held and refuse the next
+/// publication, which is how `fabric-ndc-acceptance`'s sequential helper
+/// came to be refused while other tests spawned `docker`.
+#[tokio::test]
+async fn a_copy_of_the_lock_inherited_by_a_spawned_process_does_not_outlive_the_publication() {
+    let dir = seeded().await;
+    let tenants = dir.paths(DocumentKind::Tenants);
+
+    let lock = PublicationLock::acquire(&tenants).unwrap();
+    let inherited = lock.inherited_copy().unwrap();
+    assert!(
+        PublicationLock::acquire(&tenants).is_err(),
+        "the lock is still exclusive while held"
+    );
+    drop(lock);
+
+    let next = snapshot(
+        (2, vec![tenant("acme", "pg-1", 1), tenant("globex", "pg-2", 1)]),
+        (1, vec![data_source("pg-1"), data_source("pg-2")]),
+    );
+    let report = dir.adapter().publish(&next).await.unwrap();
+    assert_eq!(report.tenants, DocumentOutcome::Written);
+    drop(inherited);
+}
+
 /// Gap G4 (write skew), residual: a writer that bypasses the lock. Writer A retires `pg-2`, which is legal because the
 /// held tenants document binds nothing to it. Writer B moves acme onto
 /// `pg-2`, which is legal because the held data-sources document has it.

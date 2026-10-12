@@ -6,7 +6,10 @@
   `execution::authorize`), a new adapter crate `fabric-fga-check`,
   `fabric-identity` (`extract_bearer` is now public), `fabric-api` (its
   configuration and composition), `scripts/check_architecture.py`, and
-  `docs/architecture/crate-dependencies.md`
+  `docs/architecture/crate-dependencies.md`; from the 2026-10-12 amendment
+  (§2a), also `fabric-core` (`CollectionObject`,
+  `OperationKind::computed_relation`), `fabric-client-model` (its
+  authorization validation) and a new model-writer crate, `fabric-fga-model`
 - **Related:** [ADR 0013](0013-authorization-is-declared-in-the-platforms-words.md);
   [ADR 0016](0016-fabric-owns-the-authorization-front-door.md);
   [ADR 0009](0009-operator-identity-is-not-tenant-identity.md);
@@ -16,7 +19,9 @@
   and D01-12, disposed in
   [#108](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6109518415);
   the collection and transport follow-ups, disposed in
-  [#108](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6115327492)
+  [#108](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6115327492);
+  the collection contract's spelling, model writer and model shape, raised in
+  [#108](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6118156522)
 
 ## Context
 
@@ -96,35 +101,70 @@ token to an address nobody configured. It reads a decision only from an
 HTTP `200`. A `201` or `202` carrying `{"allowed": true}` is not a completed
 decision and is refused as `internal`, like every other unexpected status.
 
-### 2a. Collections get their own, tenant-bound Check, and are refused until it exists
+### 2a. Collections get their own, tenant-bound Check
+
+*Amended 2026-10-12. Until then this section refused every collection
+operation on a checked resource with a 403
+(`collection_contract_undefined`), because no model defined the collection
+object. The contract below now exists and is covered by tests, so the
+refusal is gone (Owed item 1).*
 
 `list` and `create` name no record. They are asked about the resource's
 **collection**, a distinct object, never about a record:
 
 - The port's question carries a `CheckTarget`: `Record(resource:key)` for
-  `read`, `update` and `delete`, or `Collection(resource)` for `list` and
-  `create`. The two kinds cannot stand in for each other. No record key is
-  invented for a collection, and a record-level allow is never borrowed to
-  permit a collection operation.
+  `read`, `update` and `delete`, or `Collection` for `list` and `create`.
+  Which operations are collection operations is
+  `OperationKind::is_collection_operation`, in `fabric-core`, so the runtime
+  and the model writer use one partition. The two kinds cannot stand in for
+  each other. No record key is invented for a collection, and a record-level
+  allow is never borrowed to permit a collection operation.
+- **The object is `<resource>_collection:<resource>`**, for example
+  `customers_collection:customers`. The spelling is `fabric-core`'s
+  `CollectionObject`, beside `OperationKind`, because the control plane writes
+  it and the runtime plane asks about it, and the two planes may not depend on
+  each other. Its type half must be a `LogicalResourceName`, because the
+  front parses it as one. So a resource name longer than 52 bytes has no
+  collection, and two declared resources must not collide (`customers` and
+  `customers_collection`). `spec.authorization` validation refuses both.
+  If one reaches the Data API anyway, it is refused as a denial
+  (`unnameable_object`), without asking.
 - The collection object is bound to the tenant the same way every Check is.
   The front selects the store and the model from the verified caller token,
   so one tenant's `customers` collection is a different object from
   another's.
-- The model is to define one collection object per resource, with
-  `can_list` and `can_create` relations on it. A `can_list` allow authorizes
-  the collection response that model defines. It does not filter rows.
-  `ListObjects`, row filtering and their pagination are a later refinement.
-- **No model defines the collection object yet.** Until that contract exists
-  and is covered by tests, `DataAuthorization` refuses every collection
-  operation on a checked resource with a 403. The refusal reason is
-  `collection_contract_undefined`, and nothing is asked. This is a denial,
-  not a 5xx, so it does not depend on a Check being configured.
-  `fabric-fga-check` has no wire spelling for a collection either: a
-  collection question reaching it is refused as `internal`, and nothing is
-  sent.
+- **The model writer defines it.** `fabric-fga-model::authorization_model`
+  translates `spec.authorization` into the model. Each declared resource gets
+  two types:
+
+  | Type | Direct relations | Computed relations |
+  |---|---|---|
+  | `customers` (record) | every declared relation | `can_read`, `can_update`, `can_delete` |
+  | `customers_collection` | every declared relation | `can_list`, `can_create` |
+
+  - Each `can_<operation>` is the union of the relations whose `permits`
+    include the operation.
+  - Where no relation permits it, it is still defined, as a relation nobody
+    holds (`<first> but not <first>`). A Check therefore answers a denial,
+    not a model error.
+  - Neither type defines the other's operations, so inside OpenFGA too a
+    record can't answer `can_list`, and a collection can't answer
+    `can_read`.
+  - Nothing links the two types. Holding `viewer` on the collection grants
+    nothing on any record, and the reverse holds too.
+  - A declared relation may not be named `can_<operation>`, because it would
+    then be the computed relation.
+- A `can_list` allow authorizes the collection response that model defines.
+  It does not filter rows. `ListObjects`, row filtering and their pagination
+  are a later refinement.
+- `fabric-fga-check` sends a collection question as
+  `{"relation": "can_list", "object": "customers_collection:customers"}`. A
+  question whose operation and target disagree (`list` about a record,
+  `read` about a collection) is refused as `internal`, and nothing is sent.
 
 A missing collection definition, a missing Check, a denial, or an unavailable
-or invalid decision never permits a collection operation.
+or invalid decision never permits a collection operation. Each one is
+refused exactly as it would be for a record (§4).
 
 ### 2b. The bearer hop is verified TLS
 
@@ -169,8 +209,7 @@ change. The trial is the exception, so the trial is what has to be named.
 |---|---|---|
 | Scope missing | 403 | `forbidden` |
 | Check denied | 403 | `forbidden` |
-| Check required for `list` or `create`, the collection contract is undefined (§2a) | 403 | `forbidden` |
-| Check required, the key cannot name an object | 403 | `forbidden` |
+| Check required, the key (or, for `list` and `create`, the resource's collection) cannot name an object | 403 | `forbidden` |
 | Front unreachable, timed out, or `5xx` | 503, `Retry-After` | `authorization_unavailable` |
 | Front answered something that is not a decision: any status but `200` and `5xx` (including `201` and `202`), or a malformed body | 500 | `internal` |
 | Check required, no front configured | 500 | `internal` |
@@ -216,11 +255,13 @@ decision.
 
 Accepting this decision does not make these true.
 
-1. **The collection model contract (§2a).** This means the per-resource
-   collection object type and its `can_list` and `can_create` relations in the
-   model writer, and tests that cover them. Only then may the refusal in
-   `DataAuthorization::decide` and in `FrontCheck` give way to a collection
-   Check.
+1. ~~**The collection model contract (§2a).**~~ Built 2026-10-12: the
+   per-resource collection type and its `can_list` and `can_create`
+   relations, in the model writer (`fabric-fga-model`), with tests. The
+   refusals in `DataAuthorization::decide` and in `FrontCheck` have given way
+   to a collection Check. The written model is proven against a real OpenFGA
+   only by a test that is skipped unless one is provided
+   (`FABRIC_TEST_OPENFGA_PORT`); CI does not run it.
 2. **Where the policy comes from.** Only the composition root can supply
    `TenantPolicies`, and it supplies none. Before M3, the posture and each
    client's relation-declaring resources must reach the runtime through
@@ -261,17 +302,47 @@ Accepting this decision does not make these true.
   - `a_resource_that_declares_no_relations_uses_scopes_only`
   - `a_missing_scope_is_refused_before_the_check_is_asked`
   - `administrator_and_operator_roles_get_no_data_path_bypass`
-  - `a_collection_operation_on_a_checked_resource_is_refused_until_its_contract_exists`
+  - `a_tenant_beyond_the_trial_needs_a_check_allow_about_the_collection_to_list_or_create`
+  - `a_collection_deny_or_failure_never_reaches_the_connector`
   - `a_check_deny_and_a_missing_scope_answer_identically`
+  - `a_collection_deny_and_a_missing_scope_answer_identically`
 - `crates/fabric-data-api/src/authorization/data_authorization/data_authorization_tests.rs`,
   without HTTP:
   - the layer order, and every failure refusing;
+  - `a_collection_operation_is_asked_about_the_collection_with_the_callers_own_token`;
+  - `a_collection_deny_is_refused_like_any_other_denial`;
+  - `every_failure_to_decide_about_a_collection_refuses`;
+  - `a_resource_whose_collection_cannot_be_named_is_refused_without_asking`;
   - `a_record_allow_is_never_borrowed_for_a_collection_operation`;
-  - `a_collection_refusal_does_not_depend_on_a_configured_check`;
+  - `a_collection_operation_without_a_configured_check_fails_closed`;
   - `the_trial_and_undeclared_resources_still_list_on_scopes_alone`.
-- `crates/fabric-data-api/src/authorization/check_target.rs`: only `list` and
-  `create` are collection operations, and a collection is never equal to a
-  record.
+- `crates/fabric-data-api/src/authorization/check_target.rs`: a collection is
+  never equal to, and never renders as, a record.
+- `crates/fabric-core/src/operation.rs`: only `list` and `create` are
+  collection operations; each operation's computed relation is
+  `can_<operation>`.
+- `crates/fabric-core/src/collection_object.rs`: the collection is
+  `<resource>_collection:<resource>`, its type is a valid resource name, a
+  resource too long for one is refused, and a collision is detected.
+- `crates/fabric-client-model/src/authorization/validation_tests.rs`: a
+  resource spelled like another's collection, a resource too long to name its
+  collection, and a relation named `can_<operation>` are refused.
+- `crates/fabric-fga-model/src/translate/translate_tests.rs`:
+  - ADR 0013's example translates to exactly a record type and a collection
+    type;
+  - neither type defines the other's operations;
+  - the collection type is the one the runtime asks about;
+  - an operation no relation permits is defined and held by nobody;
+  - a declaration validation refuses is not translated.
+- `crates/fabric-fga-model/tests/model_against_openfga.rs`, against a real
+  OpenFGA, **skipped unless `FABRIC_TEST_OPENFGA_PORT` is set**:
+  - the service accepts the model;
+  - a collection grant answers `can_list`;
+  - a record `owner` grant answers neither `can_list` nor `can_create`;
+  - a collection grant answers nothing about a record;
+  - a cross-kind question is refused;
+  - an operation no relation permits is a denial;
+  - a computed relation cannot be written as a tuple.
 - `crates/fabric-fga-check/src/front_check/front_check_tests.rs`, against a
   fake front on `127.0.0.1` through the test-only plaintext path:
   - a `200` allow carries the caller's token and `can_<operation>` unchanged;
@@ -279,7 +350,11 @@ Accepting this decision does not make these true.
   - `201` and `202` with an allow body are `Internal`;
   - `503` and an unreachable front are `Unavailable`;
   - `401`, `400`, `403`, `307` and malformed bodies are `Internal`;
-  - a collection question is refused without sending anything;
+  - each operation asks its own `can_<operation>` about its own kind of
+    object, `customers:42` or `customers_collection:customers`;
+  - a collection answer is read by the same rules as a record answer;
+  - an operation asked about the wrong kind of object is refused without
+    sending anything;
   - an `https` endpoint pointed at a plaintext listener sends nothing.
 - `crates/fabric-fga-check/src/front_endpoint.rs`:
   - `http` to a non-loopback host is refused;

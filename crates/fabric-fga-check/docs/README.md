@@ -2,7 +2,8 @@
 
 The Data API's layer-2 adapter (ADR 0027). It answers one question for
 `fabric-data-api`: may the caller who sent this token perform this operation
-on this record? It answers by asking the Fabric authorization front
+on this record, or on this resource's collection? It answers by asking the
+Fabric authorization front
 (`fabric-fga-auth-api`, ADR 0016).
 
 ## How a question becomes a request
@@ -22,6 +23,14 @@ Authorization: Bearer <the caller's own token>
 
 Only a `200` is read as a decision.
 
+| Operation | Relation | Object |
+|---|---|---|
+| `read`, `update`, `delete` | `can_read`, `can_update`, `can_delete` | `customers:42` |
+| `list`, `create` | `can_list`, `can_create` | `customers_collection:customers` |
+
+Both spellings come from `fabric-core` (`OperationKind::computed_relation`,
+`CollectionObject`), which the model writer, `fabric-fga-model`, uses too.
+
 - **The relation is computed.** ADR 0013 maps declared relations (`viewer`,
   `editor`, …) onto a computed `can_<operation>` for each operation. This crate
   asks the computed one, so it never needs to know what an editor may do.
@@ -37,7 +46,7 @@ Only a `200` is read as a decision.
 | connection refused, reset or timed out (5s) | `Unavailable` | 503, retryable |
 | any `5xx` | `Unavailable` | 503, retryable |
 | `201`, `202`, `401`, `400`, `403`, a redirect, any other non-`200` | `Internal` | 500 |
-| a collection question (`list`, `create`) | `Internal`, nothing sent | 500 (the Data API refuses these with a 403 before asking) |
+| an operation asked about the wrong kind of object (`list` about a record, `read` about a collection) | `Internal`, nothing sent | 500 (the Data API never asks one) |
 | `200` with a body that is not `{"allowed": bool}` | `Internal` | 500 |
 
 A `201` or `202` carrying an allow body is not a completed decision, so it is
@@ -67,10 +76,11 @@ front serving verified TLS.
 
 ## Collections (ADR 0027 §2a)
 
-There is no wire spelling for a collection object yet, because no model
-defines one. A `CheckTarget::Collection` question is refused and nothing is
-sent. When the model contract exists, it will be a distinct per-resource
-collection object with `can_list` and `can_create` relations, never a record.
+A collection is its own type in the model, `<resource>_collection`, with
+only `can_list` and `can_create`. A record type has only `can_read`,
+`can_update` and `can_delete`. So a record allow can't answer a collection
+question, here or in OpenFGA. A `can_list` allow authorizes the collection
+response. It does not filter rows.
 
 ## Tests
 

@@ -6,7 +6,13 @@ import { ReconciliationBadge } from './ReconciliationBadge'
 
 /** A reconciliation state to render. */
 function state(overrides: Partial<Reconciliation> = {}): Reconciliation {
-  return { status: 'applied', observedAtUnix: 1_700_000_000, detail: null, ...overrides }
+  return {
+    status: 'applied',
+    observedAtUnix: 1_700_000_000,
+    detail: null,
+    handEdits: [],
+    ...overrides,
+  }
 }
 
 describe('the reconciliation badge', () => {
@@ -30,10 +36,31 @@ describe('the reconciliation badge', () => {
     expect(screen.getByText(/outside SaaS Fabric/i)).toBeInTheDocument()
   })
 
+  it("lists hand edits it left in place, in an operator's words", () => {
+    render(
+      <ReconciliationBadge
+        reconciliation={state({
+          status: 'handEdited',
+          handEdits: [
+            { client: 'web', field: 'clientDisabled' },
+            { client: 'web', field: 'declaredRedirectUriRemoved' },
+          ],
+        })}
+      />,
+    )
+
+    expect(screen.getByText(/left in place, not overwritten/i)).toBeInTheDocument()
+    expect(screen.getByText(/was switched off/i)).toBeInTheDocument()
+    expect(screen.getByText(/had a declared callback removed/i)).toBeInTheDocument()
+  })
+
   it('shows the failure detail when there is one', () => {
     render(
       <ReconciliationBadge
-        reconciliation={state({ status: 'failed', detail: 'the identity provider is unavailable' })}
+        reconciliation={state({
+          status: 'failed',
+          detail: 'the identity provider is unavailable',
+        })}
       />,
     )
 

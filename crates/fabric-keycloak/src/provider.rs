@@ -6,7 +6,7 @@ mod observe;
 
 use async_trait::async_trait;
 use fabric_client_model::{OidcClient, RealmName, RoleName};
-use fabric_reconciliation::{IdentityProvider, ObservedRealm, ProviderError};
+use fabric_reconciliation::{HeldEdits, IdentityProvider, ObservedRealm, ProviderError};
 
 use crate::admin::KeycloakAdmin;
 use crate::KeycloakConfig;
@@ -69,8 +69,13 @@ impl IdentityProvider for KeycloakIdentityProvider {
         mutate::create_oidc_client(&self.admin, realm, client, &self.audience).await
     }
 
-    async fn update_oidc_client(&self, realm: &RealmName, client: &OidcClient) -> Result<(), ProviderError> {
-        mutate::update_oidc_client(&self.admin, realm, client, &self.audience).await
+    async fn update_oidc_client(
+        &self,
+        realm: &RealmName,
+        client: &OidcClient,
+        held: &HeldEdits,
+    ) -> Result<(), ProviderError> {
+        mutate::update_oidc_client(&self.admin, realm, client, &self.audience, held).await
     }
 
     fn configured_audience(&self) -> Option<&str> {

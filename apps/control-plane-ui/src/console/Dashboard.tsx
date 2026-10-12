@@ -43,7 +43,7 @@ export function Dashboard({
   const attention = inventory.entries.filter(
     (entry) =>
       entry.error !== null ||
-      ['failed', 'drifted'].includes(entry.identity?.reconciliation.status ?? ''),
+      ['failed', 'drifted', 'handEdited'].includes(entry.identity?.reconciliation.status ?? ''),
   )
 
   const metrics = [

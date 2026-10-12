@@ -62,7 +62,10 @@ Everything else — `wire::*`, `admin::*` — is `pub(crate)`.
   entirely, and do appear in this crate's own tests, in
   `scripts/e2e-services.sh`, and in ADR 0014.
 - `provider::declaration` — builds the representation a create or update
-  sends, from an `OidcClient` and the adapter's configured audience. Refuses
+  sends, from an `OidcClient`, the adapter's configured audience and the
+  `HeldEdits` the reconciler decided not to overwrite (D01-19b): a held
+  disable or standard-flow switch-off is written as off, and a held removed
+  callback is left out. A create and a re-assertion pass none. Refuses
   (`ProviderError::Rejected`) a `customScheme` client that reached the adapter
   despite model validation refusing it upstream.
 - `provider::observe` / `provider::observe::clients` / `provider::mutate` —

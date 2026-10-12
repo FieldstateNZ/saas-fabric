@@ -13,6 +13,7 @@ fn recorded(status: ReconciliationStatus, at_revision: &str) -> ReconciliationRe
         actions: 0,
         observed_at_unix: 0,
         detail: None,
+        hand_edits: Vec::new(),
     }
 }
 
@@ -93,5 +94,37 @@ fn a_recovered_failure_is_applied_rather_than_drifted() {
     assert_eq!(
         status_for(Some(&previous), &revision("abc"), &outcome),
         ReconciliationStatus::Applied
+    );
+}
+
+/// A pass that held a hand edit is `handEdited`, even though it changed
+/// nothing: calling it `applied` would be the silence D01-19b refuses.
+#[test]
+fn a_pass_that_held_a_hand_edit_is_hand_edited() {
+    let outcome = ReconciliationOutcome::converged().holding(vec![crate::HandEdit {
+        client: crate::fixtures::web_client().id,
+        field: crate::HandEditedField::ClientDisabled,
+    }]);
+    let previous = recorded(ReconciliationStatus::Applied, "abc");
+
+    assert_eq!(
+        status_for(Some(&previous), &revision("abc"), &outcome),
+        ReconciliationStatus::HandEdited
+    );
+}
+
+/// Correcting product-owned drift after a `handEdited` pass at the same
+/// revision is drift: every product-owned field had matched.
+#[test]
+fn correcting_after_a_hand_edited_pass_is_drift() {
+    let previous = recorded(ReconciliationStatus::HandEdited, "abc");
+
+    assert_eq!(
+        status_for(
+            Some(&previous),
+            &revision("abc"),
+            &ReconciliationOutcome::applied(1)
+        ),
+        ReconciliationStatus::Drifted
     );
 }

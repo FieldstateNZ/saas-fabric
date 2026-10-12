@@ -40,7 +40,8 @@ second one every time.
 GET /api/clients                       list clients
 GET /api/clients/{clientId}            one client's overview
 GET /api/clients/{clientId}/identity   its identity, and reconciliation state
-PUT /api/clients/{clientId}/identity   replace its identity  (If-Match required)
+PUT /api/clients/{clientId}/identity   replace its identity  (If-Match required; a projected client is refused unless retired)
+POST /api/clients/{clientId}/identity/reassertion   overwrite held hand edits, as you; audited  (If-Match required)
 ```
 
 Note what is not there: nothing that names a file, nothing that edits a document

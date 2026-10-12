@@ -52,7 +52,9 @@ mod status;
 pub mod testing;
 
 pub use plan::{IdentityAction, IdentityPlan};
-pub use provider::{IdentityProvider, ObservedOidcClient, ObservedRealm, ProviderError};
+pub use provider::{
+    HandEdit, HandEditedField, HeldEdits, IdentityProvider, ObservedOidcClient, ObservedRealm, ProviderError,
+};
 pub use reconciler::{IdentityReconciler, ReconciliationOutcome};
 pub use status::{ReconciliationReport, ReconciliationStatus, ReconciliationStatusStore};
 

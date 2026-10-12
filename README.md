@@ -230,7 +230,10 @@ nothing.
 
 Because it observes before it acts, a realm changed outside SaaS Fabric is
 reported as `drifted` rather than silently corrected — the one signal that says
-something else is editing the realms the platform owns.
+something else is editing the realms the platform owns. A hand edit that only
+narrows a client, such as disabling it, is not corrected at all. It is reported
+as `handEdited` and left in place until an operator undoes it or re-asserts
+the projection, an audited action (D01-19b).
 
 Two capabilities skip that indirection on purpose. A client secret write
 reaches OpenBao directly and reports success or failure from that one call

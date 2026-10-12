@@ -9,6 +9,8 @@
 //! order across all eight steps is the thing being protected, not any one
 //! of them alone.
 
+mod projected_clients;
+
 use fabric_client_model::{ClientId, ClientRevision, IdentityConfiguration};
 
 use crate::repository::{ChangeContext, StoredClient};
@@ -22,7 +24,9 @@ impl ClientService {
     /// 1. Read the client at its current revision.
     /// 2. Refuse the request if that is not the revision the operator was
     ///    editing.
-    /// 3. Refuse a realm change — reconciliation cannot express one safely.
+    /// 3. Refuse a realm change — reconciliation cannot express one safely —
+    ///    and, unless the client is retired, a change to an application
+    ///    client the product projects (D01-19b).
     /// 4. Merge the new identity into the *stored document*, so nothing this
     ///    model does not understand is disturbed.
     /// 5. Return early if nothing actually changed, rather than writing a
@@ -49,7 +53,8 @@ impl ClientService {
     /// # Errors
     ///
     /// Returns [`ControlPlaneError`] if the client does not exist, the request
-    /// would move the realm, the identity breaks a validation rule, the
+    /// would move the realm or change a projected application client
+    /// ([`ControlPlaneError::ProjectedClientProductOwned`]), the identity breaks a validation rule, the
     /// revision has moved on — [`ControlPlaneError::RevisionConflict`] — the
     /// stored product section will not parse —
     /// [`ControlPlaneError::InvalidDesiredState`] — the rendered document is
@@ -73,6 +78,10 @@ impl ClientService {
             return Err(ControlPlaneError::RealmImmutable {
                 current: existing.identity.realm.clone(),
             });
+        }
+
+        if !existing.lifecycle.is_retired() {
+            projected_clients::refuse_projected_change(&current.document, &identity)?;
         }
 
         if existing.identity == identity {

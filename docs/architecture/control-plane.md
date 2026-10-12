@@ -139,9 +139,10 @@ GET    /api/clients/{clientId}           one client's overview and lifecycle
 POST   /api/clients/{clientId}/tombstone              record retirement; state retained, still published (If-Match required)
 POST   /api/clients/{clientId}/deletion-confirmation  confirm deletion; intent only    (If-Match required)
 GET    /api/clients/{clientId}/identity  its identity, and reconciliation state
-PUT    /api/clients/{clientId}/identity  replace its identity   (If-Match required)
+PUT    /api/clients/{clientId}/identity  replace its identity   (If-Match required; a projected client is refused unless retired)
+POST   /api/clients/{clientId}/identity/reassertion   overwrite held hand edits in the provider, as you; audited (If-Match required)
 GET    /api/clients/{clientId}/product   its product configuration, and what it resolves to
-PUT    /api/clients/{clientId}/product   replace it             (If-Match required)
+PUT    /api/clients/{clientId}/product   replace it             (If-Match required; refused over a stored projection divergence)
 GET    /api/clients/{clientId}/placements              every logical data source, and what is true of each
 POST   /api/clients/{clientId}/placements/{logical}    place it                       (If-Match required)
 GET    /api/clients/{clientId}/secrets   list its secret paths
@@ -1533,7 +1534,7 @@ role the document does not mention is left alone: a role that exists is a role
 something may already be granted, and removing a line from a YAML file is not
 enough evidence to revoke it.
 
-**Four statuses**, and the fourth is the one worth having:
+**Five statuses**, and the last two are the ones worth having:
 
 | Status | Means |
 |---|---|
@@ -1541,10 +1542,25 @@ enough evidence to revoke it.
 | `Applied` | The provider matches the desired state |
 | `Failed` | The last pass could not converge it |
 | `Drifted` | The provider had stopped matching a desired state already converged |
+| `HandEdited` | The provider holds a hand edit the product does not support, reported and left in place (D01-19b) |
 
 Without `Drifted`, an out-of-band change that reconciliation quietly corrects
 looks exactly like an ordinary pass, and nobody learns that something outside
 SaaS Fabric is editing the realms the platform owns.
+
+`HandEdited` is for the out-of-band change reconciliation deliberately does
+**not** correct. A client disabled, its authorization-code flow switched off,
+or a declared callback removed in Keycloak's own console only narrows the
+client, and overwriting it on every pass would be the silent fight D01-19b
+refuses. The identity response's `reconciliation.handEdits` names each one.
+An operator undoes it in Keycloak, or re-asserts the projection with `POST
+/api/clients/{clientId}/identity/reassertion`, which runs with their own
+authority and is audited. On the fields the adapter manages, an edit that
+widens a client is never held: an undeclared callback or client mapper, a
+confidential switch, or a PKCE or audience change is corrected as before.
+Fields it neither reads nor writes, such as web origins or a client scope's
+mappers, are not evaluated at all. See
+[ADR 0021's 2026-10-12 amendment](../decisions/0021-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md#amendment-2026-10-12-a-projected-identity-client-is-the-products-d01-19b).
 
 A report is only meaningful for the revision it was made against. If an operator
 has written a newer one, the honest answer is `pending` — even though a report

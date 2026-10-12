@@ -9,6 +9,7 @@ use axum::Router;
 use crate::handlers;
 use crate::state::ControlPlaneState;
 
+mod identity;
 mod integrations;
 mod lifecycle;
 mod platform;
@@ -59,7 +60,7 @@ pub const API_PREFIX: &str = "/api";
 /// GET        /api/clients/{clientId}                one client's overview and lifecycle
 /// POST       /api/clients/{clientId}/{tombstone,deletion-confirmation}  see routes::lifecycle
 /// GET/PUT    /api/clients/{clientId}/product        its product config / replace it   (If-Match)
-/// GET/PUT    /api/clients/{clientId}/identity       its identity and reconciliation state / replace it
+/// GET/PUT    /api/clients/{clientId}/identity…      its identity / replace it / re-assert it: see routes::identity
 /// GET        /api/clients/{clientId}/placements               every logical data source, and what is true of each
 /// POST       /api/clients/{clientId}/placements/{logical}     place it                              (If-Match)
 /// GET        /api/clients/{clientId}/secrets                    list its secret paths
@@ -89,10 +90,6 @@ pub(crate) fn control_plane_routes(state: ControlPlaneState) -> Router {
             get(handlers::get_product).put(handlers::put_product),
         )
         .route("/clients/{client_id}", get(handlers::get_client))
-        .route(
-            "/clients/{client_id}/identity",
-            get(handlers::get_identity).put(handlers::put_identity),
-        )
         .route("/clients/{client_id}/placements", get(handlers::list_placements))
         .route(
             "/clients/{client_id}/placements/{logical}",
@@ -129,7 +126,8 @@ pub(crate) fn control_plane_routes(state: ControlPlaneState) -> Router {
                 .merge(integrations::client_configuration())
                 .merge(integrations::platform_management())
                 .merge(registries::routes())
-                .merge(lifecycle::routes()),
+                .merge(lifecycle::routes())
+                .merge(identity::routes()),
         )
         .with_state(state)
 }

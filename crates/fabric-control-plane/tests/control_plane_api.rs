@@ -584,11 +584,11 @@ async fn a_native_client_is_declared_reconciled_and_read_back_with_its_pkce_and_
     // through a whole operator workflow, and splitting it into helpers named
     // "step one" and "step two" would hide the sequence rather than clarify it.
     //
-    // What this test does *not* guard: `matches()` deciding "converged" for
+    // What this test does *not* guard: `classify::compare` deciding "converged" for
     // the right reasons. `FakeIdentityProvider::write_client` echoes back
     // exactly what was declared — challenge method, audience mapper, enabled,
     // standard flow, and the post-logout term are all written unconditionally
-    // — so every comparison below would still pass even if `matches()` never
+    // — so every comparison below would still pass even if the comparison never
     // looked at one of those fields at all. The actual drift guards are
     // `crates/fabric-reconciliation/src/plan/diff_tests.rs`: C5/C6
     // (`a_client_without_a_recognised_challenge_method_is_corrected`), C6a

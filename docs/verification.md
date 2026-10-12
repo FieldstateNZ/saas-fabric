@@ -1353,9 +1353,9 @@ added six, and the final round added a ninth:
 | `unmodellable_redirect_uris == 0` | `1e6fb24` | **Mutation-proved** — the D13, diff row above |
 | `challenge_method == Some(declared.pkce)` | `1e6fb24` | Single-field drift test — `a_client_without_a_recognised_challenge_method_is_corrected`, plus `a_v1_client_is_still_reconciled_with_the_s256_challenge_method` (E15) |
 | `audience_mapper.as_deref() == Some(configured_audience)` | `1e6fb24` | Single-field drift tests — `a_client_whose_audience_mapper_was_removed_is_corrected` and `a_client_whose_audience_mapper_names_another_audience_is_corrected` |
-| `enabled` | `d1a395b` | Single-field drift test — `a_client_disabled_by_hand_is_corrected` |
-| `standard_flow_enabled` | `d1a395b` | Single-field drift test — `a_client_whose_standard_flow_was_switched_off_is_corrected` |
-| `post_logout_redirect_uris_is_every_registered_uri` | `d1a395b` | Single-field drift test — `a_client_whose_post_logout_set_was_narrowed_is_corrected` |
+| `enabled` | `d1a395b` | Single-field drift test — `a_client_disabled_by_hand_is_corrected`; since D01-19b a held hand edit, `a_client_disabled_by_hand_is_held_not_overwritten` |
+| `standard_flow_enabled` | `d1a395b` | Single-field drift test — `a_client_whose_standard_flow_was_switched_off_is_corrected`; since D01-19b a held hand edit, `a_client_whose_standard_flow_was_switched_off_is_held_not_overwritten` |
+| `post_logout_redirect_uris_is_every_registered_uri` | `d1a395b` | Single-field drift test — `a_client_whose_post_logout_set_was_narrowed_is_corrected`, renamed `a_client_whose_post_logout_set_was_changed_is_corrected` (still product-owned under D01-19b) |
 | `other_protocol_mappers == 0` | `1d2fc2c` | Single-field drift test — `a_client_carrying_a_mapper_nobody_declared_is_corrected` (A13b) |
 
 (all tests in `crates/fabric-reconciliation/src/plan/diff_tests.rs`, plus the

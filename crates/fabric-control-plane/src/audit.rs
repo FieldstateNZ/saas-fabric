@@ -48,7 +48,7 @@ mod registry;
 mod secret;
 mod selection;
 
-pub(crate) use identity::identity_updated;
+pub(crate) use identity::{identity_projection_reasserted, identity_updated};
 pub(crate) use lifecycle::{client_deletion_confirmed, client_tombstoned};
 pub(crate) use product::{catalogue_changed, client_created, product_updated};
 pub(crate) use publication::publication_triggered;

@@ -12,7 +12,7 @@ const IDENTITY: Identity = {
   clients: [],
   apiVersion: 'fabric.fieldstate.nz/v2',
   revision: 'rev-1',
-  reconciliation: { status: 'pending', observedAtUnix: null, detail: null },
+  reconciliation: { status: 'pending', observedAtUnix: null, detail: null, handEdits: [] },
 }
 
 /** Installs a fetch that answers once with the given status and body. */

@@ -97,11 +97,15 @@ impl ControlPlaneError {
             // related but distinct reason: not "read again and redo it" but
             // "this name is already taken", which is why each carries its
             // own code below rather than `revision_conflict`.
+            // `ProjectedClientProductOwned` is a conflict with the owner of
+            // the entry: the product, not this operator, writes it.
             Self::RevisionConflict
             | Self::CatalogueRevisionConflict
             | Self::IntegrationMoved
             | Self::ClientExists { .. }
-            | Self::RealmUnavailable { .. } => StatusCode::CONFLICT,
+            | Self::RealmUnavailable { .. }
+            | Self::ProjectedClientProductOwned { .. }
+            | Self::ProjectedClientDiverged { .. } => StatusCode::CONFLICT,
 
             // 422, not 413: 413 describes a request body that is itself too
             // large, but the request here can be a small edit — removing one

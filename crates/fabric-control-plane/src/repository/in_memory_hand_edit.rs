@@ -1,5 +1,5 @@
-//! Storing text the model never validated, the way a hand edit to the
-//! desired-state repository does.
+//! What a hand edit to the desired-state repository can do that the port
+//! cannot: store text the model never validated, or remove a document.
 
 use fabric_client_model::{ClientId, ClientRevision};
 
@@ -38,5 +38,16 @@ impl InMemoryClientRepository {
         );
 
         Ok(revision)
+    }
+
+    /// Removes `client`'s document outright, the way a commit deleting
+    /// `clients/<id>/client.yaml` does: a revert of the commit that created
+    /// it, say. [`ClientRepository`](crate::ClientRepository) has no removal
+    /// on purpose, so this is how a test puts a repository in that state.
+    ///
+    /// Returns whether a document was there to remove.
+    #[must_use]
+    pub fn remove_by_hand(&self, client: &ClientId) -> bool {
+        lock(&self.clients).remove(client).is_some()
     }
 }

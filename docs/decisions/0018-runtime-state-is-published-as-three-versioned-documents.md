@@ -1277,7 +1277,15 @@ ADR 0023's list and `docs/roadmap/m0-contract-decisions.md`.
     (`reader_compatibility.rs`). Still open: §9's dual-key path is not built,
     no check fails CI when a document shape changes without raising the
     floor, and there are no per-row matrix tests;
-  - G7: readers do not report the revisions they serve;
+  - G7: since the G7 disposition on #108, the runtime's served generation
+    (number, record SHA-256, origin), which comes from the snapshot
+    resolution reads, can be served on an off-by-default, separate
+    listener. Every publication report stamps the record it leaves held.
+    The control plane can sample every replica set's pods through the
+    read-only observer and judge them applied, pending, unobserved or no
+    readers. Still open: live use of the listener is not approved (port,
+    selectors, read grants and NetworkPolicies are owed for review), and
+    nothing is verified live;
   - G8: a catalogue entry that no tenant binds is refused, the controller
     keeps the last published catalogue while one exists, and a runtime takes
     its catalogue from the same read and record as the generation it primes.

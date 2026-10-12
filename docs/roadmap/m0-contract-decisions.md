@@ -622,6 +622,9 @@ ADR 0026.** Owner: **Brett**.
   - **B.** Move it to a durable audit store.
   - **C.** Drop it in favour of Git history.
   - *Recommendation:* **B**, with retention from #127.
+  - *Disposed 2026-10-11:* activity is a bounded view, not the audit trail; a
+    durable audit source is designed with integrity and size tests, and
+    nothing prunes. See [Dispositions recorded](#dispositions-recorded).
 - **D01-19d: accept ADR 0021 and ADR 0026.**
   - Accepting ADR 0026 partly accepts ADR 0023 (`0026-…:18-20`), so it comes
     after D01-2.
@@ -922,6 +925,7 @@ this document's ADR amendments act on. The comment holds the others.
 | D01-19a | Explicit incomplete state until provisioning, identity and publication readiness is met; saved intent is distinguished from a usable client | ADR 0021 amendment 2026-10-11 ("The states") |
 | D01-10, D01-10a | Layered authorization. Scopes and roles only for the isolated synthetic trial; OpenFGA Check on relation-declaring resources from M3 and for every tenant beyond the trial. Designed and tested now; no deployment or standing access | ADR 0027 (Proposed) §1–§4, §6; "Owed" |
 | D01-12 | No data-path administrator bypass; scopes cannot be disabled outside tests; coarse platform-operator controls retained within their current boundary | ADR 0027 §5 |
+| D01-19c | Activity is a bounded view, not the audit trail. A durable audit source with integrity and size tests; authoritative history is never silently pruned. Retention, storage activation and customer-data commitments stay separate | ADR 0028 (Proposed) §1–§5; "Deferred, and not decided here" |
 
 **D01-14 and D01-19a: what stays open.** Built: the state machine, its
 refusals, the API and console state, and `lifecycle.withdrawal`, which reports
@@ -990,7 +994,7 @@ IDs are not reused.
 | D01-18 | Lifecycle | How the runtime is raised from `replicas: 0` (amends ADR 0023 §5) | Fabric reports a gate; a person flips it |
 | D01-19a | Lifecycle | What "client created" means (ADR 0021 owed 2) | **Disposed 2026-10-11:** explicit incomplete state until provisioning, identity and publication are met. Built. See [Dispositions recorded](#dispositions-recorded) |
 | D01-19b | Lifecycle | Who owns a projected identity client (ADR 0021 owed 5) | Owned by the product; hand edits refused |
-| D01-19c | Lifecycle | Activity and the size limit (ADR 0021 owed 6) | Durable audit store |
+| D01-19c | Lifecycle | Activity and the size limit (ADR 0021 owed 6) | **Disposed 2026-10-11:** bounded view; durable audit source. Designed and tested, not activated (ADR 0028). Retention, storage activation and customer-data commitments deferred |
 | D01-19d | Lifecycle | Accept ADR 0021 and ADR 0026 (0026 has six owed decisions; it comes after D01-2) | **Disposed 2026-10-11:** in order 0023, 0021, 0026; owed items stay owed |
 | D01-20 | Rollback | Order updates as well as creation (`RollingSync`, platform #44) | Creation-only for the trial; `RollingSync` before the pilot |
 | D01-21 | Rollback | Rollback floor for Fabric's own component across format changes. #136 records and enforces a floor for the published state (`minimum_publisher_contract`) | Minimum rollable version in the release manifest. **Disposed 2026-10-11:** A. Built: `compatibility.yaml` floor `0.3.0-preview.16`, enforced for in-product rollback; publication contract 3 (2 for #139, 3 for the issuer registry, #140). Break-glass not refused; not verified live |

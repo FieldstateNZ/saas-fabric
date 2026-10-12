@@ -134,7 +134,7 @@ POST   /api/platform/publication         publish the runtime's three documents n
 GET    /api/catalogue                    the product catalogue, and its revision
 POST   /api/catalogue                    apply one command      (If-Match, or If-None-Match: *); a selection is resolved first
 GET    /api/catalogue/runtime            the catalogue the runtime would be given, derived on read
-GET    /api/activity                     recorded operator actions, newest first
+GET    /api/activity                     the newest 200 operator actions, and how many were left out
 GET    /api/clients                      list clients
 POST   /api/clients                      create one             (refused if the id exists)
 GET    /api/clients/{clientId}           one client's overview and lifecycle
@@ -1754,7 +1754,17 @@ rather than reloading to re-read `GET /api/platform`.
 Every control-plane mutation is attributable (§24). `fabric-control-plane`
 emits a structured audit event carrying who requested it, which client, the
 domain operation, and the resulting revision; the log pipeline supplies the
-time.
+time. Each event is also handed to the `AuditRecorder`, which appends it to the
+durable audit trail when the deployment has one
+([ADR 0028](../decisions/0028-the-activity-feed-is-a-bounded-view-and-the-audit-trail-is-a-separate-durable-source.md)):
+append-only, hash-chained per stream (`client.<id>`, `catalogue`,
+`registries`, `publication`), each entry capped at 4 KiB and refused whole
+above it, and never pruned. `[audit_trail]` defaults to `disabled`, so records
+reach the log pipeline only; `local_directory` is a development adapter. A
+successful append logs `control_plane.audit.appended` with the stream,
+sequence and hash; a failure logs `control_plane.audit.append_failed` or, for
+an oversize entry, `control_plane.audit.refused`, and does not fail the
+operation, which has already been written.
 
 | Write | Event |
 |---|---|
@@ -1782,7 +1792,9 @@ numbers live. Only the operator trigger is recorded; the scheduled pass has
 no operator to attribute and is not the human decision this trail exists
 for. That activity is a view kept in desired state
 ([ADR 0021](../decisions/0021-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md) §6),
-not a replacement for these events.
+not a replacement for these events. `GET /api/activity` returns at most the
+newest 200 actions, with `limit` and `omitted`, and the console says the feed
+is not the audit trail; nothing is removed from desired state to bound it.
 
 The registry event carries `operator`, `resource = "registry"`, the `host`
 (empty when the request named none that validated), the `operation` —

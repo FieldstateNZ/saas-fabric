@@ -1362,7 +1362,7 @@ ledger for one client at the revision it converges, acting as its operator.
 | The projection follows the host kind and the declared scheme, refuses a mixed client, an undeclared or misplaced scheme, and still refuses loopback | `crates/fabric-client-model/src/document/application_identity/callbacks.rs`; `host_kind_tests.rs`; `scheme_tests.rs` |
 | Only `http` and `https` parse; a product write records the scheme and clears it with public hosts; a legacy document is unverifiable and otherwise consistent only when its entries match a scheme | `crates/fabric-client-model/src/private_network_scheme.rs`; `application_identity/scheme_tests.rs`; `application_identity/legacy_scheme.rs` |
 | A missing callback is classified as removed, not yet written or unplaceable against the baseline; an unplaceable one holds the whole client under an ordinary pass and is written whole by a re-assertion; a disabled client and a hand removal stay held through a transition | `crates/fabric-reconciliation/src/plan/classify.rs`, `diff.rs`; `plan/baseline_tests.rs` |
-| A write is recorded before and after, once; a refused `Writing` record calls no provider write; a refused `Written` record leaves the write counted and its callbacks unplaceable; no or an unreadable ledger holds a transition, and a re-assertion writes it | `crates/fabric-reconciliation/src/reconciler/recorded.rs`; `reconciler/ledger_tests.rs` |
+| A write is recorded before and after, once; a refused `Writing` record calls no provider write; a refused `Written` record, in a single operation against the test fixture, leaves the write counted and its callbacks unplaceable; no or an unreadable ledger holds a transition, and a re-assertion writes it | `crates/fabric-reconciliation/src/reconciler/recorded.rs`; `reconciler/ledger_tests.rs` |
 | Each pass is handed the ledger scoped to the client, the revision it converges and its operator; a deployment is built with none | `crates/fabric-control-plane/src/declaration_ledger.rs`; `src/reconcile/pass.rs`; `fabric-control-plane-api/src/startup/application.rs` |
 | Through the router: each scheme is projected as declared and reported on the client; a missing, misplaced or unknown scheme is refused before anything is written; a public client is unchanged; Git divergences, a host move in Git and mixed hosts in Git are reported, withheld, leave identity unmet and refuse a product save or re-assertion; a legacy document is held and migrated by a save declaring a scheme, but not over edited entries | `crates/fabric-control-plane/tests/internal_host_projection.rs` |
 | Through the router, with the test-only in-memory ledger: converged public-to-public saves and moves in both cross-kind directions, and a scheme change, write `analytics` exactly once, remove the old callbacks and report no hand edit; each write is recorded before and after, by digest, bound to the revision it converged. Negatives: a hand removal after a move, a hand removal beside a move, and a disabled client stay contained; with no ledger, and after a restart that lost the baseline, a move is held whole with zero provider writes until an audited re-assertion; with no ledger a hand removal is held and never written back. Every case asserts the provider calls | `crates/fabric-control-plane/tests/host_transition.rs` |
@@ -1387,9 +1387,30 @@ ledger for one client at the revision it converges, acting as its operator.
 - **A held client is not corrected.** While a client is held as
   `redirectUrisUnconfirmed`, product-owned drift on it, widening drift
   included, is not corrected, as for a withheld one.
-- **A `Written` record that fails leaves a confirmed write unconfirmed.** Its
-  callbacks are then unplaceable until re-asserted; reported, never
-  re-written over a possible hand removal.
+- **A failed `Written` record is contained only for one operation at a
+  time.** In a single operation against the test fixture, a write whose
+  `Written` record fails stays unconfirmed and its callbacks unplaceable until
+  re-asserted. That does not hold under concurrency: review 5487789024
+  reproduced, with two concurrent reconcilers and an injected ledger, a late
+  `Written` from one operation clearing the other's pending uncertainty, after
+  which a callback an administrator removed by hand was restored with no hand
+  edit reported. The replay applies a `Written` to the client as a whole,
+  not to the reservation it completes. Production is unaffected only because
+  it has no ledger; the protocol is not fixed.
+- **No ledger adapter may be enabled before these prerequisites are built
+  and tested** (review 5487789024 and
+  [PR comment 6120006335](https://github.com/FieldstateNZ/saas-fabric/pull/158#issuecomment-6120006335)):
+  - operation pairing, so a `Written` confirms only its own reservation;
+  - baseline check-and-set and fencing;
+  - per-identity coordination of provider writes across the sweep, the
+    direct after-write pass and re-assertion;
+  - rejection of a stale completion;
+  - pending writes preserved across a failed completion and a restart;
+  - protected identity-instance and declaration fingerprint and freshness
+    context.
+
+  These belong to the protected continuity store. Neither O5 nor durable
+  host transitions are complete.
 - **An internal client has no callback on the template hostname.** An
   application reached inside the private network on its template name,
   rather than under a client host, cannot sign that client's users in.

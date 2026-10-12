@@ -36,6 +36,16 @@
 //! missing one is ambiguous and held — never re-written over a possible hand
 //! removal, never reported as one. A provider write is not made at all when
 //! its `Writing` record could not be appended.
+//!
+//! That holds for one operation at a time. A `Written` record confirms the
+//! client as a whole, not the reservation it completes, so a late `Written`
+//! from a concurrent operation clears another's pending write (review
+//! 5487789024). No adapter may be enabled until the continuity store pairs a
+//! `Written` with its own reservation, fences the baseline with
+//! check-and-set, coordinates provider writes per identity across every
+//! pass, rejects stale completions, keeps pending writes across a failed
+//! completion and a restart, and binds a protected identity-instance and
+//! declaration fingerprint (ADR 0021, D01-15).
 
 mod baseline;
 mod digest;

@@ -24,7 +24,9 @@ pub(super) struct Interrupted {
 
     /// The failing action's provider write was confirmed and only its
     /// `Written` record failed: it is counted in `completed`, and nothing is
-    /// left unconfirmed by it.
+    /// left unconfirmed by it in this operation's overwrite report. Whether its
+    /// callbacks stay unplaceable afterwards holds only while no concurrent
+    /// operation completes on the same client (see the `ledger` module).
     pub(super) recorded_late: bool,
 }
 

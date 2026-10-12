@@ -635,7 +635,16 @@ to implement this."
   held, and with no known baseline the move is held whole until an audited
   re-assertion. No deployment has a ledger until the protected continuity
   store of [#108 comment 6119161317](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6119161317)
-  exists, so every move is held today.
+  exists, so every move is held today. Review 5487789024 reproduced a
+  containment bypass with two concurrent reconcilers and an injected ledger:
+  a late `Written` cleared another operation's pending write. Before any
+  ledger adapter is enabled, these are prerequisites: operation pairing so a
+  `Written` confirms only its own reservation; baseline check-and-set and
+  fencing; per-identity coordination of provider writes across sweep, direct
+  and re-assertion passes; stale-completion rejection; pending writes that
+  survive a failed completion and a restart; and protected identity-instance
+  and declaration fingerprint and freshness context. Neither O5 nor durable
+  host transitions are complete.
 - The D01-19b report, withhold and refusal rules apply unchanged.
 
 Source only: no network, CA, gateway, Keycloak-scope, credential or live

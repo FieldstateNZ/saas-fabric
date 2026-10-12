@@ -31,23 +31,24 @@ request_timeout_seconds = 30
 # ---------------------------------------------------------------------------
 #
 # OIDC, against the platform's own realm (ADR 0009, ADR 0010). An operator
-# signs in through the console, which redeems an authorization code for a
-# bearer and sends it on every request; there is no header this file, or a
-# `curl` command standing in for the console, can set instead.
+# signs in at the gateway, which runs the authorization-code flow and forwards
+# the access token as a bearer on every request (ADR 0024); there is no header
+# this file, or a `curl` command standing in for the gateway, can set instead.
 #
 # The only posture. There is no development shortcut beside it, deliberately:
 # the one that existed asserted a name from a proxy header, was safe only
 # because of where the service sat, and could lend the platform nothing to act
 # on Keycloak with.
 #
-# That means this example needs a Keycloak to sign in against. It still loads
-# and starts without one — the desired-state and identity-provider adapters
-# below are development ones — but signing in is not something this file can
-# fake, and pretending otherwise is what the removed posture did.
+# That means this example needs a Keycloak and a gateway in front of it to sign
+# in through. It still loads and starts without either — the desired-state and
+# identity-provider adapters below are development ones — but signing in is not
+# something this file can fake, and pretending otherwise is what the removed
+# posture did.
 [control_plane.operator]
 mode = "oidc"
 
-# What appears in a token, and where the browser is sent.
+# What appears in a token.
 issuer = "http://localhost:8080/realms/master"
 
 # Where *this process* reaches the same realm. Defaults to the issuer and is
@@ -56,12 +57,12 @@ issuer = "http://localhost:8080/realms/master"
 # service address resolved inside.
 #
 #     reachable_at = "http://keycloak-http.identity.svc.cluster.local/realms/master"
+
+# The client every accepted bearer was issued to. Behind the gateway that is
+# the gateway's own client: it runs the sign-in and forwards the token, which
+# names it as `azp`.
 client_id = "saas-fabric-console"
 required_role = "fabric-operator"
-
-# The console's origin root, not a path beneath it: the console is served with
-# no history fallback, so a redirect to /callback would answer 404.
-redirect_uri = "http://localhost:5173/"
 
 
 [control_plane.reconciliation]

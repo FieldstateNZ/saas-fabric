@@ -337,7 +337,6 @@ fn build(
         "operator": {
             "mode": "oidc",
             "issuer": format!("https://auth.example.test/realms/{OPERATOR_REALM}"),
-            "redirect_uri": "https://fabric.example.test/",
         }
     }))
     .expect("the fixture configuration must load");
@@ -365,7 +364,6 @@ fn build(
             audit: AuditRecorder::durable(audit.clone(), Arc::new(FixedClock)),
             keys: fabric_control_plane::KeyHolder::empty(),
             identity_provider,
-            sign_in: None,
             git_integration: None,
 
             // The posture is verified by its own tests. These drive everything

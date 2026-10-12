@@ -9,10 +9,6 @@
 //! [`Operator`](crate::Operator), including the ones that only read. That is
 //! not decoration: the extractor is what performs authentication, so a handler
 //! without the parameter would be a handler anybody could call.
-//!
-//! The two in [`session`] are the deliberate exceptions, and they have to be:
-//! they are how an operator obtains the token the extractor then demands.
-//! Neither can read or change anything.
 
 mod change_catalogue;
 mod confirm_client_deletion;
@@ -36,7 +32,6 @@ mod registries;
 mod secrets;
 mod secrets_path;
 mod select_component;
-mod session;
 mod tombstone_client;
 
 pub(crate) use change_catalogue::change_catalogue;
@@ -68,5 +63,4 @@ pub(crate) use registries::{
     remove_registry, remove_registry_credential, remove_registry_repository, set_registry_credential,
 };
 pub(crate) use secrets::{delete_secret, list_secrets, reveal_secret, secret_metadata, write_secret};
-pub(crate) use session::{redeem_session, session_config};
 pub(crate) use tombstone_client::tombstone_client;

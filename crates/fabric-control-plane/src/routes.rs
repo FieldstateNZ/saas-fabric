@@ -33,7 +33,6 @@ pub const API_PREFIX: &str = "/api";
 /// Every path this crate serves is visible here, in one file.
 ///
 /// ```text
-/// GET/POST   /api/session                          sign-in start / redeem a code   (no operator)
 /// POST       /api/reconciliation                    converge every client, as you
 /// One handler set is mounted twice (routes::integrations); each line below is two real routes:
 /// GET/DELETE /api/integrations/{git,platform}             is it connected? / forget it
@@ -72,19 +71,6 @@ pub const API_PREFIX: &str = "/api";
 /// Not here: anything that names a file, edits a document as text, or reaches an identity provider
 /// (§8, ADR 0008). `PUT` means what the Data API does not: a genuine whole-resource replacement.
 pub(crate) fn control_plane_routes(state: ControlPlaneState) -> Router {
-    // Mounted only when the deployment has a sign-in. OIDC always builds one
-    // (`operator_keys::establish` in the host); `None` is a harness wiring an
-    // authenticator directly — the test support module, the loopback
-    // workbench. A route that only ever refuses is one somebody makes work.
-    let session = if state.sign_in.is_some() {
-        Router::new().route(
-            "/session",
-            get(handlers::session_config).post(handlers::redeem_session),
-        )
-    } else {
-        Router::new()
-    };
-
     let clients = Router::new()
         .route("/reconciliation", post(handlers::converge))
         .merge(platform::routes())
@@ -137,7 +123,6 @@ pub(crate) fn control_plane_routes(state: ControlPlaneState) -> Router {
         .nest(
             API_PREFIX,
             clients
-                .merge(session)
                 .merge(integrations::client_configuration())
                 .merge(integrations::platform_management())
                 .merge(registries::routes())

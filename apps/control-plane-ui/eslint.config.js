@@ -61,7 +61,7 @@ export default tseslint.config(
   },
 
   {
-    files: ['vite.config.ts', 'preview/*.mjs'],
+    files: ['vite.config.ts'],
     languageOptions: { globals: globals.node },
   },
 )

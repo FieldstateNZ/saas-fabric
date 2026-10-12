@@ -30,7 +30,6 @@ mod oidc_client;
 mod protocol_mapper;
 mod realm;
 mod role;
-mod token;
 
 pub(crate) use oidc_client::{
     ClientRepresentation, NewClientRepresentation, PKCE_CHALLENGE_METHOD_ATTRIBUTE,
@@ -41,4 +40,3 @@ pub(crate) use protocol_mapper::{
 };
 pub(crate) use realm::{NewRealmRepresentation, RealmRepresentation, RealmUpdate};
 pub(crate) use role::{NewRoleRepresentation, RoleRepresentation};
-pub(crate) use token::TokenResponse;

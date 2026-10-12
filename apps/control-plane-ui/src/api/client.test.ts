@@ -3,8 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { getIdentity, listClients, putIdentity, request } from './client'
 import { ControlPlaneError } from './errors'
 import type { Identity } from './types'
-import { gatewaySession, resetGatewayStateForTests } from '../session/gateway'
-import { completeSignIn, forgetToken, onSessionEnded } from '../session/session'
+import { resetGatewayStateForTests } from '../session/gateway'
 
 /** An identity the API might return. */
 const IDENTITY: Identity = {
@@ -48,18 +47,6 @@ function watchNavigation(): { to: () => string | null; times: () => number } {
   }
 }
 
-/** Signs a real token into `session.ts`, the way completing a redirect does. */
-async function withACurrentToken(): Promise<void> {
-  sessionStorage.setItem('fabric.signin.state', 'state')
-  sessionStorage.setItem('fabric.signin.verifier', 'verifier')
-  window.history.replaceState({}, '', '/?code=code&state=state')
-  vi.stubGlobal(
-    'fetch',
-    vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({ access_token: 'current-token' }) }),
-  )
-  await completeSignIn()
-}
-
 /** A `401`, as `/api/clients` sends it once a session has ended. */
 function sessionEnded(): void {
   vi.stubGlobal(
@@ -74,7 +61,6 @@ function sessionEnded(): void {
 
 beforeEach(() => {
   sessionStorage.clear()
-  forgetToken()
   resetGatewayStateForTests()
 })
 
@@ -175,53 +161,20 @@ describe('the control-plane API client', () => {
 })
 
 /**
- * How `request()` answers a `401`, with and without a gateway session.
- *
- * It forgets the console's own token so the shell can offer to sign in
- * again -- but behind the gateway (ADR 0024) this console never held a
- * token to forget, and only a document navigation, not a `fetch`, can reach
- * the gateway's sign-in. This is the seam between the two paths. Every
- * scenario holds a real console token first (`withACurrentToken`) so the
- * "was it forgotten" assertion has something to be true or false of -- a
- * console actually behind a gateway would never hold one of its own.
+ * How `request()` answers a `401`: the gateway's cookie session has ended,
+ * and only a document navigation, not a `fetch`, can reach its sign-in.
  */
 describe('a 401 that ends the session', () => {
-  it('forgets the token and tells the listeners, standalone', async () => {
-    await withACurrentToken()
+  it('navigates to the gateway sign-in', async () => {
     const navigation = watchNavigation()
-    const ended = vi.fn()
-    const unsubscribe = onSessionEnded(ended)
-
-    sessionEnded()
-    await expect(request('/api/clients')).rejects.toThrow()
-
-    expect(ended).toHaveBeenCalledTimes(1)
-    expect(navigation.times()).toBe(0)
-    unsubscribe()
-  })
-
-  it('navigates to the gateway sign-in instead, once a gateway session has been observed', async () => {
-    await withACurrentToken()
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 200, json: () => Promise.resolve({}) }))
-    expect(await gatewaySession()).toBe('signed-in')
-
-    const navigation = watchNavigation()
-    const ended = vi.fn()
-    const unsubscribe = onSessionEnded(ended)
 
     sessionEnded()
     await expect(request('/api/clients')).rejects.toThrow()
 
     expect(navigation.to()).toBe('/')
-    expect(ended).not.toHaveBeenCalled()
-    unsubscribe()
   })
 
   it('navigates once even when two panels each receive a 401 at the same moment', async () => {
-    await withACurrentToken()
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 200, json: () => Promise.resolve({}) }))
-    expect(await gatewaySession()).toBe('signed-in')
-
     const navigation = watchNavigation()
     sessionEnded()
 
@@ -231,6 +184,15 @@ describe('a 401 that ends the session', () => {
     ])
 
     expect(navigation.times()).toBe(1)
+  })
+
+  it('carries no credential of its own -- the gateway forwards the bearer', async () => {
+    const fetchMock = answering(200, { clients: [] })
+
+    await listClients()
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(new Headers(init.headers).has('Authorization')).toBe(false)
   })
 })
 
@@ -250,12 +212,15 @@ describe('the redirect count, once a real request answers', () => {
     expect(sessionStorage.getItem('fabric.gateway.redirected')).toBeNull()
   })
 
-  it('is left alone by a 401 -- consuming it there belongs to gatewaySession, not this', async () => {
+  it('is never cleared by a 401 -- the redirect that 401 starts counts on top of it', async () => {
+    // Consuming the count belongs to gatewaySession; a 401 here is one more
+    // redirect that nothing has yet proven worked.
     sessionStorage.setItem('fabric.gateway.redirected', '1')
+    watchNavigation()
     sessionEnded()
 
     await expect(request('/api/clients')).rejects.toThrow()
 
-    expect(sessionStorage.getItem('fabric.gateway.redirected')).toBe('1')
+    expect(sessionStorage.getItem('fabric.gateway.redirected')).toBe('2')
   })
 })

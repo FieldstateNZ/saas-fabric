@@ -321,14 +321,6 @@ pub enum ControlPlaneError {
     #[error("the integration changed while this request was being prepared; look again and ask again")]
     IntegrationMoved,
 
-    /// The identity provider refused to redeem an authorization code.
-    #[error("the sign-in could not be completed; start again")]
-    SignInRefused,
-
-    /// The identity provider could not be reached to redeem a code.
-    #[error("the identity provider is unavailable")]
-    SignInUnavailable,
-
     /// A declared data source breaks one of ADR 0023 part 1's rules.
     ///
     /// A `422` with the rule's own words as the message, not the `503` an

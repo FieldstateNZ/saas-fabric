@@ -84,7 +84,6 @@ fn the_example_states_the_only_posture_completely() {
         issuer,
         client_id,
         required_role,
-        redirect_uri,
         ..
     } = example().control_plane.operator;
 
@@ -92,10 +91,25 @@ fn the_example_states_the_only_posture_completely() {
         ("issuer", &issuer),
         ("client_id", &client_id),
         ("required_role", &required_role),
-        ("redirect_uri", &redirect_uri),
     ] {
         assert!(!value.trim().is_empty(), "the example must state {name}");
     }
+}
+
+#[test]
+fn a_configuration_still_stating_the_retired_redirect_uri_refuses_to_load() {
+    // `redirect_uri` was what `/api/session` handed the console; both retired
+    // with ADR 0024 §2. Refused rather than ignored, so a deployment still
+    // stating it finds out at startup that its sign-in is now the gateway's,
+    // not when an operator cannot sign in.
+    let error = serde_json::from_value::<OperatorConfig>(serde_json::json!({
+        "mode": "oidc",
+        "issuer": "https://auth.example.test/realms/master",
+        "redirect_uri": "https://console.example.test/",
+    }))
+    .expect_err("redirect_uri is no longer part of the operator posture");
+
+    assert!(error.to_string().contains("redirect_uri"), "{error}");
 }
 
 #[test]

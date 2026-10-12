@@ -1,19 +1,18 @@
 /**
- * Whether the browser already carries a session an upstream established.
+ * Whether the gateway has signed this browser in.
  *
- * ADR 0024: behind Envoy Gateway's OIDC `SecurityPolicy`, sign-in is not this
- * console's job. The gateway has already run it and holds the result in
- * HMAC-signed cookies the browser sends on every request, forwarding the
- * access token upstream as a bearer. `useSession` must never start a second
- * sign-in over a session the gateway already holds -- this probe is the only
- * thing that can tell that case apart from the standalone one, where no such
- * upstream sits in front and `session.ts`'s own PKCE flow still applies.
+ * ADR 0024: sign-in is not this console's job. The gateway runs it, holds the
+ * result in HMAC-signed cookies the browser sends on every request, and
+ * forwards the access token upstream as a bearer. The console holds no token,
+ * generates no PKCE pair and calls no sign-in route of its own; it asks this
+ * probe whether a session exists and, when one does not, navigates to the
+ * gateway's sign-in.
  *
  * # Why `/api/operator`
  *
  * It is the one route in this deployment that answers only for a verified
- * operator. Asking it costs nothing *irreversible*: no PKCE pair generated,
- * no navigation risked. It is not free of side effects any more, though -- a
+ * operator. Asking it costs nothing *irreversible*: no navigation is risked.
+ * It is not free of side effects any more, though -- a
  * `200` drops the query string, the way completing a redirect always has, and
  * every call consumes a stale marker this file itself may have left. See
  * `gatewaySession` for both.
@@ -21,16 +20,15 @@
  * # Why a non-401/403 failure throws
  *
  * A `500` or a network failure means the control plane is unreachable, not
- * "there is no gateway here." Treating it as "no gateway" would send an
- * operator whose session is perfectly fine into a PKCE flow that talks to a
- * different provider and will not accept the gateway's cookies. Surfacing
- * the failure is the honest answer; `useSession` turns it into a message.
+ * "nobody is signed in." Treating it as "no session" would send an operator
+ * whose session is perfectly fine back through the gateway's sign-in, which
+ * cannot fix an unreachable control plane. Surfacing the failure is the
+ * honest answer; `useSession` turns it into a message.
  *
  * # A duplicated tab
  *
  * `sessionStorage` is per tab but a duplicated tab inherits a copy of it --
- * the same way a duplicated tab already inherits `silent.ts`'s own marker.
- * Two tabs can each hold the redirect count below and each report
+ * the same way it inherits any other `sessionStorage` entry. Two tabs can each hold the redirect count below and each report
  * `'refused'` or `'looping'` independently; that is a correct answer twice,
  * not a bug, because each tab genuinely did redirect and each genuinely got
  * the same answer back.
@@ -42,8 +40,8 @@
  * trust decision is Envoy's `SecurityPolicy` and the control plane's own
  * bearer verification, upstream of every line in this file. This module
  * cannot close that gap; authorisation itself is the platform's boundary,
- * not this probe's. What it *can* do is stop repeating the mistake: a proxy
- * that lies sets `behindGateway`, every *real* request still `401`s because
+ * not this probe's. What it *can* do is stop repeating the mistake: behind a
+ * proxy that lies, every *real* request still `401`s because
  * there is no bearer behind the lie, `redirectToGatewaySignIn` sends the
  * browser away, and the gateway (still lying) sends it straight back to a
  * probe that says `200` again. That `200` alone proves nothing -- a lying
@@ -61,12 +59,7 @@
  * and whatever ends that session much later starts from zero rather than
  * being held to a coincidence that happened once.
  */
-import { rememberDestination } from './destination'
-import { clearQuery } from './session'
-
-/** Set once a probe has seen a gateway-held session. Never unset: for the
- *  life of a page load, having been behind a gateway once does not change. */
-let behindGateway = false
+import { clearQuery, rememberDestination } from './destination'
 
 /** Set while this tab is navigating to the gateway's sign-in, so a second
  *  401 arriving before the browser actually leaves does not navigate again. */
@@ -89,11 +82,6 @@ const LOOP_THRESHOLD = 2
  *  actually works -- so `clearRedirectCount`, which `client.ts` calls on
  *  every non-`401` response, only touches `sessionStorage` the first time. */
 let redirectCountConfirmed = false
-
-/** Whether any `gatewaySession()` call this page load has answered `200`. */
-export function isBehindGateway(): boolean {
-  return behindGateway
-}
 
 /** What the probe found. */
 export type GatewayProbe = 'signed-in' | 'no-session' | 'refused' | 'looping'
@@ -133,8 +121,6 @@ export async function gatewaySession(): Promise<GatewayProbe> {
   const count = redirectCount()
 
   if (response.ok) {
-    behindGateway = true
-
     if (count >= LOOP_THRESHOLD) {
       // Left exactly as it is: the count must survive a `'looping'` outcome,
       // or the very next probe would read zero and call this recovered.
@@ -201,9 +187,9 @@ async function refusalCode(response: Response): Promise<string | null> {
  * it increments only for an actual redirect -- not for a call the guard
  * turns away -- is the belt `gatewaySession` falls back to when a `401`'s
  * body cannot be read, and the count `'looping'` is judged against. The
- * current hash route is remembered before it, the same way `beginSignIn`
- * remembers it for the standalone flow, so returning here does not lose the
- * operator's place.
+ * current hash route is remembered before it, so returning here does not
+ * lose the operator's place. `/` is a document navigation the gateway
+ * answers with the realm's login when it holds no session.
  */
 export function redirectToGatewaySignIn(): void {
   if (navigating) return
@@ -226,7 +212,6 @@ export function redirectToGatewaySignIn(): void {
  * here reset it -- per test, via `sessionStorage.clear()`.
  */
 export function resetGatewayStateForTests(): void {
-  behindGateway = false
   navigating = false
   redirectCountConfirmed = false
 }

@@ -136,7 +136,6 @@ mod tests {
             reachable_at: String::new(),
             client_id: "console".to_owned(),
             required_role: "fabric-operator".to_owned(),
-            redirect_uri: "https://console.example.test/".to_owned(),
             leeway_seconds: 60,
             jwks_refresh_seconds: 300,
         }
@@ -248,7 +247,6 @@ mod tests {
                 reachable_at: String::new(),
                 client_id: "Fabric-Console".to_owned(),
                 required_role: "fabric-operator".to_owned(),
-                redirect_uri: "https://console.example.test/".to_owned(),
                 leeway_seconds: 60,
                 jwks_refresh_seconds: 300,
             },

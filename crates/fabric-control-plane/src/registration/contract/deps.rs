@@ -35,9 +35,6 @@ pub struct ControlPlaneDeps {
     /// Lends each operator's authority to the identity provider.
     pub identity_provider: Option<Arc<dyn crate::IdentityProviderFactory>>,
 
-    /// How an operator obtains a token.
-    pub sign_in: Option<Arc<crate::SignInSurface>>,
-
     /// The Git connection flow, when this deployment manages its own.
     pub git_integration: Option<Arc<crate::GitIntegrationService>>,
 

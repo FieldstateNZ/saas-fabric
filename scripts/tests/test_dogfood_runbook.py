@@ -24,6 +24,7 @@ import dogfood  # noqa: E402
 README = (PROFILE_DIR / "README.md").read_text(encoding="utf-8")
 
 REQUIRED_SECTIONS = (
+    "Parked (D01-9)",
     "What this profile is not",
     "Prerequisites (resolved here, changed only by the authorized activation)",
     "Restricted SSH forwarding",

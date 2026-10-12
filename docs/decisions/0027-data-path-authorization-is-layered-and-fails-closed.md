@@ -14,7 +14,9 @@
   [ADR 0018](0018-runtime-state-is-published-as-three-versioned-documents.md);
   [M0 contract decisions](../roadmap/m0-contract-decisions.md) D01-10, D01-10a
   and D01-12, disposed in
-  [#108](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6109518415)
+  [#108](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6109518415);
+  the collection and transport follow-ups, disposed in
+  [#108](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6115327492)
 
 ## Context
 
@@ -90,7 +92,58 @@ may <the holder of this credential> <operation> <resource>:<key> ?
 
 The adapter is `fabric-fga-check::FrontCheck`. It does not follow redirects or
 use a proxy from the environment, because either would carry the caller's
-token to an address nobody configured.
+token to an address nobody configured. It reads a decision only from an
+HTTP `200`. A `201` or `202` carrying `{"allowed": true}` is not a completed
+decision and is refused as `internal`, like every other unexpected status.
+
+### 2a. Collections get their own, tenant-bound Check, and are refused until it exists
+
+`list` and `create` name no record. They are asked about the resource's
+**collection**, a distinct object, never about a record:
+
+- The port's question carries a `CheckTarget`: `Record(resource:key)` for
+  `read`, `update` and `delete`, or `Collection(resource)` for `list` and
+  `create`. The two kinds cannot stand in for each other. No record key is
+  invented for a collection, and a record-level allow is never borrowed to
+  permit a collection operation.
+- The collection object is bound to the tenant the same way every Check is.
+  The front selects the store and the model from the verified caller token,
+  so one tenant's `customers` collection is a different object from
+  another's.
+- The model is to define one collection object per resource, with
+  `can_list` and `can_create` relations on it. A `can_list` allow authorizes
+  the collection response that model defines. It does not filter rows.
+  `ListObjects`, row filtering and their pagination are a later refinement.
+- **No model defines the collection object yet.** Until that contract exists
+  and is covered by tests, `DataAuthorization` refuses every collection
+  operation on a checked resource with a 403. The refusal reason is
+  `collection_contract_undefined`, and nothing is asked. This is a denial,
+  not a 5xx, so it does not depend on a Check being configured.
+  `fabric-fga-check` has no wire spelling for a collection either: a
+  collection question reaching it is refused as `internal`, and nothing is
+  sent.
+
+A missing collection definition, a missing Check, a denial, or an unavailable
+or invalid decision never permits a collection operation.
+
+### 2b. The bearer hop is verified TLS
+
+The request to the front carries the caller's bearer token. Rules for that hop:
+
+- **A live endpoint must be `https`.** `FrontEndpoint::parse` refuses `http`,
+  whether or not its host is loopback.
+- **The client never sends the token over anything else.** It is built with
+  `https_only`, and it relaxes no certificate or hostname check. Peers are
+  verified against the host's trust roots (ADR 0005). There is no plaintext
+  fallback.
+- **NetworkPolicy is not a substitute** for transport protection.
+- **Plaintext exists only on the test path.** The only plaintext endpoint is
+  `FrontEndpoint::loopback_plaintext`, which is compiled into
+  `fabric-fga-check`'s own test builds. It refuses any non-loopback address.
+  No production code path can construct it.
+- The front's current plain-HTTP listener is not evidence that the wiring is
+  ready. Certificates, the endpoint and the listener are activation
+  prerequisites for a separately reviewed change.
 
 ### 3. The policy is per tenant, and the trial must be named
 
@@ -116,10 +169,10 @@ change. The trial is the exception, so the trial is what has to be named.
 |---|---|---|
 | Scope missing | 403 | `forbidden` |
 | Check denied | 403 | `forbidden` |
-| Check required, the operation names no record | 403 | `forbidden` |
+| Check required for `list` or `create`, the collection contract is undefined (§2a) | 403 | `forbidden` |
 | Check required, the key cannot name an object | 403 | `forbidden` |
 | Front unreachable, timed out, or `5xx` | 503, `Retry-After` | `authorization_unavailable` |
-| Front answered something that is not a decision (`401`, `4xx`, a redirect, a malformed body) | 500 | `internal` |
+| Front answered something that is not a decision: any status but `200` and `5xx` (including `201` and `202`), or a malformed body | 500 | `internal` |
 | Check required, no front configured | 500 | `internal` |
 
 Every denial answers the same body, so a status cannot say which layer refused.
@@ -159,31 +212,29 @@ to pass every Data API check and is now refused. That is D01-12's intent.
 OpenFGA deployment, no credential and no live role changes are part of this
 decision.
 
-## Not decided here
-
-- **Collection operations on a relation-declaring resource.** `list` and
-  `create` name no record, so there is no object to ask about. For a tenant
-  beyond the trial they are refused (the third 403 row above) until a
-  collection-level question is defined. The options are on #108.
-- **The transport between the runtime and the front.** `FrontEndpoint`
-  accepts `http` and `https`. Whether the hop that carries the caller's token
-  must be TLS is decided when the endpoint is wired. The question is on #108.
-
 ## Owed (not yet built)
 
 Accepting this decision does not make these true.
 
-1. **Where the policy comes from.** Only the composition root can supply
+1. **The collection model contract (§2a).** This means the per-resource
+   collection object type and its `can_list` and `can_create` relations in the
+   model writer, and tests that cover them. Only then may the refusal in
+   `DataAuthorization::decide` and in `FrontCheck` give way to a collection
+   Check.
+2. **Where the policy comes from.** Only the composition root can supply
    `TenantPolicies`, and it supplies none. Before M3, the posture and each
    client's relation-declaring resources must reach the runtime through
    publication (ADR 0018), not hand-written runtime configuration.
-2. **OpenFGA deployed and models converged (D01-10a, M3).** This needs the
+3. **OpenFGA deployed and models converged (D01-10a, M3).** This needs the
    front's control-plane surface (ADR 0016) and a reconciler that writes
    `spec.authorization` as a pinned model.
-3. **The front wired into `fabric-api`.** That means a configured
-   `FrontEndpoint` and the front's issuer registry agreeing with the runtime's
-   (ADR 0019 §G4a). Until then a `401` from the front is reported as `internal`.
-4. **The two-tenant proof (#116)** against the enforcement tenant launch will
+4. **The front wired into `fabric-api`.** That needs three things:
+   - an `https` `FrontEndpoint`;
+   - the front serving verified TLS (§2b);
+   - the front's issuer registry agreeing with the runtime's (ADR 0019 §G4a).
+
+   Until then a `401` from the front is reported as `internal`.
+5. **The two-tenant proof (#116)** against the enforcement tenant launch will
    use.
 
 ## Consequences
@@ -210,16 +261,31 @@ Accepting this decision does not make these true.
   - `a_resource_that_declares_no_relations_uses_scopes_only`
   - `a_missing_scope_is_refused_before_the_check_is_asked`
   - `administrator_and_operator_roles_get_no_data_path_bypass`
-  - `a_collection_operation_on_a_checked_resource_is_refused_until_one_is_defined`
+  - `a_collection_operation_on_a_checked_resource_is_refused_until_its_contract_exists`
   - `a_check_deny_and_a_missing_scope_answer_identically`
-- `crates/fabric-data-api/src/authorization/data_authorization/data_authorization_tests.rs`:
-  layer order and every failure refusing, without HTTP.
-- `crates/fabric-fga-check/tests/front_check_over_loopback.rs`, against a fake
-  front on `127.0.0.1`:
-  - the caller's token and `can_<operation>` go out unchanged;
-  - `{"allowed": false}` is a denial;
+- `crates/fabric-data-api/src/authorization/data_authorization/data_authorization_tests.rs`,
+  without HTTP:
+  - the layer order, and every failure refusing;
+  - `a_record_allow_is_never_borrowed_for_a_collection_operation`;
+  - `a_collection_refusal_does_not_depend_on_a_configured_check`;
+  - `the_trial_and_undeclared_resources_still_list_on_scopes_alone`.
+- `crates/fabric-data-api/src/authorization/check_target.rs`: only `list` and
+  `create` are collection operations, and a collection is never equal to a
+  record.
+- `crates/fabric-fga-check/src/front_check/front_check_tests.rs`, against a
+  fake front on `127.0.0.1` through the test-only plaintext path:
+  - a `200` allow carries the caller's token and `can_<operation>` unchanged;
+  - a `200` `{"allowed": false}` is a denial;
+  - `201` and `202` with an allow body are `Internal`;
   - `503` and an unreachable front are `Unavailable`;
-  - `401`, `400`, `403`, a redirect and malformed bodies are `Internal`.
+  - `401`, `400`, `403`, `307` and malformed bodies are `Internal`;
+  - a collection question is refused without sending anything;
+  - an `https` endpoint pointed at a plaintext listener sends nothing.
+- `crates/fabric-fga-check/src/front_endpoint.rs`:
+  - `http` to a non-loopback host is refused;
+  - `http` to loopback is refused outside the test path;
+  - `https` is accepted and requires TLS;
+  - the test path accepts loopback only.
 - `crates/fabric-api/src/config/loading.rs`:
   - `scope_checks_cannot_be_switched_off_by_configuration`
   - `a_data_path_administrator_role_cannot_be_configured`

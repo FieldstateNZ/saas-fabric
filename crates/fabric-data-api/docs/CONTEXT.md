@@ -55,7 +55,12 @@ in this crate's public contract.
     LogicalResourceName>)`; `TenantPosture { SyntheticTrial, RelationChecked }`.
   - `AuthorizationCheck` (async trait, `Send + Sync`): `check(&CallerCredential,
     &CheckQuestion) -> Result<CheckDecision, CheckFailure>`.
-    `CheckQuestion { operation, object: CheckObject }`;
+    `CheckQuestion { operation, target: CheckTarget }`;
+    `CheckTarget { Record(CheckObject), Collection(CollectionObject) }`,
+    `CheckTarget::is_collection_operation(op)` (`List`, `Create`);
+    `CollectionObject::new(LogicalResourceName)`. Collection operations on a
+    checked resource are refused in `decide` (`collection_contract_undefined`)
+    until the model defines the object (ADR 0027 §2a);
     `CheckDecision { Allowed, Denied }`;
     `CheckFailure { Unavailable, Internal, NotConfigured }`.
   - `CheckObject::try_new(LogicalResourceName, &str)` — the front's id rules
@@ -289,7 +294,7 @@ by `connector_failures`), and a hand-rolled `tracing::Subscriber`
 | `error_contract.rs` | request id correlation, inbound-id bound, unknown-tenant anti-enumeration, connector-text masking, refusal logging |
 | `field_exposure.rs` | `queryable_fields` and the discriminator gate every response body |
 | `authorization_ordering.rs` | a refused caller gets one identical answer whatever the request shape |
-| `layered_authorization.rs` | ADR 0027: trial on scopes alone, Check allow/deny/unavailable/not configured, undeclared resources scope-only, no role bypass, `list`/`create` refused on checked resources |
+| `layered_authorization.rs` | ADR 0027: trial on scopes alone, Check allow/deny/unavailable/not configured, undeclared resources scope-only, no role bypass, `list`/`create` refused on checked resources until the collection contract exists |
 | `write_outcome.rs` | a write may claim success only when the affected count agrees with what was sent |
 | `transport_failures.rs` | each transport variant, read against write: status, code, `Retry-After`, and what the message may claim |
 

@@ -3,7 +3,9 @@
 use std::time::Duration;
 
 use async_trait::async_trait;
-use fabric_data_api::{AuthorizationCheck, CallerCredential, CheckDecision, CheckFailure, CheckQuestion};
+use fabric_data_api::{
+    AuthorizationCheck, CallerCredential, CheckDecision, CheckFailure, CheckQuestion, CheckTarget,
+};
 
 use crate::wire::{CheckAnswer, CheckBody};
 use crate::{computed_relation, FrontEndpoint};
@@ -38,6 +40,10 @@ impl FrontCheck {
             .redirect(reqwest::redirect::Policy::none())
             // Nor through a proxy the process environment happens to name.
             .no_proxy()
+            // ADR 0027 §2b: a live endpoint is HTTPS with the peer verified
+            // against the host's roots, and the client refuses to send the
+            // token over anything else. Certificate checks are never relaxed.
+            .https_only(endpoint.requires_tls())
             .build()
             .map_err(|error| format!("authorization front client: {error}"))?;
 
@@ -52,8 +58,15 @@ impl AuthorizationCheck for FrontCheck {
         credential: &CallerCredential,
         question: &CheckQuestion,
     ) -> Result<CheckDecision, CheckFailure> {
+        // The model has no collection object yet (ADR 0027 §2a), so there is
+        // no wire spelling for one. Refused before anything is sent, and never
+        // rewritten as a record.
+        let CheckTarget::Record(object) = &question.target else {
+            return Err(CheckFailure::Internal);
+        };
+
         let relation = computed_relation(question.operation);
-        let object = question.object.to_string();
+        let object = object.to_string();
 
         let response = self
             .http
@@ -73,11 +86,12 @@ impl AuthorizationCheck for FrontCheck {
             return Err(CheckFailure::Unavailable);
         }
 
-        // Anything else that is not a 200 is the platform disagreeing with
-        // itself: a 401 means the front's issuer registry refused a token the
-        // runtime's ingress accepted, a 400 means this adapter sent a shape the
-        // front does not take. Neither is the caller's lack of access.
-        if !status.is_success() {
+        // A decision is exactly 200. Anything else is the platform disagreeing
+        // with itself, and is never read as access: a 201 or 202 is not a
+        // completed decision, a 401 means the front's issuer registry refused
+        // a token the runtime's ingress accepted, a 400 means this adapter
+        // sent a shape the front does not take.
+        if status != reqwest::StatusCode::OK {
             return Err(CheckFailure::Internal);
         }
 
@@ -93,3 +107,6 @@ impl AuthorizationCheck for FrontCheck {
         })
     }
 }
+
+#[cfg(test)]
+mod front_check_tests;

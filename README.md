@@ -449,7 +449,9 @@ workflow publishes — see [Releases](#releases).
 `data:<resource>:<read|write>` scope; there is no administrator bypass and no
 way to switch scopes off. A tenant beyond the isolated synthetic trial also
 needs the front's Check on every resource that declares relations, and a Check
-that cannot be obtained refuses the request. The port, the per-tenant policy
+that cannot be obtained refuses the request. `list` and `create` get their own
+collection Check, refused until the model defines it. The hop to the front must
+be verified TLS. The port, the per-tenant policy
 and the HTTP adapter (`fabric-fga-check`) are built and tested; nothing is
 wired. No tenant policy is supplied and no front endpoint is configured, so
 every tenant is held to its scopes alone, as before.

@@ -234,8 +234,11 @@ Fail closed:
 - A Check that answers something other than a decision, or that is not
   configured, is a 500 `internal`.
 - Nothing becomes an allow.
-- `list` and `create` name no record, so on a checked resource they are refused
-  until a collection-level question is defined.
+- `list` and `create` name no record. They are asked about the resource's
+  collection (`CheckTarget::Collection`), a distinct tenant-bound object, never
+  about a record. No model defines that object yet, so on a checked resource
+  they are refused with a 403 (`collection_contract_undefined`) and nothing is
+  asked (ADR 0027 §2a).
 
 **What runs today:** `fabric-api` passes `DataAuthorization::default()`. That
 means no policies, and a Check (`NoCheckConfigured`) that would refuse if

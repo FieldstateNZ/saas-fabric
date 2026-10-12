@@ -7,8 +7,8 @@ use fabric_core::LogicalResourceName;
 use crate::authorization::required_scope::scopes_permit;
 use crate::authorization::{DenialReason, Refusal};
 use crate::{
-    AuthorizationCheck, Caller, CheckDecision, CheckObject, CheckQuestion, NoCheckConfigured, OperationKind,
-    TenantPolicies,
+    AuthorizationCheck, Caller, CheckDecision, CheckObject, CheckQuestion, CheckTarget, CollectionObject,
+    NoCheckConfigured, OperationKind, TenantPolicies,
 };
 
 /// Decides whether a caller may perform an operation (ADR 0027).
@@ -34,7 +34,9 @@ impl DataAuthorization {
 
     /// Applies layer 1, then layer 2 where the caller's tenant requires it.
     ///
-    /// `key` is the record the request names, when it names one.
+    /// `key` is the record the request names, when it names one. `list` and
+    /// `create` are collection operations and are asked about the resource's
+    /// collection, never about a record.
     ///
     /// Layer 1 runs first and alone decides a refusal: a caller without the
     /// scope never causes a Check, so an unscoped caller cannot use the
@@ -57,19 +59,45 @@ impl DataAuthorization {
             return Ok(());
         }
 
-        let key = key.ok_or(Refusal::Denied(DenialReason::NoObjectToCheck))?;
-        let object = CheckObject::try_new(resource.clone(), key)
-            .map_err(|_| Refusal::Denied(DenialReason::UnnameableObject))?;
+        let target = Self::target(operation, resource, key)?;
+
+        // ADR 0027 §2a: no model defines the collection object yet, so a
+        // collection operation on a checked resource is refused without asking.
+        // Removing this arm is the change that follows that model contract.
+        if let CheckTarget::Collection(_) = target {
+            return Err(Refusal::Denied(DenialReason::CollectionContractUndefined));
+        }
 
         match self
             .check
-            .check(caller.credential(), &CheckQuestion { operation, object })
+            .check(caller.credential(), &CheckQuestion { operation, target })
             .await
         {
             Ok(CheckDecision::Allowed) => Ok(()),
             Ok(CheckDecision::Denied) => Err(Refusal::Denied(DenialReason::CheckDenied)),
             Err(failure) => Err(Refusal::Undecided(failure)),
         }
+    }
+}
+
+impl DataAuthorization {
+    /// What the Check is asked about.
+    ///
+    /// `list` and `create` are asked about the resource's collection, never a
+    /// record, so a record-level allow can never be borrowed for them. Every
+    /// other operation needs a key that can name a record.
+    fn target(
+        operation: OperationKind,
+        resource: &LogicalResourceName,
+        key: Option<&str>,
+    ) -> Result<CheckTarget, Refusal> {
+        if CheckTarget::is_collection_operation(operation) {
+            return Ok(CheckTarget::Collection(CollectionObject::new(resource.clone())));
+        }
+
+        key.and_then(|key| CheckObject::try_new(resource.clone(), key).ok())
+            .map(CheckTarget::Record)
+            .ok_or(Refusal::Denied(DenialReason::UnnameableObject))
     }
 }
 

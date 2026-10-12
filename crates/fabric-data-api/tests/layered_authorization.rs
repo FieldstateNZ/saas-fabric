@@ -29,8 +29,8 @@ use async_trait::async_trait;
 use axum::Router;
 use fabric_core::{LogicalResourceName, TenantId};
 use fabric_data_api::{
-    AuthorizationCheck, CallerCredential, CheckDecision, CheckFailure, CheckQuestion, DataAuthorization,
-    NoCheckConfigured, OperationKind, TenantAuthorization, TenantPolicies, TenantPosture,
+    AuthorizationCheck, CallerCredential, CheckDecision, CheckFailure, CheckQuestion, CheckTarget,
+    DataAuthorization, NoCheckConfigured, OperationKind, TenantAuthorization, TenantPolicies, TenantPosture,
 };
 use http::{Request, StatusCode};
 use serde_json::{json, Value};
@@ -157,7 +157,10 @@ async fn a_tenant_beyond_the_trial_needs_a_check_allow_about_the_record() {
         "the caller's own token, never a workload credential"
     );
     assert_eq!(question.operation, OperationKind::Read);
-    assert_eq!(question.object.to_string(), "customers:1");
+    let CheckTarget::Record(object) = &question.target else {
+        panic!("a read is asked about a record, got {:?}", question.target);
+    };
+    assert_eq!(object.to_string(), "customers:1");
 }
 
 #[tokio::test]
@@ -258,7 +261,7 @@ async fn administrator_and_operator_roles_get_no_data_path_bypass() {
 }
 
 #[tokio::test]
-async fn a_collection_operation_on_a_checked_resource_is_refused_until_one_is_defined() {
+async fn a_collection_operation_on_a_checked_resource_is_refused_until_its_contract_exists() {
     let check = ScriptedCheck::answering(Ok(CheckDecision::Allowed));
 
     for (method, uri) in [("GET", "/customers"), ("POST", "/customers")] {

@@ -8,7 +8,7 @@ use serde_json::json;
 
 use super::*;
 use crate::authorization::caller::fixtures::caller_with;
-use crate::{CallerCredential, CheckFailure, TenantAuthorization, TenantPosture};
+use crate::{CallerCredential, CheckFailure, CheckTarget, TenantAuthorization, TenantPosture};
 
 /// A Check that answers one scripted way and records every question.
 struct ScriptedCheck {
@@ -82,7 +82,10 @@ async fn the_check_is_asked_about_the_record_with_the_callers_own_token() {
     };
     assert_eq!(token, "the-callers-own-token");
     assert_eq!(question.operation, OperationKind::Update);
-    assert_eq!(question.object.to_string(), "customers:42");
+    let CheckTarget::Record(object) = &question.target else {
+        panic!("an update is asked about a record, got {:?}", question.target);
+    };
+    assert_eq!(object.to_string(), "customers:42");
 }
 
 #[tokio::test]
@@ -114,7 +117,7 @@ async fn every_failure_to_decide_refuses() {
 }
 
 #[tokio::test]
-async fn an_operation_naming_no_record_is_refused_where_a_check_is_required() {
+async fn a_collection_operation_is_refused_until_the_collection_contract_exists() {
     let check = ScriptedCheck::answering(Ok(CheckDecision::Allowed));
 
     for operation in [OperationKind::List, OperationKind::Create] {
@@ -124,7 +127,7 @@ async fn an_operation_naming_no_record_is_refused_where_a_check_is_required() {
 
         assert_eq!(
             outcome,
-            Err(Refusal::Denied(DenialReason::NoObjectToCheck)),
+            Err(Refusal::Denied(DenialReason::CollectionContractUndefined)),
             "{operation}"
         );
     }
@@ -165,4 +168,61 @@ async fn a_policy_without_a_configured_check_fails_closed() {
         .await;
 
     assert_eq!(outcome, Err(Refusal::Undecided(CheckFailure::NotConfigured)));
+}
+
+#[tokio::test]
+async fn a_record_allow_is_never_borrowed_for_a_collection_operation() {
+    // Even with a key in hand and a Check that allows everything, `list` and
+    // `create` are not asked as a record and are not permitted.
+    let check = ScriptedCheck::answering(Ok(CheckDecision::Allowed));
+
+    for operation in [OperationKind::List, OperationKind::Create] {
+        let outcome = authorization(Arc::clone(&check))
+            .decide(&scoped("acme"), operation, &customers(), Some("42"))
+            .await;
+
+        assert_eq!(
+            outcome,
+            Err(Refusal::Denied(DenialReason::CollectionContractUndefined)),
+            "{operation}"
+        );
+    }
+    assert!(check.questions().is_empty());
+}
+
+#[tokio::test]
+async fn a_collection_refusal_does_not_depend_on_a_configured_check() {
+    // A denial, not a 5xx: the refusal is the contract's absence, not the
+    // Check's.
+    let policies = TenantPolicies::default().with(
+        TenantId::try_new("acme").unwrap(),
+        TenantAuthorization::new(TenantPosture::RelationChecked, [customers()]),
+    );
+
+    let outcome = DataAuthorization::new(policies, Arc::new(NoCheckConfigured))
+        .decide(&scoped("acme"), OperationKind::List, &customers(), None)
+        .await;
+
+    assert_eq!(
+        outcome,
+        Err(Refusal::Denied(DenialReason::CollectionContractUndefined))
+    );
+}
+
+#[tokio::test]
+async fn the_trial_and_undeclared_resources_still_list_on_scopes_alone() {
+    let check = ScriptedCheck::answering(Ok(CheckDecision::Denied));
+    let orders = LogicalResourceName::try_new("orders").unwrap();
+    let orders_caller = caller_with(json!({"tenant_id": "acme", "scope": "data:orders:read"}));
+
+    let trial = authorization(Arc::clone(&check))
+        .decide(&scoped("trial"), OperationKind::List, &customers(), None)
+        .await;
+    let undeclared = authorization(Arc::clone(&check))
+        .decide(&orders_caller, OperationKind::List, &orders, None)
+        .await;
+
+    assert_eq!(trial, Ok(()));
+    assert_eq!(undeclared, Ok(()));
+    assert!(check.questions().is_empty());
 }

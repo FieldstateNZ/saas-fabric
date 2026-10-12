@@ -8,7 +8,7 @@ on this record? It answers by asking the Fabric authorization front
 ## How a question becomes a request
 
 ```text
-CheckQuestion { operation: Update, object: customers:42 }   + the caller's bearer
+CheckQuestion { operation: Update, target: Record(customers:42) }   + the caller's bearer
         │
         ▼
 POST {endpoint}/v1/check
@@ -19,6 +19,8 @@ Authorization: Bearer <the caller's own token>
 200 {"allowed": true}   → Allowed
 200 {"allowed": false}  → Denied
 ```
+
+Only a `200` is read as a decision.
 
 - **The relation is computed.** ADR 0013 maps declared relations (`viewer`,
   `editor`, …) onto a computed `can_<operation>` for each operation. This crate
@@ -34,10 +36,13 @@ Authorization: Bearer <the caller's own token>
 |---|---|---|
 | connection refused, reset or timed out (5s) | `Unavailable` | 503, retryable |
 | any `5xx` | `Unavailable` | 503, retryable |
-| `401`, `400`, `403`, a redirect, any other non-`200` | `Internal` | 500 |
+| `201`, `202`, `401`, `400`, `403`, a redirect, any other non-`200` | `Internal` | 500 |
+| a collection question (`list`, `create`) | `Internal`, nothing sent | 500 (the Data API refuses these with a 403 before asking) |
 | `200` with a body that is not `{"allowed": bool}` | `Internal` | 500 |
 
-A `403` is not how the front denies, so it is not read as a denial. A `401`
+A `201` or `202` carrying an allow body is not a completed decision, so it is
+not read as access. A `403` is not how the front denies, so it is not read as a
+denial. A `401`
 means the front's issuer registry refused a token the runtime's ingress
 accepted, which is the platform disagreeing with itself.
 
@@ -48,15 +53,32 @@ because either would carry the caller's token to an address nobody configured.
 
 Not wired. OpenFGA is not deployed and no front endpoint is configured
 (D01-10a), so `fabric-api` does not depend on this crate. Wiring it means
-naming a `FrontEndpoint` in a separately reviewed change. That change also
-decides whether the hop must be TLS: `FrontEndpoint` accepts `http` and
-`https` today.
+naming an `https` `FrontEndpoint` in a separately reviewed change, with the
+front serving verified TLS.
+
+## Transport: verified TLS only (ADR 0027 §2b)
+
+- `FrontEndpoint::parse` accepts `https` only. `http` is refused, even to
+  loopback.
+- The client is built `https_only`, verifies the peer against the host's
+  roots, and never falls back to plaintext.
+- The one plaintext endpoint, `FrontEndpoint::loopback_plaintext`, is compiled
+  into this crate's test builds only and refuses non-loopback addresses.
+
+## Collections (ADR 0027 §2a)
+
+There is no wire spelling for a collection object yet, because no model
+defines one. A `CheckTarget::Collection` question is refused and nothing is
+sent. When the model contract exists, it will be a distinct per-resource
+collection object with `can_list` and `can_create` relations, never a record.
 
 ## Tests
 
-`tests/front_check_over_loopback.rs` runs the adapter against a fake front on
-`127.0.0.1`. It uses a real socket so the test sees what actually goes out.
-No OpenFGA, no credential and no external network are involved.
+`src/front_check/front_check_tests.rs` runs the adapter against a fake front
+on `127.0.0.1`, through the test-only plaintext path. It uses a real socket so
+the test sees what actually goes out. These are unit tests rather than
+integration tests because that path exists only under `cfg(test)`. No OpenFGA,
+certificate, credential or external network is involved.
 
 Log filter: the crate is `fabric-fga-check`, and the target is
 `fabric_fga_check`. It emits no events of its own: the Data API records every

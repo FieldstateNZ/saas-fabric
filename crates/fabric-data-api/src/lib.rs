@@ -65,8 +65,8 @@ mod state;
 
 pub use authorization::{
     required_scope, AuthorizationCheck, Caller, CallerCredential, CheckDecision, CheckFailure, CheckObject,
-    CheckQuestion, DataAuthorization, NoCheckConfigured, OperationKind, TenantAuthorization, TenantPolicies,
-    TenantPosture,
+    CheckQuestion, CheckTarget, CollectionObject, DataAuthorization, NoCheckConfigured, OperationKind,
+    TenantAuthorization, TenantPolicies, TenantPosture,
 };
 pub use catalog::{ResourceCatalog, ResourceDefinition};
 pub use config::DataApiConfig;

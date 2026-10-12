@@ -26,10 +26,10 @@ pub(crate) enum DenialReason {
     /// Layer 2: the Check answered that the relation does not hold.
     CheckDenied,
 
-    /// Layer 2 is required, but the operation names no single record to ask
-    /// about (`list`, `create`). No collection-level question is defined yet,
-    /// so there is nothing that could allow it.
-    NoObjectToCheck,
+    /// Layer 2 is required for a collection operation (`list`, `create`), and
+    /// no model defines the collection object yet (ADR 0027 §2a). Nothing can
+    /// allow it until that contract exists.
+    CollectionContractUndefined,
 
     /// Layer 2 is required, and the key cannot be written as an object.
     UnnameableObject,
@@ -41,7 +41,7 @@ impl DenialReason {
         match self {
             Self::MissingScope => "missing_scope",
             Self::CheckDenied => "check_denied",
-            Self::NoObjectToCheck => "no_object_to_check",
+            Self::CollectionContractUndefined => "collection_contract_undefined",
             Self::UnnameableObject => "unnameable_object",
         }
     }

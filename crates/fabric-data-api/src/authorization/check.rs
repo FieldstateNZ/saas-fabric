@@ -2,9 +2,9 @@
 
 use async_trait::async_trait;
 
-use crate::{CallerCredential, CheckObject, OperationKind};
+use crate::{CallerCredential, CheckTarget, OperationKind};
 
-/// What the Data API asks: may the caller perform `operation` on `object`?
+/// What the Data API asks: may the caller perform `operation` on `target`?
 ///
 /// The operation, not a relation name. ADR 0013 puts the translation from
 /// operations to the authorization model's computed relations in the adapter,
@@ -19,8 +19,8 @@ pub struct CheckQuestion {
     /// The operation attempted.
     pub operation: OperationKind,
 
-    /// The object it is attempted on.
-    pub object: CheckObject,
+    /// The record or collection it is attempted on.
+    pub target: CheckTarget,
 }
 
 /// A decision the authorization service actually made.

@@ -37,6 +37,7 @@
 mod caller;
 mod check;
 mod check_object;
+mod check_target;
 mod data_authorization;
 mod no_check_configured;
 mod refusal;
@@ -54,6 +55,7 @@ pub use fabric_core::OperationKind;
 pub use caller::{Caller, CallerCredential};
 pub use check::{AuthorizationCheck, CheckDecision, CheckFailure, CheckQuestion};
 pub use check_object::CheckObject;
+pub use check_target::{CheckTarget, CollectionObject};
 pub use data_authorization::DataAuthorization;
 pub use no_check_configured::NoCheckConfigured;
 pub(crate) use refusal::{DenialReason, Refusal};

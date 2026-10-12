@@ -321,8 +321,9 @@ undesigned secret delivery; and any redirect strategy but `claimedHttps`.
 
 *Amended 2026-10-12 (D01-15): the strategy and callbacks now follow the kind
 of the client's hosts. A client on `.internal` hosts only is projected as
-`privateNetwork`, with `http://<host>/<application id>/callback` for each host
-and no template callback; a client mixing `.internal` and public hosts is
+`privateNetwork`, with `<scheme>://<host>/<application id>/callback` for each
+host, over the scheme the client declares in `spec.privateNetworkScheme`, and
+no template callback; a client mixing `.internal` and public hosts is
 refused. Every other client is projected exactly as the table above says. See
 the [amendment](#amendment-2026-10-12-a-projected-client-follows-the-kind-of-its-hosts-d01-15).*
 
@@ -548,8 +549,9 @@ assignment for that client. (An application whose template resolves under
 `.internal` is now refused when it is published, §4.) LucentRoot's production
 hosts are `.internal`, so its clients cannot take an application today.
 *Amended 2026-10-12 (D01-15): a client whose hosts are all `.internal` now
-takes an application as a `privateNetwork` client; a loopback host, or a mix
-of `.internal` and public hosts, is still refused. See the
+takes an application as a `privateNetwork` client over the scheme it
+declares; a loopback host, or a mix of `.internal` and public hosts, is still
+refused. See the
 [amendment](#amendment-2026-10-12-a-projected-client-follows-the-kind-of-its-hosts-d01-15).*
 
 **Tightening a validation rule later can make the catalogue unreadable.** Every
@@ -1192,10 +1194,17 @@ Recorded from the D01-15 disposition in
 > reachability. Do not expose an internal client publicly or change
 > networking to implement this.
 
+and from the source disposition for #158 in
+[#108 comment 6119136505](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6119136505):
+declare the internal callback scheme per client, omit the public template,
+refuse mixed hosts, and fix new-declaration versus manual-removal
+classification with trusted provenance of the last applied declaration.
+
 This disposes owed decision 4 and amends §4 and the Consequences paragraph
 on `.internal` clients. It does not accept this ADR. It changes source only:
-no network, DNS, certificate, gateway, Keycloak scope, credential or live
-change, and nothing is applied to a running environment.
+no network, DNS, certificate, private CA, gateway listener, Keycloak scope,
+credential, grant or live change, and nothing is applied to a running
+environment.
 
 ### What an assignment projects
 
@@ -1206,8 +1215,8 @@ entry's `redirect`. `id`, `type` and `pkce` are unchanged.
 |---|---|---|
 | none | `claimedHttps` | the template callback; refused when the release has no template, as before |
 | public only | `claimedHttps` | as §4: the template callback when the release has one, and `https://<host>/<application id>/callback` per host |
-| `.internal` only | `privateNetwork` | `http://<host>/<application id>/callback` per host, and **no** template callback |
-| both `.internal` and public | refused, `400 invalid_request` on `hosts` | — |
+| `.internal` only | `privateNetwork` | `<scheme>://<host>/<application id>/callback` per host, where `<scheme>` is `spec.privateNetworkScheme`, and **no** template callback |
+| both `.internal` and public | refused, `400 invalid_request` on `hosts`, before any write | — |
 | any loopback host | refused, as before: `claimedHttps` admits no loopback callback | — |
 
 A host is `.internal` when it is the ICANN private-use top-level domain or
@@ -1216,26 +1225,92 @@ lives in one place,
 `crates/fabric-client-model/src/identity/redirect_uri/host_kind/private_network.rs`,
 so the projection and the classifier cannot disagree about it.
 
-**Plain HTTP, because that is how the private network is reached.** No
-publicly-trusted certificate can exist for `.internal`, and LucentRoot's
-gateway has one listener, on port 80
-([client desired state](../architecture/client-desired-state.md)). An `https`
-callback there would only work after a networking change, which D01-15 rules
-out. `privateNetwork` already admits plain HTTP on these hosts (ADR 0019 §3),
-and the Keycloak adapter already writes a `privateNetwork` client.
+**The scheme is declared, never inferred.** `spec.privateNetworkScheme` is
+`http` or `https`, nothing else. An `.internal` name says the host is
+private, not whether its network terminates TLS: no public certificate can
+exist for it, but a private certificate authority can issue one, and
+`privateNetwork` admits both (ADR 0019 §3). Keycloak matches a callback's
+scheme exactly, so a guess is a client nobody can sign in to. LucentRoot's
+port-80 gateway is one deployment's answer, not a rule. The scheme is
+required before a client on `.internal` hosts is assigned an application
+(`400`, naming `privateNetworkScheme`), refused on any other client, and
+cleared by a product save that moves the client's hosts off `.internal`.
+
+**A document written before the field existed is held, not reinterpreted.**
+A stored document on `.internal` hosts with an application and no scheme
+cannot be projected, so it reads as `unverifiable`: every projected entry is
+withheld, identity readiness is unmet, and a re-assertion is refused. The way
+out is a product save that declares a scheme. It is admitted only when the
+stored entries are exactly the projection under one of the two schemes, so a
+Git divergence is not overwritten (D01-19b), and it then projects under the
+scheme the operator declared, which need not be that one. A stored document
+whose entries match neither stays refused and is corrected in Git.
 
 **No template callback, because it is a public name.** Publication refuses a
 template under `.internal` (§4), so a release's template is always a public
-hostname. Projecting it onto a private-network client would register a public
-callback for an internal client, which is the public exposure D01-15 rules out,
-and `privateNetwork` would refuse it in any case.
+hostname. Projecting it onto a private-network client would be a hidden
+public entry into that private identity, which D01-15 rules out, and
+`privateNetwork` would refuse it in any case. A product used through its
+public template needs a separately explicit public client configuration; no
+second generated identity id is added here.
 
 **A mixed client is refused, not resolved.** One identity client holds one
 redirect strategy. Projecting either kind would drop callbacks the operator
 declared, or grant a kind they did not state, which is why a `v1` document
 mixing callback kinds is refused too
-([client desired state](../architecture/client-desired-state.md)). The
-operator declares only `.internal` hosts or only public ones.
+([client desired state](../architecture/client-desired-state.md)).
+
+### Moving a converged client between hosts: the declaration ledger
+
+Before this, a missing declared callback was always read as a hand removal
+(D01-19b). A product save that changed a converged client's hosts therefore
+held every new callback as `declaredRedirectUriRemoved` while the old ones,
+now undeclared, were removed: a public-to-public move kept only the
+unchanged template callback, and a move between kinds left none. The
+provider cannot tell a callback removed by hand from one not yet written,
+and neither can the declaration.
+
+Reconciliation now classifies a missing callback against a **declaration
+ledger**: Fabric's own record of what it wrote.
+
+- **Recorded on both sides of every client write.** A pass appends
+  `control_plane.audit.identity_declaration_writing` before asking the
+  provider to create or update a client, and
+  `control_plane.audit.identity_declaration_written` once it confirms. Each
+  names the client, its realm, the identity client, its strategy and the
+  SHA-256 of each declared callback — never a callback itself — and the
+  operator whose authority ran the pass (ADR 0012). A write whose callbacks
+  the ledger already confirms exactly is not recorded again, so a converged
+  pass appends nothing.
+- **Classified.** A missing callback the ledger confirms Fabric wrote is a
+  hand removal: held, as before. One it never recorded is the operator's
+  transition: written, with the old callbacks removed. One recorded only as
+  being written, never confirmed, cannot be placed.
+- **Fail closed.** When a missing callback cannot be placed — no ledger, an
+  unreadable or unverifiable one, a client converged before the ledger
+  existed, or a write that was never confirmed — the client is **not
+  written at all** under an ordinary pass, so none of its old callbacks is
+  removed. It is reported as `handEdited` with the new field
+  `redirectUrisUnconfirmed`, identity readiness stays unmet, and the
+  existing audited re-assertion writes it whole and records the baseline. A
+  `Writing` record that cannot be appended stops that write before the
+  provider is called; a `Written` record that cannot be appended leaves the
+  write counted and its callbacks unconfirmed.
+- **Where it lives.** The ledger is the durable, hash-chained audit trail
+  (ADR 0028), in each client's stream, verified on every read. Not
+  desired-state bytes, which anyone with write access edits; not provider
+  metadata, which a hand edit changes; not a process cache, which a restart
+  empties. Keeping it in the trail rather than a second store keeps one
+  history of a client, the one O5's revert work
+  ([#159](https://github.com/FieldstateNZ/saas-fabric/pull/159)) also reads.
+  It is bound to the realm and each callback's digest rather than to a
+  client revision, because a Git revert to earlier bytes can bring an
+  earlier revision back (#159) and must not bring an earlier baseline back
+  with it.
+- **Containment is unchanged.** A disabled client, a switched-off standard
+  flow and a callback removed by hand are held through a move exactly as
+  before; nothing is restored or revoked by inference, and nothing
+  enrolls ambiguous provider state automatically.
 
 ### What does not change
 
@@ -1243,54 +1318,66 @@ operator declares only `.internal` hosts or only public ones.
   strategy and callbacks are byte-for-byte what §4 built, so every stored
   projection on public hosts stays its own projection. Nothing is migrated
   and no stored document changes.
-- **D01-19b.** The product still owns the projected entry. The
+- **D01-19b.** The product still owns the projected entry, and the
   stored-projection check compares the stored entries with the stored
-  document's own projection, which now follows its stored hosts. So:
+  document's own projection, which now follows its stored hosts and scheme:
   - a Git edit that moves a client's hosts onto `.internal` without
     re-projecting reports `diverged` on `redirectStrategy`;
   - a Git edit to an internal projection's callbacks reports `diverged` on
     `redirectUris`;
-  - a Git edit that mixes host kinds makes the projection `unverifiable`.
+  - a Git edit that mixes host kinds, or removes the scheme, makes the
+    projection `unverifiable`.
 
   In each case a sweep withholds the entry, identity readiness stays unmet,
   and a product save and a re-assertion onto it are refused as for any other
-  divergence. The repair is the same too: an identity edit that restores a
-  diverged projection is admitted, and an unverifiable one is corrected in
-  Git.
+  divergence; the legacy-scheme migration above is the one exception, and
+  only when nothing diverges. The `withheld` and `handEdited` precedence and
+  readiness rules of #147 and #151 are unchanged.
 - **Permission boundaries, the realm, roles, PKCE, the audience mapper and
-  every reconciliation status** are unchanged.
+  every reconciliation status** are unchanged. The ledger records use the
+  audit trail's existing append; no credential, grant or scope is added.
 
 ### Verified against the code (at the base of this amendment)
 
 | Claim | Where |
 |---|---|
 | The `.internal` test, on whole labels | `crates/fabric-client-model/src/identity/redirect_uri/host_kind/private_network.rs` and its tests |
-| The projection follows the host kind, refuses a mixed client and still refuses loopback | `crates/fabric-client-model/src/document/application_identity/callbacks.rs` |
-| A public client is projected exactly as before and stays consistent; no hosts takes only the template; internal hosts project `privateNetwork` over HTTP with no template callback; a Git host move diverges on `redirectStrategy`; https, extra or removed internal callbacks diverge on `redirectUris`; a mixed client is refused and unverifiable; loopback is refused | `crates/fabric-client-model/src/document/application_identity/host_kind_tests.rs` |
-| Through the router: an internal client is created assigned and stores a `privateNetwork` entry with no public callback; a public client's entry is unchanged; an internal client converges with only its private callback, `applied`, identity met; a product save moving hosts between kinds re-projects and stays consistent; a Git edit to an internal projection's callbacks, a public client moved onto internal hosts in Git, and mixed host kinds in Git are each reported, withheld and leave identity unmet; a re-assertion onto a diverged entry and a product save over one are refused; the identity-edit repair restores consistency, and the audited re-assertion then leaves only the private callback in the provider | `crates/fabric-control-plane/tests/internal_host_projection.rs` |
+| The projection follows the host kind and the declared scheme, refuses a mixed client, an undeclared or misplaced scheme, and still refuses loopback | `crates/fabric-client-model/src/document/application_identity/callbacks.rs`; `host_kind_tests.rs`; `scheme_tests.rs` |
+| Only `http` and `https` parse; a product write records the scheme and clears it with public hosts; a legacy document is unverifiable and otherwise consistent only when its entries match a scheme | `crates/fabric-client-model/src/private_network_scheme.rs`; `application_identity/scheme_tests.rs`; `application_identity/legacy_scheme.rs` |
+| A missing callback is classified as removed, not yet written or unplaceable against the baseline; an unplaceable one holds the whole client under an ordinary pass and is written whole by a re-assertion; a disabled client and a hand removal stay held through a transition | `crates/fabric-reconciliation/src/plan/classify.rs`, `diff.rs`; `plan/baseline_tests.rs` |
+| A write is recorded before and after, once; a refused `Writing` record calls no provider write; a refused `Written` record leaves the write counted and its callbacks unplaceable; no or an unreadable ledger holds a transition, and a re-assertion writes it | `crates/fabric-reconciliation/src/reconciler/recorded.rs`; `reconciler/ledger_tests.rs` |
+| The ledger over the audit trail: verified on read, realm-bound, digests only | `crates/fabric-control-plane/src/declaration_ledger.rs`; `src/audit/declaration.rs` |
+| Through the router: each scheme is projected as declared and reported on the client; a missing, misplaced or unknown scheme is refused before anything is written; a public client is unchanged; Git divergences, a host move in Git and mixed hosts in Git are reported, withheld, leave identity unmet and refuse a product save or re-assertion; a legacy document is held and migrated by a save declaring a scheme, but not over edited entries | `crates/fabric-control-plane/tests/internal_host_projection.rs` |
+| Through the router: converged public-to-internal and public-to-public saves write the new callbacks, remove the old ones and report no hand edit; internal-to-public and a scheme change likewise; each write is recorded by digest and the stream verifies; a hand removal after a move is held; a disabled client moves and stays disabled; with no baseline a move is held whole with no provider write, and an audited re-assertion establishes the baseline for the next | `crates/fabric-control-plane/tests/host_transition.rs` |
 | A mixed client's creation is refused with `400 invalid_request` | `crates/fabric-control-plane/tests/product_workflows.rs::an_assignment_is_refused_for_a_client_mixing_internal_and_public_hosts` |
-| The D01-19b suites pass unchanged | `crates/fabric-client-model/src/document/application_identity/projection_tests.rs`; `crates/fabric-control-plane/tests/projected_divergence.rs`, `projected_identity.rs`, `projected_identity_git.rs`, `issuer_registry.rs` |
+| The console asks for the scheme only for `.internal` hosts, never pre-fills it, clears it with a public host, and names `redirectUrisUnconfirmed` | `apps/control-plane-ui/src/product/PrivateNetworkSchemeSelect.tsx` and its test; `components/ReconciliationBadge.tsx` and its test |
+| The D01-19b suites pass unchanged | `crates/fabric-client-model/src/document/application_identity/projection_tests.rs`; `crates/fabric-control-plane/tests/projected_divergence.rs`, `projected_identity.rs`, `projected_identity_git.rs`, `issuer_registry.rs`; `crates/fabric-keycloak/tests/keycloak_hand_edits.rs` |
 
 ### Known limits
 
 - **Not verified live.** No LucentRoot client has been assigned an
-  application, and no `privateNetwork` projected client has been converged
-  into a real Keycloak by this change.
+  application, no `privateNetwork` projected client has been converged into
+  a real Keycloak by this change, and no live HTTP, private CA or gateway
+  listener is approved by it.
+- **The ledger needs a durable trail.** Storage for the audit trail in a live
+  environment is still deferred (ADR 0028). A deployment without one keeps
+  no ledger, so every host move after a client's first convergence is held
+  as `redirectUrisUnconfirmed` until an operator re-asserts.
+- **Clients converged before the ledger have no baseline.** They stay
+  converged and report nothing while nothing is missing. Their first host
+  move, and any hand removal before a write records a baseline, is held
+  whole until re-asserted.
+- **A held client is not corrected.** While a client is held as
+  `redirectUrisUnconfirmed`, product-owned drift on it, widening drift
+  included, is not corrected, as for a withheld one.
+- **A `Written` record that fails leaves a confirmed write unconfirmed.** Its
+  callbacks are then unplaceable until re-asserted; reported, never
+  re-written over a possible hand removal.
+- **Reading is linear in a client's stream.** Each pass reads and verifies
+  the client's whole audit stream. A record holds one digest per callback,
+  so a client with very many callbacks can exceed the trail's per-entry
+  bound, which refuses the write rather than recording less.
 - **An internal client has no callback on the template hostname.** An
-  application reached inside the private network on its template name, rather
-  than under a client host, cannot sign that client's users in.
-- **Plain HTTP only.** A `.internal` deployment that serves TLS from a private
-  certificate authority would need an `https` callback, which the projection
-  does not produce. Keycloak matches the scheme exactly, so sign-in on such a
-  deployment would fail until that is decided.
+  application reached inside the private network on its template name,
+  rather than under a client host, cannot sign that client's users in.
 - **A client cannot mix host kinds** while it has an application assigned.
-- **Moving a converged client between kinds needs a re-assertion.** This is
-  not particular to D01-15: on `main`, a product save that changes a
-  converged client's hosts leaves the next pass holding each new callback as
-  a declared callback removed by hand (`handEdited`,
-  `declaredRedirectUriRemoved`) while the old callbacks, now undeclared, are
-  removed. A move between kinds changes every callback, so the client is
-  left with none, failing closed and visibly, as "A substituted callback
-  leaves a client with none" says under D01-19b's known limits, until an
-  operator re-asserts. A client's first assignment is
-  unaffected, because a new identity client is created whole.

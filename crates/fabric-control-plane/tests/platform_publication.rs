@@ -507,6 +507,10 @@ impl RuntimePublication for GatedTarget {
         self.inner.publish(snapshot).await
     }
 
+    async fn inspect(&self) -> fabric_runtime_publication::PublicationCompleteness {
+        self.inner.inspect().await
+    }
+
     fn describe(&self) -> String {
         self.inner.describe()
     }
@@ -723,4 +727,224 @@ async fn at_zero_replicas_the_documents_gate_still_stands_and_there_are_no_reade
     assert_eq!(readiness["readers"]["state"], "noReaders", "{body}");
     assert_eq!(readiness["readers"]["desiredReplicas"], 0);
     assert_eq!(readiness["updateComplete"], false, "{body}");
+}
+
+/// A real [`FilesystemRuntimePublication`] that counts every call through
+/// the port, so a test can show `GET /api/platform` reads nothing from the
+/// target.
+struct CountingTarget {
+    inner: FilesystemRuntimePublication,
+    calls: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl CountingTarget {
+    fn count(&self) {
+        self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+#[async_trait::async_trait]
+impl RuntimePublication for CountingTarget {
+    async fn current(&self) -> Result<PublishedRevisions, PublicationError> {
+        self.count();
+        self.inner.current().await
+    }
+
+    async fn published_resources(&self) -> Result<PublishedResources, PublicationError> {
+        self.count();
+        self.inner.published_resources().await
+    }
+
+    async fn publish(&self, snapshot: &RuntimeSnapshot) -> Result<PublicationReport, PublicationError> {
+        self.count();
+        self.inner.publish(snapshot).await
+    }
+
+    async fn inspect(&self) -> fabric_runtime_publication::PublicationCompleteness {
+        self.count();
+        self.inner.inspect().await
+    }
+
+    fn describe(&self) -> String {
+        self.inner.describe()
+    }
+}
+
+/// A plane publishing to `dir` through a [`CountingTarget`], with the
+/// fixture's data source, placement and release, and the target's call
+/// count.
+async fn counted_plane(
+    dir: &TempDir,
+) -> (
+    support::TestControlPlane,
+    Arc<support::platform_fixture::FakeRepository>,
+    Arc<std::sync::atomic::AtomicUsize>,
+) {
+    let (platform, fake) = platform_binding().await;
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let target = CountingTarget {
+        inner: FilesystemRuntimePublication::new(
+            dir.path().join("tenants.json"),
+            dir.path().join("data-sources.json"),
+            dir.path().join("catalog.json"),
+        ),
+        calls: Arc::clone(&calls),
+    };
+    let plane = control_plane_with_publication(
+        platform,
+        PublicationSink {
+            target: Arc::new(target),
+            issuer_origin: None,
+            readers: None,
+        },
+    );
+    fake.seed(
+        DesiredRevision::new("data-sources-1"),
+        vec![declared_data_source()],
+    );
+    fake.seed_placements(
+        DesiredRevision::new("placements-1"),
+        vec![placement("primary", 1)],
+    );
+    publish_one_application_with_a_resource(&plane.router).await;
+    (plane, fake, calls)
+}
+
+/// The fixture's data source, changed and advanced, so a pass writes the
+/// data-sources document before anything else.
+fn relabelled_data_source() -> DataSourceDeclaration {
+    DataSourceDeclaration {
+        revision: BindingRevision::new(4),
+        labels: BTreeMap::from([("tier".to_owned(), "gold".to_owned())]),
+        ..declared_data_source()
+    }
+}
+
+/// Blocks one staging path with a directory, so every write through it
+/// fails `Unwritable`, on every immediate re-offer too.
+fn block(dir: &TempDir, staging: &str) {
+    std::fs::create_dir(dir.path().join(staging)).unwrap();
+}
+
+fn unblock(dir: &TempDir, staging: &str) {
+    std::fs::remove_dir(dir.path().join(staging)).unwrap();
+}
+
+#[tokio::test]
+async fn a_pass_that_leaves_the_target_part_written_shows_it_incomplete_and_holds_the_documents_gate() {
+    let dir = TempDir::new("publication-incomplete");
+    let (plane, fake, calls) = counted_plane(&dir).await;
+
+    let (_, first) = post_publication(&plane.router).await;
+    assert_eq!(first["completeness"]["state"], "complete", "{first}");
+    assert_eq!(first["completeness"]["record"]["generation"], 1, "{first}");
+    assert_eq!(first["completeness"]["reason"], Value::Null, "{first}");
+    assert_eq!(first["readiness"]["documents"]["met"], true, "{first}");
+
+    fake.seed(
+        DesiredRevision::new("data-sources-2"),
+        vec![relabelled_data_source()],
+    );
+    block(&dir, ".publication.json.tmp");
+    let (status, posted) = post_publication(&plane.router).await;
+    assert_eq!(status, StatusCode::OK, "{posted}");
+
+    let before_get = calls.load(std::sync::atomic::Ordering::SeqCst);
+    let got = get_platform(&plane.router).await["publication"].clone();
+    assert_eq!(
+        calls.load(std::sync::atomic::Ordering::SeqCst),
+        before_get,
+        "GET renders the last inspection and reads nothing from the target"
+    );
+    for body in [&posted, &got] {
+        assert_eq!(body["lastPass"]["outcome"], "failed", "{body}");
+        let completeness = &body["completeness"];
+        assert_eq!(completeness["state"], "incomplete", "{body}");
+        assert_eq!(completeness["record"]["generation"], 1, "{body}");
+        assert_eq!(completeness["observedAtUnixSeconds"], FIXED_CLOCK_UNIX_SECONDS);
+        assert_eq!(
+            completeness["reason"],
+            "the target does not hold generation 1 whole: data-sources manifest is at another \
+             revision than the record names; data-sources payload does not match the record's digest",
+            "{body}"
+        );
+        assert_eq!(body["readiness"]["documents"]["met"], false, "{body}");
+        assert_eq!(
+            body["readiness"]["documents"]["reasons"][0], completeness["reason"],
+            "{body}"
+        );
+        assert_eq!(body["readiness"]["updateComplete"], false, "{body}");
+        let text = body.to_string();
+        assert!(
+            !text.contains("gold") && !text.contains(".publication.json.tmp"),
+            "{body}"
+        );
+    }
+
+    unblock(&dir, ".publication.json.tmp");
+    let (_, completed) = post_publication(&plane.router).await;
+    // The data sources were already written by the interrupted pass, and the
+    // pass outcome counts documents, not the record, so this pass reads
+    // `unchanged`: only the completeness row shows generation 2 completing.
+    assert_eq!(completed["lastPass"]["outcome"], "unchanged", "{completed}");
+    assert_eq!(completed["completeness"]["state"], "complete", "{completed}");
+    assert_eq!(
+        completed["completeness"]["record"]["generation"], 2,
+        "{completed}"
+    );
+    assert_eq!(completed["readiness"]["documents"]["met"], true, "{completed}");
+}
+
+#[tokio::test]
+async fn a_pass_refused_before_it_wrote_anything_leaves_a_complete_target_complete() {
+    let dir = TempDir::new("publication-zero-write");
+    let (plane, fake, _calls) = counted_plane(&dir).await;
+    post_publication(&plane.router).await;
+
+    fake.seed(
+        DesiredRevision::new("data-sources-2"),
+        vec![relabelled_data_source()],
+    );
+    block(&dir, ".data-sources.json.tmp");
+    let (_, body) = post_publication(&plane.router).await;
+
+    assert_eq!(body["lastPass"]["outcome"], "failed", "{body}");
+    assert_eq!(body["completeness"]["state"], "complete", "{body}");
+    assert_eq!(body["completeness"]["record"]["generation"], 1, "{body}");
+    assert_eq!(body["readiness"]["documents"]["met"], true, "{body}");
+}
+
+#[tokio::test]
+async fn a_restarted_control_plane_shows_completeness_unobserved_until_a_pass_inspects_the_target() {
+    let dir = TempDir::new("publication-restart");
+    {
+        let (plane, fake, _calls) = counted_plane(&dir).await;
+        post_publication(&plane.router).await;
+        fake.seed(
+            DesiredRevision::new("data-sources-2"),
+            vec![relabelled_data_source()],
+        );
+        block(&dir, ".publication.json.tmp");
+        let (_, body) = post_publication(&plane.router).await;
+        assert_eq!(body["completeness"]["state"], "incomplete", "{body}");
+    }
+
+    let (plane, fake, calls) = counted_plane(&dir).await;
+    let body = get_platform(&plane.router).await["publication"].clone();
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+    assert_eq!(body["completeness"]["state"], "unobserved", "{body}");
+    assert_eq!(body["completeness"]["observedAtUnixSeconds"], Value::Null);
+    assert_eq!(
+        body["completeness"]["reason"],
+        "no publication pass has inspected the target since the control plane started"
+    );
+    assert_eq!(body["readiness"]["documents"]["met"], false, "{body}");
+
+    fake.seed(
+        DesiredRevision::new("data-sources-2"),
+        vec![relabelled_data_source()],
+    );
+    let (_, body) = post_publication(&plane.router).await;
+    assert_eq!(body["completeness"]["state"], "incomplete", "{body}");
+    assert_eq!(body["readiness"]["documents"]["met"], false, "{body}");
 }

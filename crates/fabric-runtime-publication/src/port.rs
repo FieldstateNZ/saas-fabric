@@ -3,7 +3,10 @@
 
 use async_trait::async_trait;
 
-use crate::{PublicationError, PublicationReport, PublishedResources, PublishedRevisions, RuntimeSnapshot};
+use crate::{
+    PublicationCompleteness, PublicationError, PublicationReport, PublishedResources, PublishedRevisions,
+    RuntimeSnapshot,
+};
 
 /// Publishes the runtime's three documents, and reports what is currently
 /// held.
@@ -76,6 +79,16 @@ pub trait RuntimePublication: Send + Sync {
     /// Returns [`PublicationError`] naming exactly which rule the snapshot
     /// violated.
     async fn publish(&self, snapshot: &RuntimeSnapshot) -> Result<PublicationReport, PublicationError>;
+
+    /// Whether the target holds one whole recorded generation (G3): the
+    /// held record, read before and again after every payload, manifest and
+    /// the issuer registry it names, each checked against the record's
+    /// revision and digest. Writes nothing and takes no publication lock.
+    ///
+    /// Never an error: a target that cannot be read, or whose record moved
+    /// while it was read, is [`PublicationCompleteness::Unobserved`]. The
+    /// answer carries no payload and no read error's detail.
+    async fn inspect(&self) -> PublicationCompleteness;
 
     /// A short description for logging, such as the paths documents are
     /// published under.

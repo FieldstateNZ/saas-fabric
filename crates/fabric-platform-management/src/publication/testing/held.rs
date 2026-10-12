@@ -53,6 +53,7 @@ pub(super) struct State {
     /// offer a snapshot at most once per document plus the original offer,
     /// never more.
     pub(super) publish_attempts: usize,
+    pub(super) inspection: super::inspection::Inspection,
 }
 
 impl State {

@@ -14,8 +14,9 @@ use fabric_core::{
 use fabric_runtime_publication::{
     CatalogDocument, CollectionName, ConnectionName, ConnectionSelectorDocument, ConnectorId,
     DataResidencyDocument, DataSourceCapabilitiesDocument, FieldName, IsolationModelDocument,
-    PlacementClassDocument, PoolSettingsDocument, PublicationError, PublicationReport, PublishedResources,
-    PublishedRevisions, ResourceDefinitionDocument, RuntimePublication, RuntimeSnapshot,
+    PlacementClassDocument, PoolSettingsDocument, PublicationCompleteness, PublicationError,
+    PublicationReport, PublishedResources, PublishedRevisions, ResourceDefinitionDocument,
+    RuntimePublication, RuntimeSnapshot,
 };
 use tokio::sync::Notify;
 
@@ -486,6 +487,10 @@ impl RuntimePublication for PanickingPublication {
         unreachable!("current() always panics first")
     }
 
+    async fn inspect(&self) -> PublicationCompleteness {
+        unreachable!("current() always panics first")
+    }
+
     fn describe(&self) -> String {
         "panicking".to_owned()
     }
@@ -754,4 +759,188 @@ async fn without_a_registry_source_the_identity_gate_says_no_registry_is_publish
         "{:?}",
         report.identity
     );
+}
+
+fn ready_publisher(target: &Arc<FakePublication>) -> RuntimePublisher {
+    publisher(
+        Arc::new(FakePlatform::ready(
+            vec![declaration("shared-a")],
+            vec![placement("acme", "shared-a")],
+        )),
+        Arc::new(FakeCatalogue(Ok(catalog_with_one_resource()))),
+        Arc::clone(target) as Arc<dyn RuntimePublication>,
+    )
+}
+
+fn outcome(result: PassResult) -> PassOutcome {
+    match result {
+        PassResult::Ran { outcome, .. } => outcome,
+        PassResult::AlreadyRunning => panic!("the pass did not run"),
+    }
+}
+
+fn completeness(state: &PublicationState) -> Option<PublicationCompleteness> {
+    state.completeness().map(|observed| observed.completeness)
+}
+
+fn documents_reasons(state: &PublicationState) -> Vec<String> {
+    match state.readiness().documents {
+        crate::GateStatus::Met => Vec::new(),
+        crate::GateStatus::Unmet { reasons } => reasons,
+    }
+}
+
+/// Publishes once, then sets up a pass that writes the data sources at a
+/// new revision and is interrupted on the catalogue on every offer, so it
+/// leaves the target part-written after its two immediate re-offers.
+async fn left_part_written(target: &Arc<FakePublication>, state: &PublicationState) {
+    let publisher = ready_publisher(target);
+    assert!(matches!(
+        outcome(publisher.publish_once(state).await),
+        PassOutcome::Published { .. }
+    ));
+    target.script_divergent(fabric_runtime_publication::DocumentKind::DataSources);
+    target.script_always_interrupted(fabric_runtime_publication::DocumentKind::Catalog);
+
+    assert!(matches!(
+        outcome(publisher.publish_once(state).await),
+        PassOutcome::Failed { .. }
+    ));
+}
+
+#[tokio::test]
+async fn an_interruption_that_outlives_its_reoffers_leaves_the_target_incomplete_and_the_documents_gate_unmet(
+) {
+    let target = Arc::new(FakePublication::new());
+    let state = PublicationState::new();
+
+    left_part_written(&target, &state).await;
+
+    assert!(matches!(
+        completeness(&state),
+        Some(PublicationCompleteness::Incomplete { .. })
+    ));
+    let reasons = documents_reasons(&state);
+    assert_eq!(reasons.len(), 1, "{reasons:?}");
+    assert!(
+        reasons[0].starts_with("the target does not hold generation 1 whole"),
+        "{reasons:?}"
+    );
+    assert!(matches!(
+        state.last_pass().unwrap().outcome,
+        PassOutcome::Failed { .. }
+    ));
+    // One initial offer, one after the divergence, two immediate re-offers.
+    assert_eq!(target.publish_attempts(), 1 + 4);
+    assert_eq!(
+        target.inspections(),
+        2,
+        "every pass inspects once, after its last offer"
+    );
+}
+
+#[tokio::test]
+async fn a_refusal_that_wrote_nothing_leaves_a_complete_target_complete_while_the_pass_reads_failed() {
+    let target = Arc::new(FakePublication::new());
+    let state = PublicationState::new();
+    let publisher = ready_publisher(&target);
+    publisher.publish_once(&state).await;
+    let writes = target.writes();
+    target.script_always_interrupted(fabric_runtime_publication::DocumentKind::DataSources);
+
+    assert!(matches!(
+        outcome(publisher.publish_once(&state).await),
+        PassOutcome::Failed { .. }
+    ));
+
+    assert_eq!(target.writes(), writes, "nothing was written");
+    assert!(matches!(
+        completeness(&state),
+        Some(PublicationCompleteness::Complete { .. })
+    ));
+    assert_eq!(documents_reasons(&state), Vec::<String>::new());
+}
+
+#[tokio::test]
+async fn an_interruption_the_immediate_reoffer_completes_leaves_the_target_complete() {
+    let target = Arc::new(FakePublication::new());
+    let state = PublicationState::new();
+    let publisher = ready_publisher(&target);
+    publisher.publish_once(&state).await;
+    target.script_divergent(fabric_runtime_publication::DocumentKind::DataSources);
+    target.script_interrupted(fabric_runtime_publication::DocumentKind::Catalog);
+
+    assert!(matches!(
+        outcome(publisher.publish_once(&state).await),
+        PassOutcome::Published { .. }
+    ));
+
+    assert!(matches!(
+        completeness(&state),
+        Some(PublicationCompleteness::Complete { .. })
+    ));
+    assert_eq!(documents_reasons(&state), Vec::<String>::new());
+}
+
+#[tokio::test]
+async fn only_an_inspection_that_finds_the_target_whole_clears_an_incomplete_target() {
+    let target = Arc::new(FakePublication::new());
+    let state = PublicationState::new();
+    left_part_written(&target, &state).await;
+    let publisher = ready_publisher(&target);
+
+    publisher.publish_once(&state).await;
+    assert!(
+        matches!(
+            completeness(&state),
+            Some(PublicationCompleteness::Incomplete { .. })
+        ),
+        "a failed pass that wrote nothing more does not clear it"
+    );
+
+    target.unscript(fabric_runtime_publication::DocumentKind::Catalog);
+    target.script_inspection(PublicationCompleteness::Unobserved {
+        reason: fabric_runtime_publication::UnobservedReason::Unavailable,
+    });
+    assert!(matches!(
+        outcome(publisher.publish_once(&state).await),
+        PassOutcome::Published { .. } | PassOutcome::Unchanged { .. }
+    ));
+    assert_eq!(
+        documents_reasons(&state),
+        vec!["the target's completeness is unobserved: the publication target could not be read".to_owned()],
+        "an accepted pass whose inspection could not decide does not clear it"
+    );
+
+    assert!(matches!(
+        outcome(publisher.publish_once(&state).await),
+        PassOutcome::Unchanged { .. }
+    ));
+    assert!(matches!(
+        completeness(&state),
+        Some(PublicationCompleteness::Complete { .. })
+    ));
+    assert_eq!(documents_reasons(&state), Vec::<String>::new());
+}
+
+#[tokio::test]
+async fn a_restart_knows_nothing_until_a_pass_inspects_and_does_not_clear_an_incomplete_target() {
+    let target = Arc::new(FakePublication::new());
+    left_part_written(&target, &PublicationState::new()).await;
+
+    let restarted = PublicationState::new();
+    assert_eq!(completeness(&restarted), None);
+    assert!(documents_reasons(&restarted).contains(
+        &"no publication pass has inspected the target since the control plane started".to_owned()
+    ));
+
+    ready_publisher(&target).publish_once(&restarted).await;
+
+    assert!(matches!(
+        completeness(&restarted),
+        Some(PublicationCompleteness::Incomplete { .. })
+    ));
+    assert!(documents_reasons(&restarted)
+        .iter()
+        .any(|reason| reason.starts_with("the target does not hold generation 1 whole")));
 }

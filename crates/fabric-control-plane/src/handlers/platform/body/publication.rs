@@ -1,10 +1,12 @@
 //! The publication row: what this environment's runtime-publication target
 //! holds, and what the last pass did.
 
+mod completeness_row;
 mod last_pass_row;
 mod readers_row;
 mod readiness_row;
 
+pub use completeness_row::CompletenessRow;
 pub(crate) use last_pass_row::pass_outcome_word;
 pub use last_pass_row::LastPassRow;
 pub(crate) use readers_row::observe_readers;
@@ -36,6 +38,9 @@ pub struct PublicationRow {
 
     /// What the last pass did, or `null` if none has run.
     pub last_pass: Option<LastPassRow>,
+
+    /// Whether the target held one whole generation when last inspected.
+    pub completeness: CompletenessRow,
 
     /// The three readiness gates, as of the last pass the target accepted.
     pub readiness: ReadinessRow,
@@ -71,6 +76,7 @@ impl PublicationRow {
                 target: publisher.describe_target(),
                 documents: PublishedDocumentsRow::default(),
                 last_pass: None,
+                completeness: CompletenessRow::of(state.completeness()),
                 readiness: ReadinessRow::of(state.readiness(), readers),
             },
         }
@@ -83,8 +89,8 @@ impl PublicationRow {
     /// call returning and this rendering can never make the response
     /// describe a pass the operator did not ask for. See
     /// `LastPassRow::at`'s own rustdoc for the full argument.
-    /// The readiness row is `state`'s: it changes only when a pass is
-    /// accepted, which `publish_once` records before it returns.
+    /// The readiness and completeness rows are `state`'s, which
+    /// `publish_once` records before it returns.
     pub(crate) fn at(
         publisher: &RuntimePublisher,
         state: &PublicationState,
@@ -95,6 +101,7 @@ impl PublicationRow {
             target: publisher.describe_target(),
             documents: PublishedDocumentsRow::of(outcome),
             last_pass: Some(LastPassRow::at(at_unix_seconds, outcome)),
+            completeness: CompletenessRow::of(state.completeness()),
             readiness: ReadinessRow::of(state.readiness(), readers),
         }
     }

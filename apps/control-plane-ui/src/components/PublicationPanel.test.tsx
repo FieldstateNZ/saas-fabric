@@ -40,11 +40,19 @@ const READINESS = {
   updateComplete: false,
 }
 
+const NOT_INSPECTED = {
+  state: 'unobserved' as const,
+  observedAtUnixSeconds: null,
+  record: null,
+  reason: 'no publication pass has inspected the target since the control plane started',
+}
+
 function publication(overrides: Partial<Publication> = {}): Publication {
   return {
     target: 'ConfigMaps in namespace platform-system',
     documents: { tenants: null, dataSources: null, catalog: null, registry: null },
     lastPass: null,
+    completeness: NOT_INSPECTED,
     readiness: READINESS,
     ...overrides,
   }
@@ -178,6 +186,7 @@ describe('publishing now', () => {
           target: 'ConfigMaps in namespace platform-system',
           documents: { tenants: 9, dataSources: 8, catalog: 7, registry: null },
           lastPass: { atUnixSeconds: 1_700_000_500, outcome: 'published', detail: null },
+          completeness: NOT_INSPECTED,
           readiness: READINESS,
         }),
     })
@@ -227,6 +236,7 @@ describe('publishing now', () => {
               outcome: 'failed',
               detail: 'the publication target is unavailable',
             },
+            completeness: NOT_INSPECTED,
             readiness: READINESS,
           }),
       }),
@@ -371,5 +381,54 @@ describe('publishing now', () => {
     )
     expect(screen.queryByText(/not routed/i)).not.toBeInTheDocument()
     expect(screen.queryByText(/withdrawn/i)).not.toBeInTheDocument()
+  })
+})
+
+describe('completeness', () => {
+  it('shows an incomplete target on its own row beside a failed pass, with the record and why', () => {
+    render(
+      <PublicationPanel
+        publication={publication({
+          lastPass: { atUnixSeconds: 1_700_000_000, outcome: 'failed', detail: 'Tenants could not be written' },
+          completeness: {
+            state: 'incomplete',
+            observedAtUnixSeconds: 1_700_000_000,
+            record: { generation: 4, recordSha256: 'ab'.repeat(32) },
+            reason: 'the target does not hold generation 4 whole: data-sources payload is missing',
+          },
+        })}
+      />,
+    )
+
+    expect(fact('Last pass')).toHaveTextContent(/●Failed — Tenants could not be written$/)
+    expect(fact('Completeness')).toHaveTextContent(
+      /^●Incomplete — generation 4 \(abababababab\) — inspected .+ — the target does not hold generation 4 whole: data-sources payload is missing$/,
+    )
+  })
+
+  it('shows a complete target with no reason, even when the last pass failed', () => {
+    render(
+      <PublicationPanel
+        publication={publication({
+          lastPass: { atUnixSeconds: 1_700_000_000, outcome: 'failed', detail: 'another publisher holds the lock' },
+          completeness: {
+            state: 'complete',
+            observedAtUnixSeconds: 1_700_000_000,
+            record: { generation: 3, recordSha256: 'cd'.repeat(32) },
+            reason: null,
+          },
+        })}
+      />,
+    )
+
+    expect(fact('Completeness')).toHaveTextContent(/^●Complete — generation 3 \(cdcdcdcdcdcd\) — inspected [^—]+$/)
+  })
+
+  it('says a target no pass has inspected since a restart is unobserved, not complete', () => {
+    render(<PublicationPanel publication={publication()} />)
+
+    expect(fact('Completeness')).toHaveTextContent(
+      /^●Unobserved — not inspected yet — no publication pass has inspected the target since the control plane started$/,
+    )
   })
 })

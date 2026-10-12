@@ -16,6 +16,8 @@ import type { ReactNode } from 'react'
  * the same as anything else this component has not been given a class for.
  * The four client lifecycle states (`incomplete`, `ready`, `tombstoned`,
  * `deletionConfirmed`) each have a class of their own; see `LifecycleStatus`.
+ * `incomplete` also colours a publication target that does not hold one
+ * whole generation; see `CompletenessCell`.
  * `children` lets a caller show operator-facing text ("Loading",
  * "Unavailable") while still colouring the pill by the underlying value the
  * API returned.

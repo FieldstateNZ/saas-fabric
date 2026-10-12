@@ -1,14 +1,14 @@
 //! Whether a publication pass is running now, and what the last one did.
 //!
-//! In the 121-150 band: one state type, whose three records (last pass,
-//! published tenants, readiness evidence) are written together by `record`.
+//! In the 121-150 band: one state type, whose four records (last pass,
+//! published tenants, readiness evidence, completeness) are written
+//! together by `record`. The record types are in `pass_records.rs`.
 
-use std::collections::BTreeMap;
 use std::sync::Mutex;
 
-use fabric_core::{BindingRevision, TenantId};
-
+use crate::publication::completeness_observation::CompletenessObservation;
 use crate::publication::outcome::PassOutcome;
+use crate::publication::pass_records::{LastPass, PublishedTenants};
 use crate::publication::published::Accepted;
 use crate::publication::readiness::ReadinessReport;
 use crate::publication::readiness_evidence::ReadinessEvidence;
@@ -47,6 +47,10 @@ pub struct PublicationState {
 
     /// What the readiness report reads, from the same pass as `published`.
     evidence: Mutex<Option<ReadinessEvidence>>,
+
+    /// What the last pass's inspection of the target found, whatever the
+    /// pass's outcome. `None` until a pass has inspected it.
+    completeness: Mutex<Option<CompletenessObservation>>,
 }
 
 impl PublicationState {
@@ -75,12 +79,23 @@ impl PublicationState {
         self.published.lock().ok().and_then(|published| published.clone())
     }
 
+    /// What the last pass's inspection of the target found. `None` until a
+    /// pass has inspected it, in this process.
+    #[must_use]
+    pub fn completeness(&self) -> Option<CompletenessObservation> {
+        self.completeness
+            .lock()
+            .ok()
+            .and_then(|observed| observed.clone())
+    }
+
     /// The readiness gates (D01-18), as of the last pass that published or
-    /// found nothing to change. All three are unmet until one has.
+    /// found nothing to change, with the documents gate also held to the
+    /// last inspection. All three are unmet until a pass has been accepted.
     #[must_use]
     pub fn readiness(&self) -> ReadinessReport {
         let evidence = self.evidence.lock().ok().and_then(|evidence| evidence.clone());
-        ReadinessReport::of(evidence.as_ref())
+        ReadinessReport::of(evidence.as_ref(), self.completeness().as_ref())
     }
 
     /// The publication record the last pass that published or found nothing
@@ -92,8 +107,15 @@ impl PublicationState {
         evidence.as_ref().map(|evidence| evidence.record)
     }
 
-    /// Records how a pass ended, and what it left published if it did.
-    pub(super) fn record(&self, at_unix_seconds: u64, outcome: PassOutcome, accepted: Option<Accepted>) {
+    /// Records how a pass ended, what it left published if it did, and what
+    /// its inspection of the target found.
+    pub(super) fn record(
+        &self,
+        at_unix_seconds: u64,
+        outcome: PassOutcome,
+        accepted: Option<Accepted>,
+        completeness: fabric_runtime_publication::PublicationCompleteness,
+    ) {
         if let Some(accepted) = accepted {
             if let Ok(mut held) = self.published.lock() {
                 *held = Some(PublishedTenants {
@@ -105,6 +127,12 @@ impl PublicationState {
                 *evidence = Some(accepted.evidence);
             }
         }
+        if let Ok(mut observed) = self.completeness.lock() {
+            *observed = Some(CompletenessObservation {
+                at_unix_seconds,
+                completeness,
+            });
+        }
         if let Ok(mut last) = self.last.lock() {
             *last = Some(LastPass {
                 at_unix_seconds,
@@ -112,29 +140,4 @@ impl PublicationState {
             });
         }
     }
-}
-
-/// What one publication pass did, and when it finished.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LastPass {
-    /// When it finished, as seconds since the Unix epoch.
-    ///
-    /// Not formatted here, for the same reason `LastCheck::at_unix_seconds`
-    /// is not: recording a fact and rendering it for a human are different
-    /// jobs, and only one of them belongs in a crate with no transport.
-    pub at_unix_seconds: u64,
-
-    /// What it found and did.
-    pub outcome: PassOutcome,
-}
-
-/// The tenants a held tenants document carries, and when that was known.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PublishedTenants {
-    /// When the pass that established it finished, as seconds since the
-    /// Unix epoch.
-    pub at_unix_seconds: u64,
-
-    /// Each published tenant, at its binding revision.
-    pub tenants: BTreeMap<TenantId, BindingRevision>,
 }

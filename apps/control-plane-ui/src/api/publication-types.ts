@@ -151,6 +151,27 @@ export interface LastPass {
 }
 
 /**
+ * Whether the target held one whole recorded generation when a pass last
+ * inspected it (G3): every document, and the issuer registry the record
+ * names, at the record's revision and digest. Kept apart from `LastPass`: a
+ * pass can fail having written nothing and leave the target complete. Only
+ * `complete` can meet the documents gate. It is about the target, not the
+ * readers, which keep their last complete generation either way.
+ * `unobserved` with `observedAtUnixSeconds === null` means no pass has
+ * inspected the target since the control plane started.
+ */
+export type CompletenessState = 'complete' | 'incomplete' | 'unpublished' | 'unobserved'
+
+export interface Completeness {
+  readonly state: CompletenessState
+  readonly observedAtUnixSeconds: number | null
+  /** The record inspected against, for `complete` and `incomplete`. */
+  readonly record: RecordStamp | null
+  /** Why it is not `complete`; names parts, never their contents. */
+  readonly reason: string | null
+}
+
+/**
  * What this environment's runtime-publication target holds, and what the
  * last pass did.
  *
@@ -163,5 +184,6 @@ export interface Publication {
   readonly target: string
   readonly documents: PublishedDocuments
   readonly lastPass: LastPass | null
+  readonly completeness: Completeness
   readonly readiness: Readiness
 }

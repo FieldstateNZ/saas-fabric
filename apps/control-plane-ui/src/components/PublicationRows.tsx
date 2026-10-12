@@ -1,5 +1,6 @@
 import type { LastPass, Publication } from '../api/publication-types'
 import { Status } from '../console/Status'
+import { CompletenessCell } from './CompletenessCell'
 
 /**
  * The read-only facts: what the target holds, and what the last pass did.
@@ -31,6 +32,11 @@ export function PublicationRows({ publication }: { publication: Publication }) {
       <dt>Last pass</dt>
       <dd>
         <LastPassCell pass={publication.lastPass} />
+      </dd>
+
+      <dt>Completeness</dt>
+      <dd>
+        <CompletenessCell completeness={publication.completeness} />
       </dd>
     </dl>
   )

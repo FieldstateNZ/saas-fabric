@@ -22,6 +22,12 @@ function platformState(): PlatformState {
       target: 'ConfigMaps in namespace platform-system',
       documents: { tenants: 3, dataSources: 2, catalog: 1, registry: null },
       lastPass: { atUnixSeconds: 1_700_000_000, outcome: 'published', detail: null },
+      completeness: {
+        state: 'complete',
+        observedAtUnixSeconds: 1_700_000_000,
+        record: { generation: 1, recordSha256: 'ab'.repeat(32) },
+        reason: null,
+      },
       readiness: {
         documents: { met: true, reasons: [] },
         identity: { met: false, reasons: ['Fabric publishes no issuer registry'] },

@@ -250,11 +250,11 @@ fn an_untrustworthy_sample_no_observer_no_stamp_or_an_unobserved_rollout_is_unob
 fn an_update_is_complete_only_with_the_documents_published_and_the_readers_applied() {
     let met = ReadinessReport {
         documents: GateStatus::Met,
-        ..ReadinessReport::of(None)
+        ..ReadinessReport::of(None, None)
     };
     let applied = state_of(1, vec![member("a", "rs", serving())]);
     assert!(update_complete(&met, &applied));
-    assert!(!update_complete(&ReadinessReport::of(None), &applied));
+    assert!(!update_complete(&ReadinessReport::of(None, None), &applied));
     for unfinished in [
         state_of(0, Vec::new()),
         state_of(

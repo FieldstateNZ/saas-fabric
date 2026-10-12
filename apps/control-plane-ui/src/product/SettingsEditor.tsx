@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 
-import { getOperator } from '../api/catalogue'
+import { getCurrentUser } from '../api/current-user'
 import { PageHeader } from '../console/PageHeader'
 import { Panel } from '../console/Panel'
 import { Field } from './Field'
@@ -31,10 +31,10 @@ export function SettingsEditor({ state }: { state: CatalogueState }) {
   useEffect(() => {
     let active = true
 
-    void getOperator().then(
+    void getCurrentUser().then(
       (value) => {
         if (active) {
-          setOperator(value.subject)
+          setOperator(value.displayName)
         }
       },
       () => {

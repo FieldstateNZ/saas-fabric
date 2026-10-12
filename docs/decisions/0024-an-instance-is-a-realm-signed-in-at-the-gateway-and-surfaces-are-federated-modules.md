@@ -191,8 +191,9 @@ and the `/api/user/current` disposition on
   extractor already verified, by a reader private to that one handler; a
   token it cannot read is a `500 profile_unreadable`, never a `200`. The
   console's probe is now this route and requires a complete answer.
-  `/api/operator` keeps answering, subject only, for one release; the
-  console's Settings page still reads it for the attribution name.
+  `/api/operator` keeps answering, subject only, for one release, and the
+  console no longer calls it: its Settings page shows `displayName` from
+  `/api/user/current`.
 - **Not built:** slice 1's local half — the `hosting/` Envoy's OAuth2
   filter — so with no gateway in front the console stops at its sign-in
   screen.

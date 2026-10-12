@@ -52,10 +52,15 @@ mod tenant_policies;
 /// and two definitions of "read" would drift without ever failing a build.
 pub use fabric_core::OperationKind;
 
+/// A resource's collection, spelled in the crate both planes share for the
+/// same reason: the control plane writes its type into the model and this
+/// crate asks about it.
+pub use fabric_core::CollectionObject;
+
 pub use caller::{Caller, CallerCredential};
 pub use check::{AuthorizationCheck, CheckDecision, CheckFailure, CheckQuestion};
 pub use check_object::CheckObject;
-pub use check_target::{CheckTarget, CollectionObject};
+pub use check_target::CheckTarget;
 pub use data_authorization::DataAuthorization;
 pub use no_check_configured::NoCheckConfigured;
 pub(crate) use refusal::{DenialReason, Refusal};

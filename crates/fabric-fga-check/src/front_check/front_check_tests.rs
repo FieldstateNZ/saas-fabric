@@ -74,6 +74,15 @@ impl FakeFront {
     }
 }
 
+fn collection(operation: OperationKind) -> CheckQuestion {
+    CheckQuestion {
+        operation,
+        target: CheckTarget::Collection(
+            CollectionObject::try_new(LogicalResourceName::try_new("customers").unwrap()).unwrap(),
+        ),
+    }
+}
+
 fn record(operation: OperationKind, id: &str) -> CheckQuestion {
     CheckQuestion {
         operation,
@@ -191,21 +200,91 @@ async fn an_answer_that_is_not_a_decision_is_internal_never_a_decision() {
 }
 
 #[tokio::test]
-async fn a_collection_question_is_refused_without_sending_anything() {
-    // ADR 0027 §2a: no model defines the collection object, so there is no
-    // wire spelling for one, and it is never rewritten as a record.
-    let front = FakeFront::answering(StatusCode::OK, r#"{"allowed":true}"#).await;
-    let question = CheckQuestion {
-        operation: OperationKind::List,
-        target: CheckTarget::Collection(CollectionObject::new(
-            LogicalResourceName::try_new("customers").unwrap(),
-        )),
-    };
+async fn each_operation_asks_its_own_computed_relation_about_its_own_kind_of_object() {
+    let expected = [
+        (record(OperationKind::Read, "42"), "can_read", "customers:42"),
+        (record(OperationKind::Update, "42"), "can_update", "customers:42"),
+        (record(OperationKind::Delete, "42"), "can_delete", "customers:42"),
+        (
+            collection(OperationKind::List),
+            "can_list",
+            "customers_collection:customers",
+        ),
+        (
+            collection(OperationKind::Create),
+            "can_create",
+            "customers_collection:customers",
+        ),
+    ];
 
-    assert_eq!(
-        ask(&front.endpoint(), &question).await,
-        Err(CheckFailure::Internal)
-    );
+    for (question, relation, object) in expected {
+        let front = FakeFront::answering(StatusCode::OK, r#"{"allowed":true}"#).await;
+
+        assert_eq!(
+            ask(&front.endpoint(), &question).await,
+            Ok(CheckDecision::Allowed)
+        );
+        let seen = front.seen();
+        let [(authorization, body)] = seen.as_slice() else {
+            panic!("exactly one request, got {seen:?}");
+        };
+        assert_eq!(authorization, "Bearer eyJ.Caller-Own.Token");
+        assert_eq!(body, &serde_json::json!({"relation": relation, "object": object}));
+    }
+}
+
+#[tokio::test]
+async fn a_collection_answer_is_read_by_the_same_rules_as_a_record_answer() {
+    for operation in [OperationKind::List, OperationKind::Create] {
+        for (status, body, expected) in [
+            (StatusCode::OK, r#"{"allowed":false}"#, Ok(CheckDecision::Denied)),
+            (
+                StatusCode::ACCEPTED,
+                r#"{"allowed":true}"#,
+                Err(CheckFailure::Internal),
+            ),
+            (StatusCode::BAD_REQUEST, "{}", Err(CheckFailure::Internal)),
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                r#"{"allowed":true}"#,
+                Err(CheckFailure::Unavailable),
+            ),
+        ] {
+            let front = FakeFront::answering(status, body).await;
+
+            assert_eq!(
+                ask(&front.endpoint(), &collection(operation)).await,
+                expected,
+                "{operation} {status} {body}"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn an_operation_asked_about_the_wrong_kind_of_object_is_refused_without_sending_anything() {
+    // A record allow must never answer `list` or `create`, and a collection
+    // allow must never answer `read`, `update` or `delete`.
+    let front = FakeFront::answering(StatusCode::OK, r#"{"allowed":true}"#).await;
+    let customers = || LogicalResourceName::try_new("customers").unwrap();
+
+    for operation in OperationKind::ALL {
+        let mismatched = if operation.is_collection_operation() {
+            CheckTarget::Record(CheckObject::try_new(customers(), "42").unwrap())
+        } else {
+            CheckTarget::Collection(CollectionObject::try_new(customers()).unwrap())
+        };
+        let question = CheckQuestion {
+            operation,
+            target: mismatched,
+        };
+
+        assert_eq!(
+            ask(&front.endpoint(), &question).await,
+            Err(CheckFailure::Internal),
+            "{operation}"
+        );
+    }
     assert!(front.seen().is_empty());
 }
 

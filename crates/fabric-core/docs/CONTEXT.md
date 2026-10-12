@@ -16,6 +16,18 @@ workspace crate depends on it.
   the other is a configured physical destination (ADR 0003).
 - `LogicalResourceName` — same rules as `LogicalDataSourceName`. Separate type so the
   compiler stops you passing a resource where a data source belongs.
+- `CollectionObject` — a resource's collection as an authorization object
+  (ADR 0027 §2a). `try_new(LogicalResourceName)` refuses a name longer than
+  `MAX_RESOURCE_LENGTH` (52), so `type_name()` (`<resource>_collection`) is
+  itself a valid resource name; `Display` is `<resource>_collection:<resource>`;
+  `collides_with(&LogicalResourceName)`. Shared because the control plane's
+  model writer and the runtime's Check adapter must spell it identically.
+- `authorization_names` (a public module) — `PRINCIPAL_TYPE` (`user`) and
+  `SERVICE_RESERVED` (`self`, `this`): names the model writer emits or the
+  service reserves, which managed authorization validation keeps clear of.
+- `OperationKind` — `is_collection_operation()` (`List`, `Create`) and
+  `computed_relation()` (`can_<operation>`) are the one partition and the one
+  relation spelling both planes use.
 - `BindingRevision` — newtype over `u64`. `ZERO`, `new`, `get`, `next`
   (saturating). `Ord` is the point of the type.
 - `IdentifierError` — `Empty` / `TooLong` / `DisallowedCharacter` / `BadBoundary`.

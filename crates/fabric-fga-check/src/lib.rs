@@ -1,11 +1,11 @@
 //! The Data API's layer-2 adapter (ADR 0027).
 //!
 //! ```text
-//! fabric-data-api            AuthorizationCheck port: may the caller <operation> <resource:id>?
+//! fabric-data-api            AuthorizationCheck port: may the caller <operation> <record | collection>?
 //!       │
 //!       ▼
 //! fabric-fga-check           this crate: operation → computed relation (ADR 0013),
-//!       │                    caller's own bearer → Authorization header
+//!       │                    target → object, caller's own bearer → Authorization header
 //!       ▼
 //! authorization front        POST /v1/check {relation, object}       (ADR 0016)
 //!       │                    verifies the token, binds the subject and the store
@@ -39,17 +39,25 @@
 //! The port's rule, kept here: a transport failure or `5xx` is
 //! [`CheckFailure::Unavailable`], any other answer that is not a decision is
 //! [`CheckFailure::Internal`], and neither is ever turned into an allow or a
-//! deny. A collection question has no wire spelling until the model defines a
-//! collection object (ADR 0027 §2a), so it is refused before anything is sent.
+//! deny.
+//!
+//! # Records and collections (ADR 0027 §2a)
+//!
+//! `read`, `update` and `delete` are asked about a record, `customers:42`.
+//! `list` and `create` are asked about the resource's collection,
+//! `customers_collection:customers`, a distinct type the model writer
+//! (`fabric-fga-model`) defines with only `can_list` and `can_create`. Both
+//! spellings, and the `can_<operation>` relation, come from `fabric-core`, so
+//! this adapter and the model writer cannot disagree about them. A question
+//! whose operation and target disagree is refused before anything is sent: a
+//! record is never asked a collection question, nor the reverse.
 //!
 //! [`CheckFailure::Unavailable`]: fabric_data_api::CheckFailure::Unavailable
 //! [`CheckFailure::Internal`]: fabric_data_api::CheckFailure::Internal
 
-mod computed_relation;
 mod front_check;
 mod front_endpoint;
 mod wire;
 
-pub use computed_relation::computed_relation;
 pub use front_check::FrontCheck;
 pub use front_endpoint::FrontEndpoint;

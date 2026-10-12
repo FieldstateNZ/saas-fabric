@@ -26,7 +26,7 @@ impl AuthorizationConfiguration {
             resource.check()?;
         }
 
-        Ok(())
+        self.check_collections_are_distinct()
     }
 
     /// A resource may be declared once.
@@ -57,6 +57,9 @@ impl AuthorizationConfiguration {
 impl ResourceAuthorization {
     /// The rules one resource's relations must satisfy.
     pub(super) fn check(&self) -> Result<(), DesiredStateError> {
+        self.check_name_is_not_reserved()?;
+        self.check_collection_is_nameable()?;
+
         if self.relations.is_empty() {
             return Err(DesiredStateError::InvalidField {
                 field: "spec.authorization.resources[].relations",
@@ -90,8 +93,11 @@ impl ResourceAuthorization {
 }
 
 impl crate::Relation {
-    /// A relation must permit something, and must not say so twice.
+    /// A relation must permit something, must not say so twice, and must not
+    /// be named like the relation an operation is asked as.
     fn check(&self, resource: &str) -> Result<(), DesiredStateError> {
+        self.check_name_is_not_reserved(resource)?;
+
         if self.permits.is_empty() {
             return Err(DesiredStateError::InvalidField {
                 field: "spec.authorization.resources[].relations[].permits",

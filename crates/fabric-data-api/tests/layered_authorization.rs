@@ -260,20 +260,106 @@ async fn administrator_and_operator_roles_get_no_data_path_bypass() {
     assert_eq!(connector.mutation_count(), 0);
 }
 
+/// The two collection operations, as requests, with the status each answers
+/// once permitted.
+fn collection_requests() -> [(&'static str, OperationKind, StatusCode); 2] {
+    [
+        ("GET", OperationKind::List, StatusCode::OK),
+        ("POST", OperationKind::Create, StatusCode::CREATED),
+    ]
+}
+
 #[tokio::test]
-async fn a_collection_operation_on_a_checked_resource_is_refused_until_its_contract_exists() {
-    let check = ScriptedCheck::answering(Ok(CheckDecision::Allowed));
-
-    for (method, uri) in [("GET", "/customers"), ("POST", "/customers")] {
+async fn a_tenant_beyond_the_trial_needs_a_check_allow_about_the_collection_to_list_or_create() {
+    for (method, operation, permitted) in collection_requests() {
+        let check = ScriptedCheck::answering(Ok(CheckDecision::Allowed));
         let (app, connector) = app(Arc::clone(&check) as Arc<dyn AuthorizationCheck>);
-        let request = support::json_request(method, uri, scoped("acme"), &json!({"name": "Eve"}));
+        let request = support::json_request(method, "/customers", scoped("acme"), &json!({"name": "Eve"}));
 
-        let (_, status, _) = send(app, request).await;
+        let (bearer, status, _) = send(app, request).await;
 
-        assert_eq!(status, StatusCode::FORBIDDEN, "{method} {uri}");
-        assert_eq!(connector.query_count() + connector.mutation_count(), 0);
+        assert_eq!(status, permitted, "{method}");
+        assert_eq!(
+            connector.query_count() + connector.mutation_count(),
+            1,
+            "{method}"
+        );
+
+        let asked = check.asked();
+        let [(sent, question)] = asked.as_slice() else {
+            panic!("exactly one Check for {method}, got {asked:?}");
+        };
+        assert_eq!(
+            sent, &bearer,
+            "the caller's own token, never a workload credential"
+        );
+        assert_eq!(question.operation, operation);
+        let CheckTarget::Collection(collection) = &question.target else {
+            panic!(
+                "{method} is asked about the collection, got {:?}",
+                question.target
+            );
+        };
+        assert_eq!(collection.to_string(), "customers_collection:customers");
     }
-    assert!(check.asked().is_empty());
+}
+
+#[tokio::test]
+async fn a_collection_deny_or_failure_never_reaches_the_connector() {
+    let outcomes = [
+        (Ok(CheckDecision::Denied), StatusCode::FORBIDDEN, "forbidden"),
+        (
+            Err(CheckFailure::Unavailable),
+            StatusCode::SERVICE_UNAVAILABLE,
+            "authorization_unavailable",
+        ),
+        (
+            Err(CheckFailure::Internal),
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal",
+        ),
+        (
+            Err(CheckFailure::NotConfigured),
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal",
+        ),
+    ];
+
+    for (method, _, _) in collection_requests() {
+        for (answer, refused, code) in outcomes {
+            let (app, connector) = app(ScriptedCheck::answering(answer));
+            let request =
+                support::json_request(method, "/customers", scoped("acme"), &json!({"name": "Eve"}));
+
+            let (_, status, body) = send(app, request).await;
+
+            assert_eq!(status, refused, "{method} {answer:?}");
+            assert_eq!(body["error"]["code"], code, "{method} {answer:?}");
+            assert_eq!(
+                connector.query_count() + connector.mutation_count(),
+                0,
+                "{method} {answer:?}: fail closed"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_collection_deny_and_a_missing_scope_answer_identically() {
+    let (denied_app, _) = app(ScriptedCheck::answering(Ok(CheckDecision::Denied)));
+    let (unscoped_app, _) = app(ScriptedCheck::answering(Ok(CheckDecision::Allowed)));
+
+    let (_, denied_status, mut denied) = send(denied_app, request("GET", "/customers", scoped("acme"))).await;
+    let (_, unscoped_status, mut unscoped) = send(
+        unscoped_app,
+        request("GET", "/customers", json!({"tenant_id": "acme", "scope": ""})),
+    )
+    .await;
+
+    denied["error"]["request_id"] = Value::Null;
+    unscoped["error"]["request_id"] = Value::Null;
+    assert_eq!(denied_status, unscoped_status);
+    assert_eq!(denied, unscoped);
 }
 
 #[tokio::test]

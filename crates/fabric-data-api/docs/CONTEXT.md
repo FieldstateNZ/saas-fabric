@@ -56,11 +56,12 @@ in this crate's public contract.
   - `AuthorizationCheck` (async trait, `Send + Sync`): `check(&CallerCredential,
     &CheckQuestion) -> Result<CheckDecision, CheckFailure>`.
     `CheckQuestion { operation, target: CheckTarget }`;
-    `CheckTarget { Record(CheckObject), Collection(CollectionObject) }`,
-    `CheckTarget::is_collection_operation(op)` (`List`, `Create`);
-    `CollectionObject::new(LogicalResourceName)`. Collection operations on a
-    checked resource are refused in `decide` (`collection_contract_undefined`)
-    until the model defines the object (ADR 0027 §2a);
+    `CheckTarget { Record(CheckObject), Collection(CollectionObject) }`.
+    `decide` picks `Collection` when `OperationKind::is_collection_operation`
+    (`List`, `Create`), ignoring any key, and `Record` otherwise.
+    `CollectionObject` is `fabric-core`'s, re-exported;
+    `try_new(LogicalResourceName)` fails past 52 bytes, refused as
+    `unnameable_object` without asking (ADR 0027 §2a);
     `CheckDecision { Allowed, Denied }`;
     `CheckFailure { Unavailable, Internal, NotConfigured }`.
   - `CheckObject::try_new(LogicalResourceName, &str)` — the front's id rules

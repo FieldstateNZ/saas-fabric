@@ -117,17 +117,87 @@ async fn every_failure_to_decide_refuses() {
 }
 
 #[tokio::test]
-async fn a_collection_operation_is_refused_until_the_collection_contract_exists() {
-    let check = ScriptedCheck::answering(Ok(CheckDecision::Allowed));
-
+async fn a_collection_operation_is_asked_about_the_collection_with_the_callers_own_token() {
     for operation in [OperationKind::List, OperationKind::Create] {
+        let check = ScriptedCheck::answering(Ok(CheckDecision::Allowed));
+
         let outcome = authorization(Arc::clone(&check))
+            .decide(&scoped("acme"), operation, &customers(), None)
+            .await;
+
+        assert_eq!(outcome, Ok(()), "{operation}");
+        let questions = check.questions();
+        let [(token, question)] = questions.as_slice() else {
+            panic!("exactly one question, got {questions:?}");
+        };
+        assert_eq!(token, "the-callers-own-token");
+        assert_eq!(question.operation, operation);
+        let CheckTarget::Collection(collection) = &question.target else {
+            panic!(
+                "{operation} is asked about the collection, got {:?}",
+                question.target
+            );
+        };
+        assert_eq!(collection.to_string(), "customers_collection:customers");
+    }
+}
+
+#[tokio::test]
+async fn a_collection_deny_is_refused_like_any_other_denial() {
+    for operation in [OperationKind::List, OperationKind::Create] {
+        let outcome = authorization(ScriptedCheck::answering(Ok(CheckDecision::Denied)))
             .decide(&scoped("acme"), operation, &customers(), None)
             .await;
 
         assert_eq!(
             outcome,
-            Err(Refusal::Denied(DenialReason::CollectionContractUndefined)),
+            Err(Refusal::Denied(DenialReason::CheckDenied)),
+            "{operation}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn every_failure_to_decide_about_a_collection_refuses() {
+    for operation in [OperationKind::List, OperationKind::Create] {
+        for failure in [
+            CheckFailure::Unavailable,
+            CheckFailure::Internal,
+            CheckFailure::NotConfigured,
+        ] {
+            let outcome = authorization(ScriptedCheck::answering(Err(failure)))
+                .decide(&scoped("acme"), operation, &customers(), None)
+                .await;
+
+            assert_eq!(outcome, Err(Refusal::Undecided(failure)), "{operation}");
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_resource_whose_collection_cannot_be_named_is_refused_without_asking() {
+    let check = ScriptedCheck::answering(Ok(CheckDecision::Allowed));
+    let long = LogicalResourceName::try_new("r".repeat(CollectionObject::MAX_RESOURCE_LENGTH + 1)).unwrap();
+    let policies = TenantPolicies::default().with(
+        TenantId::try_new("acme").unwrap(),
+        TenantAuthorization::new(TenantPosture::RelationChecked, [long.clone()]),
+    );
+    let caller = caller_with(json!({
+        "tenant_id": "acme",
+        "scope": format!("data:{long}:read data:{long}:write"),
+    }));
+
+    for operation in [OperationKind::List, OperationKind::Create] {
+        let outcome = DataAuthorization::new(
+            policies.clone(),
+            Arc::clone(&check) as Arc<dyn AuthorizationCheck>,
+        )
+        .decide(&caller, operation, &long, None)
+        .await;
+
+        assert_eq!(
+            outcome,
+            Err(Refusal::Denied(DenialReason::UnnameableObject)),
             "{operation}"
         );
     }
@@ -172,41 +242,49 @@ async fn a_policy_without_a_configured_check_fails_closed() {
 
 #[tokio::test]
 async fn a_record_allow_is_never_borrowed_for_a_collection_operation() {
-    // Even with a key in hand and a Check that allows everything, `list` and
-    // `create` are not asked as a record and are not permitted.
-    let check = ScriptedCheck::answering(Ok(CheckDecision::Allowed));
-
+    // Even with a key in hand, `list` and `create` are asked about the
+    // collection and never about a record, so only a collection decision can
+    // permit them.
     for operation in [OperationKind::List, OperationKind::Create] {
+        let check = ScriptedCheck::answering(Ok(CheckDecision::Denied));
+
         let outcome = authorization(Arc::clone(&check))
             .decide(&scoped("acme"), operation, &customers(), Some("42"))
             .await;
 
         assert_eq!(
             outcome,
-            Err(Refusal::Denied(DenialReason::CollectionContractUndefined)),
+            Err(Refusal::Denied(DenialReason::CheckDenied)),
             "{operation}"
         );
+        let questions = check.questions();
+        assert_eq!(questions.len(), 1, "{operation}");
+        assert!(
+            matches!(questions[0].1.target, CheckTarget::Collection(_)),
+            "{operation} is never asked as a record: {questions:?}"
+        );
     }
-    assert!(check.questions().is_empty());
 }
 
 #[tokio::test]
-async fn a_collection_refusal_does_not_depend_on_a_configured_check() {
-    // A denial, not a 5xx: the refusal is the contract's absence, not the
-    // Check's.
+async fn a_collection_operation_without_a_configured_check_fails_closed() {
+    // No Check configured is not a permission and not a denial.
     let policies = TenantPolicies::default().with(
         TenantId::try_new("acme").unwrap(),
         TenantAuthorization::new(TenantPosture::RelationChecked, [customers()]),
     );
 
-    let outcome = DataAuthorization::new(policies, Arc::new(NoCheckConfigured))
-        .decide(&scoped("acme"), OperationKind::List, &customers(), None)
-        .await;
+    for operation in [OperationKind::List, OperationKind::Create] {
+        let outcome = DataAuthorization::new(policies.clone(), Arc::new(NoCheckConfigured))
+            .decide(&scoped("acme"), operation, &customers(), None)
+            .await;
 
-    assert_eq!(
-        outcome,
-        Err(Refusal::Denied(DenialReason::CollectionContractUndefined))
-    );
+        assert_eq!(
+            outcome,
+            Err(Refusal::Undecided(CheckFailure::NotConfigured)),
+            "{operation}"
+        );
+    }
 }
 
 #[tokio::test]

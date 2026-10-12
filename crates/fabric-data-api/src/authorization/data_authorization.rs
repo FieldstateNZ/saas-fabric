@@ -61,13 +61,6 @@ impl DataAuthorization {
 
         let target = Self::target(operation, resource, key)?;
 
-        // ADR 0027 §2a: no model defines the collection object yet, so a
-        // collection operation on a checked resource is refused without asking.
-        // Removing this arm is the change that follows that model contract.
-        if let CheckTarget::Collection(_) = target {
-            return Err(Refusal::Denied(DenialReason::CollectionContractUndefined));
-        }
-
         match self
             .check
             .check(caller.credential(), &CheckQuestion { operation, target })
@@ -84,15 +77,19 @@ impl DataAuthorization {
     /// What the Check is asked about.
     ///
     /// `list` and `create` are asked about the resource's collection, never a
-    /// record, so a record-level allow can never be borrowed for them. Every
-    /// other operation needs a key that can name a record.
+    /// record, so a record-level allow can never be borrowed for them, and a
+    /// key the request happens to carry is ignored. Every other operation
+    /// needs a key that can name a record. A collection or a record that
+    /// cannot be named is refused as a denial, without asking.
     fn target(
         operation: OperationKind,
         resource: &LogicalResourceName,
         key: Option<&str>,
     ) -> Result<CheckTarget, Refusal> {
-        if CheckTarget::is_collection_operation(operation) {
-            return Ok(CheckTarget::Collection(CollectionObject::new(resource.clone())));
+        if operation.is_collection_operation() {
+            return CollectionObject::try_new(resource.clone())
+                .map(CheckTarget::Collection)
+                .map_err(|_| Refusal::Denied(DenialReason::UnnameableObject));
         }
 
         key.and_then(|key| CheckObject::try_new(resource.clone(), key).ok())

@@ -235,10 +235,11 @@ Fail closed:
   configured, is a 500 `internal`.
 - Nothing becomes an allow.
 - `list` and `create` name no record. They are asked about the resource's
-  collection (`CheckTarget::Collection`), a distinct tenant-bound object, never
-  about a record. No model defines that object yet, so on a checked resource
-  they are refused with a 403 (`collection_contract_undefined`) and nothing is
-  asked (ADR 0027 §2a).
+  collection (`CheckTarget::Collection`), `customers_collection:customers`, a
+  distinct tenant-bound object, never about a record. `fabric-fga-model`
+  defines its `can_list` and `can_create` (ADR 0027 §2a). A resource whose
+  collection cannot be named is refused with a 403 (`unnameable_object`), and
+  nothing is asked.
 
 **What runs today:** `fabric-api` passes `DataAuthorization::default()`. That
 means no policies, and a Check (`NoCheckConfigured`) that would refuse if

@@ -480,7 +480,9 @@ Recorded in ADR 0017's
   in the store after a roll forward. Fabric cannot read them, but the platform
   credential's policy can. A leaked credential is revoked at its issuer, not by
   writing over it. The live mount's options are **not verified**, and limits are
-  proposed separately on #108 before anything changes.
+  proposed separately on
+  [#108](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6116824201)
+  before anything changes.
 
 ### Image registries
 

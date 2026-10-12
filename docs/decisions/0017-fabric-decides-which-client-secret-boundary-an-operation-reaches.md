@@ -221,7 +221,7 @@ What follows from that:
 
 No mount, policy, retention setting or retained version is changed by it. The
 actual limits are proposed separately, on
-[#108](https://github.com/FieldstateNZ/saas-fabric/issues/108), and wait for
+[#108](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6116824201), and wait for
 a decision there before anything is applied. Shortening retained history is
 irreversible for every version it drops, and a lower `max_versions` is a
 shorter window to recover from, including under option B if it is taken

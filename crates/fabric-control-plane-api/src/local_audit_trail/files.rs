@@ -5,6 +5,8 @@ use std::path::{Path, PathBuf};
 
 use fabric_control_plane::{AuditEntry, AuditError, AuditStream, ChainHead, StoredStream};
 
+use super::durability::Durability;
+
 /// The extension of a stream's log.
 pub(super) const LOG_EXTENSION: &str = "jsonl";
 
@@ -21,28 +23,52 @@ pub(super) fn head_path(dir: &Path, stream: &AuditStream) -> PathBuf {
     dir.join(format!("{stream}.{HEAD_EXTENSION}"))
 }
 
-/// Appends `line` and a newline in one write, then flushes it to disk.
+/// Appends `line` and a newline in one write, then flushes it to storage.
 ///
 /// Opened for append, so the operating system places the write at the end
-/// whatever any other handle did; nothing here ever seeks or truncates.
-pub(super) fn append_line(path: &Path, line: &str) -> std::io::Result<()> {
-    let mut file = std::fs::OpenOptions::new().create(true).append(true).open(path)?;
+/// whatever any other handle did; nothing here ever seeks or truncates. The
+/// write that creates a stream also syncs the directory: until its name is
+/// durable, neither is the entry.
+pub(super) fn append_line(
+    dir: &Path,
+    stream: &AuditStream,
+    line: &str,
+    durability: &dyn Durability,
+) -> std::io::Result<()> {
+    let path = log_path(dir, stream);
+    let mut options = std::fs::OpenOptions::new();
+    options.append(true);
+    let (mut file, created) = match options.clone().create_new(true).open(&path) {
+        Ok(file) => (file, true),
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => (options.open(&path)?, false),
+        Err(error) => return Err(error),
+    };
     file.write_all(format!("{line}\n").as_bytes())?;
-    file.sync_data()
+    durability.sync_file(&file, &path)?;
+    if created {
+        durability.sync_dir(dir)?;
+    }
+    Ok(())
 }
 
-/// Replaces `stream`'s head: written beside it, flushed, then renamed over,
-/// so a reader sees the old head or the new one and never half of either.
-/// The staging file's name starts with `.`, which opening skips, so one left
-/// by a stop mid-write is not mistaken for a stream.
-pub(super) fn write_head(dir: &Path, stream: &AuditStream, head: &ChainHead) -> std::io::Result<()> {
-    let path = head_path(dir, stream);
+/// Replaces `stream`'s head: written beside it, flushed, renamed over, then
+/// the directory synced, so a reader sees the old head or the new one and
+/// never half of either. The staging file's name starts with `.`, which
+/// opening skips, so one left by a stop mid-write is not mistaken for a
+/// stream.
+pub(super) fn write_head(
+    dir: &Path,
+    stream: &AuditStream,
+    head: &ChainHead,
+    durability: &dyn Durability,
+) -> std::io::Result<()> {
     let next = dir.join(format!(".{stream}.{HEAD_EXTENSION}.next"));
     let text = serde_json::to_string(head).map_err(std::io::Error::other)?;
     let mut file = std::fs::File::create(&next)?;
     file.write_all(text.as_bytes())?;
-    file.sync_all()?;
-    std::fs::rename(&next, &path)
+    durability.sync_file(&file, &next)?;
+    std::fs::rename(&next, head_path(dir, stream))?;
+    durability.sync_dir(dir)
 }
 
 /// Reads `stream`'s entries and head, without verifying them.

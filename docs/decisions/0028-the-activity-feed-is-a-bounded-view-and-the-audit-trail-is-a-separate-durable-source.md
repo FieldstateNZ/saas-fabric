@@ -115,12 +115,19 @@ stop it between writing an entry and recording the head.
 ### 4. The development adapter: a file, not Git
 
 `LocalAuditTrail` keeps one JSON-lines file per stream, opened for append,
-one entry per line, flushed (`sync_data`) before an append returns. Beside
-each is `<stream>.head`, replaced atomically after each append. An OS lock on
-the directory refuses a second process, as `LocalClientRepository` does.
-Opening verifies every stream against its head. A stream one entry past its
-head is a stop between the two writes: it is complete, and the head catches
-up. A head with no log is a deleted stream, refused like any truncation.
+one entry per line, synced before an append returns. The append that creates
+a stream also syncs the directory, since a file's sync does not make its name
+durable; if that sync fails the append fails, and the stream takes no more
+entries until the trail is reopened. Beside each log is `<stream>.head`,
+replaced atomically after each append: written, synced, renamed, then the
+directory synced. A head that fails any of those leaves the entry appended
+and the head stale. An OS lock on the directory refuses a second process, as
+`LocalClientRepository` does, and is held by every queued or running append
+as well as the trail, so it outlives a dropped trail until that work ends.
+Opening verifies every stream against its head and syncs the directory,
+along with any ancestor it creates. A stream past its head is a stop or a
+failure between the two writes: it is complete, and the head catches up. A
+head with no log is a deleted stream, refused like any truncation.
 
 Git was considered and not chosen. Desired state reaches Git through a
 hosting provider's contents API, which rewrites a whole file per write and

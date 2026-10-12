@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex};
 
 use fabric_control_plane::{AuditError, AuditStream};
 
+use super::durability::{self, Durability, Os};
 use super::files::{self, HEAD_EXTENSION, LOG_EXTENSION};
 use super::{Heads, Inner, LocalAuditTrail, LocalAuditTrailError};
 
@@ -14,9 +15,11 @@ impl LocalAuditTrail {
     /// Opens the trail in `dir`, creating it if absent.
     ///
     /// Every stream with a log or a head is read and verified. A stream whose
-    /// log runs one entry past its head — a stop between the two writes — is
+    /// log runs past its head — a stop or failure between the two writes — is
     /// complete, and its head is caught up. A head with no log is a deleted
-    /// stream, and is refused like any other truncation.
+    /// stream, and is refused like any other truncation. The directory, and
+    /// any ancestor this creates, is synced before the trail is returned, so
+    /// every name an earlier append failed to make durable now is.
     ///
     /// # Errors
     ///
@@ -24,11 +27,19 @@ impl LocalAuditTrail {
     /// another process holds it, a file names no stream, or a stream does not
     /// read back or verify.
     pub fn open(dir: &Path) -> Result<Self, LocalAuditTrailError> {
+        Self::open_with(dir, Box::new(Os))
+    }
+
+    /// [`Self::open`], syncing through `durability`.
+    pub(super) fn open_with(
+        dir: &Path,
+        durability: Box<dyn Durability>,
+    ) -> Result<Self, LocalAuditTrailError> {
         let io = |path: &Path| {
             let path = path.to_path_buf();
             move |source| LocalAuditTrailError::Io { path, source }
         };
-        std::fs::create_dir_all(dir).map_err(io(dir))?;
+        durability::create_dir(dir, &*durability).map_err(io(dir))?;
 
         let lock_path = dir.join(".audit.lock");
         let lock = std::fs::OpenOptions::new()
@@ -63,18 +74,21 @@ impl LocalAuditTrail {
             })?;
             if let Some(head) = head {
                 if stored.anchor != Some(head) {
-                    files::write_head(dir, &stream, &head).map_err(io(dir))?;
+                    files::write_head(dir, &stream, &head, &*durability).map_err(io(dir))?;
                 }
                 heads.heads.insert(stream, head);
             }
         }
 
+        durability.sync_dir(dir).map_err(io(dir))?;
+
         Ok(Self {
             inner: Arc::new(Inner {
                 dir: dir.to_path_buf(),
                 state: Mutex::new(heads),
+                durability,
+                _lock: lock,
             }),
-            _lock: lock,
         })
     }
 }

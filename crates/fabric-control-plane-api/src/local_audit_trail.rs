@@ -17,11 +17,14 @@
 //! # Layout
 //!
 //! ```text
-//! <dir>/.audit.lock          held while the trail is open
+//! <dir>/.audit.lock          held while the trail or any append it started lives
 //! <dir>/<stream>.jsonl       one sealed entry per line, never rewritten
 //! <dir>/<stream>.head        the last appended entry's sequence and hash
 //! ```
 
+mod durability;
+#[cfg(test)]
+mod durability_tests;
 mod errors;
 mod files;
 mod open;
@@ -45,13 +48,17 @@ pub use errors::LocalAuditTrailError;
 /// never fall behind the file and fork the chain.
 pub struct LocalAuditTrail {
     inner: Arc<Inner>,
-    _lock: std::fs::File,
 }
 
-/// What every append and read works on.
+/// What every append and read works on. A queued or running append holds
+/// this, not the trail, so the directory lock lives here: it is released
+/// only once the trail and every operation it started are gone, and a second
+/// owner cannot open the directory while an old append can still write.
 struct Inner {
     dir: PathBuf,
     state: Mutex<Heads>,
+    durability: Box<dyn durability::Durability>,
+    _lock: std::fs::File,
 }
 
 /// Each stream's head, and the streams a failed write left unsafe to extend.
@@ -95,16 +102,21 @@ impl Inner {
         let entry = AuditEntry::seal(state.heads.get(&stream), at, record)?;
         let line = entry.encode()?;
 
-        if let Err(error) = files::append_line(&files::log_path(&self.dir, &stream), &line) {
+        // Whether or not the line reached the file, it is not known to be
+        // durable, so nothing more is chained onto it until the trail is
+        // reopened and the stream verified.
+        if let Err(error) = files::append_line(&self.dir, &stream, &line, &*self.durability) {
             state.broken.insert(stream);
-            return Err(unavailable(&error.to_string()));
+            return Err(unavailable(&format!(
+                "the entry was not durably appended: {error}"
+            )));
         }
         state.heads.insert(stream.clone(), entry.head());
 
         // The line is durable, so the entry is recorded. A head that failed
-        // to write is caught up on the next open: an entry past its head is
-        // a complete record (`verify`).
-        if let Err(error) = files::write_head(&self.dir, &stream, &entry.head()) {
+        // to write or sync is caught up on the next open: entries past their
+        // head are a complete record (`verify`).
+        if let Err(error) = files::write_head(&self.dir, &stream, &entry.head(), &*self.durability) {
             tracing::warn!(
                 event = "control_plane.audit.head_not_written",
                 stream = %stream,

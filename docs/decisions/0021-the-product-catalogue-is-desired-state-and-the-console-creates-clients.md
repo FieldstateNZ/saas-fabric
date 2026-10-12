@@ -6,6 +6,8 @@
   [2026-10-12 workbench amendment](#amendment-2026-10-12-the-loopback-workbench-is-retired-d01-9);
   owed decision 5 by the
   [2026-10-12 projected-client amendment](#amendment-2026-10-12-a-projected-identity-client-is-the-products-d01-19b);
+  owed decision 4 by the
+  [2026-10-12 host-kind amendment](#amendment-2026-10-12-a-projected-client-follows-the-kind-of-its-hosts-d01-15);
   acceptance follows ADR 0023 through its own reviewed change (D01-19d).
 - **Date:** 2026-09-16; amended 2026-10-11 and 2026-10-12
 - **Applies to:** `fabric-client-model`, `fabric-client-git`,
@@ -317,6 +319,13 @@ Consequences.
 **What is not projected.** A confidential client, which still needs ADR 0008's
 undesigned secret delivery; and any redirect strategy but `claimedHttps`.
 
+*Amended 2026-10-12 (D01-15): the strategy and callbacks now follow the kind
+of the client's hosts. A client on `.internal` hosts only is projected as
+`privateNetwork`, with `http://<host>/<application id>/callback` for each host
+and no template callback; a client mixing `.internal` and public hosts is
+refused. Every other client is projected exactly as the table above says. See
+the [amendment](#amendment-2026-10-12-a-projected-client-follows-the-kind-of-its-hosts-d01-15).*
+
 ### 5. Removing an assigned application is refused until deprovisioning exists
 
 A product save that drops an application the client is currently assigned is
@@ -538,6 +547,10 @@ not the application has a hostname template, and `claimedHttps` admits public
 assignment for that client. (An application whose template resolves under
 `.internal` is now refused when it is published, §4.) LucentRoot's production
 hosts are `.internal`, so its clients cannot take an application today.
+*Amended 2026-10-12 (D01-15): a client whose hosts are all `.internal` now
+takes an application as a `privateNetwork` client; a loopback host, or a mix
+of `.internal` and public hosts, is still refused. See the
+[amendment](#amendment-2026-10-12-a-projected-client-follows-the-kind-of-its-hosts-d01-15).*
 
 **Tightening a validation rule later can make the catalogue unreadable.** Every
 read parses and re-validates every stored release with the publication rules.
@@ -602,7 +615,7 @@ unreadable — whether a rule change ships as a new `apiVersion`, or a release i
 validated against the rules it was published under.
 
 **Confidential application clients**, and any projected strategy other than
-`claimedHttps`.
+`claimedHttps` and, since D01-15, `privateNetwork`.
 
 **Permission enforcement.** Navigation is an entitlement preview; the
 application enforces its own permissions.
@@ -644,7 +657,9 @@ repository is single-process by its lock, and is a development mode only.
    while removal is refused — yet a plan granting fewer features, or a release
    with fewer components, drops components from what the client is entitled to.
    That is the same deprovisioning question, asked more quietly.
-4. **Private-network clients.** Whether a projected client should follow the
+4. **Private-network clients.** *Disposed 2026-10-11 (D01-15): follow the
+   declared host kind, without exposing an internal client publicly or
+   changing networking; see the amendment below.* Whether a projected client should follow the
    kind of the client's hosts — `privateNetwork` for `.internal` — which is what
    LucentRoot needs, or whether applications stay public-host only.
 5. **Who owns a projected identity client.** *Disposed 2026-10-12 (D01-19b):
@@ -1168,3 +1183,114 @@ D01-19b is complete:
 
 Neither adds a forced repair or an automatic credential or access change.
 
+## Amendment 2026-10-12: a projected client follows the kind of its hosts (D01-15)
+
+Recorded from the D01-15 disposition in
+[#108](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6109518415):
+
+> **D01-15:** Follow the declared host kind, preserving private-network
+> reachability. Do not expose an internal client publicly or change
+> networking to implement this.
+
+This disposes owed decision 4 and amends §4 and the Consequences paragraph
+on `.internal` clients. It does not accept this ADR. It changes source only:
+no network, DNS, certificate, gateway, Keycloak scope, credential or live
+change, and nothing is applied to a running environment.
+
+### What an assignment projects
+
+The kind of the client's declared hosts (`spec.hosts`) decides the projected
+entry's `redirect`. `id`, `type` and `pkce` are unchanged.
+
+| The client's hosts | `redirect.strategy` | `redirect.uris` |
+|---|---|---|
+| none | `claimedHttps` | the template callback; refused when the release has no template, as before |
+| public only | `claimedHttps` | as §4: the template callback when the release has one, and `https://<host>/<application id>/callback` per host |
+| `.internal` only | `privateNetwork` | `http://<host>/<application id>/callback` per host, and **no** template callback |
+| both `.internal` and public | refused, `400 invalid_request` on `hosts` | — |
+| any loopback host | refused, as before: `claimedHttps` admits no loopback callback | — |
+
+A host is `.internal` when it is the ICANN private-use top-level domain or
+sits under it, by the same test the redirect URI classifier applies. The test
+lives in one place,
+`crates/fabric-client-model/src/identity/redirect_uri/host_kind/private_network.rs`,
+so the projection and the classifier cannot disagree about it.
+
+**Plain HTTP, because that is how the private network is reached.** No
+publicly-trusted certificate can exist for `.internal`, and LucentRoot's
+gateway has one listener, on port 80
+([client desired state](../architecture/client-desired-state.md)). An `https`
+callback there would only work after a networking change, which D01-15 rules
+out. `privateNetwork` already admits plain HTTP on these hosts (ADR 0019 §3),
+and the Keycloak adapter already writes a `privateNetwork` client.
+
+**No template callback, because it is a public name.** Publication refuses a
+template under `.internal` (§4), so a release's template is always a public
+hostname. Projecting it onto a private-network client would register a public
+callback for an internal client, which is the public exposure D01-15 rules out,
+and `privateNetwork` would refuse it in any case.
+
+**A mixed client is refused, not resolved.** One identity client holds one
+redirect strategy. Projecting either kind would drop callbacks the operator
+declared, or grant a kind they did not state, which is why a `v1` document
+mixing callback kinds is refused too
+([client desired state](../architecture/client-desired-state.md)). The
+operator declares only `.internal` hosts or only public ones.
+
+### What does not change
+
+- **A client on public hosts, or none, is projected exactly as before.** Its
+  strategy and callbacks are byte-for-byte what §4 built, so every stored
+  projection on public hosts stays its own projection. Nothing is migrated
+  and no stored document changes.
+- **D01-19b.** The product still owns the projected entry. The
+  stored-projection check compares the stored entries with the stored
+  document's own projection, which now follows its stored hosts. So:
+  - a Git edit that moves a client's hosts onto `.internal` without
+    re-projecting reports `diverged` on `redirectStrategy`;
+  - a Git edit to an internal projection's callbacks reports `diverged` on
+    `redirectUris`;
+  - a Git edit that mixes host kinds makes the projection `unverifiable`.
+
+  In each case a sweep withholds the entry, identity readiness stays unmet,
+  and a product save and a re-assertion onto it are refused as for any other
+  divergence. The repair is the same too: an identity edit that restores a
+  diverged projection is admitted, and an unverifiable one is corrected in
+  Git.
+- **Permission boundaries, the realm, roles, PKCE, the audience mapper and
+  every reconciliation status** are unchanged.
+
+### Verified against the code (at the base of this amendment)
+
+| Claim | Where |
+|---|---|
+| The `.internal` test, on whole labels | `crates/fabric-client-model/src/identity/redirect_uri/host_kind/private_network.rs` and its tests |
+| The projection follows the host kind, refuses a mixed client and still refuses loopback | `crates/fabric-client-model/src/document/application_identity/callbacks.rs` |
+| A public client is projected exactly as before and stays consistent; no hosts takes only the template; internal hosts project `privateNetwork` over HTTP with no template callback; a Git host move diverges on `redirectStrategy`; https, extra or removed internal callbacks diverge on `redirectUris`; a mixed client is refused and unverifiable; loopback is refused | `crates/fabric-client-model/src/document/application_identity/host_kind_tests.rs` |
+| Through the router: an internal client is created assigned and stores a `privateNetwork` entry with no public callback; a public client's entry is unchanged; an internal client converges with only its private callback, `applied`, identity met; a product save moving hosts between kinds re-projects and stays consistent; a Git edit to an internal projection's callbacks, a public client moved onto internal hosts in Git, and mixed host kinds in Git are each reported, withheld and leave identity unmet; a re-assertion onto a diverged entry and a product save over one are refused; the identity-edit repair restores consistency, and the audited re-assertion then leaves only the private callback in the provider | `crates/fabric-control-plane/tests/internal_host_projection.rs` |
+| A mixed client's creation is refused with `400 invalid_request` | `crates/fabric-control-plane/tests/product_workflows.rs::an_assignment_is_refused_for_a_client_mixing_internal_and_public_hosts` |
+| The D01-19b suites pass unchanged | `crates/fabric-client-model/src/document/application_identity/projection_tests.rs`; `crates/fabric-control-plane/tests/projected_divergence.rs`, `projected_identity.rs`, `projected_identity_git.rs`, `issuer_registry.rs` |
+
+### Known limits
+
+- **Not verified live.** No LucentRoot client has been assigned an
+  application, and no `privateNetwork` projected client has been converged
+  into a real Keycloak by this change.
+- **An internal client has no callback on the template hostname.** An
+  application reached inside the private network on its template name, rather
+  than under a client host, cannot sign that client's users in.
+- **Plain HTTP only.** A `.internal` deployment that serves TLS from a private
+  certificate authority would need an `https` callback, which the projection
+  does not produce. Keycloak matches the scheme exactly, so sign-in on such a
+  deployment would fail until that is decided.
+- **A client cannot mix host kinds** while it has an application assigned.
+- **Moving a converged client between kinds needs a re-assertion.** This is
+  not particular to D01-15: on `main`, a product save that changes a
+  converged client's hosts leaves the next pass holding each new callback as
+  a declared callback removed by hand (`handEdited`,
+  `declaredRedirectUriRemoved`) while the old callbacks, now undeclared, are
+  removed. A move between kinds changes every callback, so the client is
+  left with none, failing closed and visibly, as "A substituted callback
+  leaves a client with none" says under D01-19b's known limits, until an
+  operator re-asserts. A client's first assignment is
+  unaffected, because a new identity client is created whole.

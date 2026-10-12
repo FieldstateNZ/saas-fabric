@@ -604,6 +604,21 @@ Options:
 
 *Recommendation:* **A**, because LucentRoot needs it. Owner: **Brett**.
 
+*Disposed 2026-10-11 ([#108 comment 6109518415](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6109518415)); built 2026-10-12, under review:*
+**A**: "Follow the declared host kind, preserving private-network
+reachability. Do not expose an internal client publicly or change networking
+to implement this."
+- A client on `.internal` hosts only is projected as `privateNetwork`, with
+  `http://<host>/<application id>/callback` per host and no public template
+  callback.
+- A client on public hosts, or none, is projected exactly as before.
+- A client mixing `.internal` and public hosts is refused; loopback still is.
+- The D01-19b report, withhold and refusal rules apply unchanged.
+
+Source only: no network, Keycloak-scope, credential or live change. See
+ADR 0021's
+[D01-15 amendment](../decisions/0021-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md#amendment-2026-10-12-a-projected-client-follows-the-kind-of-its-hosts-d01-15).
+
 **U4.3: client upgrades, and what `automatic` means for application
 components** (**D01-16**). Sources: ADR 0021 owed decision 7; ADR 0026 "What
 this does not decide".
@@ -1161,7 +1176,7 @@ IDs are not reused.
 | D01-12 | Authorization | The administrator-role bypass and `require_scopes = false`; operator granularity | **Disposed 2026-10-11:** bypass and toggle removed; health detail role retained as the coarse operator control (ADR 0027 §5) |
 | D01-13 | Authorization | Where entitlements are enforced | Applications enforce; Fabric previews. **Disposed 2026-10-11** ([#108 comment 6109518415](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6109518415)): "Applications enforce entitlements server-side; Fabric previews them, without presenting a preview as enforcement. Keep the settled WorkSpec policy." |
 | D01-14 | Lifecycle | What deprovisioning undoes (ADR 0021 owed 3; ADR 0008 Deletion) | **Disposed 2026-10-11:** tombstone first, retained state, confirmed deletion as a separate write; no destructive action or retention period. Built; retention and customer-data choices deferred. See [Dispositions recorded](#dispositions-recorded) |
-| D01-15 | Lifecycle | `.internal` private-network clients (ADR 0021 owed 4) | Follow the host kind. **Disposed 2026-10-11** ([#108 comment 6109518415](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6109518415)): "Follow the declared host kind, preserving private-network reachability. Do not expose an internal client publicly or change networking to implement this." |
+| D01-15 | Lifecycle | `.internal` private-network clients (ADR 0021 owed 4) | Follow the host kind. **Disposed 2026-10-11** ([#108 comment 6109518415](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6109518415)): "Follow the declared host kind, preserving private-network reachability. Do not expose an internal client publicly or change networking to implement this." Built 2026-10-12, under review: `.internal`-only clients project `privateNetwork` over HTTP on their own hosts, with no public template callback; public clients unchanged; mixed host kinds refused. Not verified live. See ADR 0021's D01-15 amendment |
 | D01-16 | Lifecycle | Client upgrades, and `automatic` for application components (ADR 0021 owed 7) | Operator save per client for the pilot. **Disposed 2026-10-11** ([#108 comment 6109518415](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6109518415)): "Explicit operator save per client for the pilot; no automatic application-component upgrade policy introduced." |
 | D01-18 | Lifecycle | How the runtime is raised from `replicas: 0` (amends ADR 0023 §5) | Fabric reports a gate; a person flips it. **Disposed 2026-10-11** ([#108 comment 6109518415](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6109518415)): "Fabric reports the readiness gate; a deliberate operator action changes replicas only once inputs and evidence are ready. Current replicas=0 is intentional, not a crash; scaling alone cannot fix absent documents/identity/connectors. Existing disposable LucentRoot authority does not excuse unmet readiness conditions." |
 | D01-19a | Lifecycle | What "client created" means (ADR 0021 owed 2) | **Disposed 2026-10-11:** explicit incomplete state until provisioning, identity and publication are met. Built. See [Dispositions recorded](#dispositions-recorded) |

@@ -4,10 +4,11 @@
 //! Creation stages desired intent whatever the store says. What it cannot do
 //! without the store is admit an identity: only a completed new-instance
 //! reservation proves the id is not a retired identity coming back. A
-//! refused reservation is logged and the document is still written; the
-//! client then stays held, as every client does without a store.
+//! granted reservation writes the minted instance into `spec.lifecycle`; a
+//! refused one is logged and the document is staged with no instance, so it
+//! is never the identity the store knows and stays held.
 
-use fabric_client_model::{ClientId, ClientRevision, LifecycleRecord};
+use fabric_client_model::{ClientDocument, ClientId, ClientRevision};
 
 use crate::continuity::{self, Reserving};
 use crate::TransitionKind;
@@ -16,30 +17,42 @@ use crate::{
 };
 
 impl ClientService {
-    /// A new-instance reservation for `id`, when there is a store and it
-    /// grants one.
+    /// `document` with a freshly minted identity instance and its
+    /// new-instance reservation, when there is a store and it grants one;
+    /// otherwise `document` as it is, with none.
     pub(crate) async fn reserve_creation(
         &self,
         continuity: Option<&dyn LifecycleContinuity>,
-        id: &ClientId,
-        lifecycle: &LifecycleRecord,
+        document: ClientDocument,
         operator: &Operator,
-    ) -> Option<ContinuityReservation> {
-        let continuity = continuity?;
-        continuity::reserve(
+    ) -> (ClientDocument, Option<ContinuityReservation>) {
+        let (Some(continuity), Some(instance)) = (continuity, continuity::mint()) else {
+            return (document, None);
+        };
+        let mut lifecycle = document.lifecycle().clone();
+        lifecycle.instance = Some(instance);
+        let Ok(attested) = document.with_lifecycle(&lifecycle) else {
+            return (document, None);
+        };
+        let client = document.client();
+        let reserved = continuity::reserve(
             continuity,
             &Reserving {
-                client: id,
+                client: &client.id,
+                realm: &client.identity.realm,
                 kind: TransitionKind::Create,
                 at_revision: None,
                 from: None,
-                to: lifecycle,
+                to: &lifecycle,
                 reversing: None,
                 operator: operator.subject(),
             },
         )
-        .await
-        .ok()
+        .await;
+        match reserved {
+            Ok(reservation) => (attested, Some(reservation)),
+            Err(_) => (document, None),
+        }
     }
 
     /// Completes, releases or leaves pending `reservation`, by how the

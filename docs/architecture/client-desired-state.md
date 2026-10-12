@@ -493,6 +493,7 @@ spec:
 | `spec.lifecycle` | no | absent reads as saved intent, which every document written before it existed is |
 | `spec.lifecycle.tombstone.reason` | with a tombstone | non-blank, at most 512 bytes, no control characters |
 | `spec.lifecycle.deletionConfirmed` | no | only beside a tombstone, and not earlier than it |
+| `spec.lifecycle.instance` | no | 32 lowercase hexadecimal characters; written only by a creation the continuity store attested. A client without it, or with another, is never admitted as the identity the store knows |
 | `spec.lifecycle.restorations` | no | each entry not earlier than the tombstone it reverses or the entry before it, and the current tombstone not earlier than the last; both reasons follow the tombstone reason rule |
 
 **Written only by the control plane's three lifecycle writes**,

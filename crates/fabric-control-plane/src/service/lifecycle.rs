@@ -5,6 +5,7 @@
 
 mod create;
 mod record;
+mod replay;
 mod restore;
 mod retire;
 mod write;

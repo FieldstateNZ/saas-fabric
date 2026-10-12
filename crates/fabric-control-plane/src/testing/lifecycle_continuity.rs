@@ -7,11 +7,14 @@
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 
-use fabric_client_model::{ClientId, ClientRevision, LifecycleRecord};
+use fabric_client_model::lifecycle::IdentityInstance;
+use fabric_client_model::{ClientId, ClientRevision};
 
 use crate::{AcceptedLifecycle, ContinuityRefusal, LifecycleFingerprint, TransitionKind};
 
 mod port;
+#[cfg(test)]
+mod port_tests;
 
 /// What happened, in order.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -32,7 +35,7 @@ type ReserveHook = Box<dyn Fn() + Send + Sync>;
 #[derive(Default)]
 pub struct InMemoryLifecycleContinuity {
     clients: Mutex<BTreeMap<ClientId, AcceptedLifecycle>>,
-    instances: Mutex<u64>,
+    operations: Mutex<u64>,
     refuse_with: Mutex<Option<ContinuityRefusal>>,
     unavailable: Mutex<bool>,
     fail_completion: Mutex<bool>,
@@ -47,16 +50,15 @@ impl InMemoryLifecycleContinuity {
         Self::default()
     }
 
-    /// Enrolls `client` as a new instance whose accepted lifecycle is
-    /// `record`: the reviewed enrollment a test stands in for.
-    pub fn enroll(&self, client: &ClientId, record: &LifecycleRecord) {
-        let instance = self.next_instance();
+    /// Enrolls `client` as `instance`, accepting `fingerprint`: the reviewed
+    /// enrollment a test stands in for.
+    pub fn enroll(&self, client: &ClientId, instance: IdentityInstance, fingerprint: LifecycleFingerprint) {
         lock(&self.clients).insert(
             client.clone(),
             AcceptedLifecycle {
                 instance,
                 sequence: 0,
-                fingerprint: LifecycleFingerprint::of(record),
+                fingerprint,
                 pending: None,
             },
         );
@@ -88,10 +90,11 @@ impl InMemoryLifecycleContinuity {
         lock(&self.events).clone()
     }
 
-    pub(super) fn next_instance(&self) -> u64 {
-        let mut instances = lock(&self.instances);
-        *instances += 1;
-        *instances
+    /// A token no earlier operation used.
+    pub(super) fn next_operation(&self) -> u64 {
+        let mut operations = lock(&self.operations);
+        *operations += 1;
+        *operations
     }
 }
 

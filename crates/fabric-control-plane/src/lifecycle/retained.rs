@@ -23,13 +23,17 @@ use crate::state::ControlPlaneState;
 use crate::RestoreRefusal;
 
 /// What the check reads.
+///
+/// A deployment with no platform or no publication target is not evidence
+/// that the client was never placed or published: its configuration could
+/// have changed. Both are unknown retention, and refuse.
 pub(crate) enum RetainedEvidence {
-    /// This deployment manages no platform: nothing was placed.
+    /// This deployment manages no platform.
     NotManaged,
     /// The placements or the held publication could not be read.
     Unreadable,
     /// Every recorded placement, and what the target holds; `None` when no
-    /// publication target exists, so nothing was ever published.
+    /// publication target is configured.
     Read {
         placements: Vec<PlacementRecord>,
         published: Option<PublishedResources>,
@@ -62,7 +66,7 @@ impl ControlPlaneState {
 /// Refuses restoring `client` unless its placements are as it left them.
 pub(crate) fn check(client: &Client, evidence: &RetainedEvidence) -> Result<(), RestoreRefusal> {
     let (placements, published) = match evidence {
-        RetainedEvidence::NotManaged => return Ok(()),
+        RetainedEvidence::NotManaged => return Err(RestoreRefusal::PlacementsUnverified),
         RetainedEvidence::Unreadable => return Err(RestoreRefusal::PlacementsUnreadable),
         RetainedEvidence::Read {
             placements,
@@ -86,7 +90,7 @@ pub(crate) fn check(client: &Client, evidence: &RetainedEvidence) -> Result<(), 
         )));
     }
     let Some(published) = published else {
-        return Ok(());
+        return Err(RestoreRefusal::PlacementsUnverified);
     };
     if published.tenants.is_empty() && published.history.tenants.is_empty() {
         return Err(RestoreRefusal::PlacementsUnverified);

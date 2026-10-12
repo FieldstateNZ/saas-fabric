@@ -8,20 +8,20 @@
 //! files or provider attributes. A reservation is durable before the
 //! document write and binds the identity instance, the expected sequence,
 //! the reviewed desired revision, the fingerprint it moves from and the one
-//! it moves to, and, for a restore, the exact tombstone reversed. Reserving
-//! the same transition again (same kind, instance, sequence, reviewed
-//! revision and starting lifecycle) returns the pending reservation with its
-//! new destination, so a retry whose first write never landed recovers it:
-//! the document could not have moved while it is still at that revision. Any
-//! other transition while one is pending is refused.
+//! it moves to, the exact record it will write, the operator and, for a
+//! restore, the exact tombstone reversed. The pending transition is frozen:
+//! reserving exactly the same transition again returns the same reservation,
+//! so a retry replays the stored intent rather than a new one, and any other
+//! transition while one is pending is refused. Each reservation is a unique
+//! operation: a completion or release names it, never another.
 //! A completion pairs with its own pending reservation only. A pending
 //! reservation survives a failed document write that may have landed, a
 //! failed completion and a restart. Storage, threat boundary, crash
 //! consistency, enrollment and backup are O5 slice B's to state.
 
 use async_trait::async_trait;
-use fabric_client_model::lifecycle::Tombstone;
-use fabric_client_model::{ClientId, ClientRevision};
+use fabric_client_model::lifecycle::{IdentityInstance, Tombstone};
+use fabric_client_model::{ClientId, ClientRevision, LifecycleRecord};
 
 use super::{ContinuityRefusal, ContinuityReservation, LifecycleFingerprint};
 
@@ -44,49 +44,56 @@ pub trait LifecycleContinuity: Send + Sync {
     /// Nothing may be written after a refusal.
     async fn reserve(&self, transition: &Transition<'_>) -> Result<ContinuityReservation, ContinuityRefusal>;
 
-    /// Records that the document write for `reservation` produced `revision`.
+    /// Records that the document write `reservation` names produced
+    /// `revision`.
     ///
     /// # Errors
     ///
     /// [`ContinuityRefusal::StaleCompletion`] when `reservation` is not the
-    /// pending one, or [`ContinuityRefusal::Unavailable`]. The reservation
-    /// then stays pending.
+    /// pending operation, or [`ContinuityRefusal::Unavailable`]. The
+    /// reservation then stays pending.
     async fn complete(
         &self,
         reservation: &ContinuityReservation,
         revision: &ClientRevision,
     ) -> Result<(), ContinuityRefusal>;
 
-    /// Releases `reservation`, whose document write is known not to have
-    /// happened.
+    /// Releases `reservation`, whose own document write conclusively did not
+    /// land. Any other reservation is left as it is.
     async fn release(&self, reservation: &ContinuityReservation);
 }
 
 /// What the store holds for one client.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AcceptedLifecycle {
-    /// The client's identity instance: a client id created again after its
-    /// document was removed is a different instance, never this one.
-    pub instance: u64,
+    /// The identity instance the store attested at creation or enrollment.
+    pub instance: IdentityInstance,
     /// How many transitions the store has completed for this instance.
     pub sequence: u64,
-    /// The lifecycle the last completed transition recorded.
+    /// The lifecycle, instance and identity context last confirmed.
     pub fingerprint: LifecycleFingerprint,
     /// A reserved transition not yet completed, if any.
     pub pending: Option<PendingTransition>,
 }
 
-/// A reserved transition the store has not seen completed.
+/// A reserved transition the store has not seen completed, frozen exactly
+/// as it was reserved.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PendingTransition {
-    /// The reservation.
+    /// The unique operation.
     pub reservation: ContinuityReservation,
-    /// The lifecycle it records.
-    pub to: LifecycleFingerprint,
-    /// The desired revision it was reviewed at; `None` for a creation.
-    pub at_revision: Option<ClientRevision>,
     /// Which write it is.
     pub kind: TransitionKind,
+    /// The desired revision it was reviewed at; `None` for a creation.
+    pub at_revision: Option<ClientRevision>,
+    /// The fingerprint it records.
+    pub to: LifecycleFingerprint,
+    /// The exact lifecycle record it writes, so a retry replays it.
+    pub to_record: LifecycleRecord,
+    /// For a restore, the tombstone it reverses.
+    pub reversing: Option<Tombstone>,
+    /// The operator subject that reserved it.
+    pub operator: String,
 }
 
 /// Which lifecycle write a transition is.
@@ -109,16 +116,18 @@ pub struct Transition<'a> {
     pub client: &'a ClientId,
     /// Which write.
     pub kind: TransitionKind,
-    /// The identity instance it moves; `None` only for a creation.
-    pub instance: Option<u64>,
+    /// The identity instance it moves, or for a creation the one minted for it.
+    pub instance: &'a IdentityInstance,
     /// The sequence the store must still be at; `None` only for a creation.
     pub expected_sequence: Option<u64>,
     /// The desired revision the operator reviewed; `None` for a creation.
     pub at_revision: Option<&'a ClientRevision>,
-    /// The lifecycle it moves from; `None` only for a creation.
+    /// The fingerprint it moves from; `None` only for a creation.
     pub from: Option<&'a LifecycleFingerprint>,
-    /// The lifecycle it records.
+    /// The fingerprint it records.
     pub to: &'a LifecycleFingerprint,
+    /// The exact lifecycle record it writes.
+    pub to_record: &'a LifecycleRecord,
     /// For a restore, the exact tombstone it reverses.
     pub reversing: Option<&'a Tombstone>,
     /// The operator subject.

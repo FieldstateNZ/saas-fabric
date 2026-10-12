@@ -210,9 +210,13 @@ fn a_target_holding_no_accepted_publication_is_unknown_evidence() {
 }
 
 #[test]
-fn a_deployment_without_a_platform_or_target_has_only_the_declaration_check() {
-    assert_eq!(check(&two_intents(), &RetainedEvidence::NotManaged), Ok(()));
-    assert_eq!(check(&two_intents(), &no_target(placed())), Ok(()));
-    let only_primary = client("  data:\n    primary:\n      class: dedicated\n");
-    assert!(check(&only_primary, &no_target(placed())).is_err());
+fn no_platform_or_no_target_is_unknown_retention_not_never_published() {
+    assert_eq!(
+        check(&two_intents(), &RetainedEvidence::NotManaged),
+        Err(RestoreRefusal::PlacementsUnverified)
+    );
+    assert_eq!(
+        check(&two_intents(), &no_target(placed())),
+        Err(RestoreRefusal::PlacementsUnverified)
+    );
 }

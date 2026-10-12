@@ -301,8 +301,8 @@ async fn registered_globex(label: &str) -> (TempDir, TestControlPlane, ClientRev
     let dir = TempDir::new(label);
     let (platform, fake) = platform_binding().await;
     let plane = control_plane_with_publication(platform, sink(&dir));
-    let revision = plane.repository.insert(&globex_document()).unwrap();
-    plane.enroll("globex").await;
+    plane.repository.insert(&globex_document()).unwrap();
+    let revision = plane.enroll("globex").await;
     fake.seed(DesiredRevision::new("data-sources-1"), vec![data_source()]);
     fake.seed_placements(DesiredRevision::new("placements-1"), vec![placement()]);
     release_workspec(&plane.router).await;
@@ -489,35 +489,40 @@ async fn reverting_an_assignment_removes_what_the_console_refuses_to_remove_and_
     assert_eq!(published(&dir), before);
 }
 
+/// A reverted creation leaves the tenant bound with no client document.
+/// Nothing protected says that identity ended, so leaving its issuer out
+/// would withdraw an accepted registration on Git's word: the pass is held
+/// and the target keeps every document (review 5489320331). Reverting the
+/// revert brings back the attested instance, and the issuer is decided
+/// again.
 #[tokio::test]
-async fn reverting_a_clients_creation_leaves_its_tenant_published_and_takes_its_issuer_out() {
+async fn reverting_a_clients_creation_holds_the_registry_and_keeps_every_published_document() {
     let (dir, plane, _) = registered_globex("client-revert-creation").await;
     let router = &plane.router;
     let created = plane.repository.get(&globex()).await.unwrap().document;
-    let tenants_before = read(&dir, "tenants.json");
+    let accepted = published(&dir);
 
     assert!(plane.repository.remove_by_hand(&globex()));
     let (status, _) = get(router, "/api/clients/globex").await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 
-    // The placement is the platform's record, not the client's, so the
-    // tenant binding stays published. Its issuer leaves the registry in a
-    // new generation, reported as having no client.
     let removed = publish(router).await;
-    assert_eq!(exclusion(&removed).as_deref(), Some("noClient"), "{removed}");
-    assert!(registered(&dir).is_empty());
-    assert_eq!(generation(&dir), 2);
-    assert_eq!(read(&dir, "tenants.json"), tenants_before);
+    assert_eq!(removed["lastPass"]["outcome"], "failed", "{removed}");
+    assert!(
+        removed["lastPass"]["detail"]
+            .as_str()
+            .unwrap()
+            .contains("no client document"),
+        "{removed}"
+    );
+    assert_eq!(published(&dir), accepted, "nothing withdrawn, nothing published");
+    assert_eq!(registered(&dir), ["globex"]);
     assert!(audited(&plane, &globex()).await.is_empty());
 
-    // Reverting the revert brings the document back at a new revision.
-    // Identity is pending there until reconciliation applies it.
     let restored = plane.repository.insert(&created).unwrap();
-    let pending = publish(router).await;
-    assert_eq!(exclusion(&pending).as_deref(), Some("notReady"), "{pending}");
-    assert_eq!(generation(&dir), 2);
     applied(&plane, &restored);
-    publish(router).await;
+    let decided = publish(router).await;
+    assert_ne!(decided["lastPass"]["outcome"], "failed", "{decided}");
     assert_eq!(registered(&dir), ["globex"]);
-    assert_eq!(generation(&dir), 3);
+    assert_eq!(generation(&dir), 1);
 }

@@ -5,7 +5,7 @@
 //! |---|---|---|
 //! | `placements_unavailable` | 503 | the placements, or what was published from them, could not be read |
 //! | `restore_placements_not_retained` | 409 | a placement was removed, replaced, lowered or orphaned while the client was retired |
-//! | `restore_placements_unverified` | 409 | the publication target holds no accepted publication |
+//! | `restore_placements_unverified` | 409 | no platform or publication target is configured, or the target holds no accepted publication |
 //! | `lifecycle_continuity_unavailable` | 503 | no protected continuity store exists (held; no `Retry-After`), or it could not be reached |
 //! | `lifecycle_continuity_unenrolled` | 409 | the store holds no accepted lifecycle for the client |
 //! | `lifecycle_continuity_mismatch` | 409 | the document's lifecycle is not the one the store accepted |

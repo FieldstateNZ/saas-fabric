@@ -69,11 +69,11 @@ async fn a_client_becomes_ready_once_placed_applied_and_published_and_retirement
     let dir = TempDir::new("lifecycle-ready");
     let (platform, fake) = platform_binding().await;
     let plane = control_plane_with_publication(platform, sink(&dir));
-    let revision = plane
+    plane
         .repository
         .insert(&ClientDocument::parse(GLOBEX).unwrap())
         .unwrap();
-    plane.enroll("globex").await;
+    let revision = plane.enroll("globex").await;
 
     let (_, saved) = get(&plane.router, "/api/clients/globex").await;
     assert_eq!(saved["lifecycle"]["state"], "incomplete", "{saved}");
@@ -457,11 +457,11 @@ async fn a_tombstoned_client_refuses_placement() {
     let (platform, fake) = platform_binding().await;
     let dir = TempDir::new("lifecycle-placement");
     let plane = control_plane_with_publication(platform, sink(&dir));
-    let revision = plane
+    plane
         .repository
         .insert(&ClientDocument::parse(GLOBEX).unwrap())
         .unwrap();
-    plane.enroll("globex").await;
+    let revision = plane.enroll("globex").await;
     fake.seed(DesiredRevision::new("ds-1"), vec![declared_data_source()]);
     fake.seed_placements(DesiredRevision::new("pl-1"), vec![]);
     tombstone(&plane.router, "globex", revision.as_str()).await;

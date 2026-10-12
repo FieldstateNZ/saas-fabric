@@ -18,23 +18,41 @@ fn client() -> ClientId {
     ClientId::try_new("acme").unwrap()
 }
 
-/// A continuity store that accepts `acme` as the fixture records it.
-fn enrolled() -> InMemoryLifecycleContinuity {
+/// The `acme` fixture attested with an identity instance, and a
+/// continuity store that accepts it exactly as stored.
+fn attested_acme() -> (
+    Arc<crate::InMemoryClientRepository>,
+    fabric_client_model::ClientRevision,
+    InMemoryLifecycleContinuity,
+) {
+    let (repository, _) = repository_with_acme();
+    let lifecycle = fabric_client_model::LifecycleRecord {
+        instance: Some(fabric_client_model::lifecycle::IdentityInstance::try_new(&"1".repeat(32)).unwrap()),
+        ..fabric_client_model::LifecycleRecord::default()
+    };
+    let document = crate::fixtures::acme_document()
+        .with_lifecycle(&lifecycle)
+        .unwrap();
+    let revision = repository.insert(&document).unwrap();
     let store = InMemoryLifecycleContinuity::new();
-    store.enroll(&client(), &fabric_client_model::LifecycleRecord::default());
-    store
+    store.enroll(
+        &client(),
+        lifecycle.instance.clone().unwrap(),
+        crate::LifecycleFingerprint::of_document(&document),
+    );
+    (repository, revision, store)
 }
 
 #[tokio::test]
 async fn a_sweep_reconciles_every_client_and_records_the_result() {
-    let (repository, revision) = repository_with_acme();
+    let (repository, revision, store) = attested_acme();
     let provider = Arc::new(FakeIdentityProvider::new());
     let reconciler = IdentityReconciler::new(provider.clone());
     let statuses = ReconciliationStatusStore::new();
 
     let swept = pass::run(
         repository.as_ref(),
-        Some(&enrolled()),
+        Some(&store),
         &reconciler,
         None,
         &statuses,
@@ -54,14 +72,14 @@ async fn a_sweep_reconciles_every_client_and_records_the_result() {
 
 #[tokio::test]
 async fn a_second_sweep_changes_nothing() {
-    let (repository, _) = repository_with_acme();
+    let (repository, _, store) = attested_acme();
     let provider = Arc::new(FakeIdentityProvider::new());
     let reconciler = IdentityReconciler::new(provider.clone());
     let statuses = ReconciliationStatusStore::new();
 
     pass::run(
         repository.as_ref(),
-        Some(&enrolled()),
+        Some(&store),
         &reconciler,
         None,
         &statuses,
@@ -72,7 +90,7 @@ async fn a_second_sweep_changes_nothing() {
     provider.clear_calls();
     pass::run(
         repository.as_ref(),
-        Some(&enrolled()),
+        Some(&store),
         &reconciler,
         None,
         &statuses,
@@ -90,7 +108,7 @@ async fn a_second_sweep_changes_nothing() {
 
 #[tokio::test]
 async fn a_provider_failure_is_recorded_and_desired_state_is_untouched() {
-    let (repository, revision) = repository_with_acme();
+    let (repository, revision, store) = attested_acme();
     let provider = Arc::new(FakeIdentityProvider::new());
     provider.fail_with(ProviderError::Unavailable {
         detail: "connection refused".to_owned(),
@@ -100,7 +118,7 @@ async fn a_provider_failure_is_recorded_and_desired_state_is_untouched() {
 
     pass::run(
         repository.as_ref(),
-        Some(&enrolled()),
+        Some(&store),
         &reconciler,
         None,
         &statuses,
@@ -120,14 +138,14 @@ async fn a_provider_failure_is_recorded_and_desired_state_is_untouched() {
 async fn an_unreadable_repository_leaves_recorded_status_alone() {
     // A briefly unreadable repository is not evidence that anything changed,
     // so it must not overwrite what is known about every client.
-    let (repository, _) = repository_with_acme();
+    let (repository, _, store) = attested_acme();
     let provider = Arc::new(FakeIdentityProvider::new());
     let reconciler = IdentityReconciler::new(provider);
     let statuses = ReconciliationStatusStore::new();
 
     pass::run(
         repository.as_ref(),
-        Some(&enrolled()),
+        Some(&store),
         &reconciler,
         None,
         &statuses,
@@ -140,7 +158,7 @@ async fn an_unreadable_repository_leaves_recorded_status_alone() {
     repository.set_unavailable(Some("connection refused".to_owned()));
     let swept = pass::run(
         repository.as_ref(),
-        Some(&enrolled()),
+        Some(&store),
         &reconciler,
         None,
         &statuses,
@@ -159,7 +177,13 @@ async fn a_client_the_continuity_store_does_not_confirm_is_left_alone() {
         .tombstone(1, "o", "retired")
         .unwrap();
     let mismatched = InMemoryLifecycleContinuity::new();
-    mismatched.enroll(&client(), &tombstoned);
+    let instance = fabric_client_model::lifecycle::IdentityInstance::try_new(&"1".repeat(32)).unwrap();
+    let realm = RealmName::try_new("acme").unwrap();
+    mismatched.enroll(
+        &client(),
+        instance,
+        crate::LifecycleFingerprint::of(&client(), &realm, &tombstoned),
+    );
 
     for continuity in [None, Some(&InMemoryLifecycleContinuity::new()), Some(&mismatched)] {
         let (repository, _) = repository_with_acme();

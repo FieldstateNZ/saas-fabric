@@ -1,29 +1,26 @@
 //! What desired state records about a client's lifecycle (`spec.lifecycle`),
 //! and the three operator transitions that write it.
 //!
-//! In the 121-150 band: the record and the three transitions that are the
-//! only way to produce a new one. Splitting a transition from the record it
-//! moves would put "deletion follows a tombstone" or "a restoration keeps its
-//! tombstone" apart from the fields that hold them. Invariants: `invariants`.
+//! In the 121-150 band: the record and the only three transitions producing a
+//! new one, kept with the fields they move. Invariants: `invariants`.
 
 mod invariants;
 
 use serde::{Deserialize, Serialize};
 
 use super::entries::{DeletionConfirmation, Restoration, Tombstone};
+use super::instance::IdentityInstance;
 use super::refusal::LifecycleRefusal;
 use crate::ClientId;
 use invariants::{check_reason, Reasoned};
 
 /// A client's recorded lifecycle (D01-14).
 ///
-/// Absent from a document means no entry is present: the client is saved
-/// intent, and whether it is usable is derived from evidence
+/// Absent means saved intent; whether it is usable is derived from evidence
 /// ([`super::ClientLifecycle::derive`]), never recorded here.
 ///
 /// `deny_unknown_fields`, unlike the rest of `spec`: a misspelt `tombstoned:`
-/// would otherwise read as an active client, which is the one misreading this
-/// section exists to rule out.
+/// would otherwise read as an active client.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct LifecycleRecord {
@@ -31,15 +28,17 @@ pub struct LifecycleRecord {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tombstone: Option<Tombstone>,
 
-    /// When deletion of a tombstoned client was confirmed. Records intent
-    /// only: nothing is deleted when this is written.
+    /// When deletion of a tombstoned client was confirmed. Intent only.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deletion_confirmed: Option<DeletionConfirmation>,
 
-    /// Every tombstone an operator reversed, oldest first. Only ever grows:
-    /// a restoration moves the tombstone here rather than erasing it.
+    /// Every tombstone an operator reversed, oldest first. Only ever grows.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub restorations: Vec<Restoration>,
+
+    /// The identity instance the continuity store attested at creation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub instance: Option<IdentityInstance>,
 }
 
 impl LifecycleRecord {
@@ -74,7 +73,7 @@ impl LifecycleRecord {
                 reason,
             }),
             deletion_confirmed: None,
-            restorations: self.restorations.clone(),
+            ..self.clone()
         })
     }
 
@@ -145,6 +144,7 @@ impl LifecycleRecord {
             tombstone: None,
             deletion_confirmed: None,
             restorations,
+            instance: self.instance.clone(),
         })
     }
 }

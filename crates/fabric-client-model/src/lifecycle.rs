@@ -22,6 +22,7 @@
 //! removes, and whether it can ever be restored, are not decided.
 
 mod entries;
+mod instance;
 mod readiness;
 mod record;
 mod refusal;
@@ -31,6 +32,7 @@ mod state;
 mod lifecycle_tests;
 
 pub use entries::{DeletionConfirmation, Restoration, Tombstone};
+pub use instance::IdentityInstance;
 pub use readiness::{Evidence, Readiness, ReadinessCondition, Unmet};
 pub use record::LifecycleRecord;
 pub use refusal::{LifecycleRefusal, LifecycleUse};

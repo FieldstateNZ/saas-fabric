@@ -20,11 +20,11 @@ pub enum RestoreRefusal {
         detail: String,
     },
 
-    /// A publication target exists and holds no accepted publication, so
-    /// nothing establishes what was published.
+    /// Nothing establishes what was published: no platform or publication
+    /// target is configured, or the target holds no accepted publication.
     #[error(
-        "the publication target holds no accepted publication, so the retained placements cannot be \
-         checked against what was published"
+        "nothing establishes what was published for this client, so the retained placements cannot be \
+         checked"
     )]
     PlacementsUnverified,
 }

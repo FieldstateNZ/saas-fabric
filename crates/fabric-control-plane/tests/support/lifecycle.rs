@@ -109,9 +109,11 @@ pub async fn publish_one_application_with_a_resource(router: &Router) {
         body_of(response).await
     }
 
+    // Over whatever catalogue is already there, or as the first write.
+    let (_, current) = get(router, "/api/catalogue").await;
     let created = command(
         router,
-        &Value::Null,
+        &current["revision"],
         &json!({"action":"createApplication","id":"workspec","name":"Workspec"}),
     )
     .await;

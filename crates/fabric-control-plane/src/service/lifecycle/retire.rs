@@ -13,6 +13,7 @@
 
 use fabric_client_model::{ClientId, ClientRevision};
 
+use super::record::{Asked, Ran};
 use crate::{
     audit, ClientService, ControlPlaneError, LifecycleContinuity, Operator, StoredClient, TransitionKind,
 };
@@ -34,19 +35,26 @@ impl ClientService {
         expected: &ClientRevision,
         continuity: Option<&dyn LifecycleContinuity>,
     ) -> Result<StoredClient, ControlPlaneError> {
-        let kind = TransitionKind::Tombstone;
-        if let Some(recovered) = self.recover_transition(id, expected, continuity, kind).await? {
-            return Ok(recovered);
-        }
         let at = self.clock.now_unix_seconds();
-        let prepared = self
-            .prepare_lifecycle(operator, id, expected, "Client tombstoned", |record| {
-                record.tombstone(at, operator.subject(), reason)
-            })
-            .await?;
-        let (stored, _) = self
-            .record_transition(operator, id, expected, prepared, continuity, kind)
-            .await?;
+        let asked = Asked {
+            operator,
+            id,
+            expected,
+            kind: TransitionKind::Tombstone,
+            action: "Client tombstoned",
+            continuity,
+        };
+        let stored = match self
+            .run_transition(
+                &asked,
+                |record| record.tombstone(at, operator.subject(), reason),
+                |_| Ok(()),
+            )
+            .await?
+        {
+            Ran::Recovered(stored) => return Ok(stored),
+            Ran::Written(stored, _) => stored,
+        };
         self.audit
             .record(audit::client_tombstoned(operator, id, &stored.revision))
             .await;
@@ -70,19 +78,22 @@ impl ClientService {
         expected: &ClientRevision,
         continuity: Option<&dyn LifecycleContinuity>,
     ) -> Result<StoredClient, ControlPlaneError> {
-        let kind = TransitionKind::ConfirmDeletion;
-        if let Some(recovered) = self.recover_transition(id, expected, continuity, kind).await? {
-            return Ok(recovered);
-        }
         let at = self.clock.now_unix_seconds();
-        let prepared = self
-            .prepare_lifecycle(operator, id, expected, "Client deletion confirmed", |record| {
-                record.confirm_deletion(id, confirming, at, operator.subject())
-            })
-            .await?;
-        let (stored, _) = self
-            .record_transition(operator, id, expected, prepared, continuity, kind)
-            .await?;
+        let asked = Asked {
+            operator,
+            id,
+            expected,
+            kind: TransitionKind::ConfirmDeletion,
+            action: "Client deletion confirmed",
+            continuity,
+        };
+        let confirm = |record: &fabric_client_model::LifecycleRecord| {
+            record.confirm_deletion(id, confirming, at, operator.subject())
+        };
+        let stored = match self.run_transition(&asked, confirm, |_| Ok(())).await? {
+            Ran::Recovered(stored) => return Ok(stored),
+            Ran::Written(stored, _) => stored,
+        };
         self.audit
             .record(audit::client_deletion_confirmed(operator, id, &stored.revision))
             .await;

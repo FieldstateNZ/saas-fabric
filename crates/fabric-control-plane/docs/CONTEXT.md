@@ -142,14 +142,16 @@ edits and secret writes are deliberately not guarded (remediation).
 a retired tenant stays published (withdrawal deferred). `lifecycle/withdrawal.rs`
 reports `withdrawal` (`pending`/`refused`/`unobserved`/`notPublished`) for retired
 clients from `PublicationState` evidence only; never "withdrawn". Nothing here deletes
-anything. Restore (`service/restore.rs`, `POST .../restoration`): CAS, then
+anything. Restore (`service/lifecycle/restore.rs`, `POST .../restoration`): CAS, then
 `LifecycleRecord::restore` (tombstone kept in `restorations`), then
 `lifecycle/retained.rs` (against the target's held publication), then a reservation
 in the `LifecycleContinuity` port (`continuity/`), then the write, completion and
-audit S20 (`service/lifecycle/record.rs` holds the retry contract). Every lifecycle
+audit S20 (`service/lifecycle/record.rs` and `replay.rs` hold the retry contract). Every lifecycle
 write reserves when a store exists. `continuity::admit` guards readiness
 (`evidence::identity`), the sweep (`reconcile/pass.rs`), re-assertion (`converge.rs`)
-and the issuer registry (a held bound client fails the pass). No deployment has a
+and the issuer registry (a held bound client, retired or not, or a bound tenant with no
+client document, fails the pass). Creation mints `spec.lifecycle.instance`; admission
+requires that exact instance. No deployment has a
 store, so every restore and every identity side effect is held (codes in
 `errors/status_mapping/restore.rs`); `testing::InMemoryLifecycleContinuity` is
 test-only.

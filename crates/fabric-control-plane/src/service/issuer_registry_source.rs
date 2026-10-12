@@ -37,12 +37,14 @@ use crate::{ClientService, LifecycleContinuity};
 /// amendment).
 ///
 /// A bound client the continuity store does not confirm cannot be decided
-/// either way (O5, #108 comment 6120741272 item 2): registering it would
-/// admit an unconfirmed identity, and leaving it out would publish a
-/// registry decided without the authority. The pass is held instead, so the
-/// target keeps the registry, bindings and last-good readers it accepted. A
-/// retired client is excluded whatever the store says: retirement only
-/// restricts.
+/// either way (O5, #108 comment 6120741272 item 2 and review 5489320331):
+/// registering it would admit an unconfirmed identity, and leaving it out
+/// would publish a registry decided without the authority. That includes a
+/// retired client whose tombstone the store has not confirmed, and a bound
+/// tenant whose client document is gone: a desired-state-only restriction
+/// is not authority to withdraw what was accepted. The pass is held
+/// instead, so the target keeps the record, registry, documents, bindings
+/// and last-good readers it accepted.
 pub(crate) struct LifecycleIssuerRegistry {
     service: Arc<ClientService>,
     origin: IssuerOrigin,
@@ -94,8 +96,7 @@ impl IssuerRegistrySource for LifecycleIssuerRegistry {
             };
             let is_bound = bound.remove(&tenant).is_some();
             let admission = admit(self.continuity.as_deref(), stored).await;
-            if let (true, false, Admission::Held(hold)) = (is_bound, client.lifecycle.is_retired(), admission)
-            {
+            if let (true, Admission::Held(hold)) = (is_bound, admission) {
                 return Err(RegistrySourceError::Unavailable(format!(
                     "the issuer registry is held: {} is bound and its identity is {hold}",
                     client.id
@@ -120,12 +121,12 @@ impl IssuerRegistrySource for LifecycleIssuerRegistry {
                 Err(_) => {}
             }
         }
-        registrations
-            .excluded
-            .extend(bound.into_keys().map(|tenant| Excluded {
-                tenant,
-                reason: Exclusion::NoClient,
-            }));
+        if let Some(tenant) = bound.into_keys().next() {
+            return Err(RegistrySourceError::Unavailable(format!(
+                "the issuer registry is held: {tenant} is bound and has no client document, and nothing \
+                 protected says its identity ended"
+            )));
+        }
         Ok(registrations)
     }
 }

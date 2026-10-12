@@ -188,3 +188,42 @@ fn a_restoration_with_a_blank_reason_or_unknown_key_is_refused() {
         "{misspelt:?}"
     );
 }
+
+// The identity instance the continuity store attested.
+
+#[test]
+fn an_identity_instance_round_trips_and_survives_every_transition() {
+    let record = LifecycleRecord {
+        instance: Some(crate::lifecycle::IdentityInstance::try_new(&"0f".repeat(16)).unwrap()),
+        ..LifecycleRecord::default()
+    };
+    let record = record
+        .tombstone(100, "o", "r")
+        .unwrap()
+        .restore(150, "o", "renewed")
+        .unwrap()
+        .tombstone(200, "o", "again")
+        .unwrap()
+        .confirm_deletion(&id("acme"), &id("acme"), 300, "o")
+        .unwrap();
+
+    let written = acme().with_lifecycle(&record).unwrap();
+    let reread = ClientDocument::parse(&written.render().unwrap()).unwrap();
+
+    assert_eq!(reread.lifecycle(), &record);
+    assert_eq!(
+        reread.lifecycle().instance.as_ref().map(ToString::to_string),
+        Some("0f".repeat(16))
+    );
+}
+
+#[test]
+fn a_malformed_identity_instance_is_refused() {
+    for instance in ["", "ABCDEF", "not-hex-not-hex-not-hex-not-hex!", &"a".repeat(31)] {
+        let error = with_lifecycle(&format!("    instance: '{instance}'\n")).unwrap_err();
+        assert!(
+            matches!(error, DesiredStateError::Malformed { .. }),
+            "{instance}: {error:?}"
+        );
+    }
+}

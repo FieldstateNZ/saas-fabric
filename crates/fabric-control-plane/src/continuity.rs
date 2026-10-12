@@ -39,4 +39,4 @@ pub use fingerprint::LifecycleFingerprint;
 pub use hold::ContinuityHold;
 pub use port::{AcceptedLifecycle, LifecycleContinuity, PendingTransition, Transition, TransitionKind};
 pub use refusal::{ContinuityRefusal, ContinuityReservation};
-pub(crate) use reserve::{reserve, Reserving};
+pub(crate) use reserve::{mint, reserve, Reserving};

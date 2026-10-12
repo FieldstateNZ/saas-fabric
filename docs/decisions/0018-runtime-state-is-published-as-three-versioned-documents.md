@@ -1265,7 +1265,9 @@ ADR 0023's list and `docs/roadmap/m0-contract-decisions.md`.
     With no store, every client is held this way. A
     reverted assignment removes an application, with its projected identity
     client, which the console refuses to remove. A reverted creation keeps
-    the tenant binding published and leaves the issuer out (`noClient`).
+    the tenant binding published; since ADR 0021's restore amendment it holds
+    the pass instead of leaving the issuer out, because nothing protected says
+    that identity ended.
   - `fabric-client-git` `desired_state_repository.rs`: a revision is the
     blob's hash. A revert to identical bytes therefore brings the earlier
     revision back, and a write held at it since then is accepted.

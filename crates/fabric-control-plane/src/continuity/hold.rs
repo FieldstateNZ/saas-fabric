@@ -27,8 +27,12 @@ pub enum ContinuityHold {
     /// A lifecycle transition is reserved and not confirmed.
     #[error("held: a lifecycle transition for this client is reserved and not confirmed")]
     Pending,
-    /// The client id names an identity the store already knows.
-    #[error("held: the continuity store already knows this client, so it is not a new identity")]
+    /// The document does not carry the identity instance the store attested:
+    /// a client id created again, or a creation the store refused.
+    #[error(
+        "held: the document does not carry the identity instance the continuity store attested for this \
+         client, so it is not that identity"
+    )]
     Resurrection,
 }
 

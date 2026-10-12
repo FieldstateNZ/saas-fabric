@@ -1,33 +1,36 @@
-//! Writing a prepared lifecycle transition through the continuity store:
-//! reserve, write, complete, and recover a transition whose completion was
-//! not recorded.
+//! Running one lifecycle write through the continuity store: reserve, write,
+//! complete, and replay or recover a transition the store still holds
+//! pending.
 //!
 //! # The partial-success and retry contract
 //!
 //! - A refused reservation writes nothing.
-//! - A document write that lost its revision released the reservation:
-//!   nothing was written.
-//! - Any other failed write may have landed, so the reservation stays
-//!   pending, and the client is held.
+//! - A document write that lost its revision conclusively did not land, so
+//!   it releases its own reservation and nothing else.
+//! - Any other failed write may have landed: its reservation stays pending,
+//!   and the client is held.
 //! - A failed completion leaves the written transition pending and the
 //!   client held; the response reports the hold, never a confirmed
 //!   transition.
-//! - Sending the same request again, with the same `If-Match`, recovers
-//!   either: if the document carries exactly the pending transition, the
-//!   reservation is completed at the document's revision; if the document
-//!   is still at the reviewed revision, the store hands back the same
-//!   reservation and the write is made.
+//! - The same request sent again, with the same `If-Match`, is the only way
+//!   on. If the document is still at the reviewed revision, the store's
+//!   frozen transition is replayed exactly, and only when the request asks
+//!   for the same thing; anything else is refused as pending. If the
+//!   document carries exactly the pending lifecycle, the write's
+//!   preconditions are checked again against what is true now, and only
+//!   then is the reservation completed. Otherwise it stays pending.
 
-use fabric_client_model::{ClientId, ClientRevision};
+use fabric_client_model::{ClientDocument, ClientId, ClientRevision, LifecycleRecord, LifecycleRefusal};
 
+use super::replay::same_intent;
 use super::write::Prepared;
 use crate::continuity::{self, Reserving};
 use crate::{
-    logging, ClientService, ContinuityHold, ControlPlaneError, LifecycleContinuity, LifecycleFingerprint,
-    Operator, StoredClient, TransitionKind,
+    logging, ClientService, ContinuityHold, ControlPlaneError, LifecycleContinuity, Operator, StoredClient,
+    TransitionKind,
 };
 
-/// Whether the store confirmed a written transition.
+/// Whether the store confirmed a transition.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Confirmed {
     /// No store: the document alone records it.
@@ -38,29 +41,83 @@ pub(super) enum Confirmed {
     Pending,
 }
 
+/// One lifecycle write, and where it is reserved.
+pub(super) struct Asked<'a> {
+    pub(super) operator: &'a Operator,
+    pub(super) id: &'a ClientId,
+    pub(super) expected: &'a ClientRevision,
+    pub(super) kind: TransitionKind,
+    pub(super) action: &'static str,
+    pub(super) continuity: Option<&'a dyn LifecycleContinuity>,
+}
+
+/// What a write did.
+pub(super) enum Ran {
+    /// It wrote the document.
+    Written(StoredClient, Confirmed),
+    /// It completed a pending transition the document already carried.
+    Recovered(StoredClient),
+}
+
 impl ClientService {
-    /// Writes `prepared`, reserving it in `continuity` when there is one.
-    pub(super) async fn record_transition(
+    /// Runs `transition` as `asked`, checking `precondition` against the
+    /// stored document before anything is reserved, written or completed.
+    pub(super) async fn run_transition(
         &self,
-        operator: &Operator,
-        id: &ClientId,
-        expected: &ClientRevision,
+        asked: &Asked<'_>,
+        transition: impl Fn(&LifecycleRecord) -> Result<LifecycleRecord, LifecycleRefusal> + Sync,
+        precondition: impl Fn(&ClientDocument) -> Result<(), ControlPlaneError> + Sync,
+    ) -> Result<Ran, ControlPlaneError> {
+        let pending = self.pending(asked).await?;
+        let prepared = match &pending {
+            Some(frozen) => {
+                let current = self.get(asked.id).await?;
+                if current.revision != *asked.expected {
+                    return self.recover(asked, frozen, current, &precondition).await;
+                }
+                let fresh = self.prepare(asked, &transition).await?;
+                if !same_intent(asked.kind, &fresh.to, &frozen.to_record) {
+                    return Err(ContinuityHold::Pending.into());
+                }
+                self.prepare(asked, &|_: &LifecycleRecord| Ok(frozen.to_record.clone()))
+                    .await?
+            }
+            None => self.prepare(asked, &transition).await?,
+        };
+        precondition(&prepared.current)?;
+        let (stored, confirmed) = self.record_transition(asked, prepared).await?;
+        Ok(Ran::Written(stored, confirmed))
+    }
+
+    async fn prepare(
+        &self,
+        asked: &Asked<'_>,
+        transition: &(dyn Fn(&LifecycleRecord) -> Result<LifecycleRecord, LifecycleRefusal> + Sync),
+    ) -> Result<Prepared, ControlPlaneError> {
+        self.prepare_lifecycle(asked.operator, asked.id, asked.expected, asked.action, transition)
+            .await
+    }
+
+    /// Writes `prepared`, reserving it first when there is a store.
+    async fn record_transition(
+        &self,
+        asked: &Asked<'_>,
         prepared: Prepared,
-        continuity: Option<&dyn LifecycleContinuity>,
-        kind: TransitionKind,
     ) -> Result<(StoredClient, Confirmed), ControlPlaneError> {
-        let Some(continuity) = continuity else {
+        let (operator, id, expected) = (asked.operator, asked.id, asked.expected);
+        let Some(continuity) = asked.continuity else {
             let stored = self.write_lifecycle(operator, id, expected, prepared).await?;
             return Ok((stored, Confirmed::NoStore));
         };
-        let reversing = (kind == TransitionKind::Restore)
+        let reversing = (asked.kind == TransitionKind::Restore)
             .then(|| prepared.from.tombstone.clone())
             .flatten();
         let reservation = continuity::reserve(
             continuity,
             &Reserving {
                 client: id,
-                kind,
+                realm: &prepared.current.client().identity.realm,
+                kind: asked.kind,
                 at_revision: Some(expected),
                 from: Some(&prepared.from),
                 to: &prepared.to,
@@ -88,41 +145,5 @@ impl ClientService {
                 Ok((stored, Confirmed::Pending))
             }
         }
-    }
-
-    /// The client as stored, when a `kind` transition reviewed at `expected`
-    /// is pending and the document already carries exactly it: its
-    /// reservation is then completed at the document's revision.
-    pub(super) async fn recover_transition(
-        &self,
-        id: &ClientId,
-        expected: &ClientRevision,
-        continuity: Option<&dyn LifecycleContinuity>,
-        kind: TransitionKind,
-    ) -> Result<Option<StoredClient>, ControlPlaneError> {
-        let Some(continuity) = continuity else {
-            return Ok(None);
-        };
-        let pending = match continuity.accepted(id).await {
-            Ok(accepted) => accepted.and_then(|accepted| accepted.pending),
-            Err(refusal) => return Err(ContinuityHold::from_refusal(&refusal).into()),
-        };
-        let Some(pending) = pending.filter(|pending| pending.kind == kind) else {
-            return Ok(None);
-        };
-        if pending.at_revision.as_ref() != Some(expected) {
-            return Ok(None);
-        }
-        let current = self.get(id).await?;
-        if current.revision == *expected
-            || pending.to != LifecycleFingerprint::of(current.document.lifecycle())
-        {
-            return Ok(None);
-        }
-        continuity
-            .complete(&pending.reservation, &current.revision)
-            .await
-            .map_err(|refusal| ControlPlaneError::from(ContinuityHold::from_refusal(&refusal)))?;
-        Ok(Some(current))
     }
 }

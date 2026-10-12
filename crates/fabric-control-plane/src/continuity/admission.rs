@@ -18,8 +18,11 @@ pub(crate) enum Admission {
     Held(ContinuityHold),
 }
 
-/// Admits `stored` only when the store's accepted lifecycle, with nothing
-/// pending, has exactly the document's fingerprint.
+/// Admits `stored` only when the store attests its exact identity instance
+/// and its accepted lifecycle, with nothing pending, has exactly the
+/// document's fingerprint: lifecycle, instance and identity context. A
+/// document carrying no instance, or another one, is not the identity the
+/// store knows (`resurrection`), whatever its lifecycle says.
 ///
 /// Every identity instance is checked, a client with no lifecycle history
 /// included: conditioning on a visible tombstone or restoration would be
@@ -37,7 +40,10 @@ pub(crate) async fn admit(continuity: Option<&dyn LifecycleContinuity>, stored: 
     if accepted.pending.is_some() {
         return Admission::Held(ContinuityHold::Pending);
     }
-    if accepted.fingerprint == LifecycleFingerprint::of(stored.document.lifecycle()) {
+    if stored.document.lifecycle().instance.as_ref() != Some(&accepted.instance) {
+        return Admission::Held(ContinuityHold::Resurrection);
+    }
+    if accepted.fingerprint == LifecycleFingerprint::of_document(&stored.document) {
         Admission::Admitted
     } else {
         Admission::Held(ContinuityHold::Mismatch)

@@ -1,15 +1,16 @@
 //! Restoring a tombstoned client, and the continuity admission every
 //! identity side effect passes, through the real router (D01-14; ADR 0021,
 //! "Restoring a tombstone"; #108 comments 6113749198 item 3, 6119161317
-//! item 2 and 6120741272).
+//! item 2 and 6120741272; review 5489320331).
 //!
 //! Without a continuity store, which is every deployment today, a restore is
 //! held and no client is admitted. With the test-only store: an explicit
 //! operator write at the tombstoned revision, refused for a confirmed
-//! deletion or unretained placements, reserved before the document is
-//! written, completed after, recoverable by sending it again, audited once
-//! confirmed; and a lifecycle Git rewrote, by revert, forgery, erasure or
-//! an earlier blob, is held on every read, pass and publication.
+//! deletion or unretained or unknown placements, reserved as one frozen
+//! operation before the document is written, completed after, replayed or
+//! recovered only by the same request with its preconditions checked again,
+//! audited once confirmed; and a lifecycle, identity instance or identity
+//! context Git rewrote is held on every read, pass and publication.
 
 #![allow(
     clippy::unwrap_used,
@@ -40,14 +41,13 @@ use support::lifecycle::{
     conditions, confirm_deletion, declared_data_source, get, placement, post,
     publish_one_application_with_a_resource, sink, tenants_document, tombstone, GLOBEX,
 };
-use support::newco::{
-    converged_on, identity_unmet, newco, provider_callbacks, reassert, save_product_on, settled, sweep,
-};
-use support::platform_fixture::{platform_binding, FakeRepository};
+use support::newco::{identity_unmet, newco, provider_callbacks, reassert, save_product_on, settled, sweep};
+use support::platform_fixture::{platform_binding, platform_binding_on, FakeRepository};
 use support::projected::{hand_edit_in_git, newco_with_a_projected_client};
 use support::{
-    as_operator, control_plane, control_plane_with_no_continuity, control_plane_with_publication,
-    json as body_of, restarted, send, TempDir, TestControlPlane, OPERATOR,
+    as_operator, control_plane_with_no_continuity, control_plane_with_publication,
+    control_plane_with_publication_and_identity_provider, json as body_of, restarted, send, TempDir,
+    TestControlPlane, OPERATOR,
 };
 
 fn id(value: &str) -> ClientId {
@@ -58,12 +58,92 @@ fn revision(value: &str) -> ClientRevision {
     ClientRevision::try_new(value).unwrap()
 }
 
+/// A plane with a platform, a publication target holding an accepted
+/// publication (`globex`, placed and published), and optionally a continuity
+/// store and an identity provider. `acme` is never placed, so the target's
+/// history establishes that it was never published.
+struct Published {
+    plane: TestControlPlane,
+    fake: Arc<FakeRepository>,
+    dir: TempDir,
+    globex: ClientRevision,
+}
+
+impl Published {
+    async fn new(continuity: bool, provider: Option<Arc<FakeIdentityProvider>>) -> Self {
+        Self::with_catalogue(continuity, provider, false).await
+    }
+
+    /// As [`Self::new`]; with `newco`, the catalogue is `newco`'s, created
+    /// with one projected client and converged before the pass.
+    async fn with_catalogue(
+        continuity: bool,
+        provider: Option<Arc<FakeIdentityProvider>>,
+        newco: bool,
+    ) -> Self {
+        let dir = TempDir::new("restore");
+        let (platform, fake) = platform_binding().await;
+        let plane = match (continuity, provider) {
+            (false, provider) => control_plane_with_no_continuity(Some(platform), Some(sink(&dir)), provider),
+            (true, None) => control_plane_with_publication(platform, sink(&dir)),
+            (true, Some(provider)) => {
+                control_plane_with_publication_and_identity_provider(platform, sink(&dir), provider)
+            }
+        };
+        let mut globex = plane
+            .repository
+            .insert(&ClientDocument::parse(GLOBEX).unwrap())
+            .unwrap();
+        if continuity {
+            globex = plane.enroll("globex").await;
+        }
+        fake.seed(DesiredRevision::new("ds-1"), vec![declared_data_source()]);
+        fake.seed_placements(DesiredRevision::new("pl-1"), vec![placement("globex")]);
+        plane.statuses.record(
+            &id("globex"),
+            globex.clone(),
+            &ReconciliationOutcome::converged(),
+            1,
+        );
+        if newco {
+            let at = newco_with_a_projected_client(&plane.router).await;
+            settled(&plane, &at).await;
+        }
+        publish_one_application_with_a_resource(&plane.router).await;
+        let (status, pass) = post(&plane.router, "/api/platform/publication", None, &json!({})).await;
+        assert_eq!(status, StatusCode::OK, "{pass}");
+        assert_eq!(pass["lastPass"]["outcome"], "published", "{pass}");
+        Self {
+            plane,
+            fake,
+            dir,
+            globex,
+        }
+    }
+
+    /// The same repository, platform and target, and the same continuity
+    /// store, after a restart.
+    async fn restarted(&self) -> TestControlPlane {
+        let platform = platform_binding_on(Arc::clone(&self.fake)).await;
+        restarted(&self.plane, None, Some(platform), Some(sink(&self.dir)))
+    }
+}
+
 async fn restore(plane: &TestControlPlane, client: &str, at: &str) -> (StatusCode, Value) {
+    restore_because(plane, client, at, "Contract renewed").await
+}
+
+async fn restore_because(
+    plane: &TestControlPlane,
+    client: &str,
+    at: &str,
+    reason: &str,
+) -> (StatusCode, Value) {
     post(
         &plane.router,
         &format!("/api/clients/{client}/restoration"),
         Some(at),
-        &json!({"reason": "Contract renewed"}),
+        &json!({ "reason": reason }),
     )
     .await
 }
@@ -95,19 +175,12 @@ fn restored_audits(audit: &[String]) -> usize {
         .count()
 }
 
-/// Every store event about a restore, in order.
+/// Every store event from the first restore reservation on.
 fn restore_events(plane: &TestControlPlane) -> Vec<ContinuityEvent> {
-    plane
-        .continuity
-        .as_ref()
-        .unwrap()
+    store(plane)
         .events()
         .into_iter()
-        .filter(|event| match event {
-            ContinuityEvent::Reserved(_, kind, _) => *kind == TransitionKind::Restore,
-            _ => true,
-        })
-        .skip_while(|event| !matches!(event, ContinuityEvent::Reserved(..)))
+        .skip_while(|event| !matches!(event, ContinuityEvent::Reserved(_, TransitionKind::Restore, _)))
         .collect()
 }
 
@@ -121,11 +194,15 @@ fn store(plane: &TestControlPlane) -> &fabric_control_plane::testing::InMemoryLi
     plane.continuity.as_ref().unwrap()
 }
 
-/// `acme` tombstoned in `plane`, and the revision the tombstone produced.
-async fn tombstoned(plane: &TestControlPlane) -> String {
-    let (status, body) = tombstone(&plane.router, "acme", plane.revision.as_str()).await;
+/// `client` tombstoned at `at`, and the revision the tombstone produced.
+async fn tombstoned_at(plane: &TestControlPlane, client: &str, at: &str) -> String {
+    let (status, body) = tombstone(&plane.router, client, at).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     body["revision"].as_str().unwrap().to_owned()
+}
+
+async fn tombstoned(plane: &TestControlPlane) -> String {
+    tombstoned_at(plane, "acme", plane.revision.as_str()).await
 }
 
 /// Writes `document` over `client` as a Git commit would.
@@ -148,47 +225,40 @@ async fn continuity_of(plane: &TestControlPlane, client: &str) -> Value {
     get(&plane.router, &format!("/api/clients/{client}")).await.1["lifecycle"]["continuity"].clone()
 }
 
-/// `globex` placed, applied and published beside `acme`, then tombstoned:
-/// the plane, the fake platform, the publication directory, the revision
-/// before the tombstone and the tombstoned revision.
-async fn a_retired_published_client() -> (TestControlPlane, Arc<FakeRepository>, TempDir, String, String) {
-    let dir = TempDir::new("restore-published");
-    let (platform, fake) = platform_binding().await;
-    let plane = control_plane_with_publication(platform, sink(&dir));
-    let before = plane
-        .repository
-        .insert(&ClientDocument::parse(GLOBEX).unwrap())
-        .unwrap();
-    plane.enroll("globex").await;
-    fake.seed(DesiredRevision::new("ds-1"), vec![declared_data_source()]);
-    fake.seed_placements(
-        DesiredRevision::new("pl-1"),
-        vec![placement("acme"), placement("globex")],
-    );
-    plane.statuses.record(
-        &id("globex"),
-        before.clone(),
-        &ReconciliationOutcome::converged(),
-        1,
-    );
-    publish_one_application_with_a_resource(&plane.router).await;
-    post(&plane.router, "/api/platform/publication", None, &json!({})).await;
-    let (_, ready) = get(&plane.router, "/api/clients/globex").await;
-    assert_eq!(ready["lifecycle"]["state"], "ready", "{ready}");
+/// `newco` created with one projected client and converged, beside a
+/// published environment.
+async fn converged_newco() -> (Published, Arc<FakeIdentityProvider>) {
+    let provider = Arc::new(FakeIdentityProvider::new());
+    let published = Published::with_catalogue(true, Some(provider.clone()), true).await;
+    (published, provider)
+}
 
-    let (status, retired) = tombstone(&plane.router, "globex", before.as_str()).await;
-    assert_eq!(status, StatusCode::OK, "{retired}");
-    let retired = retired["revision"].as_str().unwrap().to_owned();
-    (plane, fake, dir, before.as_str().to_owned(), retired)
+async fn create_newco(plane: &TestControlPlane, display_name: &str) -> StatusCode {
+    send(
+        &plane.router,
+        as_operator("POST", "/api/clients")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({"id":"newco","configuration":{
+                    "displayName":display_name,"legalName":"Newco Ltd","region":"NZ",
+                    "timezone":"Pacific/Auckland","hosts":["newco.example.com"],"configuration":{},
+                    "applications":[]}})
+                .to_string(),
+            ))
+            .unwrap(),
+    )
+    .await
+    .status()
 }
 
 // No continuity store: every deployment today.
 
 #[tokio::test]
 async fn without_a_continuity_store_a_restore_is_held_and_writes_nothing() {
-    let plane = control_plane_with_no_continuity(None, None, None);
+    let Published { plane, dir, .. } = Published::new(false, None).await;
     let retired = tombstoned(&plane).await;
     let audited_before = audited(&plane, "acme").await;
+    let documents = tenants_document(&dir);
 
     let response = send(
         &plane.router,
@@ -219,12 +289,21 @@ async fn without_a_continuity_store_a_restore_is_held_and_writes_nothing() {
         audited_before,
         "nothing was audited"
     );
+    assert_eq!(tenants_document(&dir), documents);
 }
 
 #[tokio::test]
-async fn without_a_continuity_store_the_hold_comes_after_the_revision_and_lifecycle_checks() {
-    let plane = control_plane_with_no_continuity(None, None, None);
+async fn without_a_continuity_store_the_hold_comes_after_the_revision_lifecycle_and_placement_checks() {
+    let unplaced = control_plane_with_no_continuity(None, None, None);
+    let retired = tombstoned(&unplaced).await;
+    let (status, body) = restore(&unplaced, "acme", &retired).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(
+        body["error"]["code"], "restore_placements_unverified",
+        "no platform is not evidence of never published"
+    );
 
+    let Published { plane, dir: _dir, .. } = Published::new(false, None).await;
     let (status, body) = restore(&plane, "acme", plane.revision.as_str()).await;
     assert_eq!(status, StatusCode::CONFLICT, "{body}");
     assert_eq!(body["error"]["code"], "client_not_tombstoned");
@@ -245,16 +324,14 @@ async fn without_a_continuity_store_no_identity_is_admitted_and_nothing_reaches_
     let provider = Arc::new(FakeIdentityProvider::new());
     let plane = control_plane_with_no_continuity(None, None, Some(provider.clone()));
 
-    // Creation stages desired intent, and nothing converges it.
-    let revision = newco_with_a_projected_client(&plane.router).await;
+    let at = newco_with_a_projected_client(&plane.router).await;
     sweep(&plane.router).await;
-    assert!(no_call_names_newco(&provider), "{:?}", provider.calls());
+    assert!(provider.calls().is_empty(), "{:?}", provider.calls());
     let continuity = continuity_of(&plane, "newco").await;
     assert_eq!(continuity["state"], "held", "{continuity}");
     assert_eq!(continuity["reason"], "noStore", "{continuity}");
     assert!(identity_unmet(&plane.router).await);
 
-    // Re-assertion is held before any provider call.
     let response = reassert(&plane.router).await;
     assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
     assert!(response.headers().get(RETRY_AFTER).is_none());
@@ -264,17 +341,24 @@ async fn without_a_continuity_store_no_identity_is_admitted_and_nothing_reaches_
     );
     assert!(provider.calls().is_empty());
 
-    // Retiring only restricts, so it is still written.
-    let (status, body) = tombstone(&plane.router, "newco", &revision).await;
+    // Retiring only restricts, so it is still staged; it confers nothing.
+    let (status, body) = tombstone(&plane.router, "newco", &at).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["lifecycle"]["state"], "tombstoned");
+    assert_eq!(body["lifecycle"]["continuity"]["state"], "held");
 }
 
 // The write, with the test-only continuity store.
 
 #[tokio::test]
 async fn a_restore_reverses_the_tombstone_forward_and_leaves_the_client_saved_intent() {
-    let (plane, fake, dir, before, retired) = a_retired_published_client().await;
+    let Published {
+        plane,
+        fake,
+        dir,
+        globex: before,
+    } = Published::new(true, None).await;
+    let retired = tombstoned_at(&plane, "globex", before.as_str()).await;
     let published = tenants_document(&dir);
     let placements = fake.read_placements("lucentroot").await.unwrap();
     let stored_before = plane.repository.get(&id("globex")).await.unwrap();
@@ -292,13 +376,11 @@ async fn a_restore_reverses_the_tombstone_forward_and_leaves_the_client_saved_in
     let etag = response.headers().get(ETAG).unwrap().to_str().unwrap().to_owned();
     let restored = body_of(response).await;
 
-    // A forward write: a new revision, never the one before the tombstone.
     let at = restored["revision"].as_str().unwrap().to_owned();
     assert_eq!(etag, format!("\"{at}\""));
     assert_ne!(at, retired);
-    assert_ne!(at, before);
+    assert_ne!(at, before.as_str());
 
-    // Saved intent again, admitted: identity is pending at the new revision.
     let lifecycle = &restored["lifecycle"];
     assert_eq!(lifecycle["state"], "incomplete", "{restored}");
     assert_eq!(conditions(lifecycle), ["identity"], "{restored}");
@@ -310,7 +392,6 @@ async fn a_restore_reverses_the_tombstone_forward_and_leaves_the_client_saved_in
     assert_eq!(lifecycle["tombstone"], Value::Null);
     assert_eq!(lifecycle["withdrawal"], Value::Null);
 
-    // The tombstone is kept, with who reversed it and why.
     let history = &lifecycle["restorations"];
     assert_eq!(history.as_array().unwrap().len(), 1, "{restored}");
     assert_eq!(history[0]["tombstone"]["reason"], "Contract ended");
@@ -318,7 +399,6 @@ async fn a_restore_reverses_the_tombstone_forward_and_leaves_the_client_saved_in
     assert_eq!(history[0]["reason"], "Contract renewed");
     assert_eq!(history[0]["by"], OPERATOR);
 
-    // Reserved at the tombstoned revision, then completed at the new one.
     assert_eq!(
         restore_events(&plane),
         [
@@ -327,7 +407,6 @@ async fn a_restore_reverses_the_tombstone_forward_and_leaves_the_client_saved_in
         ]
     );
 
-    // Audited through the durable trail once confirmed, naming the tombstone.
     let stored = plane
         .audit
         .read(&AuditStream::Client(id("globex")))
@@ -340,13 +419,14 @@ async fn a_restore_reverses_the_tombstone_forward_and_leaves_the_client_saved_in
     assert!(entry.field("tombstonedAt").is_some());
     assert!(stored.verify().is_ok());
 
-    // Nothing else moved: data intent, identity, secrets reference,
-    // placements and the published tenants document.
+    // Nothing else moved: data intent, identity, the identity instance,
+    // secrets reference, placements and the published tenants document.
     let stored_after = plane.repository.get(&id("globex")).await.unwrap();
     let (was, is) = (stored_before.document.client(), stored_after.document.client());
     assert_eq!(was.data, is.data);
     assert_eq!(was.identity, is.identity);
     assert_eq!(was.secrets, is.secrets);
+    assert_eq!(was.lifecycle.instance, is.lifecycle.instance);
     assert_eq!(
         fake.read_placements("lucentroot").await.unwrap().placements,
         placements.placements
@@ -361,7 +441,6 @@ async fn a_restore_reverses_the_tombstone_forward_and_leaves_the_client_saved_in
         "no binding or resource revision moved"
     );
 
-    // Ready again only once identity is applied at the restored revision.
     plane.statuses.record(
         &id("globex"),
         revision(&at),
@@ -374,16 +453,12 @@ async fn a_restore_reverses_the_tombstone_forward_and_leaves_the_client_saved_in
 
 #[tokio::test]
 async fn a_restored_client_can_be_retired_again_in_the_same_second_and_its_history_only_grows() {
-    let plane = control_plane();
+    let Published { plane, dir: _dir, .. } = Published::new(true, None).await;
     let first = tombstoned(&plane).await;
     let (_, restored) = restore(&plane, "acme", &first).await;
 
-    let (status, again) = tombstone(&plane.router, "acme", restored["revision"].as_str().unwrap()).await;
-    assert_eq!(status, StatusCode::OK, "{again}");
-    assert_eq!(again["lifecycle"]["state"], "tombstoned");
-    assert_eq!(again["lifecycle"]["restorations"].as_array().unwrap().len(), 1);
-
-    let (status, twice) = restore(&plane, "acme", again["revision"].as_str().unwrap()).await;
+    let again = tombstoned_at(&plane, "acme", restored["revision"].as_str().unwrap()).await;
+    let (status, twice) = restore(&plane, "acme", &again).await;
     assert_eq!(status, StatusCode::OK, "{twice}");
     let history = twice["lifecycle"]["restorations"].as_array().unwrap();
     assert_eq!(history.len(), 2);
@@ -396,11 +471,14 @@ async fn a_restored_client_can_be_retired_again_in_the_same_second_and_its_histo
     assert!(seconds.windows(2).all(|pair| pair[0] == pair[1]), "{history:?}");
     assert_eq!(twice["lifecycle"]["continuity"]["state"], "admitted", "{twice}");
     let (_, listed) = get(&plane.router, "/api/clients").await;
+    let acme = listed["clients"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|client| client["id"] == "acme")
+        .unwrap();
     assert_eq!(
-        listed["clients"][0]["lifecycle"]["restorations"]
-            .as_array()
-            .unwrap()
-            .len(),
+        acme["lifecycle"]["restorations"].as_array().unwrap().len(),
         2,
         "{listed}"
     );
@@ -410,7 +488,7 @@ async fn a_restored_client_can_be_retired_again_in_the_same_second_and_its_histo
 
 #[tokio::test]
 async fn a_deletion_confirmed_client_is_not_restored_and_nothing_is_reserved() {
-    let plane = control_plane();
+    let Published { plane, dir: _dir, .. } = Published::new(true, None).await;
     let retired = tombstoned(&plane).await;
     let (_, confirmed) = confirm_deletion(&plane.router, "acme", &retired).await;
     let at = confirmed["revision"].as_str().unwrap();
@@ -425,7 +503,7 @@ async fn a_deletion_confirmed_client_is_not_restored_and_nothing_is_reserved() {
 
 #[tokio::test]
 async fn a_restore_needs_the_current_revision_an_operator_and_a_reason() {
-    let plane = control_plane();
+    let Published { plane, dir: _dir, .. } = Published::new(true, None).await;
     let retired = tombstoned(&plane).await;
 
     let (status, body) = post(
@@ -441,13 +519,7 @@ async fn a_restore_needs_the_current_revision_an_operator_and_a_reason() {
     assert_eq!(status, StatusCode::CONFLICT, "{body}");
     assert_eq!(body["error"]["code"], "revision_conflict");
 
-    let (status, body) = post(
-        &plane.router,
-        "/api/clients/acme/restoration",
-        Some(&retired),
-        &json!({"reason": " "}),
-    )
-    .await;
+    let (status, body) = restore_because(&plane, "acme", &retired, " ").await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
     assert_eq!(body["error"]["code"], "invalid_restoration_reason");
 
@@ -482,8 +554,15 @@ async fn a_restore_needs_the_current_revision_an_operator_and_a_reason() {
 
 #[tokio::test]
 async fn a_placement_removed_while_retired_refuses_the_restore() {
-    let (plane, fake, _dir, _, retired) = a_retired_published_client().await;
-    fake.seed_placements(DesiredRevision::new("pl-2"), vec![placement("acme")]);
+    let Published {
+        plane,
+        fake,
+        globex,
+        dir: _dir,
+        ..
+    } = Published::new(true, None).await;
+    let retired = tombstoned_at(&plane, "globex", globex.as_str()).await;
+    fake.seed_placements(DesiredRevision::new("pl-2"), vec![]);
 
     let (status, body) = restore(&plane, "globex", &retired).await;
 
@@ -495,11 +574,18 @@ async fn a_placement_removed_while_retired_refuses_the_restore() {
 
 #[tokio::test]
 async fn a_replaced_binding_masked_by_a_raised_revision_refuses_the_restore() {
-    let (plane, fake, _dir, _, retired) = a_retired_published_client().await;
+    let Published {
+        plane,
+        fake,
+        globex,
+        dir: _dir,
+        ..
+    } = Published::new(true, None).await;
+    let retired = tombstoned_at(&plane, "globex", globex.as_str()).await;
     let mut replaced = placement("globex");
     replaced.data_source = DataSourceId::try_new("another-postgres").unwrap();
     replaced.revision = BindingRevision::new(5);
-    fake.seed_placements(DesiredRevision::new("pl-2"), vec![placement("acme"), replaced]);
+    fake.seed_placements(DesiredRevision::new("pl-2"), vec![replaced]);
 
     let (status, body) = restore(&plane, "globex", &retired).await;
 
@@ -510,7 +596,10 @@ async fn a_replaced_binding_masked_by_a_raised_revision_refuses_the_restore() {
 
 #[tokio::test]
 async fn an_unreadable_held_publication_refuses_the_restore() {
-    let (plane, _fake, dir, _, retired) = a_retired_published_client().await;
+    let Published {
+        plane, dir, globex, ..
+    } = Published::new(true, None).await;
+    let retired = tombstoned_at(&plane, "globex", globex.as_str()).await;
     std::fs::write(dir.path().join("tenants.json"), "not json").unwrap();
 
     let (status, body) = restore(&plane, "globex", &retired).await;
@@ -552,7 +641,7 @@ async fn each_continuity_refusal_writes_nothing_and_shows_no_store_detail() {
             "lifecycle_continuity_unavailable",
         ),
     ] {
-        let plane = control_plane();
+        let Published { plane, dir: _dir, .. } = Published::new(true, None).await;
         let retired = tombstoned(&plane).await;
         store(&plane).refuse_with(refusal);
         let audited_before = audited(&plane, "acme").await;
@@ -581,14 +670,14 @@ async fn each_continuity_refusal_writes_nothing_and_shows_no_store_detail() {
 
 #[tokio::test]
 async fn missing_or_unavailable_history_holds_the_client_and_refuses_the_restore() {
-    let plane = control_plane();
+    let Published { plane, dir: _dir, .. } = Published::new(true, None).await;
     let retired = tombstoned(&plane).await;
     plane
         .repository
-        .insert(&ClientDocument::parse(GLOBEX).unwrap())
+        .insert(&ClientDocument::parse(&GLOBEX.replace("globex", "initech")).unwrap())
         .unwrap();
 
-    let unenrolled = continuity_of(&plane, "globex").await;
+    let unenrolled = continuity_of(&plane, "initech").await;
     assert_eq!(unenrolled["reason"], "unenrolled", "{unenrolled}");
 
     store(&plane).set_unavailable(true);
@@ -600,11 +689,11 @@ async fn missing_or_unavailable_history_holds_the_client_and_refuses_the_restore
     assert_eq!(revision_of(&plane, "acme").await, retired);
 }
 
-// Partial success, recovery and conflicting reservations.
+// Partial success, replay, recovery and conflicting reservations.
 
 #[tokio::test]
-async fn a_write_that_loses_its_revision_after_the_reservation_releases_it() {
-    let plane = control_plane();
+async fn a_write_that_loses_its_revision_after_the_reservation_releases_only_its_own() {
+    let Published { plane, dir: _dir, .. } = Published::new(true, None).await;
     let retired = tombstoned(&plane).await;
     let concurrent = plane.repository.clone();
     let document = plane.repository.get(&id("acme")).await.unwrap().document;
@@ -629,8 +718,8 @@ async fn a_write_that_loses_its_revision_after_the_reservation_releases_it() {
 }
 
 #[tokio::test]
-async fn a_write_that_may_have_landed_stays_pending_and_the_same_request_recovers_it() {
-    let plane = control_plane();
+async fn a_write_that_may_have_landed_stays_pending_and_only_the_same_request_replays_it() {
+    let Published { plane, dir: _dir, .. } = Published::new(true, None).await;
     let retired = tombstoned(&plane).await;
     let repository = plane.repository.clone();
     store(&plane).on_reserve(move || repository.set_unavailable(Some("the host timed out".to_owned())));
@@ -646,42 +735,44 @@ async fn a_write_that_may_have_landed_stays_pending_and_the_same_request_recover
         "not released over a write that may have landed"
     );
 
-    // The write never landed: the document is still at the reviewed
-    // revision, so the store hands back the same reservation.
+    // A different intent at the same revision is not the frozen operation.
+    let (status, body) = restore_because(&plane, "acme", &retired, "A different reason").await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["error"]["code"], "lifecycle_continuity_pending");
+    assert_eq!(revision_of(&plane, "acme").await, retired);
+
+    // The same request replays the frozen transition exactly.
     let (status, body) = restore(&plane, "acme", &retired).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["lifecycle"]["continuity"]["state"], "admitted", "{body}");
+    assert_eq!(body["lifecycle"]["restorations"][0]["reason"], "Contract renewed");
     assert_eq!(restored_audits(&audited(&plane, "acme").await), 1);
 }
 
 #[tokio::test]
 async fn a_failed_completion_stays_pending_across_a_restart_until_the_same_request_recovers_it() {
-    let plane = control_plane();
-    let retired = tombstoned(&plane).await;
-    store(&plane).fail_completions(true);
+    let published = Published::new(true, None).await;
+    let plane = &published.plane;
+    let retired = tombstoned(plane).await;
+    store(plane).fail_completions(true);
 
-    let (status, body) = restore(&plane, "acme", &retired).await;
+    let (status, body) = restore(plane, "acme", &retired).await;
 
-    // The document is written, and the response says the transition is not
-    // confirmed rather than reporting it complete.
     assert_eq!(status, StatusCode::OK, "{body}");
     let landed = body["revision"].as_str().unwrap().to_owned();
     assert_eq!(body["lifecycle"]["continuity"]["reason"], "pending", "{body}");
     assert!(conditions(&body["lifecycle"]).contains(&"identity"));
     assert_eq!(
-        restored_audits(&audited(&plane, "acme").await),
+        restored_audits(&audited(plane, "acme").await),
         0,
         "audited once confirmed"
     );
 
-    // A restart keeps the store and the document, so it is still pending.
-    store(&plane).fail_completions(false);
-    let after_restart = restarted(&plane, None);
+    store(plane).fail_completions(false);
+    let after_restart = published.restarted().await;
     let pending = continuity_of(&after_restart, "acme").await;
     assert_eq!(pending["reason"], "pending", "{pending}");
 
-    // Sending the same request again completes it at the landed revision,
-    // without writing the document again.
     let (status, body) = restore(&after_restart, "acme", &retired).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["revision"], landed.as_str());
@@ -691,11 +782,41 @@ async fn a_failed_completion_stays_pending_across_a_restart_until_the_same_reque
         restore_events(&after_restart).last(),
         Some(&ContinuityEvent::Completed(id("acme"), revision(&landed)))
     );
+    assert_eq!(restored_audits(&audited(&after_restart, "acme").await), 1);
+}
+
+#[tokio::test]
+async fn recovery_checks_the_retained_bindings_again_and_completes_nothing_when_they_moved() {
+    let Published {
+        plane,
+        fake,
+        globex,
+        dir: _dir,
+        ..
+    } = Published::new(true, None).await;
+    let retired = tombstoned_at(&plane, "globex", globex.as_str()).await;
+    store(&plane).fail_completions(true);
+    let (status, body) = restore(&plane, "globex", &retired).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let landed = body["revision"].as_str().unwrap().to_owned();
+    store(&plane).fail_completions(false);
+    let events = store(&plane).events();
+
+    // The held binding is removed before the operator retries.
+    fake.seed_placements(DesiredRevision::new("pl-2"), vec![]);
+    let (status, body) = restore(&plane, "globex", &retired).await;
+
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["error"]["code"], "restore_placements_not_retained");
+    assert_eq!(store(&plane).events(), events, "nothing completed or reserved");
+    assert_eq!(revision_of(&plane, "globex").await, landed, "nothing written");
+    assert_eq!(continuity_of(&plane, "globex").await["reason"], "pending");
+    assert_eq!(restored_audits(&audited(&plane, "globex").await), 0);
 }
 
 #[tokio::test]
 async fn a_conflicting_transition_while_one_is_pending_is_refused_and_writes_nothing() {
-    let plane = control_plane();
+    let Published { plane, dir: _dir, .. } = Published::new(true, None).await;
     let retired = tombstoned(&plane).await;
     store(&plane).fail_completions(true);
     let (_, body) = restore(&plane, "acme", &retired).await;
@@ -709,11 +830,14 @@ async fn a_conflicting_transition_while_one_is_pending_is_refused_and_writes_not
     assert_eq!(revision_of(&plane, "acme").await, landed);
 }
 
-// A lifecycle rewritten in Git is held everywhere.
+// A lifecycle, instance or context rewritten outside the store is held.
 
 #[tokio::test]
 async fn a_restoration_forged_in_git_is_held_and_publishes_nothing_new() {
-    let (plane, _fake, dir, _, _) = a_retired_published_client().await;
+    let Published {
+        plane, dir, globex, ..
+    } = Published::new(true, None).await;
+    tombstoned_at(&plane, "globex", globex.as_str()).await;
     let stored = plane.repository.get(&id("globex")).await.unwrap();
     let at = stored.document.lifecycle().tombstone.as_ref().unwrap().at;
     let forged = stored
@@ -731,14 +855,10 @@ async fn a_restoration_forged_in_git_is_held_and_publishes_nothing_new() {
 
     let continuity = continuity_of(&plane, "globex").await;
     assert_eq!(continuity["reason"], "mismatch", "{continuity}");
-    let (_, pass) = post(&plane.router, "/api/platform/publication", None, &json!({})).await;
-    // This sink publishes no issuer registry, so the pass decides nothing
-    // that needs an admission; `client_document_revert.rs` and
-    // `issuer_registry.rs` cover the held registry.
-    assert_eq!(pass["lastPass"]["outcome"], "unchanged", "{pass}");
     assert!(
         conditions(&get(&plane.router, "/api/clients/globex").await.1["lifecycle"]).contains(&"identity")
     );
+    post(&plane.router, "/api/platform/publication", None, &json!({})).await;
     assert_eq!(tenants_document(&dir), held_documents);
     let (status, body) = restore(&plane, "globex", &revision_of(&plane, "globex").await).await;
     assert_eq!(status, StatusCode::CONFLICT, "{body}");
@@ -746,23 +866,37 @@ async fn a_restoration_forged_in_git_is_held_and_publishes_nothing_new() {
 }
 
 #[tokio::test]
-async fn an_erased_history_or_an_earlier_blob_is_held() {
-    let plane = control_plane();
+async fn an_erased_history_an_earlier_blob_or_another_realm_is_held() {
+    let Published { plane, dir: _dir, .. } = Published::new(true, None).await;
     let before_tombstone = plane.repository.get(&id("acme")).await.unwrap().document;
     let retired = tombstoned(&plane).await;
     let (_, restored) = restore(&plane, "acme", &retired).await;
     assert_eq!(restored["lifecycle"]["continuity"]["state"], "admitted");
     let restored_document = plane.repository.get(&id("acme")).await.unwrap().document;
 
-    let erased = restored_document
-        .with_lifecycle(&LifecycleRecord::default())
-        .unwrap();
-    commit(&plane, "acme", &erased).await;
+    let erased = LifecycleRecord {
+        instance: restored_document.lifecycle().instance.clone(),
+        ..LifecycleRecord::default()
+    };
+    commit(
+        &plane,
+        "acme",
+        &restored_document.with_lifecycle(&erased).unwrap(),
+    )
+    .await;
     assert_eq!(continuity_of(&plane, "acme").await["reason"], "mismatch");
 
-    // The exact bytes from before the tombstone: what a revert to an earlier
-    // blob reads as.
+    // The exact bytes from before the tombstone: a revert to an earlier blob.
     commit(&plane, "acme", &before_tombstone).await;
+    assert_eq!(continuity_of(&plane, "acme").await["reason"], "mismatch");
+
+    // The same lifecycle and instance under another realm is another
+    // identity context.
+    let moved = restored_document
+        .render()
+        .unwrap()
+        .replace("realm: acme", "realm: acme-two");
+    commit(&plane, "acme", &ClientDocument::parse(&moved).unwrap()).await;
     assert_eq!(continuity_of(&plane, "acme").await["reason"], "mismatch");
 
     commit(&plane, "acme", &restored_document).await;
@@ -771,15 +905,15 @@ async fn an_erased_history_or_an_earlier_blob_is_held() {
 
 #[tokio::test]
 async fn a_reverted_tombstone_is_held_by_the_sweep_the_write_after_it_and_reassertion() {
-    let (plane, provider) = converged_on(&["newco.example.com"], None).await;
+    let (published, provider) = converged_newco().await;
+    let plane = &published.plane;
     let before_tombstone = plane.repository.get(&newco()).await.unwrap().document;
-    let current = revision_of(&plane, "newco").await;
-    let (_, retired) = tombstone(&plane.router, "newco", &current).await;
-    settled(&plane, retired["revision"].as_str().unwrap()).await;
-    commit(&plane, "newco", &before_tombstone).await;
+    let current = revision_of(plane, "newco").await;
+    let retired = tombstoned_at(plane, "newco", &current).await;
+    settled(plane, &retired).await;
+    commit(plane, "newco", &before_tombstone).await;
     provider.clear_calls();
 
-    // A sweep, and the convergence a product save starts after it writes.
     sweep(&plane.router).await;
     save_product_on(&plane.router, &["newco.example.com"], None).await;
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
@@ -796,57 +930,66 @@ async fn a_reverted_tombstone_is_held_by_the_sweep_the_write_after_it_and_reasse
 }
 
 #[tokio::test]
-async fn a_new_identity_is_admitted_and_a_retired_one_created_again_is_held() {
-    let provider = Arc::new(FakeIdentityProvider::new());
-    let plane = support::control_plane_with_identity_provider(provider.clone());
-    let revision = newco_with_a_projected_client(&plane.router).await;
-    settled(&plane, &revision).await;
-    assert_eq!(continuity_of(&plane, "newco").await["state"], "admitted");
+async fn a_client_id_created_again_is_held_whether_its_identity_was_active_or_retired() {
+    for retire_first in [false, true] {
+        let (published, provider) = converged_newco().await;
+        let plane = &published.plane;
+        assert_eq!(continuity_of(plane, "newco").await["state"], "admitted");
+        if retire_first {
+            let current = revision_of(plane, "newco").await;
+            let retired = tombstoned_at(plane, "newco", &current).await;
+            settled(plane, &retired).await;
+        }
+        assert!(plane.repository.remove_by_hand(&newco()));
+        provider.clear_calls();
+
+        // The replacement's configuration differs, and its reservation is
+        // refused: intent is staged, with no identity instance.
+        assert_eq!(
+            create_newco(plane, "Newco Replacement").await,
+            StatusCode::CREATED
+        );
+        sweep(&plane.router).await;
+
+        let continuity = continuity_of(plane, "newco").await;
+        assert_eq!(continuity["state"], "held", "{continuity}");
+        assert_eq!(continuity["reason"], "resurrection", "{continuity}");
+        assert!(identity_unmet(&plane.router).await);
+        assert!(no_call_names_newco(&provider), "{:?}", provider.calls());
+        let staged = plane.repository.get(&newco()).await.unwrap();
+        assert_eq!(staged.document.lifecycle().instance, None);
+    }
+}
+
+#[tokio::test]
+async fn a_new_client_id_is_attested_and_admitted() {
+    let (published, provider) = converged_newco().await;
+    let plane = &published.plane;
+    let stored = plane.repository.get(&newco()).await.unwrap();
+
+    assert!(stored.document.lifecycle().instance.is_some());
+    assert_eq!(continuity_of(plane, "newco").await["state"], "admitted");
     assert!(!identity_unmet(&plane.router).await);
-
-    let (_, retired) = tombstone(&plane.router, "newco", &revision).await;
-    settled(&plane, retired["revision"].as_str().unwrap()).await;
-    assert!(plane.repository.remove_by_hand(&newco()));
-    provider.clear_calls();
-
-    let created = send(
-        &plane.router,
-        as_operator("POST", "/api/clients")
-            .header("content-type", "application/json")
-            .body(Body::from(
-                json!({"id":"newco","configuration":{
-                    "displayName":"Newco","legalName":"Newco Ltd","region":"NZ","timezone":"Pacific/Auckland",
-                    "hosts":["newco.example.com"],"configuration":{},"applications":[]}})
-                .to_string(),
-            ))
-            .unwrap(),
-    )
-    .await;
-    assert_eq!(created.status(), StatusCode::CREATED, "intent is still staged");
-    sweep(&plane.router).await;
-
-    let continuity = continuity_of(&plane, "newco").await;
-    assert_eq!(continuity["state"], "held", "{continuity}");
-    assert!(identity_unmet(&plane.router).await);
-    assert!(no_call_names_newco(&provider), "{:?}", provider.calls());
+    assert!(!no_call_names_newco(&provider), "it converged");
 }
 
 // Identity comes back only through D01-19b/D01-15's readiness rules.
 
 #[tokio::test]
 async fn a_restored_client_is_identity_ready_only_once_converged_with_a_consistent_projection() {
-    let (plane, provider) = converged_on(&["newco.example.com"], None).await;
+    let (published, provider) = converged_newco().await;
+    let plane = &published.plane;
     let callbacks = provider_callbacks(&provider);
-    let current = revision_of(&plane, "newco").await;
-    let (_, retired) = tombstone(&plane.router, "newco", &current).await;
-    let retired = retired["revision"].as_str().unwrap().to_owned();
-    settled(&plane, &retired).await;
+    let current = revision_of(plane, "newco").await;
+    let retired = tombstoned_at(plane, "newco", &current).await;
+    settled(plane, &retired).await;
 
-    let (status, restored) = restore(&plane, "newco", &retired).await;
+    let (status, restored) = restore(plane, "newco", &retired).await;
     assert_eq!(status, StatusCode::OK, "{restored}");
-    assert!(identity_unmet(&plane.router).await, "pending at the new revision");
-
-    settled(&plane, restored["revision"].as_str().unwrap()).await;
+    // The write marked identity pending at the new revision; the
+    // convergence it started applies it there (the response may already
+    // show either, so it is the settled state that is asserted).
+    settled(plane, restored["revision"].as_str().unwrap()).await;
     assert!(
         !identity_unmet(&plane.router).await,
         "applied at the restored revision with a consistent projection"
@@ -856,12 +999,13 @@ async fn a_restored_client_is_identity_ready_only_once_converged_with_a_consiste
 
 #[tokio::test]
 async fn a_restored_client_whose_projection_diverged_in_git_stays_identity_unmet() {
-    let (plane, provider) = converged_on(&["newco.example.com"], None).await;
+    let (published, provider) = converged_newco().await;
+    let plane = &published.plane;
     let callbacks = provider_callbacks(&provider);
-    let current = revision_of(&plane, "newco").await;
-    let (_, retired) = tombstone(&plane.router, "newco", &current).await;
-    settled(&plane, retired["revision"].as_str().unwrap()).await;
-    let edited = hand_edit_in_git(&plane, |text| {
+    let current = revision_of(plane, "newco").await;
+    let retired = tombstoned_at(plane, "newco", &current).await;
+    settled(plane, &retired).await;
+    let edited = hand_edit_in_git(plane, |text| {
         text.replace(
             "- https://newco.example.com/analytics/callback",
             "- https://newco.example.com/analytics/callback\n        - https://evil.example.com/callback",
@@ -869,9 +1013,9 @@ async fn a_restored_client_whose_projection_diverged_in_git_stays_identity_unmet
     })
     .await;
 
-    let (status, restored) = restore(&plane, "newco", &edited).await;
+    let (status, restored) = restore(plane, "newco", &edited).await;
     assert_eq!(status, StatusCode::OK, "{restored}");
-    settled(&plane, restored["revision"].as_str().unwrap()).await;
+    settled(plane, restored["revision"].as_str().unwrap()).await;
     sweep(&plane.router).await;
 
     let (_, client) = get(&plane.router, "/api/clients/newco").await;

@@ -85,9 +85,7 @@ impl ClientService {
         // the ordinary case to retry a write that will never succeed. A
         // 502 nobody could act on for one rare race is a smaller cost than
         // advice that cannot help for the common one.
-        let reservation = self
-            .reserve_creation(continuity, &request.id, document.lifecycle(), operator)
-            .await;
+        let (document, reservation) = self.reserve_creation(continuity, document, operator).await;
         let written = self
             .write_created(&repository, &document, &change, &request.id)
             .await;

@@ -213,10 +213,10 @@ async fn only_routable_clients_are_registered_and_each_change_is_one_new_generat
     let dir = TempDir::new("issuer-registry");
     let (platform, fake) = platform_binding().await;
     let plane = control_plane_with_publication(platform, sink(&dir));
-    let globex = plane.repository.insert(&client_document("globex")).unwrap();
-    plane.enroll("globex").await;
-    let initech = plane.repository.insert(&client_document("initech")).unwrap();
-    plane.enroll("initech").await;
+    plane.repository.insert(&client_document("globex")).unwrap();
+    let globex = plane.enroll("globex").await;
+    plane.repository.insert(&client_document("initech")).unwrap();
+    let initech = plane.enroll("initech").await;
     fake.seed(DesiredRevision::new("ds-1"), vec![declared_data_source()]);
     fake.seed_placements(
         DesiredRevision::new("pl-1"),
@@ -330,8 +330,8 @@ async fn the_platform_panel_reports_the_three_gates_and_never_meets_connectors_i
         assert_eq!(before["publication"]["readiness"][gate]["met"], false, "{before}");
     }
 
-    let globex = plane.repository.insert(&client_document("globex")).unwrap();
-    plane.enroll("globex").await;
+    plane.repository.insert(&client_document("globex")).unwrap();
+    let globex = plane.enroll("globex").await;
     fake.seed(DesiredRevision::new("ds-1"), vec![declared_data_source()]);
     fake.seed_placements(DesiredRevision::new("pl-1"), vec![placement("globex")]);
     publish_one_application_with_a_resource(&plane.router).await;
@@ -383,8 +383,8 @@ async fn edit_display_name(
 async fn ready_plane(dir: &TempDir) -> (TestControlPlane, ClientRevision) {
     let (platform, fake) = platform_binding().await;
     let plane = control_plane_with_publication(platform, sink(dir));
-    let globex = plane.repository.insert(&client_document("globex")).unwrap();
-    plane.enroll("globex").await;
+    plane.repository.insert(&client_document("globex")).unwrap();
+    let globex = plane.enroll("globex").await;
     fake.seed(DesiredRevision::new("ds-1"), vec![declared_data_source()]);
     fake.seed_placements(DesiredRevision::new("pl-1"), vec![placement("globex")]);
     publish_one_application_with_a_resource(&plane.router).await;
@@ -462,18 +462,18 @@ async fn a_withheld_or_unverifiable_projection_is_not_registered_and_its_binding
     let dir = TempDir::new("issuer-registry-projection");
     let (platform, fake) = platform_binding().await;
     let plane = control_plane_with_publication(platform, sink(&dir));
-    let globex = plane.repository.insert(&client_document("globex")).unwrap();
-    plane.enroll("globex").await;
-    let initech = plane.repository.insert(&client_document("initech")).unwrap();
-    plane.enroll("initech").await;
+    plane.repository.insert(&client_document("globex")).unwrap();
+    let globex = plane.enroll("globex").await;
+    plane.repository.insert(&client_document("initech")).unwrap();
+    let initech = plane.enroll("initech").await;
     let unreadable = ClientDocument::parse(&format!(
         "{}  product:\n    region: [nz]\n",
         client_document("umbrella").render().unwrap()
     ))
     .unwrap();
     assert!(unreadable.product().is_err());
-    let umbrella = plane.repository.insert(&unreadable).unwrap();
-    plane.enroll("umbrella").await;
+    plane.repository.insert(&unreadable).unwrap();
+    let umbrella = plane.enroll("umbrella").await;
     fake.seed(DesiredRevision::new("ds-1"), vec![declared_data_source()]);
     fake.seed_placements(
         DesiredRevision::new("pl-1"),
@@ -575,8 +575,8 @@ async fn a_projected_entry_missing_in_git_is_not_ready_and_not_registered_after_
     let provider = Arc::new(fabric_reconciliation::testing::FakeIdentityProvider::new());
     let plane =
         support::control_plane_with_publication_and_identity_provider(platform, sink(&dir), provider.clone());
-    let inserted = plane.repository.insert(&client_document("initech")).unwrap();
-    plane.enroll("initech").await;
+    plane.repository.insert(&client_document("initech")).unwrap();
+    let inserted = plane.enroll("initech").await;
     fake.seed(DesiredRevision::new("ds-1"), vec![declared_data_source()]);
     fake.seed_placements(DesiredRevision::new("pl-1"), vec![placement("initech")]);
     publish_one_application_with_a_resource(&plane.router).await;
@@ -771,4 +771,57 @@ async fn without_a_continuity_store_a_bound_client_holds_the_registry_and_publis
     );
     assert!(!dir.path().join("tenants.json").exists(), "nothing was published");
     assert!(!dir.path().join("issuer-registry.json").exists());
+
+    // A tombstone with no store stages a restriction; it is not authority to
+    // decide the registry without the client either.
+    let response = send(
+        &plane.router,
+        as_operator("POST", "/api/clients/globex/tombstone")
+            .header("content-type", "application/json")
+            .header("if-match", format!("\"{}\"", globex.as_str()))
+            .body(Body::from(json!({"reason": "Contract ended"}).to_string()))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let still_held = publish(&plane.router).await;
+    assert_eq!(still_held["lastPass"]["outcome"], "failed", "{still_held}");
+    assert!(!dir.path().join("issuer-registry.json").exists());
+}
+
+/// Review 5489320331: a tombstone written only in Git is not confirmed by
+/// the continuity store, so it is no authority to withdraw the accepted
+/// registration. The pass is held and every accepted document is kept.
+#[tokio::test]
+async fn a_tombstone_the_continuity_store_never_confirmed_holds_the_registry() {
+    use fabric_control_plane::ClientRepository as _;
+
+    let dir = TempDir::new("issuer-registry-git-tombstone");
+    let (plane, globex) = ready_plane(&dir).await;
+    applied(&plane, "globex", &globex);
+    publish(&plane.router).await;
+    assert_eq!(registered(&dir), [(issuer("globex"), "globex".to_owned())]);
+    let accepted = std::fs::read(dir.path().join("issuer-registry.json")).unwrap();
+
+    let stored = plane
+        .repository
+        .get(&ClientId::try_new("globex").unwrap())
+        .await
+        .unwrap();
+    let retired = stored
+        .document
+        .lifecycle()
+        .tombstone(1, "someone-in-git", "retired in Git")
+        .unwrap();
+    plane
+        .repository
+        .insert(&stored.document.with_lifecycle(&retired).unwrap())
+        .unwrap();
+
+    let held = publish(&plane.router).await;
+    assert_eq!(held["lastPass"]["outcome"], "failed", "{held}");
+    assert_eq!(
+        std::fs::read(dir.path().join("issuer-registry.json")).unwrap(),
+        accepted
+    );
 }

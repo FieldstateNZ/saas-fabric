@@ -16,15 +16,16 @@
 //!    pending at the new one;
 //! 6. the reservation is completed and, once it is, the durable trail
 //!    records the restore. Until it is, the client stays held, and the same
-//!    request sent again completes it (`record`).
+//!    request sent again replays or recovers it (`record`), checking the
+//!    retained placements again against what is true then.
 //!
 //! The restore touches nothing else: no placement, tenant binding, resource
 //! history, secret or identity provider. Identity comes back only when a
 //! pass applies the new revision with a consistent projection.
 
-use fabric_client_model::{ClientId, ClientRevision};
+use fabric_client_model::{ClientDocument, ClientId, ClientRevision};
 
-use super::record::Confirmed;
+use super::record::{Asked, Confirmed, Ran};
 use crate::lifecycle::retained::{self, RetainedEvidence};
 use crate::{
     audit, ClientService, ContinuityHold, ControlPlaneError, LifecycleContinuity, Operator, StoredClient,
@@ -39,9 +40,10 @@ impl ClientService {
     /// [`ControlPlaneError::RevisionConflict`] if `expected` is stale;
     /// [`ControlPlaneError::Lifecycle`] if the client is not tombstoned, its
     /// deletion is confirmed, or the reason is not acceptable;
-    /// [`ControlPlaneError::Restore`] if its placements were not retained;
-    /// and [`ControlPlaneError::Continuity`] if there is no continuity store
-    /// or it refuses. Nothing is written after any of these.
+    /// [`ControlPlaneError::Restore`] if its placements are not shown to be
+    /// retained; and [`ControlPlaneError::Continuity`] if there is no
+    /// continuity store, it refuses, or a different transition is pending.
+    /// Nothing is written, completed or audited after any of these.
     pub(crate) async fn restore(
         &self,
         operator: &Operator,
@@ -51,28 +53,36 @@ impl ClientService {
         evidence: &RetainedEvidence,
         continuity: Option<&dyn LifecycleContinuity>,
     ) -> Result<StoredClient, ControlPlaneError> {
-        let kind = TransitionKind::Restore;
-        if let Some(recovered) = self.recover_transition(id, expected, continuity, kind).await? {
-            self.audit_restore(operator, id, &recovered).await;
-            return Ok(recovered);
-        }
         let at = self.clock.now_unix_seconds();
-        let prepared = self
-            .prepare_lifecycle(operator, id, expected, "Client restored", |record| {
-                record.restore(at, operator.subject(), reason)
-            })
+        let asked = Asked {
+            operator,
+            id,
+            expected,
+            kind: TransitionKind::Restore,
+            action: "Client restored",
+            continuity,
+        };
+        let precondition = |document: &ClientDocument| {
+            retained::check(document.client(), evidence)?;
+            if continuity.is_none() {
+                return Err(ContinuityHold::NoStore.into());
+            }
+            Ok(())
+        };
+        let ran = self
+            .run_transition(
+                &asked,
+                |record| record.restore(at, operator.subject(), reason),
+                precondition,
+            )
             .await?;
-        retained::check(prepared.current.client(), evidence)?;
-        if continuity.is_none() {
-            return Err(ContinuityHold::NoStore.into());
-        }
-
-        let (stored, confirmed) = self
-            .record_transition(operator, id, expected, prepared, continuity, kind)
-            .await?;
-        if confirmed == Confirmed::Yes {
-            self.audit_restore(operator, id, &stored).await;
-        }
+        let stored = match ran {
+            Ran::Recovered(stored) | Ran::Written(stored, Confirmed::Yes) => {
+                self.audit_restore(operator, id, &stored).await;
+                stored
+            }
+            Ran::Written(stored, _) => stored,
+        };
 
         Ok(stored)
     }

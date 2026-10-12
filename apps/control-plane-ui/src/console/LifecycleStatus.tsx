@@ -24,7 +24,7 @@ const HELD: Record<Exclude<ClientLifecycle['continuity']['reason'], null>, strin
   unenrolled: 'Lifecycle not confirmed: not enrolled',
   mismatch: 'Lifecycle held: it does not match the confirmed history',
   pending: 'Lifecycle change not confirmed yet',
-  resurrection: 'Lifecycle held: this id was retired before',
+  resurrection: 'Lifecycle held: not the attested identity instance',
 }
 
 /** What each readiness condition is called. */

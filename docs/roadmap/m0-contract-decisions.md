@@ -942,7 +942,7 @@ Options:
   Recorded in ADR 0018 part 10 and ADR 0023's amendment. The owed items are
   O1, O3, O4 and O5. O1 is implemented in #136. O3 and O4 are implemented,
   and O5 is partly characterized, in the change that follows #136. O5 is
-  characterized for the catalogue and client documents in PR_NUMBER, with
+  characterized for the catalogue and client documents in #159, with
   findings open on #108 (none of it verified live).
 
 ---

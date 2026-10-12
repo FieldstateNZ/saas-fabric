@@ -203,14 +203,16 @@ stays a per-tenant fact.
 >   any connector is reached, so a path that skipped the edge is still
 >   refused here.
 >
-> **Not decided here.** ADR 0024 keeps tokens out of the browser, so a
-> browser surface on a client instance has no bearer of its own to present
-> to G1's route. Two answers would each change what G1 means. One is a
-> single route that lists every client host under one policy. The other is
-> an application backend that calls G1's route with the forwarded bearer.
-> Neither is chosen ([#108](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6116923424)). So is
-> whether ADR 0024's planned runtime `/v1/identity` joins G1's route. Until
-> one is chosen, nothing in this repository builds or describes such a path.
+> **Owed to ADR 0024 slice 5, a gap and not a built journey.** ADR 0024
+> keeps tokens out of the browser, so a browser surface on a client
+> instance has no bearer of its own to present to G1's route. Two answers
+> would each change what G1 means. One is a single route that lists every
+> client host under one policy. The other is an application backend that
+> calls G1's route with the forwarded bearer. Whether ADR 0024's planned
+> runtime `/v1/identity` joins G1's route is owed with it. D01-5 chose to
+> defer both ([#108](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6116986746)). Until slice 5 decides them, no client-instance
+> `/v1/data` or `/v1/identity` route is added. Neither is a hostname JWT or
+> session filter, a browser bearer store, or a backend credential path.
 
 **Every claim SaaS Fabric does not check on this path is checked before SaaS
 Fabric, by the ingress, and the ingress is the only thing permitted to reach a

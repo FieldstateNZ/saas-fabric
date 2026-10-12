@@ -3,6 +3,7 @@ import { useEffect, useRef } from 'react'
 import type { ClientProductRequest, ConfigurationField } from '../api/catalogue-types'
 import { ConfigurationInputs } from './ConfigurationInputs'
 import { Field } from './Field'
+import { allInternal, PrivateNetworkSchemeSelect } from './PrivateNetworkSchemeSelect'
 
 /** What the client-details step of `ClientForm` needs to read and edit it. */
 interface ClientDetailsStepProps {
@@ -104,18 +105,27 @@ export function ClientDetailsStep({
         <Field
           label="Hostnames (comma separated)"
           value={hostText}
-          onChange={(hosts) => {
-            onHostTextChange(hosts)
+          onChange={(text) => {
+            onHostTextChange(text)
+            // Commas, whitespace and newlines all separate hostnames — a
+            // pasted list is as likely to be one per line, or space
+            // separated, as it is comma separated.
+            const hosts = text
+              .split(/[\s,]+/)
+              .map((h) => h.trim())
+              .filter(Boolean)
             onValueChange({
               ...value,
-              // Commas, whitespace and newlines all separate hostnames — a
-              // pasted list is as likely to be one per line, or space
-              // separated, as it is comma separated.
-              hosts: hosts
-                .split(/[\s,]+/)
-                .map((h) => h.trim())
-                .filter(Boolean),
+              hosts,
+              privateNetworkScheme: allInternal(hosts) ? value.privateNetworkScheme : null,
             })
+          }}
+        />
+        <PrivateNetworkSchemeSelect
+          hosts={value.hosts}
+          value={value.privateNetworkScheme}
+          onChange={(privateNetworkScheme) => {
+            onValueChange({ ...value, privateNetworkScheme })
           }}
         />
       </div>

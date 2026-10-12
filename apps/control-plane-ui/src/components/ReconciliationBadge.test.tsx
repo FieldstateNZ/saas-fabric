@@ -55,6 +55,20 @@ describe('the reconciliation badge', () => {
     expect(screen.getByText(/had a declared callback removed/i)).toBeInTheDocument()
   })
 
+  it('says a callback it cannot place was held, without calling it a hand edit', () => {
+    render(
+      <ReconciliationBadge
+        reconciliation={state({
+          status: 'handEdited',
+          handEdits: [{ client: 'analytics', field: 'redirectUrisUnconfirmed' }],
+        })}
+      />,
+    )
+
+    expect(screen.getByText(/a change it cannot confirm it made/i)).toBeInTheDocument()
+    expect(screen.getByText(/has no record of writing, so nothing was changed for it/i)).toBeInTheDocument()
+  })
+
   it('names the projected applications it withheld', () => {
     render(<ReconciliationBadge reconciliation={state({ status: 'withheld', withheld: ['analytics'] })} />)
 

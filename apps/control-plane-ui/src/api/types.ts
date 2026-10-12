@@ -20,6 +20,12 @@ export interface Client {
   readonly id: string
   readonly displayName: string
   readonly hosts: readonly string[]
+  /**
+   * The scheme its `.internal` callbacks use, when it declares one (D01-15).
+   * Absent from fixtures written before the field existed; `null` from the
+   * API when nothing is declared.
+   */
+  readonly privateNetworkScheme?: 'http' | 'https' | null
   readonly realm: string
   /**
    * The version of this client's desired state.

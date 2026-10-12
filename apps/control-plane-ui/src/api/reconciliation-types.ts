@@ -11,12 +11,15 @@ export type ReconciliationStatus = 'pending' | 'applied' | 'failed' | 'drifted' 
 /**
  * A hand edit made in the identity provider that the product does not
  * support, and which reconciliation reported and left in place (D01-19b).
+ * `redirectUrisUnconfirmed` is held the same way without being a hand edit
+ * as such: a declared callback is missing and nothing durable says whether
+ * SaaS Fabric ever wrote it (D01-15).
  */
 export interface HandEdit {
   /** The application client that carries it. */
   readonly client: string
   /** What was edited. */
-  readonly field: 'clientDisabled' | 'standardFlowDisabled' | 'declaredRedirectUriRemoved'
+  readonly field: 'clientDisabled' | 'standardFlowDisabled' | 'declaredRedirectUriRemoved' | 'redirectUrisUnconfirmed'
 }
 
 /** What is known about whether a client's desired state has taken effect. */

@@ -8,7 +8,7 @@
 
 use std::fs::File;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 /// How the trail syncs. [`Os`] in every real trail; a test substitutes one
 /// that fails on cue, which no real disk can be made to do.
@@ -41,18 +41,24 @@ impl Durability for Os {
     }
 }
 
-/// Creates `dir` and any missing ancestors, syncing the parent of each one
-/// created so the new names survive a crash.
+/// Creates `dir` and any missing ancestors, then syncs the parent of every
+/// component of `dir`, existing or not, so each name the trail depends on is
+/// durable. Syncing all of them, not only those this call created, is what
+/// makes a retry safe: a directory created by an earlier attempt whose sync
+/// failed exists now, and is synced all the same.
 pub(super) fn create_dir(dir: &Path, durability: &dyn Durability) -> io::Result<()> {
-    let created: Vec<PathBuf> = dir
-        .ancestors()
-        .take_while(|ancestor| !ancestor.as_os_str().is_empty() && !ancestor.exists())
-        .map(Path::to_path_buf)
-        .collect();
     std::fs::create_dir_all(dir)?;
-    for path in created.iter().rev() {
-        if let Some(parent) = path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
-            durability.sync_dir(parent)?;
+    let mut components: Vec<&Path> = dir
+        .ancestors()
+        .filter(|ancestor| !ancestor.as_os_str().is_empty())
+        .collect();
+    components.reverse();
+    for component in components {
+        match component.parent() {
+            // A relative path's first component lives in the working directory.
+            Some(parent) if parent.as_os_str().is_empty() => durability.sync_dir(Path::new("."))?,
+            Some(parent) => durability.sync_dir(parent)?,
+            None => {}
         }
     }
     Ok(())

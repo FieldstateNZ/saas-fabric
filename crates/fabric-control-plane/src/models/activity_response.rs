@@ -32,10 +32,20 @@ pub(crate) struct ActivityResponse {
 impl ActivityResponse {
     /// The newest [`ACTIVITY_VIEW_LIMIT`] of `activity`, and how many were
     /// left out. Sorting is done here so the bound always keeps the newest.
-    pub(crate) fn newest(mut activity: Vec<ProductActivity>) -> Self {
-        activity.sort_by_key(|action| std::cmp::Reverse(action.at));
-        let omitted = activity.len().saturating_sub(ACTIVITY_VIEW_LIMIT);
-        activity.truncate(ACTIVITY_VIEW_LIMIT);
+    ///
+    /// `activity` is in append order within each document, and timestamps
+    /// are whole seconds, so many actions can share one. Position breaks the
+    /// tie: among equal times the later-appended action is newer, and it is
+    /// the oldest of them that the bound drops.
+    pub(crate) fn newest(activity: Vec<ProductActivity>) -> Self {
+        let mut ordered: Vec<(usize, ProductActivity)> = activity.into_iter().enumerate().collect();
+        ordered.sort_by_key(|(appended, action)| std::cmp::Reverse((action.at, *appended)));
+        let omitted = ordered.len().saturating_sub(ACTIVITY_VIEW_LIMIT);
+        let activity = ordered
+            .into_iter()
+            .take(ACTIVITY_VIEW_LIMIT)
+            .map(|(_, action)| action)
+            .collect();
 
         Self {
             activity,
@@ -67,6 +77,24 @@ mod tests {
         assert_eq!(view.omitted, 7);
         assert_eq!(view.activity.first().map(|a| a.at), Some(total as u64 - 1));
         assert_eq!(view.activity.last().map(|a| a.at), Some(7));
+    }
+
+    #[test]
+    fn among_actions_in_one_second_the_view_keeps_the_last_appended() {
+        let total = ACTIVITY_VIEW_LIMIT + 5;
+        let actions = (0..total)
+            .map(|appended| ProductActivity {
+                resource: appended.to_string(),
+                ..action(1_000)
+            })
+            .collect();
+
+        let view = ActivityResponse::newest(actions);
+
+        let kept: Vec<String> = view.activity.iter().map(|a| a.resource.clone()).collect();
+        let newest: Vec<String> = (5..total).rev().map(|appended| appended.to_string()).collect();
+        assert_eq!(kept, newest);
+        assert_eq!(view.omitted, 5);
     }
 
     #[test]

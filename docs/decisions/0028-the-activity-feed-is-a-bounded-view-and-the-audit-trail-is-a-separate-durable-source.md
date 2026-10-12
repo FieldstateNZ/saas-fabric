@@ -109,8 +109,10 @@ line, already emitted, keeps the content in the log pipeline. A successful
 append logs `control_plane.audit.appended` with the stream, sequence and
 hash. That line is a second anchor for the head, outside the store.
 
-The append runs in a task the request only awaits, so a disconnect cannot
-stop it between writing an entry and recording the head.
+The append, and the log line saying how it ended, run in a task the request
+only awaits, so a disconnect can stop neither: not between writing an entry
+and recording the head, and not before a failure is logged or a success's
+head is anchored in the log pipeline.
 
 ### 4. The development adapter: a file, not Git
 
@@ -124,8 +126,9 @@ directory synced. A head that fails any of those leaves the entry appended
 and the head stale. An OS lock on the directory refuses a second process, as
 `LocalClientRepository` does, and is held by every queued or running append
 as well as the trail, so it outlives a dropped trail until that work ends.
-Opening verifies every stream against its head and syncs the directory,
-along with any ancestor it creates. A stream past its head is a stop or a
+Opening verifies every stream against its head and syncs the directory and
+the parent of every component of its path, so a retry after a failed sync
+syncs what the earlier attempt created. A stream past its head is a stop or a
 failure between the two writes: it is complete, and the head catches up. A
 head with no log is a deleted stream, refused like any truncation.
 

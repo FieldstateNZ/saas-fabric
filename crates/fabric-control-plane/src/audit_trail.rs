@@ -38,6 +38,8 @@ mod in_memory;
 mod port;
 mod record;
 mod recorder;
+#[cfg(test)]
+mod recorder_tests;
 mod stream;
 mod verify;
 #[cfg(test)]

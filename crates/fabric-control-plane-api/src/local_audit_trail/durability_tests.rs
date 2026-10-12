@@ -167,7 +167,7 @@ async fn a_failed_directory_sync_after_a_head_rename_keeps_the_entry_and_refuses
 }
 
 #[test]
-fn opening_a_new_directory_syncs_each_ancestor_it_creates() {
+fn opening_a_new_directory_syncs_the_parent_of_each_component() {
     let root = TempDir::unique("audit-ancestry");
     let dir = root.0.join("a").join("b");
     let faults = Arc::new(Faults::default());
@@ -175,5 +175,39 @@ fn opening_a_new_directory_syncs_each_ancestor_it_creates() {
     LocalAuditTrail::open_with(&dir, Box::new(Faulty(Arc::clone(&faults)))).unwrap();
 
     let synced = faults.dir_syncs.lock().unwrap().clone();
-    assert_eq!(synced, vec![root.0.clone(), root.0.join("a"), dir]);
+    assert_eq!(synced.first().map(PathBuf::as_path), Some(Path::new("/")));
+    assert!(synced.ends_with(&[root.0.clone(), root.0.join("a"), dir]));
+}
+
+#[test]
+fn a_retry_after_a_failed_ancestry_sync_syncs_the_ancestry_it_already_created() {
+    let root = TempDir::unique("audit-ancestry-retry");
+    let dir = root.0.join("a").join("b");
+    let faults = Arc::new(Faults::default());
+
+    faults.fail_dir.store(true, Ordering::SeqCst);
+    assert!(LocalAuditTrail::open_with(&dir, Box::new(Faulty(Arc::clone(&faults)))).is_err());
+    assert!(
+        dir.exists(),
+        "the directories were created before the sync failed"
+    );
+
+    faults.fail_dir.store(false, Ordering::SeqCst);
+    faults.dir_syncs.lock().unwrap().clear();
+    LocalAuditTrail::open_with(&dir, Box::new(Faulty(Arc::clone(&faults)))).unwrap();
+
+    let synced = faults.dir_syncs.lock().unwrap().clone();
+    assert!(synced.ends_with(&[root.0.clone(), root.0.join("a"), dir]));
+}
+
+#[test]
+fn a_relative_directory_syncs_the_working_directory_it_is_named_in() {
+    let name = format!("fabric-audit-relative-{}", std::process::id());
+    let _cleanup = TempDir(PathBuf::from(&name));
+    let faults = Arc::new(Faults::default());
+
+    LocalAuditTrail::open_with(Path::new(&name), Box::new(Faulty(Arc::clone(&faults)))).unwrap();
+
+    let synced = faults.dir_syncs.lock().unwrap().clone();
+    assert_eq!(synced, vec![PathBuf::from("."), PathBuf::from(&name)]);
 }

@@ -907,8 +907,11 @@ Recorded from the D01-19b disposition in
 > boundaries.
 
 This amends owed decision 5. It does not accept this ADR. The items listed
-under "Owed before D01-19b is complete" are built by the follow-up below,
-and D01-19b is complete once its review accepts them. The field split
+under "Owed before D01-19b is complete" are built by the follow-up below.
+D01-19b is complete: the first slice merged in
+[#147](https://github.com/FieldstateNZ/saas-fabric/pull/147) and the
+follow-up in [#151](https://github.com/FieldstateNZ/saas-fabric/pull/151).
+The field split
 below was asked back on
 [#108](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6116623432)
 and accepted for the fields this adapter observes in the
@@ -1149,7 +1152,10 @@ extractor. The identity-edit refusal narrows what an existing write accepts.
 
 From the engineering disposition, tracked on #108. Both are built by the
 follow-up in "A stored divergence is reported on read and is not
-converged", and await its review:
+converged", which merged in
+[#151](https://github.com/FieldstateNZ/saas-fabric/pull/151); with the
+first slice in [#147](https://github.com/FieldstateNZ/saas-fabric/pull/147),
+D01-19b is complete:
 
 - **Read-time reporting** of a stored projected entry that diverges from its
   projection, so the console shows it before anyone tries a save. This

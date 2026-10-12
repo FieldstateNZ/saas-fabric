@@ -22,6 +22,7 @@ use fabric_control_plane::{
     IdentityProviderFactory, InMemoryAuditTrail, InMemoryClientRepository, InMemoryRegistryStore,
     InMemorySecretStore, OperatorToken, PlatformBinding, PublicationSink, RegistryClient, RegistryConnection,
     RegistryConnector, RegistryHost, RegistryService, RegistryServiceParts, ResolutionParts,
+    SuppliedOperators,
 };
 use fabric_core::Clock;
 use fabric_platform_management::{Attached, Registry, RegistryError, Resolved};
@@ -205,13 +206,27 @@ pub const SECRET_VALUE: &str = "a-value-that-must-not-leak";
 
 /// Builds a control plane holding one client.
 pub fn control_plane() -> TestControlPlane {
-    build(None, None, None, no_registries(), no_resolution())
+    build(
+        None,
+        None,
+        None,
+        no_registries(),
+        no_resolution(),
+        accepting_operators(),
+    )
 }
 
 /// Builds a control plane holding one client, with `registries` behind the
 /// registry routes.
 pub fn control_plane_with_registries(registries: Arc<RegistryService>) -> TestControlPlane {
-    build(None, None, None, registries, no_resolution())
+    build(
+        None,
+        None,
+        None,
+        registries,
+        no_resolution(),
+        accepting_operators(),
+    )
 }
 
 /// Builds a control plane holding one client, resolving selections through
@@ -222,7 +237,14 @@ pub fn control_plane_with_resolution(
     resolution: ResolutionParts,
     platform: Option<PlatformBinding>,
 ) -> TestControlPlane {
-    build(None, platform, None, registries, resolution)
+    build(
+        None,
+        platform,
+        None,
+        registries,
+        resolution,
+        accepting_operators(),
+    )
 }
 
 /// A registry that reads nothing: every test that selects no version.
@@ -302,13 +324,21 @@ pub fn control_plane_with_identity_provider(provider: Arc<FakeIdentityProvider>)
         None,
         no_registries(),
         no_resolution(),
+        accepting_operators(),
     )
 }
 
 /// Builds a control plane with a platform bound, for tests that drive
 /// `/api/platform/*` against something other than "nothing is managed".
 pub fn control_plane_with_platform(platform: PlatformBinding) -> TestControlPlane {
-    build(None, Some(platform), None, no_registries(), no_resolution())
+    build(
+        None,
+        Some(platform),
+        None,
+        no_registries(),
+        no_resolution(),
+        accepting_operators(),
+    )
 }
 
 /// Builds a control plane with a platform bound *and* somewhere to publish
@@ -316,7 +346,14 @@ pub fn control_plane_with_platform(platform: PlatformBinding) -> TestControlPlan
 /// `publication` row `GET /api/platform` renders (ADR 0023 part 4) against
 /// something other than "nothing is configured".
 pub fn control_plane_with_publication(platform: PlatformBinding, sink: PublicationSink) -> TestControlPlane {
-    build(None, Some(platform), Some(sink), no_registries(), no_resolution())
+    build(
+        None,
+        Some(platform),
+        Some(sink),
+        no_registries(),
+        no_resolution(),
+        accepting_operators(),
+    )
 }
 
 /// Builds a control plane that publishes *and* converges against
@@ -333,18 +370,42 @@ pub fn control_plane_with_publication_and_identity_provider(
         Some(sink),
         no_registries(),
         no_resolution(),
+        accepting_operators(),
     )
 }
 
+/// The operator role every fixture authenticator presents, stated here
+/// because a supplied authenticator has no configured posture to take one
+/// from.
+pub const PRESENTED_ROLE: &str = "fabric-operator";
+
+/// The authenticator every constructor uses unless a test chooses one.
+pub fn accepting_operators() -> SuppliedOperators {
+    SuppliedOperators {
+        authenticator: AcceptingOperator::accepting(OPERATOR),
+        presented_role: PRESENTED_ROLE.to_owned(),
+    }
+}
+
+/// Builds a control plane holding one client, establishing operators with
+/// `operators` -- for `GET /api/user/current`, whose answer depends on the
+/// bearer an accepted operator carries and the role the authenticator
+/// presents.
+pub fn control_plane_with_operators(operators: SuppliedOperators) -> TestControlPlane {
+    build(None, None, None, no_registries(), no_resolution(), operators)
+}
+
 /// Shared by every constructor above; only what lends the identity
-/// provider's authority, which platform is bound, where it publishes and
-/// which registries it has differ between them.
+/// provider's authority, which platform is bound, where it publishes,
+/// which registries it has and who it accepts as an operator differ between
+/// them.
 fn build(
     identity_provider: Option<Arc<dyn IdentityProviderFactory>>,
     platform: Option<PlatformBinding>,
     publication: Option<PublicationSink>,
     registries: Arc<RegistryService>,
     resolution: ResolutionParts,
+    operators: SuppliedOperators,
 ) -> TestControlPlane {
     let repository = Arc::new(InMemoryClientRepository::new());
     let revision = repository
@@ -387,7 +448,7 @@ fn build(
             // The posture is verified by its own tests. These drive everything
             // above it, and minting signed tokens here would make every one of
             // them a test about authentication.
-            operators: Some(AcceptingOperator::accepting(OPERATOR)),
+            operators: Some(operators),
 
             reserved_realms,
             reserved_client_ids: [RESERVED_APPLICATION_ID.to_owned()].into_iter().collect(),

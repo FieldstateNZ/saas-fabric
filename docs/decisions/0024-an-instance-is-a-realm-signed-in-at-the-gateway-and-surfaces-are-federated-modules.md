@@ -1,7 +1,7 @@
 # ADR 0024 — An instance is a realm, signed in at the gateway, and product surfaces are federated modules
 
 - **Status:** Accepted (2026-09-22, product owner)
-- **Date:** 2026-09-22; amended 2026-10-12 (D01-9)
+- **Date:** 2026-09-22; amended 2026-10-12 (D01-9; `/api/user/current`)
 - **Applies to:** `apps/app-shell`, `apps/control-plane-ui`,
   `fabric-control-plane` (the operator posture, `/api/session`,
   `/api/operator`), `fabric-control-plane-api`, `hosting/`, the runtime plane
@@ -168,20 +168,34 @@ In this order, each mergeable on its own:
 
 ### Implementation status (2026-10-12)
 
-Slice 2 is built in part, by the D01-9 disposition on
-[#108](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6109518415):
+Slice 2 is built in source, by the D01-9 disposition on
+[#108](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6109518415)
+and the `/api/user/current` disposition on
+[#108](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6119067476):
 
-- **Built:** `GET`/`POST /api/session` are gone, and so are the
+- **Built (D01-9):** `GET`/`POST /api/session` are gone, and so are the
   `SignInSurface` port, its Keycloak adapter's code redemption and the
   operator posture's `redirect_uri`, which a configuration may no longer
   state. The console is session-free as §2 says: no PKCE pair, no
   `sessionStorage` verifier, no in-memory token, no silent renewal, and no
-  `Authorization` header — it probes `/api/operator` and navigates to the
-  gateway's sign-in. The loopback workbench is retired with it.
-- **Not built:** `GET /api/user/current` (`/api/operator` keeps answering, and
-  is still the probe). Slice 1's local half — the `hosting/` Envoy's OAuth2
-  filter — is not built either, so with no gateway in front the console stops
-  at its sign-in screen.
+  `Authorization` header. The loopback workbench is retired with it.
+- **Built (§3):** `GET /api/user/current` answers §3's shape on the
+  control-plane instance. It takes the same `Operator` extractor as every
+  other route, so no bearer is `401 unauthenticated` and a refused one —
+  including a realm member without the operator role — is `401
+  operator_refused`. `subject` is the verified token's exact `sub`;
+  `userName` and `email` are `preferred_username` and `email`, or `null`;
+  `displayName` is `name`, else `preferred_username`, else `sub`. `roles` is
+  the deployment's configured `required_role` alone, never the token's realm
+  roles, and confers nothing. The profile is decoded from the bearer the
+  extractor already verified, by a reader private to that one handler; a
+  token it cannot read is a `500 profile_unreadable`, never a `200`. The
+  console's probe is now this route and requires a complete answer.
+  `/api/operator` keeps answering, subject only, for one release; the
+  console's Settings page still reads it for the attribution name.
+- **Not built:** slice 1's local half — the `hosting/` Envoy's OAuth2
+  filter — so with no gateway in front the console stops at its sign-in
+  screen.
 - **Platform consequence:** LucentRoot's control-plane configuration states
   `redirect_uri`, and now refuses to load with it. The overlay drops it in the
   same change that takes the release carrying this, which is also when the

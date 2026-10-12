@@ -84,7 +84,7 @@ pub struct ControlPlaneDeps {
     /// it. It exists for tests, which drive the real router and would
     /// otherwise have to mint tokens signed by a key they also had to publish
     /// — proving the extractor works, and nothing else, at considerable cost.
-    pub operators: Option<Arc<dyn crate::OperatorAuthenticator>>,
+    pub operators: Option<SuppliedOperators>,
 
     /// Realms a new client may never declare, because something other than
     /// a client already means them: Keycloak's own `master`, the realm the
@@ -126,4 +126,19 @@ pub struct ControlPlaneDeps {
     /// What a selected component version is resolved through: the registry
     /// port and the budget that bounds one resolution (ADR 0026 section 7).
     pub resolution: crate::ResolutionParts,
+}
+
+/// An authenticator handed in instead of the configured posture, and the
+/// role `GET /api/user/current` presents for every operator it accepts.
+///
+/// The role travels with the authenticator because only the configured
+/// posture has one of its own: a supplied authenticator requires whatever it
+/// requires, and the role the route reports must be stated by whoever
+/// supplied it rather than borrowed from a posture that is not deciding.
+pub struct SuppliedOperators {
+    /// What establishes the operator.
+    pub authenticator: Arc<dyn crate::OperatorAuthenticator>,
+
+    /// The realm tier `GET /api/user/current` reports. Must not be blank.
+    pub presented_role: String,
 }

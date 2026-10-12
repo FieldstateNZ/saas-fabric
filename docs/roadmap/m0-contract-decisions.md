@@ -162,10 +162,11 @@ Options:
 
 What is built:
 
-- **ADR 0024 slice 1, Fabric side.** `GET /api/operator` is the probe for a
-  gateway session. It answers `401 operator_refused` when it refuses a
-  forwarded bearer (`crates/fabric-control-plane/src/handlers/get_operator.rs:15-33`).
-- **ADR 0024 slice 2: built in part (D01-9, 2026-10-12).**
+- **ADR 0024 slice 1, Fabric side.** `GET /api/user/current` is the probe for
+  a gateway session (it was `GET /api/operator` until slice 2). Both answer
+  `401 operator_refused` when the `Operator` extractor refuses a forwarded
+  bearer (`crates/fabric-control-plane/src/operator/extractor.rs`).
+- **ADR 0024 slice 2: built in source (D01-9 and `/api/user/current`, 2026-10-12).**
   - `GET/POST /api/session`, the `SignInSurface` port, the Keycloak adapter's
     code redemption and the operator posture's `redirect_uri` are removed.
     `tests/boundary.rs::the_control_plane_redeems_no_authorization_code_for_anybody`
@@ -173,13 +174,23 @@ What is built:
     `example_configuration.rs::a_configuration_still_stating_the_retired_redirect_uri_refuses_to_load`
     pins the configuration break.
   - The console is session-free: no PKCE, no token, no `Authorization`
-    header; it probes `/api/operator` and navigates to the gateway's sign-in.
+    header; it probes `/api/user/current` and navigates to the gateway's
+    sign-in.
   - **Platform action owed:** LucentRoot still states `redirect_uri`
     (`applications/core/saas-fabric-control-plane/overlays/lucentroot/control-plane.toml`,
     whose comment already says it "retires alongside that endpoint in ADR
     0024 slice 2"). It must be dropped in the change that takes this release,
     which is also when the console depends on gateway sign-in alone.
-  - No `/api/user/current` route exists in `crates/`.
+  - `GET /api/user/current` answers ADR 0024 §3's shape behind the unchanged
+    `Operator` extractor, by the disposition in
+    [#108 comment 6119067476](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6119067476):
+    the exact `sub`, `preferred_username`/`email` or `null`, a display name
+    that is never empty, and the configured `required_role` alone as `roles`
+    (`crates/fabric-control-plane/src/handlers/get_current_user.rs`). Signed
+    tokens through the real authenticator are tested in
+    `handlers/get_current_user/get_current_user_tests.rs`, and the full
+    router in `tests/user_current.rs`. `/api/operator` keeps answering,
+    subject only, for one release; the console's Settings page still reads it.
 - **ADR 0024 slices 3–5: not built.** `apps/app-shell` has no sign-in and does
   not load modules at runtime. The runtime has no `/v1/identity` route.
 - **Platform side.** There is an OIDC `SecurityPolicy` at

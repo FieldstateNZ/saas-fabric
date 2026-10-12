@@ -93,7 +93,8 @@ may depend on a crate in the other.
 Operator-facing HTTP, in `fabric-control-plane`.
 
 ```text
-GET    /api/operator                     who the API authenticated
+GET    /api/user/current                 who is signed in (ADR 0024 §3)
+GET    /api/operator                     the subject alone; kept one release
 POST   /api/reconciliation               converge every client, as you
 GET    /api/integrations/git             can desired state be read?
 POST   /api/integrations/git/connect     describe the app to create
@@ -1406,18 +1407,28 @@ PKCE pair, and calls no sign-in route; `GET`/`POST /api/session` and the
 operator posture's `redirect_uri` are retired (D01-9), and a configuration
 still stating `redirect_uri` refuses to load.
 
-On load the console probes `GET /api/operator`, and a `200` is the whole
-answer: the gateway already authenticates this browser. A `401` there renders
-a sign-in button that navigates to `/`, where the gateway answers with the
-realm's login; the console never navigates by itself, because with no gateway
-in front that would reload the same page forever. A `401` on any later
-`fetch` means the cookie session has ended, and since a `fetch` cannot follow
-a redirect to an identity provider the way a top-level navigation can, the
-console navigates to `/` for the gateway to run its sign-in again. That
-navigation is counted, and a third page load in a row that signs in and is
-then refused is reported as looping rather than repeated — the guard against
-an upstream that answers `200` without verifying; see `gateway.ts`'s own
-account of the bound and its limits.
+On load the console probes `GET /api/user/current`, and a `200` carrying a
+complete user is the whole answer: the gateway already authenticates this
+browser. A `401` there renders a sign-in button that navigates to `/`, where
+the gateway answers with the realm's login; the console never navigates by
+itself, because with no gateway in front that would reload the same page
+forever. A `401` on any later `fetch` means the cookie session has ended, and
+since a `fetch` cannot follow a redirect to an identity provider the way a
+top-level navigation can, the console navigates to `/` for the gateway to run
+its sign-in again. That navigation is counted, and a third page load in a row
+that signs in and is then refused is reported as looping rather than repeated
+— the guard against an upstream that answers `200` without verifying; see
+`gateway.ts`'s own account of the bound and its limits.
+
+`GET /api/user/current` answers ADR 0024 §3's shape from the bearer the
+operator extractor verified: `subject` is the token's exact `sub`; `userName`
+and `email` are `preferred_username` and `email`, or `null`; `displayName` is
+`name`, else `preferred_username`, else `sub`; and `roles` is the configured
+`required_role` alone — a label, not a grant. The extractor's refusals are
+unchanged (`401 unauthenticated`, `401 operator_refused`), and a verified
+token whose payload cannot be read as a profile is `500 profile_unreadable`,
+never a `200`. `GET /api/operator` keeps answering the attribution name for
+one release.
 
 With no gateway in front — the Vite dev proxy at `npm run dev` — the console
 stops at the sign-in screen. Putting the gateway on the local development path

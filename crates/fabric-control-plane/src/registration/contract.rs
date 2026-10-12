@@ -6,5 +6,5 @@
 mod deps;
 mod services;
 
-pub use deps::ControlPlaneDeps;
+pub use deps::{ControlPlaneDeps, SuppliedOperators};
 pub use services::ControlPlaneServices;

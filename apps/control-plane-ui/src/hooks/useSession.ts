@@ -3,7 +3,7 @@
  *
  * Sign-in belongs to the gateway (ADR 0024 §2). This console holds no token
  * and runs no flow of its own, so a page load asks one question -- does
- * `/api/operator` answer for this browser? -- and either renders the console
+ * `/api/user/current` answer for this browser? -- and either renders the console
  * or offers to send the browser to the gateway's sign-in.
  */
 import { useEffect, useState } from 'react'

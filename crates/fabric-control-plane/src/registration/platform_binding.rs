@@ -64,4 +64,9 @@ pub struct PlatformBinding {
     /// `ControlPlaneServices::platform_sweeps` is always built whether or
     /// not a platform is managed at all.
     pub publication: Arc<fabric_platform_management::PublicationState>,
+
+    /// Samples which generation the runtime's replicas serve (G7). `None`
+    /// unless the publication sink names a reader target, and then every
+    /// reader answer is unobserved. Set only by `build_control_plane`.
+    pub readers: Option<Arc<dyn fabric_platform_management::ReaderObserver>>,
 }

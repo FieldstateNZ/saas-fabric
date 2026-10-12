@@ -600,3 +600,38 @@ async fn the_contract_two_to_three_migration_keeps_every_payload_and_held_manife
     );
     assert_eq!(record["registry"]["generation"], 1);
 }
+
+#[tokio::test]
+async fn the_record_stamp_names_the_record_key_written_and_matches_the_filesystem_adapter() {
+    let dir = std::env::temp_dir().join(format!("fabric-publication-stamp-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let files = FilesystemRuntimePublication::new(
+        dir.join("tenants.json"),
+        dir.join("data-sources.json"),
+        dir.join("catalog.json"),
+    );
+    let on_disk = files.publish(&snapshot(3)).await.unwrap().record;
+    let (client, _token, task) = fake(vec![
+        (404, "{}".into()),
+        (404, "{}".into()),
+        (404, "{}".into()),
+        (201, "{}".into()),
+        (201, "{}".into()),
+        (201, "{}".into()),
+    ]);
+    let adapter = KubernetesRuntimePublication::with_client(client, NS);
+
+    let stamp = adapter.publish(&snapshot(3)).await.unwrap().record;
+
+    assert_eq!(
+        stamp, on_disk,
+        "a reader of either target reports the same record"
+    );
+    let seen = task.join().unwrap();
+    let tenants: serde_json::Value = serde_json::from_str(&seen[5].body).unwrap();
+    assert_eq!(
+        tenants["data"]["publication.json"],
+        std::fs::read_to_string(dir.join("publication.json")).unwrap()
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

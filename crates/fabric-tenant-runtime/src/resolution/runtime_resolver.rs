@@ -31,7 +31,7 @@ use crate::{DataSourceRegistry, ResolveError, ResolvedDataSource, TenantRegistry
 pub struct RuntimeResolver {
     tenants: Arc<TenantRegistry>,
     data_sources: Arc<DataSourceRegistry>,
-    published: Option<Arc<PublishedGeneration>>,
+    pub(super) published: Option<Arc<PublishedGeneration>>,
 }
 
 impl RuntimeResolver {
@@ -60,7 +60,7 @@ impl RuntimeResolver {
 
     fn view(&self) -> ResolutionView {
         self.published.as_ref().map_or_else(
-            || ResolutionView::of(&self.tenants, &self.data_sources),
+            || ResolutionView::of(&self.tenants, &self.data_sources, None),
             |published| published.view(),
         )
     }

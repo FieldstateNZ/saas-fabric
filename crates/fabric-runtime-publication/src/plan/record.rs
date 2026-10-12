@@ -1,8 +1,9 @@
 //! Deciding the publication record a plan ends with.
 
+use crate::digest::sha256_digest;
 use crate::{
-    DocumentKind, DocumentOutcome, DocumentPlan, PublicationError, PublicationRecord, RecordedDocument,
-    RecordedDocuments, RegistryPlan, ResourceHistory,
+    DocumentKind, DocumentOutcome, DocumentPlan, PublicationError, PublicationRecord, RecordStamp,
+    RecordedDocument, RecordedDocuments, RegistryPlan, ResourceHistory,
 };
 
 /// The record's decided fate: written whenever the generation it names
@@ -17,6 +18,10 @@ pub struct RecordPlan {
     pub record: PublicationRecord,
     /// Its canonical bytes.
     pub bytes: Vec<u8>,
+    /// The record the target holds once this plan is written: the bytes
+    /// written, or, when unchanged, the bytes already held, which a reader
+    /// hashes as they are.
+    pub stamp: RecordStamp,
 }
 
 /// Names each planned document's bytes and revision, the resource history
@@ -29,7 +34,7 @@ pub struct RecordPlan {
 /// publication, or a set written before the record existed -- the generation
 /// starts at 1.
 pub(super) fn decide(
-    held: Option<PublicationRecord>,
+    held: Option<(PublicationRecord, &[u8])>,
     [data_sources, catalog, tenants]: [&DocumentPlan; 3],
     resources: ResourceHistory,
     registry: Option<&RegistryPlan>,
@@ -41,22 +46,24 @@ pub(super) fn decide(
         catalog: RecordedDocument::of(catalog.revision, &catalog.bytes),
     };
 
-    let (outcome, record) = match held {
-        Some(held)
+    let (outcome, record, held_bytes) = match held {
+        Some((held, held_bytes))
             if PublicationRecord::new(held.generation(), documents.clone(), resources.clone())
                 .with_registry(registry.clone())
                 == held =>
         {
-            (DocumentOutcome::Unchanged, held)
+            (DocumentOutcome::Unchanged, held, Some(held_bytes))
         }
-        Some(held) => (
+        Some((held, _)) => (
             DocumentOutcome::Written,
             PublicationRecord::new(held.generation().saturating_add(1), documents, resources)
                 .with_registry(registry),
+            None,
         ),
         None => (
             DocumentOutcome::Written,
             PublicationRecord::new(1, documents, resources).with_registry(registry),
+            None,
         ),
     };
 
@@ -67,9 +74,14 @@ pub(super) fn decide(
             cause: Box::new(cause),
         })?;
 
+    let stamp = RecordStamp {
+        generation: record.generation(),
+        sha256: sha256_digest(held_bytes.unwrap_or(&bytes)),
+    };
     Ok(RecordPlan {
         outcome,
         record,
         bytes,
+        stamp,
     })
 }

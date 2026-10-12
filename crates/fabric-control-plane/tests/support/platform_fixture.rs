@@ -386,6 +386,7 @@ pub async fn platform_binding_with_floors(
         // caller in this crate's tests that supplies one.
         publisher: None,
         publication: Arc::new(fabric_platform_management::PublicationState::new()),
+        readers: None,
     };
 
     (binding, fake)

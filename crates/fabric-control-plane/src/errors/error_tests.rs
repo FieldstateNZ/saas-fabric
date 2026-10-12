@@ -33,6 +33,7 @@ fn every_failure_has_its_own_machine_code() {
     let errors = [
         ControlPlaneError::Unauthenticated(OperatorAuthError::Missing),
         ControlPlaneError::OperatorRefused,
+        ControlPlaneError::ProfileUnreadable,
         ControlPlaneError::UnknownClient(client()),
         ControlPlaneError::InvalidRequest(DesiredStateError::MissingField { field: "spec" }),
         ControlPlaneError::InvalidDesiredState {

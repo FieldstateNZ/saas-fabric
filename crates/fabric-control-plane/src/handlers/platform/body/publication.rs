@@ -2,13 +2,16 @@
 //! holds, and what the last pass did.
 
 mod last_pass_row;
+mod readers_row;
 mod readiness_row;
 
 pub(crate) use last_pass_row::pass_outcome_word;
 pub use last_pass_row::LastPassRow;
+pub(crate) use readers_row::observe_readers;
+pub use readers_row::ReadersRow;
 pub use readiness_row::ReadinessRow;
 
-use fabric_platform_management::{PassOutcome, PublicationState, RuntimePublisher};
+use fabric_platform_management::{PassOutcome, PublicationState, ReaderApplication, RuntimePublisher};
 use fabric_runtime_publication::{DocumentRevision, PublishedRevisions, RegistryGeneration};
 
 /// What an operator is told about this environment's runtime publication.
@@ -57,14 +60,18 @@ impl PublicationRow {
     /// Renders this environment's publication state from what
     /// `PublicationState` currently holds -- `GET /api/platform`'s own
     /// read, where there is no fresher outcome to prefer.
-    pub(crate) fn of(publisher: &RuntimePublisher, state: &PublicationState) -> Self {
+    pub(crate) fn of(
+        publisher: &RuntimePublisher,
+        state: &PublicationState,
+        readers: ReaderApplication,
+    ) -> Self {
         match state.last_pass() {
-            Some(pass) => Self::at(publisher, state, pass.at_unix_seconds, &pass.outcome),
+            Some(pass) => Self::at(publisher, state, (pass.at_unix_seconds, &pass.outcome), readers),
             None => Self {
                 target: publisher.describe_target(),
                 documents: PublishedDocumentsRow::default(),
                 last_pass: None,
-                readiness: state.readiness().into(),
+                readiness: ReadinessRow::of(state.readiness(), readers),
             },
         }
     }
@@ -81,14 +88,14 @@ impl PublicationRow {
     pub(crate) fn at(
         publisher: &RuntimePublisher,
         state: &PublicationState,
-        at_unix_seconds: u64,
-        outcome: &PassOutcome,
+        (at_unix_seconds, outcome): (u64, &PassOutcome),
+        readers: ReaderApplication,
     ) -> Self {
         Self {
             target: publisher.describe_target(),
             documents: PublishedDocumentsRow::of(outcome),
             last_pass: Some(LastPassRow::at(at_unix_seconds, outcome)),
-            readiness: state.readiness().into(),
+            readiness: ReadinessRow::of(state.readiness(), readers),
         }
     }
 }

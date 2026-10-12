@@ -20,6 +20,14 @@ pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
         })
 }
 
+/// [`sha256_hex`] as the digest type a reader reports (G7).
+pub(crate) fn sha256_digest(bytes: &[u8]) -> fabric_core::RecordDigest {
+    let digest = ring::digest::digest(&ring::digest::SHA256, bytes);
+    let mut out = [0_u8; 32];
+    out.copy_from_slice(digest.as_ref());
+    fabric_core::RecordDigest::from_bytes(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -30,5 +38,10 @@ mod tests {
             sha256_hex(b""),
             "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
         );
+    }
+
+    #[test]
+    fn the_digest_type_prints_as_the_hex_digest() {
+        assert_eq!(sha256_digest(b"record").to_string(), sha256_hex(b"record"));
     }
 }

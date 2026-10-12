@@ -13,10 +13,11 @@ mod platform_binding;
 mod publication_sink;
 mod publisher;
 
-pub use contract::{ControlPlaneDeps, ControlPlaneServices};
+pub use contract::{ControlPlaneDeps, ControlPlaneServices, SuppliedOperators};
 pub use platform_binding::PlatformBinding;
 pub use publication_sink::PublicationSink;
 
+use crate::operator_tier::OperatorTier;
 use crate::resolution::ResolutionService;
 use crate::routes::control_plane_routes;
 use crate::service::ClientService;
@@ -28,7 +29,7 @@ use crate::{logging, ControlPlaneConfig};
 /// # Errors
 ///
 /// Returns a message if the operator posture cannot be built — a blank issuer,
-/// client or role. Each means the API would be reachable by nobody or by
+/// client or role, or a supplied authenticator presenting a blank role. Each means the API would be reachable by nobody or by
 /// everybody, and finding that out at startup beats finding it out when an
 /// operator cannot sign in.
 pub fn build_control_plane(
@@ -54,9 +55,15 @@ pub fn build_control_plane(
     } = deps;
 
     let repository = &repository;
-    let operators: Arc<dyn crate::OperatorAuthenticator> = match operators {
-        Some(supplied) => supplied,
-        None => Arc::from(config.operator.build(keys)?),
+    let (operators, operator_tier): (Arc<dyn crate::OperatorAuthenticator>, _) = match operators {
+        Some(supplied) => (
+            supplied.authenticator,
+            OperatorTier::new(&supplied.presented_role)?,
+        ),
+        None => (
+            Arc::from(config.operator.build(keys)?),
+            OperatorTier::new(config.operator.required_role())?,
+        ),
     };
     let described = repository.current().describe();
     let statuses = Arc::new(ReconciliationStatusStore::new());
@@ -96,6 +103,7 @@ pub fn build_control_plane(
             publisher,
             publication: Arc::clone(&publication_state),
             data_sources,
+            readers: publication.as_ref().and_then(|sink| sink.readers.clone()),
             ..binding
         }
     });
@@ -116,6 +124,7 @@ pub fn build_control_plane(
         service,
         client_secrets,
         operators,
+        operator_tier,
         git_integration,
         identity_provider,
         public_base_url: config.public_base_url.clone(),

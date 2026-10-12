@@ -30,6 +30,7 @@ mod observation;
 mod placements;
 mod policy;
 mod publication;
+mod readers;
 mod registry;
 mod rollback_floors;
 mod running_guard;
@@ -60,7 +61,7 @@ pub use discovery::{
 pub use fabric_runtime_publication::{
     ConnectionName, ConnectionSelectorDocument, ConnectorId, DataResidencyDocument,
     DataSourceCapabilitiesDocument, DataSourceDocument, FieldName, IsolationModelDocument,
-    PlacementClassDocument, PoolSettingsDocument,
+    PlacementClassDocument, PoolSettingsDocument, RecordStamp,
 };
 pub use observation::{DeploymentHealth, DeploymentObservation, DeploymentObserver, WorkloadObservation};
 pub use placements::{
@@ -73,6 +74,10 @@ pub use publication::{
     IssuerRegistrySource, LastPass, PassOutcome, PassResult, PublicationState, PublishedTenants,
     ReadinessEvidence, ReadinessReport, Registrations, RegistryApplication, RegistryEvidence,
     RegistryEvidenceSummary, RegistrySourceError, RuntimeCatalogueSource, RuntimePublisher, WaitingReason,
+};
+pub use readers::{
+    assess as assess_readers, update_complete, Finding, MemberFinding, MemberState, ProbeFailure,
+    ProbeOutcome, ReaderApplication, ReaderMember, ReaderObserver, ReaderSample, ReaderState, SampleOutcome,
 };
 pub use registry::{Attached, AttachedDescriptor, Provenance, Registry, RegistryError, Resolved, Unusable};
 pub use rollback_floors::RollbackFloors;

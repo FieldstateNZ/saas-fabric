@@ -1,6 +1,7 @@
 //! The one pointer a published runtime resolves through.
 
 use arc_swap::ArcSwapOption;
+use fabric_core::ReaderGenerationReport;
 
 use super::resolution_view::ResolutionView;
 use crate::{DataSourceRegistry, TenantRegistry};
@@ -27,15 +28,23 @@ pub(crate) struct PublishedGeneration {
 
 impl PublishedGeneration {
     /// Installs what both registries now hold as the view every resolution
-    /// reads.
+    /// reads, stamped with `served`: the generation they hold exactly, if
+    /// they do. The stamp is installed in the same store as the snapshots,
+    /// so what a replica reports serving is always what it resolves against.
     ///
     /// Called only once both registries have been written for a generation,
     /// and only by the refresher that wrote them -- so the two snapshots it
     /// pairs are always the same generation's.
-    pub(crate) fn publish(&self, tenants: &TenantRegistry, data_sources: &DataSourceRegistry) {
+    pub(crate) fn publish(
+        &self,
+        tenants: &TenantRegistry,
+        data_sources: &DataSourceRegistry,
+        served: Option<ReaderGenerationReport>,
+    ) {
         self.current.store(Some(std::sync::Arc::new(ResolutionView::of(
             tenants,
             data_sources,
+            served,
         ))));
     }
 

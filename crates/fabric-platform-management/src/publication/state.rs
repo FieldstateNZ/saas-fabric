@@ -83,6 +83,15 @@ impl PublicationState {
         ReadinessReport::of(evidence.as_ref())
     }
 
+    /// The publication record the last pass that published or found nothing
+    /// to change left held, which a replica must report to have applied it
+    /// (G7). `None` until one has, in this process.
+    #[must_use]
+    pub fn expected_record(&self) -> Option<fabric_runtime_publication::RecordStamp> {
+        let evidence = self.evidence.lock().ok()?;
+        evidence.as_ref().map(|evidence| evidence.record)
+    }
+
     /// Records how a pass ended, and what it left published if it did.
     pub(super) fn record(&self, at_unix_seconds: u64, outcome: PassOutcome, accepted: Option<Accepted>) {
         if let Some(accepted) = accepted {

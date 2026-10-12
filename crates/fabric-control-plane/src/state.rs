@@ -10,6 +10,7 @@ use axum::extract::FromRef;
 use crate::git_integration::GitIntegrationService;
 use crate::integration::IntegrationHealth;
 use crate::operator::OperatorAuthenticator;
+use crate::operator_tier::OperatorTier;
 use crate::repository::DesiredStateBinding;
 use crate::service::ClientService;
 
@@ -31,6 +32,9 @@ pub(crate) struct ControlPlaneState {
     /// handler declare an `Operator` parameter and be unable to run without an
     /// authenticated one.
     pub(crate) operators: Arc<dyn OperatorAuthenticator>,
+
+    /// The role `GET /api/user/current` reports, fixed with `operators`.
+    pub(crate) operator_tier: OperatorTier,
 
     /// Whether desired state is connected, for the integration status only.
     ///
@@ -114,5 +118,11 @@ impl ControlPlaneState {
 impl FromRef<ControlPlaneState> for Arc<dyn OperatorAuthenticator> {
     fn from_ref(state: &ControlPlaneState) -> Self {
         Arc::clone(&state.operators)
+    }
+}
+
+impl FromRef<ControlPlaneState> for OperatorTier {
+    fn from_ref(state: &ControlPlaneState) -> Self {
+        state.operator_tier.clone()
     }
 }

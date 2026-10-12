@@ -169,7 +169,7 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
   const response = await fetch(path, { ...init, headers })
 
-  // A `200` from `/api/operator` cannot prove a session works -- a lying
+  // A `200` from `/api/user/current` cannot prove a session works -- a lying
   // proxy can produce it forever (gateway.ts's "A lying upstream") -- so
   // this is the real evidence instead: any status but `401` here.
   if (response.status !== 401) {

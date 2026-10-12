@@ -198,7 +198,7 @@ describe('a 401 that ends the session', () => {
 })
 
 /**
- * The other half of `gateway.ts`'s loop guard: a `200` from `/api/operator`
+ * The other half of `gateway.ts`'s loop guard: a `200` from `/api/user/current`
  * cannot prove a session works (a lying proxy can produce it forever), so
  * `request()` is where the real evidence -- an actual request answered by
  * anything but a `401` -- clears the redirect count instead.

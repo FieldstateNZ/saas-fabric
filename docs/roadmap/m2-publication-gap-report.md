@@ -480,6 +480,17 @@ and the error names the field. With `false` it starts unprimed and answers
 - **D01-1:** reader-side revision reporting changes the consumption shape.
 - **D01-2:** what §5's gate checks (D01-18).
 
+**Since then:** under the G7 disposition on #108, the following are built in
+source:
+- each replica's served generation, taken from the snapshot resolution reads;
+- an off-by-default listener that reports it;
+- the publisher's record stamp;
+- a read-only observer that samples every replica set's pods;
+- the assessment, with reader evidence shown beside the documents gate.
+
+Live use of the listener is not approved. See
+[Reader generation reporting (G7)](#reader-generation-reporting-g7).
+
 ### G8. The catalogue and the tenants document are never checked against each other
 
 **Evidence**
@@ -751,7 +762,11 @@ Limits of this change:
     refused, and that refusal holds back the whole pass.
 - **O5, partly.** No test characterizes a Git revert of the catalogue or of
   client documents, or restoring either through the console with conditional
-  writes and audit evidence.
+  writes and audit evidence. **Since then:** both are characterized in
+  `fabric-control-plane/tests/catalogue_revert.rs` and
+  `client_document_revert.rs`, and the Git adapter's revision on a revert
+  in `fabric-client-git/tests/desired_state_repository.rs`. ADR 0018's O5
+  lists what they prove and the findings open on #108.
 
 Still deferred after this change: G4 `Lease` (single-writer enforcement),
 G5 (persisted last-known-good, recovery command, failure semantics), the
@@ -996,6 +1011,134 @@ Still deferred after this change: G5's publisher hold and publisher-side
 recovery, the platform reader mount above, G4 `Lease`, G7, G6's remaining
 items, G2's publisher wait, G3's panel state, O5 for the catalogue and
 client documents, and the platform contract follow-ups.
+
+## Reader generation reporting (G7)
+
+The disposition on [#108](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6118073758)
+chose option A: the control plane pulls a small report from each replica
+through the existing read-only observer, ADR 0022's. It allows source-only
+preparation now. It does not approve live use of the separate,
+unauthenticated port. The control plane needs no runtime write RBAC, no
+`TokenReview`, no human or platform-admin bearer and no push credential.
+Nothing below is verified live, and nothing is wired in any environment.
+
+- **The report (`fabric-core` `ReaderGenerationReport`).** It is versioned
+  (`contract: 1`) and has exactly four keys: `contract`, `generation`,
+  `record_sha256` and `origin` (`published` or `last_known_good`). It
+  carries no tenant, issuer, data source, path, token or hold reason. It
+  lives in the shared kernel because both planes must agree on it, and they
+  cannot depend on each other. A reader refuses any other contract, any
+  unknown key and generation 0.
+- **Taken from the installed snapshot.** The view that resolution reads now
+  carries the generation's stamp: its number, the SHA-256 of the exact
+  record bytes, and its origin. The stamp is installed by the same atomic
+  store as the tenant and DataSource snapshots
+  (`PublishedGeneration::publish`). `RuntimeResolver::served_generation`
+  reads that view once. So the report is always what resolution reads
+  against, never a configured, mounted or about-to-be-applied generation.
+  - The stamp is absent when nothing is installed, when the view holds
+    documents with no record, and when a registry did not take every
+    resource of the generation as offered (`ApplyReport::took_every_resource`).
+    In that last case, held copies serve beside the generation, so the
+    replica is not on that generation and must not report that it is.
+  - `/ready` and its minimal body are unchanged.
+- **The listener (`fabric-api` `reader_generation`).** It is off by default.
+  It binds only when `reader_generation_listen` is set, and that setting
+  must be an explicit `ip:port` apart from the main listener's port. It
+  serves `GET /reader-generation` and nothing else:
+  - `200` with the report, `no-store`;
+  - `404` with no body when no whole recorded generation is installed.
+
+  The main listener has no such route, and nothing in this repository sets
+  the address.
+- **The publisher's stamp (`RecordStamp`).** Every `PublicationReport` now
+  names the record the target holds once the call returns: its generation,
+  and the SHA-256 of the bytes written. An unchanged pass names the bytes
+  already held. Both adapters stamp the same record. The control plane
+  keeps the stamp of the last pass that published or found nothing to
+  change (`PublicationState::expected_record`).
+- **The sample (`fabric-deployment-kubernetes` `KubernetesReaderObserver`).**
+  - It reads the configured Deployment, every replica set it controls and
+    every pod those control, through the same bounded API reads as
+    deployment evidence.
+  - It asks each ready, non-terminating pod at the pod IP the API server
+    reports and the configured port. It uses a separate HTTP client: no
+    credential, no default header, no proxy, no redirect, a 2 s bound per
+    probe and a 1 KiB body bound.
+  - It then reads all three again. The sample is discarded as unobserved if
+    the Deployment's identity or version, the set of replica sets, or any
+    owned pod's identity or version moved in between.
+  - A target is deployment configuration
+    (`[platform_management.publication.readers]`: namespace, deployment,
+    port). It is never taken from client desired state or a request.
+  - A whole sample is bounded to 8 s and 64 pods.
+- **The answer (`fabric-platform-management` `readers::assess`).**
+  - **Applied:** every replica that could serve, from every replica set,
+    reports the stamped generation and record digest, read from the
+    published files. At least as many replicas are ready as desired, and
+    none is terminating.
+  - **Pending:** a replica is older, on its last-known-good copy, not ready
+    or terminating, or fewer replicas are ready than desired.
+  - **Unobserved:** a replica is ahead, at the stamped generation with
+    another digest, serves nothing, gives no usable answer, or the
+    membership changed. Also unobserved when no observer is configured,
+    nothing is stamped yet, the controller has not observed the current
+    spec, or no replica is ready to ask.
+  - **No readers:** replicas are deliberately 0 and no pod remains. This is
+    never applied and never withdrawal evidence.
+  - Unobserved outranks pending. Every reason is kept, with the sample's
+    time and each pod beside its replica set.
+- **Readiness.** The documents gate stays publisher evidence, so a runtime
+  at zero replicas can be raised against it with no bootstrap cycle. The
+  readers row sits beside the three gates. `updateComplete` holds only when
+  the documents gate is met and the readers are applied. The console shows
+  both.
+
+| Acceptance (#108 disposition) | Guard | Tests |
+|---|---|---|
+| Matched multi-pod control | `readers/assess.rs`; `reader/sample.rs` | `assess_tests.rs::every_ready_replica_on_the_stamped_record_is_applied`; `sample_tests.rs::every_ready_pod_of_the_current_replica_set_is_asked_and_matches`; `platform_publication.rs::the_stamped_record_is_the_one_on_the_target_and_matching_readers_complete_the_update` |
+| An old replica set's reader during a rollout | `reader/membership.rs::owned_sets` (every set the Deployment controls) | `sample_tests.rs::a_ready_pod_of_an_older_replica_set_is_asked_too_and_holds_the_sample_back`; `assess_tests.rs::an_older_replica_set_still_ready_during_a_rollout_is_held_to_the_record_too`; `::pods_and_replica_sets_the_deployment_does_not_control_are_left_out` |
+| Terminating, not ready and zero readers | `reader/sample.rs::unasked`; `readers/reasons.rs` | `sample_tests.rs::terminating_and_unready_pods_are_not_asked_and_a_pod_with_no_address_is_not_guessed_at`, `::zero_replicas_and_no_pods_is_no_readers`; `assess_tests.rs::a_terminating_or_unready_pod_or_too_few_ready_replicas_keep_it_pending`, `::zero_replicas_is_no_readers_and_never_applied`, `::desired_replicas_with_none_ready_is_never_a_vacuous_match` |
+| Same generation, wrong digest; older, last-known-good, ahead, 404, unreachable and malformed reports | `readers/finding.rs::compare`; `reader/probe.rs` | `assess_tests.rs::an_older_generation_or_a_last_known_good_copy_is_pending`, `::an_answer_that_cannot_be_compared_makes_it_unobserved`, `::unobserved_outranks_pending_and_every_reason_is_kept`; `probe_tests.rs::nothing_served_is_its_own_answer`, `::a_pod_nothing_listens_on_is_unreachable`, `::an_answer_that_is_not_a_report_this_side_reads_is_malformed` |
+| Membership or UID changes during the sample | `reader/membership.rs::Membership` | `sample_tests.rs::anything_that_moves_during_the_sample_discards_it` (Deployment version, pod version, pod UID replaced, replica set added, pod added) |
+| No Kubernetes bearer and no redirect forwarding | `reader/probe.rs::HttpProbe` (its own client) | `probe_tests.rs::a_report_is_read_with_a_plain_get_that_carries_no_credential`, `::a_redirect_is_never_followed` |
+| Bounded body and time | `reader/probe.rs` (`PROBE_TIMEOUT`, `READER_GENERATION_MAX_BYTES`); `reader.rs` (`SAMPLE_BUDGET`, `MAX_MEMBERS`) | `probe_tests.rs::an_answer_past_the_size_bound_is_refused`, `::a_pod_that_does_not_answer_in_time_is_timed_out`; `sample_tests.rs::more_pods_than_one_sample_asks_is_refused_without_asking_any` |
+| Installed-snapshot coherence | `resolution/published_generation.rs::publish`; `resolution/served_generation.rs`; `refresher/prime_published.rs::served` | `served_generation_tests.rs::the_report_moves_in_the_same_store_as_the_view_resolution_reads`, `::the_report_follows_every_kind_of_read_through_the_production_builder` (fails with the whole-generation guard removed; checked locally); `reader_generation_report.rs` (real publisher and reader: the replica reports the publisher's stamp at start, after a refresh, unchanged, and for a respaced record) |
+| The publisher's stamp is the record held | `plan/record.rs` (`RecordPlan::stamp`) | `reader_generation_report.rs::an_unchanged_publication_stamps_the_record_already_held`; Kubernetes `publish_tests.rs::the_record_stamp_names_the_record_key_written_and_matches_the_filesystem_adapter`; `published_files_tests.rs::documents_matching_the_record_are_read_as_one_generation` |
+| Minimal `/ready` and default exposure unchanged | `fabric-api` `reader_generation.rs`, `config/validation/reader_generation_listen.rs`, `startup/serve.rs` | `reader_generation_listener.rs::omitted_configuration_binds_nothing`, `::the_main_listener_has_no_reader_generation_route`, `::the_listener_serves_its_one_route_and_nothing_else`, `::the_answer_names_no_tenant_data_source_path_or_hold_reason`, `::nothing_served_whole_is_a_404_with_no_body`; `validation_tests.rs::a_reader_generation_listener_must_be_an_explicit_socket_apart_from_the_main_one`; existing `readiness_body_tests.rs::the_minimal_body_says_nothing_about_the_publication` |
+| Documents gate kept; reader evidence beside it; update completion needs applied readers | `readers/assess.rs::update_complete`; `readiness_row.rs` | `assess_tests.rs::an_update_is_complete_only_with_the_documents_published_and_the_readers_applied`; `platform_publication.rs::with_no_reader_observer_the_readers_are_unobserved_and_no_update_is_complete`, `::at_zero_replicas_the_documents_gate_still_stands_and_there_are_no_readers`; `ReaderRows.test.tsx` |
+
+Owed before any live use. Each is a separately reviewed platform or
+security step. None is approved here:
+
+- **Caller and target selectors.** The control plane's namespace and pod
+  selector, and the runtime's.
+- **Port.** The reader-generation port: the runtime's
+  `reader_generation_listen`, the container port, and the control plane's
+  `[platform_management.publication.readers]`.
+- **Read grants.** The observer's grants on the runtime namespace: `get` on
+  the named Deployment, `list` on replica sets and pods. These are the
+  ADR 0022 grants, extended to that namespace if it differs.
+- **NetworkPolicies.** Admit only the control plane to that port. A
+  NetworkPolicy isolates traffic. It does not prove which pod answered.
+
+Limits:
+
+- **Withdrawal.** No withdrawal is built, so nothing yet claims a withdrawal
+  is applied. `lifecycle.withdrawal` still says no reader is observed.
+- **The edge.** The edge's applied registry generation is the platform's
+  check. Fabric still observes no edge (`registryApplication` stays
+  unobserved).
+- **Sampling.** Sampling happens on `GET /api/platform` and after
+  `POST /api/platform/publication`. There is no schedule and no history.
+- **The stamp is per process.** It is the last accepted pass in this
+  control-plane process, so after a control-plane restart readers are
+  unobserved until a pass runs.
+
+Still deferred after this change: G7's live wiring (above), G5's publisher
+hold and publisher-side recovery, the platform reader mount, G4 `Lease`,
+G6's remaining items, G2's publisher wait, G3's panel state, withdrawal,
+and the platform contract follow-ups. O5 is characterized since #159.
 
 ## Not covered here
 

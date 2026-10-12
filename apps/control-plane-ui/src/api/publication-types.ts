@@ -68,9 +68,64 @@ export interface RegistryApplication {
 }
 
 /**
+ * What the runtime's replicas were found serving (G7). Only `applied` is a
+ * positive claim, and only about the sample taken at `observedAtUnixSeconds`:
+ * every replica that could serve reported the stamped record. `noReaders` is
+ * replicas at zero: never applied, and not evidence of withdrawal.
+ */
+export type ReaderState = 'applied' | 'pending' | 'unobserved' | 'noReaders'
+
+/** What one replica's answer means against the stamped record. */
+export type ReaderFinding =
+  | 'matches'
+  | 'behind'
+  | 'lastKnownGood'
+  | 'ahead'
+  | 'wrongDigest'
+  | 'nothingServed'
+  | 'failed'
+  | 'notReady'
+  | 'terminating'
+  | 'uncompared'
+
+/** One publication record, as a replica identifies it. */
+export interface RecordStamp {
+  readonly generation: number
+  readonly recordSha256: string
+}
+
+/** A generation one replica reported serving, and where it read it from. */
+export interface ServedGeneration extends RecordStamp {
+  readonly origin: 'published' | 'lastKnownGood'
+}
+
+/** One pod the runtime Deployment owns, through any of its replica sets. */
+export interface ReaderMember {
+  readonly pod: string
+  readonly replicaSet: string
+  readonly finding: ReaderFinding
+  /** Why it gave no usable answer; `null` unless `finding` is `failed`. */
+  readonly detail: string | null
+  readonly served: ServedGeneration | null
+}
+
+/** The readers, sampled and held to the record the last accepted pass stamped. */
+export interface Readers {
+  readonly state: ReaderState
+  readonly reasons: readonly string[]
+  readonly expected: RecordStamp | null
+  readonly observedAtUnixSeconds: number | null
+  readonly desiredReplicas: number | null
+  readonly members: readonly ReaderMember[]
+}
+
+/**
  * The three gates the runtime is raised against, named as the platform
  * contract names them. `connectors` is never met here: platform
- * composition deploys them, and Fabric does not observe it.
+ * composition deploys them, and Fabric does not observe it. `readers` sits
+ * beside them: the documents gate stays publisher evidence, so a runtime at
+ * zero replicas can still be raised, and `updateComplete` is true only once
+ * the documents are published and the readers applied them.
  */
 export interface Readiness {
   readonly documents: Gate
@@ -78,6 +133,8 @@ export interface Readiness {
   readonly connectors: Gate
   readonly excludedFromRegistry: readonly ExcludedTenant[]
   readonly registryApplication: RegistryApplication
+  readonly readers: Readers
+  readonly updateComplete: boolean
 }
 
 /**

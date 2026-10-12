@@ -1,5 +1,7 @@
 //! What a publication call actually did to each document.
 
+use fabric_core::RecordDigest;
+
 use crate::verdict::Verdict;
 use crate::RegistryGeneration;
 
@@ -59,6 +61,19 @@ pub struct PublicationReport {
     pub catalog: DocumentOutcome,
     /// What happened to the issuer registry, when the snapshot carried one.
     pub registry: Option<RegistryOutcome>,
+    /// The publication record the target holds once this call returns.
+    pub record: RecordStamp,
+}
+
+/// One publication record, as a reader identifies it: its generation and
+/// the SHA-256 of its exact bytes. What a runtime replica reports serving is
+/// compared against this (G7).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RecordStamp {
+    /// The record's generation number.
+    pub generation: u64,
+    /// The SHA-256 of the bytes the target holds.
+    pub sha256: RecordDigest,
 }
 
 /// What a publication did to the issuer registry, and the generation it

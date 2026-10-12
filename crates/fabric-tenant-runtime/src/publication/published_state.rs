@@ -14,6 +14,9 @@ pub enum PublishedState {
     Generation {
         /// The record's generation number.
         generation: u64,
+        /// The SHA-256 of the record's exact bytes, which identifies the
+        /// generation exactly.
+        record_sha256: fabric_core::RecordDigest,
         /// Whether it was read from the published files or from this
         /// replica's persisted last-known-good copy.
         origin: GenerationOrigin,

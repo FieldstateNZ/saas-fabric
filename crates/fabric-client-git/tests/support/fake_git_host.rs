@@ -41,6 +41,18 @@ struct State {
 
     /// Whether the host reports itself rate limited.
     rate_limited: bool,
+
+    /// The first hash each text was stored under, so a revert can name
+    /// restored bytes as Git does: by their content.
+    named: BTreeMap<String, String>,
+}
+
+impl State {
+    /// Stores `text` at `path` under `sha`, remembering the name.
+    fn store(&mut self, path: &str, text: String, sha: String) {
+        self.named.entry(text.clone()).or_insert_with(|| sha.clone());
+        self.files.insert(path.to_owned(), Blob { text, sha });
+    }
 }
 
 /// A Git host holding files in memory.
@@ -61,13 +73,7 @@ impl FakeGitHost {
         let mut state = State::default();
 
         for (index, (path, text)) in files.iter().enumerate() {
-            state.files.insert(
-                (*path).to_owned(),
-                Blob {
-                    text: (*text).to_owned(),
-                    sha: format!("sha-{index}"),
-                },
-            );
+            state.store(path, (*text).to_owned(), format!("sha-{index}"));
             if let Some((directory, _)) = path.rsplit_once('/') {
                 state.directories.insert(directory.to_owned());
             }
@@ -136,13 +142,25 @@ impl FakeGitHost {
         state.writes += 1;
         let sha = format!("sha-other-{}", state.writes);
 
-        state.files.insert(
-            path.to_owned(),
-            Blob {
-                text: text.to_owned(),
-                sha,
-            },
-        );
+        state.store(path, text.to_owned(), sha);
+    }
+
+    /// Restores `text` at a path as `git revert` would. A blob's hash is
+    /// its content's, so bytes the path held before come back under the
+    /// hash they had then.
+    ///
+    /// Panics if `text` was never stored: a revert restores bytes a commit
+    /// held, and this fake has no hash function to name new ones.
+    pub fn revert(&self, path: &str, text: &str) {
+        let mut state = self.state.lock().unwrap();
+        let sha = state
+            .named
+            .get(text)
+            .cloned()
+            .expect("a revert restores bytes stored before");
+        state.writes += 1;
+
+        state.store(path, text.to_owned(), sha);
     }
 
     /// Every request received so far.
@@ -294,13 +312,7 @@ fn put(state: &Arc<Mutex<State>>, path: &str, body: &str) -> (u16, String) {
     state.writes += 1;
     let sha = format!("sha-written-{}", state.writes);
 
-    state.files.insert(
-        path.to_owned(),
-        Blob {
-            text: String::from_utf8_lossy(&decoded).to_string(),
-            sha: sha.clone(),
-        },
-    );
+    state.store(path, String::from_utf8_lossy(&decoded).to_string(), sha.clone());
 
     (200, serde_json::json!({"content": {"sha": sha}}).to_string())
 }

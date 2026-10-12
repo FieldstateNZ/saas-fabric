@@ -21,7 +21,16 @@ function stubLocation(hash = ''): ReturnType<typeof vi.fn> {
   return assign
 }
 
-/** A `fetch` answering `/api/operator` once with the given status and body. */
+/** What `/api/user/current` answers for a signed-in operator. */
+const SIGNED_IN = {
+  subject: 'f81d4fae-7dec-11d0-a765-00a0c91e6bf6',
+  userName: 'brett',
+  displayName: 'Brett Example',
+  email: null,
+  roles: ['fabric-operator'],
+}
+
+/** A `fetch` answering `/api/user/current` once with the given status and body. */
 function answeringWith(status: number, body: unknown = {}): void {
   vi.stubGlobal(
     'fetch',
@@ -29,14 +38,15 @@ function answeringWith(status: number, body: unknown = {}): void {
   )
 }
 
-/** A `fetch` answering `/api/operator` once with the given status and a
- *  readable body that names no error code -- `{}`, not a body that fails
- *  to parse at all. `answeringWithUnreadableBody` below is that other case. */
+/** A `fetch` answering `/api/user/current` once with the given status: a
+ *  signed-in user for a `200`, and otherwise a readable body that names no
+ *  error code -- `{}`, not a body that fails to parse at all.
+ *  `answeringWithUnreadableBody` below is that other case. */
 function answering(status: number): void {
-  answeringWith(status)
+  answeringWith(status, status === 200 ? SIGNED_IN : {})
 }
 
-/** A `fetch` answering `/api/operator` with a body that cannot be parsed as
+/** A `fetch` answering `/api/user/current` with a body that cannot be parsed as
  *  JSON at all -- a proxy's own HTML error page landing where the control
  *  plane's JSON was expected, say. */
 function answeringWithUnreadableBody(status: number): void {
@@ -70,6 +80,34 @@ describe('gatewaySession', () => {
     answering(200)
 
     expect(await gatewaySession()).toBe('signed-in')
+  })
+
+  it('asks /api/user/current, with the cookies of this origin only', async () => {
+    answering(200)
+
+    await gatewaySession()
+
+    expect(vi.mocked(fetch).mock.calls).toEqual([['/api/user/current', { credentials: 'same-origin' }]])
+  })
+
+  it.each([
+    ['an empty body', {}],
+    ['the subject-only operator answer', { subject: 'brett' }],
+    ['a user with no roles', { ...SIGNED_IN, roles: [] }],
+  ])('throws on a 200 carrying %s, consuming neither the count nor the query', async (_case, body) => {
+    window.history.replaceState({}, '', '/?code=abc#/clients/acme')
+    sessionStorage.setItem('fabric.gateway.redirected', '1')
+    answeringWith(200, body)
+
+    await expect(gatewaySession()).rejects.toThrow(/without a signed-in user/)
+    expect(sessionStorage.getItem('fabric.gateway.redirected')).toBe('1')
+    expect(window.location.search).toBe('?code=abc')
+  })
+
+  it('throws on a 200 whose body cannot be read at all', async () => {
+    answeringWithUnreadableBody(200)
+
+    await expect(gatewaySession()).rejects.toThrow(/without a signed-in user/)
   })
 
   it('reports no session for a plain 401', async () => {

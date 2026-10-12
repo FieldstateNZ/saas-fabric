@@ -5,6 +5,8 @@ use std::collections::BTreeMap;
 #[derive(Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct Metadata {
+    #[serde(default)]
+    pub name: String,
     pub uid: String,
     #[serde(default)]
     pub generation: u64,
@@ -91,6 +93,8 @@ pub(crate) struct Pod {
 pub(crate) struct PodStatus {
     #[serde(default)]
     pub container_statuses: Vec<ContainerStatus>,
+    #[serde(rename = "podIP", default)]
+    pub pod_ip: Option<String>,
     #[serde(default)]
     pub conditions: Vec<Condition>,
 }

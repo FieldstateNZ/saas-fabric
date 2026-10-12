@@ -120,6 +120,7 @@ impl RuntimePublication for KubernetesRuntimePublication {
                 outcome: registry.outcome,
                 generation: registry.document.generation(),
             }),
+            record: plan.record.stamp,
         })
     }
 

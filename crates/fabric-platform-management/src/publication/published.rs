@@ -32,7 +32,7 @@ impl RuntimePublisher {
             let registry = report.registry.map(|registry| registry.generation);
             *held = Some(Accepted {
                 tenants: published_tenants(&accepted.tenants.payload),
-                evidence: ReadinessEvidence::of(accepted, registry, excluded),
+                evidence: ReadinessEvidence::of(accepted, (registry, report.record), excluded),
             });
         }
 

@@ -148,6 +148,7 @@ mod tests {
                 namespace: "platform-system".to_owned(),
                 interval_seconds,
                 issuer_origin: None,
+                readers: None,
             }),
         }
     }

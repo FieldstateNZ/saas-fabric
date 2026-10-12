@@ -55,7 +55,8 @@ pub const API_PREFIX: &str = "/api";
 /// GET/POST   /api/catalogue                         the product catalogue / apply one command
 /// GET        /api/catalogue/runtime                 the catalogue the runtime would be given
 /// GET        /api/activity                          every recorded action, newest first
-/// GET        /api/operator                          who is signed in
+/// GET        /api/operator                          who is signed in, subject only (one more release)
+/// GET        /api/user/current                      who is signed in, ADR 0024 §3's shape
 /// GET/POST   /api/clients                           list clients / create one
 /// GET        /api/clients/{clientId}                one client's overview and lifecycle
 /// POST       /api/clients/{clientId}/{tombstone,deletion-confirmation}  see routes::lifecycle
@@ -81,6 +82,7 @@ pub(crate) fn control_plane_routes(state: ControlPlaneState) -> Router {
         .route("/catalogue/runtime", get(handlers::get_runtime_catalogue))
         .route("/activity", get(handlers::list_activity))
         .route("/operator", get(handlers::get_operator))
+        .route("/user/current", get(handlers::get_current_user))
         .route(
             "/clients",
             get(handlers::list_clients).post(handlers::create_client),

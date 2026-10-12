@@ -16,6 +16,7 @@ mod resolved_data_source;
 mod runtime_resolver;
 #[cfg(test)]
 mod runtime_resolver_tests;
+mod served_generation;
 
 pub(crate) use published_generation::PublishedGeneration;
 pub use resolved_data_source::ResolvedDataSource;

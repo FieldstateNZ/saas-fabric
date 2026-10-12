@@ -125,6 +125,10 @@ impl ControlPlaneError {
                 StatusCode::INTERNAL_SERVER_ERROR
             }
 
+            // A token the authenticator accepted and the profile reader cannot
+            // read: never the caller's fault, and never a `200`.
+            Self::ProfileUnreadable => StatusCode::INTERNAL_SERVER_ERROR,
+
             // 422, joining `DocumentTooLarge`: understood, and cannot be
             // acted on, so the fix is to change what was submitted.
             // `LogicalDataSourceNotDeclared` shares this (ADR 0023 part 2).

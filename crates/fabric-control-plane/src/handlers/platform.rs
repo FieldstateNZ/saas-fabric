@@ -18,7 +18,7 @@ pub(crate) use rollback::{roll_back_component, rollback_candidates};
 use axum::extract::State;
 use axum::Json;
 
-use crate::handlers::platform::body::PlatformBody;
+use crate::handlers::platform::body::{observe_readers, PlatformBody};
 use crate::state::ControlPlaneState;
 use crate::{ControlPlaneError, Operator};
 
@@ -52,12 +52,16 @@ pub(crate) async fn get_platform(
     let platform = state.platform()?;
 
     let components = platform.service.statuses(&platform.environment).await?;
+    let publisher = match platform.publisher.as_deref() {
+        Some(publisher) => Some((publisher, observe_readers(platform).await)),
+        None => None,
+    };
 
     Ok(Json(PlatformBody::of(
         &platform.environment,
         components.as_slice(),
         state.platform_sweeps.last_check().as_ref(),
-        platform.publisher.as_deref(),
+        publisher,
         &platform.publication,
     )))
 }

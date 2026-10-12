@@ -8,10 +8,15 @@
  * probe whether a session exists and, when one does not, navigates to the
  * gateway's sign-in.
  *
- * # Why `/api/operator`
+ * # Why `/api/user/current`
  *
- * It is the one route in this deployment that answers only for a verified
- * operator. Asking it costs nothing *irreversible*: no navigation is risked.
+ * It is the route ADR 0024 §3 gives every instance's shell for "who is
+ * signed in", and on this instance it answers only for a verified operator:
+ * no bearer is `401 unauthenticated`, a refused one `401 operator_refused`,
+ * exactly as every other route. A `200` must also carry a complete
+ * `CurrentUser` (`current-user.ts`); anything else is thrown rather than
+ * read as a session.
+ * Asking it costs nothing *irreversible*: no navigation is risked.
  * It is not free of side effects any more, though -- a
  * `200` drops the query string, the way completing a redirect always has, and
  * every call consumes a stale marker this file itself may have left. See
@@ -36,7 +41,7 @@
  * # A lying upstream
  *
  * Nothing here can tell a gateway that verified this browser from a proxy
- * that answers `200` to `/api/operator` without checking anything -- that
+ * that answers `200` to `/api/user/current` without checking anything -- that
  * trust decision is Envoy's `SecurityPolicy` and the control plane's own
  * bearer verification, upstream of every line in this file. This module
  * cannot close that gap; authorisation itself is the platform's boundary,
@@ -59,6 +64,7 @@
  * and whatever ends that session much later starts from zero rather than
  * being held to a coincidence that happened once.
  */
+import { readCurrentUser } from './current-user'
 import { clearQuery, rememberDestination } from './destination'
 
 /** Set while this tab is navigating to the gateway's sign-in, so a second
@@ -83,6 +89,9 @@ const LOOP_THRESHOLD = 2
  *  every non-`401` response, only touches `sessionStorage` the first time. */
 let redirectCountConfirmed = false
 
+/** The route that says whether this browser is signed in (ADR 0024 §3). */
+const PROBE = '/api/user/current'
+
 /** What the probe found. */
 export type GatewayProbe = 'signed-in' | 'no-session' | 'refused' | 'looping'
 
@@ -96,19 +105,21 @@ function redirectCount(): number {
 /**
  * Asks whether an upstream has already signed this browser in.
  *
- * `'signed-in'` on `200`, having dropped the query string the same way
+ * `'signed-in'` on a `200` carrying a complete `CurrentUser` (a `200` that
+ * does not carry one is thrown), having dropped the query string the same way
  * `clearQuery` always does -- deliberately, on every such `200`, whether or
  * not anything was in it, because this call does not know in advance
  * whether it is answering a fresh tab or one returning from a redirect. The
  * redirect count is *not* cleared just because this probe says `200` -- a
- * proxy that lies about `/api/operator` can say `200` forever, so only
+ * proxy that lies about `/api/user/current` can say `200` forever, so only
  * [`clearRedirectCount`] clears it, on evidence a real request actually
  * worked. `'looping'` on a `200` that arrives with the count already at
  * [`LOOP_THRESHOLD`] -- see the module doc's "A lying upstream". `'refused'`
  * on `401` when the body names `operator_refused`: the control plane's own
  * word that a bearer was presented and rejected, which needs no count to
  * trust. The count is the belt for a `401` whose body cannot be read at all
- * -- consulted only then, and cleared on every `401`/`403`/throw, so it
+ * -- consulted only then, and cleared on every `401`/`403` and every
+ * non-`200` throw, so it
  * never outlives the one probe that should read it for those. `'no-session'`
  * on any other `401`/`403`. Anything else is thrown.
  */
@@ -117,7 +128,7 @@ export async function gatewaySession(): Promise<GatewayProbe> {
   // checking what this probe can and cannot leak does not have to already
   // know that, on the one call in this file that decides whether a cookie
   // session exists at all.
-  const response = await fetch('/api/operator', { credentials: 'same-origin' })
+  const response = await fetch(PROBE, { credentials: 'same-origin' })
   const count = redirectCount()
 
   if (response.ok) {
@@ -125,6 +136,13 @@ export async function gatewaySession(): Promise<GatewayProbe> {
       // Left exactly as it is: the count must survive a `'looping'` outcome,
       // or the very next probe would read zero and call this recovered.
       return 'looping'
+    }
+
+    // Read before anything is cleared: a `200` that is not a signed-in user
+    // is not a session, and must not consume the query or the count.
+    const user = readCurrentUser(await response.json().catch(() => null))
+    if (user === null) {
+      throw new Error(`The control plane answered ${PROBE} without a signed-in user.`)
     }
 
     clearQuery()
@@ -145,12 +163,12 @@ export async function gatewaySession(): Promise<GatewayProbe> {
     return 'no-session'
   }
 
-  throw new Error(`The control plane answered ${String(response.status)} for /api/operator.`)
+  throw new Error(`The control plane answered ${String(response.status)} for ${PROBE}.`)
 }
 
 /**
  * Clears the redirect count because a real request just proved the session
- * works -- a `200` from `/api/operator` alone cannot prove that (see the
+ * works -- a `200` from `/api/user/current` alone cannot prove that (see the
  * module doc's "A lying upstream"). `client.ts` calls this on every response
  * that is not a `401`; only the first call each page load does anything.
  */

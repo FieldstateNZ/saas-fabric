@@ -156,7 +156,7 @@ reads stay mounted while navigating; per-client editors retain their own hooks.
 The console signs nobody in. The gateway does (ADR 0024 §2): it runs the
 authorization-code flow against the platform realm, keeps the session in its
 own cookies and forwards the access token to the control plane as a bearer.
-The console asks `GET /api/operator` whether that happened and, when it has
+The console asks `GET /api/user/current` whether that happened and, when it has
 not, offers a button that navigates to `/` for the gateway to answer with the
 realm's login. It holds no token, generates no PKCE pair, and calls no sign-in
 route — `/api/session` is retired.

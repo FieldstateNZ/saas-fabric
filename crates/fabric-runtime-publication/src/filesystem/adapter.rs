@@ -116,6 +116,7 @@ impl RuntimePublication for FilesystemRuntimePublication {
                 outcome: registry.outcome,
                 generation: registry.document.generation(),
             }),
+            record: plan.record.stamp,
         })
     }
 

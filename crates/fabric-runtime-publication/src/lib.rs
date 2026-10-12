@@ -58,6 +58,7 @@ mod errors;
 mod filesystem;
 #[cfg(test)]
 mod format_compatibility_tests;
+mod held_recovery;
 mod ids;
 mod manifest;
 mod plan;
@@ -96,6 +97,11 @@ pub use document::{
 pub use document_revision::DocumentRevision;
 pub use errors::PublicationError;
 pub use filesystem::FilesystemRuntimePublication;
+pub use held_recovery::{
+    diagnose, plan_restore, DocumentDiagnosis, HeldDiagnosis, HeldObservation, HeldRecovery, ManifestState,
+    Part, Problem, ProblemKind, RecordState, RecoveryAudit, RecoveryError, RegistryDiagnosis, RestorePlan,
+    RestoreRefusal,
+};
 pub use ids::{CollectionName, ConnectionName, ConnectorId, FieldName, SchemaName};
 pub use manifest::{
     DocumentKind, DocumentManifest, CATALOG_FILE, CATALOG_MANIFEST_FILE, CONTRACT_VERSION, DATA_SOURCES_FILE,

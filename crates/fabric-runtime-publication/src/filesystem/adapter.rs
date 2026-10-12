@@ -32,11 +32,11 @@ use crate::{
 /// symlink swap instead of `rename(2)` but keeps the same payload-before-
 /// manifest ordering.
 pub struct FilesystemRuntimePublication {
-    tenants: DocumentPaths,
-    data_sources: DocumentPaths,
-    catalog: DocumentPaths,
-    record: PathBuf,
-    registry: PathBuf,
+    pub(super) tenants: DocumentPaths,
+    pub(super) data_sources: DocumentPaths,
+    pub(super) catalog: DocumentPaths,
+    pub(super) record: PathBuf,
+    pub(super) registry: PathBuf,
 }
 
 impl FilesystemRuntimePublication {

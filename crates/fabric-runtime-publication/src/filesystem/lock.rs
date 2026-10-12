@@ -1,5 +1,9 @@
 //! The one-publisher-at-a-time lock the filesystem adapter takes around a
-//! publication.
+//! publication or a restore.
+//!
+//! In the 121-150 line band (docs/architecture/file-size-policy.md): one
+//! type, whose rustdoc carries why it refuses rather than waits and what it
+//! does not cover; its two ways in share one open.
 
 use std::ffi::OsStr;
 use std::fs::{File, OpenOptions, TryLockError};
@@ -54,8 +58,22 @@ impl PublicationLock {
     /// [`PublicationError::Unwritable`] for the tenants document if another
     /// publication holds the lock, or if the lock file cannot be opened.
     pub(super) fn acquire(tenants: &DocumentPaths) -> Result<Self, PublicationError> {
+        Self::open(tenants, true)
+    }
+
+    /// Takes the lock only where a publication already created its file, so
+    /// a restore that is then refused leaves nothing behind it.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::acquire`], and `Unwritable` when there is no lock file.
+    pub(super) fn acquire_existing(tenants: &DocumentPaths) -> Result<Self, PublicationError> {
+        Self::open(tenants, false)
+    }
+
+    fn open(tenants: &DocumentPaths, create: bool) -> Result<Self, PublicationError> {
         let file = OpenOptions::new()
-            .create(true)
+            .create(create)
             .write(true)
             .truncate(false)
             .open(lock_path(&tenants.payload))

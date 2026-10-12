@@ -25,6 +25,7 @@
 
 pub mod config;
 pub mod contracts;
+pub mod recovery;
 pub mod secrets;
 pub mod startup;
 pub mod telemetry;

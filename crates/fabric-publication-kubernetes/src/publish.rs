@@ -22,7 +22,7 @@ use crate::PublicationTarget;
 /// with the pod's own identity.
 pub struct KubernetesRuntimePublication {
     pub(crate) client: Client,
-    namespace: String,
+    pub(crate) namespace: String,
 }
 
 impl KubernetesRuntimePublication {

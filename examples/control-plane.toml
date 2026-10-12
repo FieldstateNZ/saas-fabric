@@ -262,3 +262,16 @@ http_timeout_seconds = 10
 # `git_host.http_timeout_seconds` must be strictly less than
 # `request_timeout_seconds` above. The defaults, 10 + 8 + 10 under 30, fit.
 resolution_budget_seconds = 8
+
+# The durable audit trail (ADR 0028): an append-only, hash-chained record of
+# every operator action, beside the bounded activity feed the console shows.
+# Disabled unless stated, because where it is stored in a live environment and
+# for how long are deferred decisions; disabled, audit records reach the log
+# pipeline only, and startup says so. The only storage on offer is a local
+# development directory, which startup warns about:
+#
+#     [audit_trail]
+#     mode = "local_directory"
+#     path = ".local/audit"
+[audit_trail]
+mode = "disabled"

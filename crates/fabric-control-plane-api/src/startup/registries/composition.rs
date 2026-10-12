@@ -3,7 +3,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use fabric_control_plane::{RegistryService, RegistryStore, ResolutionParts, SecretStore};
+use fabric_control_plane::{AuditRecorder, RegistryService, RegistryStore, ResolutionParts, SecretStore};
 use fabric_core::Clock;
 use fabric_platform_management::Registry;
 use fabric_registry::Registries;
@@ -32,6 +32,9 @@ pub struct RegistryComposition {
 
     /// Stamps records.
     pub clock: Arc<dyn Clock>,
+
+    /// Where every registry change's audit record goes.
+    pub audit: AuditRecorder,
 }
 
 /// The composed registries.

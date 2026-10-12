@@ -15,6 +15,15 @@ testable.
   `LocalDirectory { path }`. Tagged `mode`.
 - `config::IdentityProviderConfig` — `Keycloak(KeycloakConfig)` | `InMemory`.
   Tagged `mode`.
+- `config::AuditTrailConfig` — `Disabled` (default) | `LocalDirectory { path }`.
+  Tagged `mode`. Storage activation is deferred (ADR 0028), so nothing else is
+  offered. `startup::audit::recorder` builds the `AuditRecorder` handed to both
+  `ControlPlaneDeps.audit` and `RegistryComposition.audit`.
+- `local_audit_trail::LocalAuditTrail::open(dir)` — the development
+  `AuditTrail`: `<stream>.jsonl` opened for append (`sync_data` per entry),
+  `<stream>.head` replaced atomically, `.audit.lock` OS lock. Open verifies
+  every stream and refuses a broken one; an entry one past its head is caught
+  up. The console workbench records to `<workbench data>/audit`.
 - `config::CONFIG_PATH_VAR = "FABRIC_CP_CONFIG"`.
 - `config::PlatformManagementConfig { environment, registry, observation,
   reconciliation_interval_seconds, operation_timeout_seconds, publication:
@@ -71,9 +80,11 @@ testable.
 ## Hard invariants — do not break
 
 1. **The API is never given the identity provider.** `build` hands
-   `build_control_plane` the repository and the clock, and nothing else.
+   `build_control_plane` the repository, the clock and the audit recorder,
+   and no provider.
 2. **`ControlPlaneAppConfig` gains no `Default`.**
-3. **Both adapter choices stay tagged enums**, so a development adapter cannot
+3. **Every adapter choice stays a tagged enum** (desired state, identity
+   provider, audit trail), so a development adapter cannot
    be reached by omission.
 4. **A development adapter warns loudly at startup**, at `warn`, saying what is
    lost.

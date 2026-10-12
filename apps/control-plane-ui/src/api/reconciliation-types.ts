@@ -6,7 +6,7 @@
  */
 
 /** Where a client's identity stands between what Git says and what exists. */
-export type ReconciliationStatus = 'pending' | 'applied' | 'failed' | 'drifted' | 'handEdited'
+export type ReconciliationStatus = 'pending' | 'applied' | 'failed' | 'drifted' | 'handEdited' | 'withheld'
 
 /**
  * A hand edit made in the identity provider that the product does not
@@ -26,6 +26,12 @@ export interface Reconciliation {
   readonly observedAtUnix: number | null
   /** Why the last attempt failed, if it did. */
   readonly detail: string | null
-  /** Hand edits left in place; non-empty exactly when `status` is `handEdited`. */
+  /** Hand edits left in place; non-empty when `status` is `handEdited`, and may be beside `withheld`. */
   readonly handEdits: readonly HandEdit[]
+  /**
+   * Projected application clients the last pass did not converge, because
+   * their stored entry is not their projection (D01-19b). Non-empty exactly
+   * when `status` is `withheld`.
+   */
+  readonly withheld: readonly string[]
 }

@@ -53,7 +53,10 @@ pub(crate) async fn run(
 
     for stored in &clients {
         let client = stored.document.client();
-        let outcome = reconciler.reconcile(client).await;
+        // D01-19b: a stored projected entry that is not the stored
+        // document's own projection is not converged as though it were.
+        let withheld = stored.document.projection_check().withheld();
+        let outcome = reconciler.reconcile(client, &withheld).await;
         let status = statuses.record(
             &client.id,
             stored.revision.clone(),

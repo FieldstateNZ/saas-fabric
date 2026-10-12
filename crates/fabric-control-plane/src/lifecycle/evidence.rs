@@ -7,7 +7,7 @@
 //! condition unmet, with the reason.
 
 use fabric_client_model::lifecycle::Evidence;
-use fabric_client_model::Client;
+use fabric_client_model::{Client, ProjectionCheck};
 use fabric_core::TenantId;
 use fabric_reconciliation::ReconciliationStatus;
 
@@ -46,12 +46,32 @@ pub(crate) fn provisioning(client: &Client, facts: &PlatformFacts) -> Evidence {
 /// `drifted` counts: the pass that reported it corrected the drift.
 /// `handEdited` does not: the provider holds something other than what was
 /// declared — a client switched off, a declared callback removed — and the
-/// product has deliberately not overwritten it (D01-19b).
-pub(crate) fn identity(status: ReconciliationStatus) -> Evidence {
+/// product has deliberately not overwritten it (D01-19b). Nor does
+/// `withheld`: a projected client whose stored entry is not its projection
+/// was not converged at all.
+///
+/// Nor is identity in effect while the stored projection is not consistent,
+/// whatever the status says about the entries that are declared: a missing
+/// projected entry withholds nothing and can leave the rest `applied`, and a
+/// projection that cannot be computed shows nothing at all. Neither is the
+/// projection in effect, even with nothing withheld.
+pub(crate) fn identity(status: ReconciliationStatus, projection: &ProjectionCheck) -> Evidence {
+    match projection {
+        ProjectionCheck::Consistent => {}
+        ProjectionCheck::Diverged(_) => {
+            return unmet("a stored projected identity client does not match its projection");
+        }
+        ProjectionCheck::Unverifiable { .. } => {
+            return unmet("the stored projected identity clients cannot be checked against their projection");
+        }
+    }
     match status {
         ReconciliationStatus::Applied | ReconciliationStatus::Drifted => Evidence::Met,
         ReconciliationStatus::HandEdited => {
             unmet("the identity provider holds hand edits the product does not support")
+        }
+        ReconciliationStatus::Withheld => {
+            unmet("a projected identity client was withheld: its stored entry is not its projection")
         }
         ReconciliationStatus::Pending => unmet("identity has not been applied at this revision yet"),
         ReconciliationStatus::Failed => unmet("identity could not be applied at this revision"),

@@ -1562,7 +1562,7 @@ role the document does not mention is left alone: a role that exists is a role
 something may already be granted, and removing a line from a YAML file is not
 enough evidence to revoke it.
 
-**Five statuses**, and the last two are the ones worth having:
+**Six statuses**, and the last three are the ones worth having:
 
 | Status | Means |
 |---|---|
@@ -1571,6 +1571,7 @@ enough evidence to revoke it.
 | `Failed` | The last pass could not converge it |
 | `Drifted` | The provider had stopped matching a desired state already converged |
 | `HandEdited` | The provider holds a hand edit the product does not support, reported and left in place (D01-19b) |
+| `Withheld` | A projected client's stored entry is not its projection, so the pass left it out: neither written nor corrected (D01-19b) |
 
 Without `Drifted`, an out-of-band change that reconciliation quietly corrects
 looks exactly like an ordinary pass, and nobody learns that something outside
@@ -1587,7 +1588,13 @@ authority and is audited. On the fields the adapter manages, an edit that
 widens a client is never held: an undeclared callback or client mapper, a
 confidential switch, or a PKCE or audience change is corrected as before.
 Fields it neither reads nor writes, such as web origins or a client scope's
-mappers, are not evaluated at all. See
+mappers, are not evaluated at all.
+
+`Withheld` is the desired-state counterpart. A projected client whose stored
+entry in Git is not the stored document's own projection is left out of the
+pass. It is not converged onto the stored entry or onto the projection, and
+`reconciliation.withheld` names it. Every client read reports the divergence
+as `projection`, and a re-assertion onto it is refused. See
 [ADR 0021's 2026-10-12 amendment](../decisions/0021-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md#amendment-2026-10-12-a-projected-identity-client-is-the-products-d01-19b).
 
 A report is only meaningful for the revision it was made against. If an operator

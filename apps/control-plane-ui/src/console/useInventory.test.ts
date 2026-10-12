@@ -15,6 +15,7 @@ const clients: Client[] = Array.from({ length: 8 }, (_, index) => ({
   realm: `client-${String(index)}`,
   revision: 'r',
   lifecycle: SAVED_INTENT,
+  projection: { state: 'consistent' },
 }))
 
 const identity: Identity = {
@@ -23,7 +24,8 @@ const identity: Identity = {
   clients: [],
   revision: 'r',
   apiVersion: 'v2',
-  reconciliation: { status: 'applied', observedAtUnix: null, detail: null, handEdits: [] },
+  reconciliation: { status: 'applied', observedAtUnix: null, detail: null, handEdits: [], withheld: [] },
+  projection: { state: 'consistent' },
 }
 
 describe('identity inventory', () => {

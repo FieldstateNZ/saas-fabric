@@ -71,6 +71,7 @@ mod logging;
 mod models;
 mod operator;
 mod preconditions;
+mod projection;
 mod reconcile;
 mod registration;
 mod registries;

@@ -906,9 +906,10 @@ Recorded from the D01-19b disposition in
 > instead of silently fighting them. Preserve current permission
 > boundaries.
 
-This amends owed decision 5. It does not accept this ADR, and it does not
-complete D01-19b: what is still owed is listed under "Owed before D01-19b is
-complete". The field split below was asked back on
+This amends owed decision 5. It does not accept this ADR. The items listed
+under "Owed before D01-19b is complete" are built by the follow-up below,
+and D01-19b is complete once its review accepts them. The field split
+below was asked back on
 [#108](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6116623432)
 and accepted for the fields this adapter observes in the
 [engineering disposition](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6116879549),
@@ -977,6 +978,69 @@ which the product does not support but no longer overwrites on every pass.
 That claim covers only the fields the adapter observes. An edit to an
 unmanaged field, widening or not, is invisible to reconciliation.
 
+### A stored divergence is reported on read and is not converged
+
+This follow-up builds the two owed items. Its defaults were asked on
+[#108](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6117200254)
+and accepted, with the boundaries below, in the
+[engineering disposition](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6117388945).
+That disposition settles source design only. It grants no live identity,
+credential, gateway or publication authority.
+`ClientDocument::projection_check` makes the product-save guard's comparison
+once, and every path below reads it. It uses the same stored document, the
+same previously assigned projected ids, and never the request or the
+catalogue. It answers one of three things:
+
+- `consistent`: every projected entry is its projection.
+- `diverged`: lists every projected entry that is not, each as
+  `{ client, field }`.
+- `unverifiable`: the stored document's projection cannot be computed. Either
+  the product section does not parse, or the assignments no longer project.
+  It names the declared clients that may be projected entries: the assigned
+  ones, or every declared client when the assignments cannot be read.
+
+**Read.** `GET /api/clients`, `GET /api/clients/{clientId}` and `GET
+/api/clients/{clientId}/identity` each carry `projection`, in that shape.
+The console shows it above the reconciliation badge and in the client list.
+Any divergence puts the client on the dashboard's attention list. It
+reports an inconsistency in the stored document. It names fields, never a
+callback, and never says who edited Git.
+
+**Convergence.** A sweep withholds each declared entry that is diverged or
+unverifiable. The entry is left out of the pass, and the identity provider is
+neither written nor corrected for it. It is converged neither onto the stored
+entry, which would push a Git edit into Keycloak as the projection, nor onto
+the projection, which would be a forced repair. Everything else in the
+client still converges: realm, roles, hand-declared clients and consistent
+projected clients. The client is recorded as **`withheld`**, a sixth
+`ReconciliationStatus`, with `withheld: [clientId]` in its report. The
+precedence is `failed`, then `withheld`, then `handEdited`. Held hand
+edits are still listed beside it. A missing entry is reported on read, but
+it is not withheld: nothing declares it, so there is nothing to converge.
+Identity readiness needs a consistent stored projection. `withheld` leaves it
+unmet, as `handEdited` does. So does any projection that is not
+`consistent`, whatever the status says about the declared entries. That
+includes a `diverged` projection with nothing withheld, such as a missing
+entry, and an `unverifiable` one with nothing to withhold. An empty
+projection is never inferred as safe.
+The client is therefore `incomplete`, and the issuer registry leaves it out of
+what Fabric publishes. That is the existing fail-closed rule. It is not
+withdrawal, access revocation or a credential change. A tenant already
+published stays published, existing sessions and provider access are not
+revoked, and last-known-good and generation holds still apply.
+
+**Re-assertion.** `POST /api/clients/{clientId}/identity/reassertion` is
+refused before any provider call when the stored projection is diverged
+(`409 projected_client_diverged`, naming the first client and field) or
+unverifiable (`desired_state_invalid`, as a product save reports it). A
+refused re-assertion is not audited, like a stale or missing `If-Match`. A
+Git edit is never written over a Keycloak hand edit as though it were the
+projection.
+
+**Clearing it.** Restore the entry in Git, or make an identity edit that sets
+it back to exactly the projection. The next sweep converges it again. Nothing
+is repaired automatically.
+
 ### The drift state
 
 - A **held** hand edit is not written. Reconciliation records the client as
@@ -1043,12 +1107,29 @@ extractor. The identity-edit refusal narrows what an existing write accepts.
 | A re-assertion that fails after one confirmed overwrite reports and audits it as overwritten, the failing call's as unconfirmed, and stays `failed` | `crates/fabric-reconciliation/src/reconciler/apply.rs`; `reconciler_tests.rs::a_reassertion_that_fails_part_way_reports_the_overwrite_it_completed`; `projected_identity.rs::a_partly_failed_reassertion_audits_the_overwrite_that_took_effect` |
 | `handEdited` leaves identity readiness unmet | `crates/fabric-control-plane/src/lifecycle/evidence.rs`; `evidence_tests.rs` |
 | The console names the hand edits and asks for confirmation before re-asserting | `apps/control-plane-ui/src/components/ReconciliationBadge.tsx`, `ReassertProjection.tsx`; their tests |
+| Follow-up: the projection check reports every diverged entry, tells unverifiable from diverged, and names what a pass withholds; reordered callbacks and hand-declared clients are not divergences | `crates/fabric-client-model/src/document/application_identity/projection_check.rs`; `projection_tests.rs` |
+| Follow-up: a withheld client is neither created, written nor corrected, its neighbours still converge, and repeated passes never write; `withheld` outranks `handEdited`, `failed` outranks `withheld` | `crates/fabric-reconciliation/src/reconciler/withhold.rs`; `withhold_tests.rs`; `status/transition_tests.rs` |
+| Follow-up, through the router: list, overview and identity reads report `consistent`, `diverged` (changed or missing) and `unverifiable` alike, with no callback; a sweep withholds a Git divergence and converges a hand-declared client beside it; a withheld client is not corrected onto the projection either; restoring the projection converges it again; a re-assertion onto a diverged or unverifiable entry is refused, writes nothing and is not audited | `crates/fabric-control-plane/tests/projected_divergence.rs`; `src/projection.rs`; `src/reconcile/pass.rs`; `src/converge.rs` |
+| Follow-up: `withheld`, and an `unverifiable` projection even with nothing withheld, leave identity readiness unmet; such a client is left out of the issuer registry while its tenant binding stays published | `crates/fabric-control-plane/src/lifecycle/evidence.rs`; `evidence_tests.rs`; `tests/issuer_registry.rs::a_withheld_or_unverifiable_projection_is_not_registered_and_its_binding_stays_published`; `tests/projected_divergence.rs::an_unverifiable_projection_with_nothing_to_withhold_is_still_not_ready` |
+| Follow-up (review 5486578470): a projected entry missing in Git, after a completed same-revision sweep, still reports `missing`, leaves identity unmet whatever the status, is left out of the real publisher's issuer registry while its tenant binding stays published, and no provider call names it; restoring the projection registers it again | `evidence_tests.rs::a_projection_that_is_not_consistent_is_never_in_effect_whatever_the_status`; `tests/issuer_registry.rs::a_projected_entry_missing_in_git_is_not_ready_and_not_registered_after_a_completed_sweep` |
+| Follow-up: mixed clients with realm-role drift converge and no call of any kind names the withheld entry; `failed` > `withheld` > `handEdited`, held edits kept beside `withheld` | `withhold_tests.rs::mixed_clients_and_realm_role_drift_converge_and_nothing_targets_the_withheld_entry`; `transition_tests.rs::failed_outranks_withheld_which_outranks_hand_edited`; `projected_divergence.rs::a_sweep_withholds_a_diverged_entry_and_converges_the_rest` |
+| Follow-up: a re-assertion keeps the existing refusal order (401, 428, stale 409) before the divergence refusal, with zero provider calls, status writes, desired-state writes and audit records | `projected_divergence.rs::a_reassertion_onto_a_diverged_entry_keeps_the_existing_refusal_order_and_touches_nothing` |
+| Follow-up: the console shows a divergence, names withheld clients, and does not offer re-assertion onto a diverged entry | `apps/control-plane-ui/src/components/ProjectionNotice.tsx`, `ReconciliationBadge.tsx`, `IdentityPanel.tsx`; their tests |
 
 ### Known limits
 
-- **A Git divergence is found only by a product save.** The save refuses it.
-  Nothing reports it on read, and reconciliation and re-assertion still
-  converge Keycloak onto whatever the stored entry says.
+- **A withheld client is not corrected.** While a stored entry diverges,
+  Keycloak-side drift on that client, widening drift included, is not
+  corrected. It is visible as `withheld` and in `projection`, and it is
+  corrected by the first sweep after the entry matches again.
+- **A missing projected entry is reported and held from readiness, not
+  withheld.** A Git edit that removes the entry leaves the Keycloak client
+  as it was, because reconciliation never deletes it, and no provider call
+  names it. The status describes only the remaining declared entries, so it
+  can still be `applied`. But the client is reported `diverged` on read and
+  its identity readiness stays unmet, so the issuer registry leaves it out.
+  Its tenant binding, last-known-good and generation stay as they were.
+  Nothing is revoked.
 - **A substituted callback leaves a client with none.** If a declared
   callback is replaced by hand, the undeclared one is product-owned and is
   removed, and the removal of the declared one is held. The client is left
@@ -1064,7 +1145,9 @@ extractor. The identity-edit refusal narrows what an existing write accepts.
 
 ### Owed before D01-19b is complete
 
-From the engineering disposition, tracked on #108:
+From the engineering disposition, tracked on #108. Both are built by the
+follow-up in "A stored divergence is reported on read and is not
+converged", and await its review:
 
 - **Read-time reporting** of a stored projected entry that diverges from its
   projection, so the console shows it before anyone tries a save. This

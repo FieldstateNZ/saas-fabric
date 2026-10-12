@@ -42,6 +42,11 @@ export function ClientDirectoryRow({
         <Status value={loading ? 'unknown' : (entry?.identity?.reconciliation.status ?? 'unknown')}>
           {loading ? 'Loading' : (entry?.identity?.reconciliation.status ?? 'Unavailable')}
         </Status>
+        {client.projection.state !== 'consistent' && (
+          <small className="projection-flag">
+            {client.projection.state === 'diverged' ? 'Stored projection diverged' : 'Stored projection unverifiable'}
+          </small>
+        )}
       </td>
       <td>
         <a href={clientHref(client.id)} aria-label={`Open ${client.displayName}`}>

@@ -43,7 +43,7 @@ records that it is deliberately not made here.
 desired state to Git; this crate makes a provider match it. Different events,
 failing independently — and the gap between them is visible rather than hidden.
 
-## The five statuses
+## The six statuses
 
 | Status | Means | Who fixes it |
 |---|---|---|
@@ -52,6 +52,7 @@ failing independently — and the gap between them is visible rather than hidden
 | `Failed` | The last pass could not converge it | Depends on the detail |
 | `Drifted` | The provider had stopped matching a desired state already converged | Nobody, but somebody should know |
 | `HandEdited` | The provider holds a hand edit the product does not support, left in place (D01-19b) | An operator: undo it, or re-assert |
+| `Withheld` | The caller withheld declared clients from the pass; the provider was neither written nor corrected for them (D01-19b) | Whoever owns the declaration: make it trustworthy again |
 
 `Drifted` is the one that is easy to leave out and expensive to lack. Without
 it, an out-of-band change to a realm that reconciliation quietly corrects looks

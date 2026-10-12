@@ -11,6 +11,7 @@ function state(overrides: Partial<Reconciliation> = {}): Reconciliation {
     observedAtUnix: 1_700_000_000,
     detail: null,
     handEdits: [],
+    withheld: [],
     ...overrides,
   }
 }
@@ -52,6 +53,13 @@ describe('the reconciliation badge', () => {
     expect(screen.getByText(/left in place, not overwritten/i)).toBeInTheDocument()
     expect(screen.getByText(/was switched off/i)).toBeInTheDocument()
     expect(screen.getByText(/had a declared callback removed/i)).toBeInTheDocument()
+  })
+
+  it('names the projected applications it withheld', () => {
+    render(<ReconciliationBadge reconciliation={state({ status: 'withheld', withheld: ['analytics'] })} />)
+
+    expect(screen.getByText(/was not applied, and the identity provider was left as it was/i)).toBeInTheDocument()
+    expect(screen.getByText('analytics')).toBeInTheDocument()
   })
 
   it('shows the failure detail when there is one', () => {

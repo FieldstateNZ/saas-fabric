@@ -23,7 +23,7 @@ fn reconciler() -> (IdentityReconciler, Arc<FakeIdentityProvider>) {
 async fn a_missing_realm_is_created_with_its_roles_and_clients() {
     let (reconciler, provider) = reconciler();
 
-    let outcome = reconciler.reconcile(&acme()).await;
+    let outcome = reconciler.reconcile(&acme(), &[]).await;
 
     assert_eq!(outcome.status(), ReconciliationStatus::Applied);
     assert_eq!(outcome.actions(), 4);
@@ -38,11 +38,11 @@ async fn a_missing_realm_is_created_with_its_roles_and_clients() {
 #[tokio::test]
 async fn reconciling_again_changes_nothing() {
     let (reconciler, provider) = reconciler();
-    reconciler.reconcile(&acme()).await;
+    reconciler.reconcile(&acme(), &[]).await;
     let after_first = provider.realm(&acme().identity.realm);
 
     provider.clear_calls();
-    let outcome = reconciler.reconcile(&acme()).await;
+    let outcome = reconciler.reconcile(&acme(), &[]).await;
 
     assert_eq!(outcome.status(), ReconciliationStatus::Applied);
     assert!(outcome.changed_nothing());
@@ -61,11 +61,11 @@ async fn reconciling_a_third_time_still_changes_nothing() {
     let (reconciler, provider) = reconciler();
 
     for _ in 0..3 {
-        reconciler.reconcile(&acme()).await;
+        reconciler.reconcile(&acme(), &[]).await;
     }
 
     provider.clear_calls();
-    reconciler.reconcile(&acme()).await;
+    reconciler.reconcile(&acme(), &[]).await;
 
     assert_eq!(provider.calls(), ["observe_realm:acme"]);
 }
@@ -73,7 +73,7 @@ async fn reconciling_a_third_time_still_changes_nothing() {
 #[tokio::test]
 async fn only_the_missing_role_is_created() {
     let (reconciler, provider) = reconciler();
-    reconciler.reconcile(&acme()).await;
+    reconciler.reconcile(&acme(), &[]).await;
 
     // Something removed one role out of band.
     let realm = acme().identity.realm;
@@ -82,7 +82,7 @@ async fn only_the_missing_role_is_created() {
     provider.seed_realm(realm.clone(), current);
 
     provider.clear_calls();
-    let outcome = reconciler.reconcile(&acme()).await;
+    let outcome = reconciler.reconcile(&acme(), &[]).await;
 
     assert_eq!(outcome.actions(), 1);
     assert_eq!(
@@ -99,7 +99,7 @@ async fn a_client_whose_mapper_was_removed_is_corrected_on_the_next_pass() {
     // The client-level analogue of `only_the_missing_role_is_created`: proves
     // a correction reaches the provider, not only the plan.
     let (reconciler, provider) = reconciler();
-    reconciler.reconcile(&acme()).await;
+    reconciler.reconcile(&acme(), &[]).await;
 
     // Something removed the client's audience mapper out of band.
     let realm = acme().identity.realm;
@@ -110,7 +110,7 @@ async fn a_client_whose_mapper_was_removed_is_corrected_on_the_next_pass() {
     provider.seed_realm(realm.clone(), current);
 
     provider.clear_calls();
-    let outcome = reconciler.reconcile(&acme()).await;
+    let outcome = reconciler.reconcile(&acme(), &[]).await;
 
     assert_eq!(outcome.actions(), 1);
     assert_eq!(
@@ -139,7 +139,7 @@ async fn a_client_whose_mapper_was_removed_is_corrected_on_the_next_pass() {
 async fn a_client_whose_mapper_names_another_audience_is_corrected_by_the_reconciler() {
     let provider = Arc::new(FakeIdentityProvider::with_audience("acme-data-api"));
     let reconciler = IdentityReconciler::new(provider.clone());
-    reconciler.reconcile(&acme()).await;
+    reconciler.reconcile(&acme(), &[]).await;
 
     // Something wrote the mapper for a different deployment's audience.
     let realm = acme().identity.realm;
@@ -150,7 +150,7 @@ async fn a_client_whose_mapper_names_another_audience_is_corrected_by_the_reconc
     provider.seed_realm(realm.clone(), current);
 
     provider.clear_calls();
-    let outcome = reconciler.reconcile(&acme()).await;
+    let outcome = reconciler.reconcile(&acme(), &[]).await;
 
     assert_eq!(outcome.actions(), 1);
     assert_eq!(
@@ -173,7 +173,7 @@ async fn a_provider_that_cannot_be_read_fails_the_pass_and_writes_nothing() {
         detail: "connection refused".to_owned(),
     });
 
-    let outcome = reconciler.reconcile(&acme()).await;
+    let outcome = reconciler.reconcile(&acme(), &[]).await;
 
     assert_eq!(outcome.status(), ReconciliationStatus::Failed);
     assert!(outcome
@@ -187,7 +187,7 @@ async fn a_provider_that_fails_mid_apply_leaves_the_pass_failed() {
     let (reconciler, provider) = reconciler();
     provider.fail_with(ProviderError::NotPermitted);
 
-    let outcome = reconciler.reconcile(&acme()).await;
+    let outcome = reconciler.reconcile(&acme(), &[]).await;
 
     assert_eq!(outcome.status(), ReconciliationStatus::Failed);
     assert_eq!(outcome.actions(), 0, "a failed pass claims no changes");
@@ -201,10 +201,10 @@ async fn a_failure_is_recovered_from_on_the_next_pass() {
     provider.fail_with(ProviderError::Unavailable {
         detail: "connection refused".to_owned(),
     });
-    reconciler.reconcile(&acme()).await;
+    reconciler.reconcile(&acme(), &[]).await;
 
     provider.recover();
-    let outcome = reconciler.reconcile(&acme()).await;
+    let outcome = reconciler.reconcile(&acme(), &[]).await;
 
     assert_eq!(outcome.status(), ReconciliationStatus::Applied);
     assert!(provider.realm(&acme().identity.realm).is_some());
@@ -285,7 +285,7 @@ async fn a_provider_that_names_no_audience_refuses_to_plan() {
         Err(ProviderError::NoAudienceConfigured)
     );
 
-    let outcome = reconciler.reconcile(&acme()).await;
+    let outcome = reconciler.reconcile(&acme(), &[]).await;
     assert_eq!(outcome.status(), ReconciliationStatus::Failed);
 }
 
@@ -294,7 +294,7 @@ async fn converged_then(
     edit: impl FnOnce(&mut crate::ObservedOidcClient),
 ) -> (IdentityReconciler, Arc<FakeIdentityProvider>) {
     let (reconciler, provider) = reconciler();
-    reconciler.reconcile(&acme()).await;
+    reconciler.reconcile(&acme(), &[]).await;
 
     let realm = acme().identity.realm;
     let mut current = provider.realm(&realm).unwrap();
@@ -320,7 +320,7 @@ fn web_in(provider: &FakeIdentityProvider) -> crate::ObservedOidcClient {
 async fn product_owned_drift_is_corrected() {
     let (reconciler, provider) = converged_then(|client| client.public = false).await;
 
-    let outcome = reconciler.reconcile(&acme()).await;
+    let outcome = reconciler.reconcile(&acme(), &[]).await;
 
     assert_eq!(outcome.status(), ReconciliationStatus::Applied);
     assert_eq!(outcome.actions(), 1);
@@ -333,7 +333,7 @@ async fn product_owned_drift_is_corrected() {
 async fn an_unsupported_hand_edit_is_detected_and_not_overwritten() {
     let (reconciler, provider) = converged_then(|client| client.enabled = false).await;
 
-    let outcome = reconciler.reconcile(&acme()).await;
+    let outcome = reconciler.reconcile(&acme(), &[]).await;
 
     assert_eq!(outcome.status(), ReconciliationStatus::Applied);
     assert!(outcome.changed_nothing());
@@ -363,7 +363,7 @@ async fn repeated_passes_over_a_hand_edit_never_write() {
     .await;
 
     for _ in 0..3 {
-        let outcome = reconciler.reconcile(&acme()).await;
+        let outcome = reconciler.reconcile(&acme(), &[]).await;
         assert_eq!(outcome.hand_edits().len(), 2);
     }
 
@@ -381,7 +381,7 @@ async fn correcting_beside_a_hand_edit_preserves_it_and_then_settles() {
     })
     .await;
 
-    let first = reconciler.reconcile(&acme()).await;
+    let first = reconciler.reconcile(&acme(), &[]).await;
     assert_eq!(first.actions(), 1);
     assert!(
         !web_in(&provider).enabled,
@@ -390,7 +390,7 @@ async fn correcting_beside_a_hand_edit_preserves_it_and_then_settles() {
     assert_eq!(web_in(&provider).other_protocol_mappers, 0);
 
     provider.clear_calls();
-    let second = reconciler.reconcile(&acme()).await;
+    let second = reconciler.reconcile(&acme(), &[]).await;
     assert!(second.changed_nothing());
     assert_eq!(second.hand_edits().len(), 1);
     assert_eq!(provider.calls(), ["observe_realm:acme"]);
@@ -417,7 +417,7 @@ async fn reasserting_overwrites_the_hand_edit_and_names_it() {
     assert!(web_in(&provider).enabled);
 
     provider.clear_calls();
-    assert!(reconciler.reconcile(&acme()).await.changed_nothing());
+    assert!(reconciler.reconcile(&acme(), &[]).await.changed_nothing());
     assert_eq!(provider.calls(), ["observe_realm:acme"]);
 }
 
@@ -433,7 +433,7 @@ async fn a_reassertion_that_fails_part_way_reports_the_overwrite_it_completed() 
     client.identity.clients.push(admin);
 
     let (reconciler, provider) = reconciler();
-    reconciler.reconcile(&client).await;
+    reconciler.reconcile(&client, &[]).await;
     let realm = client.identity.realm.clone();
     let mut state = provider.realm(&realm).unwrap();
     for observed in state.clients.values_mut() {

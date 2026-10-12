@@ -1,6 +1,6 @@
 //! One client's most recent reconciliation state.
 
-use fabric_client_model::ClientRevision;
+use fabric_client_model::{ClientRevision, OidcClientId};
 
 use crate::provider::HandEdit;
 use crate::status::ReconciliationStatus;
@@ -45,6 +45,10 @@ pub struct ReconciliationReport {
     pub detail: Option<String>,
 
     /// The unsupported hand edits the last pass left in place. Non-empty
-    /// exactly when `status` is `HandEdited`.
+    /// when `status` is `HandEdited`, and may be beside `Withheld`.
     pub hand_edits: Vec<HandEdit>,
+
+    /// The declared clients the last pass withheld. Non-empty exactly when
+    /// `status` is `Withheld`.
+    pub withheld: Vec<OidcClientId>,
 }

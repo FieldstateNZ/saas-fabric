@@ -21,7 +21,7 @@ vi.mock('../api/client', async (importOriginal) => {
 })
 
 const clients: Client[] = [
-  { id: 'acme', displayName: 'Acme', hosts: ['acme.example.test'], realm: 'acme', revision: 'r1', lifecycle: SAVED_INTENT },
+  { id: 'acme', displayName: 'Acme', hosts: ['acme.example.test'], realm: 'acme', revision: 'r1', lifecycle: SAVED_INTENT, projection: { state: 'consistent' } },
   {
     id: 'northstar',
     displayName: 'Northstar',
@@ -29,6 +29,7 @@ const clients: Client[] = [
     realm: 'northstar',
     revision: 'r1',
     lifecycle: SAVED_INTENT,
+    projection: { state: 'consistent' },
   },
 ]
 
@@ -38,7 +39,8 @@ const identity: Identity = {
   clients: [],
   apiVersion: 'v2',
   revision: 'r1',
-  reconciliation: { status: 'pending', observedAtUnix: null, detail: null, handEdits: [] },
+  reconciliation: { status: 'pending', observedAtUnix: null, detail: null, handEdits: [], withheld: [] },
+  projection: { state: 'consistent' },
 }
 
 const inventory: Inventory = {
@@ -268,7 +270,16 @@ describe('Console: identity is not re-read on pages that do not show it', () => 
         if (url === '/api/clients' && method === 'GET') {
           return Promise.resolve(
             jsonResponse(200, {
-              clients: [{ id: 'acme', displayName: 'Acme', hosts: [], realm: 'acme', revision: 'r1' }],
+              clients: [
+                {
+                  id: 'acme',
+                  displayName: 'Acme',
+                  hosts: [],
+                  realm: 'acme',
+                  revision: 'r1',
+                  projection: { state: 'consistent' },
+                },
+              ],
             }),
           )
         }
@@ -281,7 +292,8 @@ describe('Console: identity is not re-read on pages that do not show it', () => 
               clients: [],
               apiVersion: 'v2',
               revision: 'r1',
-              reconciliation: { status: 'applied', observedAtUnix: null, detail: null, handEdits: [] },
+              reconciliation: { status: 'applied', observedAtUnix: null, detail: null, handEdits: [], withheld: [] },
+              projection: { state: 'consistent' },
             }),
           )
         }

@@ -79,7 +79,7 @@ export function ClientDirectory({
           }}
         >
           <option value="all">All statuses</option>
-          {['applied', 'pending', 'failed', 'drifted', 'handEdited'].map((value) => (
+          {['applied', 'pending', 'failed', 'drifted', 'handEdited', 'withheld'].map((value) => (
             <option key={value}>{value}</option>
           ))}
         </select>

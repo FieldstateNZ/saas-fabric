@@ -1,5 +1,6 @@
 //! What is known about whether desired state has taken effect.
 
+use fabric_client_model::OidcClientId;
 use fabric_reconciliation::{HandEdit, ReconciliationStatus};
 
 /// Reconciliation state for one client, as an operator sees it.
@@ -32,8 +33,15 @@ pub(crate) struct ReconciliationResponse {
 
     /// The unsupported hand edits the provider holds and the last pass left
     /// in place (D01-19b), each naming the application client and the field.
-    /// Non-empty exactly when `status` is `handEdited`. An operator either
-    /// removes them in the provider or re-asserts the projection
+    /// Non-empty when `status` is `handEdited`, and may be beside
+    /// `withheld`. An operator either removes them in the provider or
+    /// re-asserts the projection
     /// (`POST /api/clients/{clientId}/identity/reassertion`).
     pub(crate) hand_edits: Vec<HandEdit>,
+
+    /// The projected application clients the last pass withheld because
+    /// their stored entry is not the stored document's own projection
+    /// (D01-19b): the identity provider was neither written nor corrected
+    /// for them. Non-empty exactly when `status` is `withheld`.
+    pub(crate) withheld: Vec<OidcClientId>,
 }

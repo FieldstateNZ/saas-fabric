@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import type { Client } from '../api/types'
 import { useIdentity } from '../hooks/useIdentity'
 import { ApplicationClients } from './ApplicationClients'
+import { ProjectionNotice } from './ProjectionNotice'
 import { ReassertProjection } from './ReassertProjection'
 import { ReconciliationBadge } from './ReconciliationBadge'
 import { RoleEditor } from './RoleEditor'
@@ -44,8 +45,9 @@ export function IdentityPanel({ client }: { client: Client }) {
       <h2>Identity</h2>
       {identity.error !== null && <p className="error">{identity.error}</p>}
 
+      <ProjectionNotice projection={current.projection} />
       <ReconciliationBadge reconciliation={current.reconciliation} />
-      {current.reconciliation.status === 'handEdited' && (
+      {current.reconciliation.handEdits.length > 0 && current.projection.state === 'consistent' && (
         <ReassertProjection busy={identity.saving} onReassert={identity.reassert} />
       )}
 

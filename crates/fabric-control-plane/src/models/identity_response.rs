@@ -6,7 +6,7 @@ use fabric_client_model::{ClientRevision, OidcClient, RealmName, RoleName};
 use http::header::ETAG;
 use http::{HeaderValue, StatusCode};
 
-use crate::models::ReconciliationResponse;
+use crate::models::{ProjectionResponse, ReconciliationResponse};
 use crate::preconditions;
 use crate::repository::StoredClient;
 
@@ -51,6 +51,10 @@ pub(crate) struct IdentityResponse {
 
     /// Where reconciliation stands for this revision.
     pub(crate) reconciliation: ReconciliationResponse,
+
+    /// Whether the stored projected entries in `clients` are still what the
+    /// document's own product configuration projects (D01-19b).
+    pub(crate) projection: ProjectionResponse,
 }
 
 impl IdentityResponse {
@@ -69,6 +73,7 @@ impl IdentityResponse {
             api_version: stored.document.api_version(),
             revision: stored.revision.clone(),
             reconciliation,
+            projection: stored.document.projection_check().into(),
         }
     }
 }

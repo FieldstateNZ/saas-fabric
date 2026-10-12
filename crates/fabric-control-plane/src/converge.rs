@@ -64,7 +64,10 @@ pub(crate) async fn sweep(
 ///
 /// The operator names the revision they reviewed. A client whose desired
 /// state has moved since is refused, so nobody overwrites a hand edit on the
-/// strength of a declaration they did not see.
+/// strength of a declaration they did not see. A client whose stored
+/// projected entry is not its own projection is refused too (D01-19b), so a
+/// Git edit is never written over a hand edit as though it were the
+/// projection. Neither refusal reaches the provider or the audit trail.
 ///
 /// Not gated by the client's lifecycle: identity remediation stays open on a
 /// retired client, as identity edits do. It uses the operator's own
@@ -75,7 +78,9 @@ pub(crate) async fn sweep(
 ///
 /// [`ControlPlaneError::ConvergenceUnavailable`] when this deployment
 /// converges nothing, [`ControlPlaneError::RevisionConflict`] when `expected`
-/// is stale, and whatever reading the client returns. A provider failure is
+/// is stale, [`ControlPlaneError::ProjectedClientDiverged`] or
+/// [`ControlPlaneError::InvalidDesiredState`] when the stored projection is
+/// diverged or cannot be computed, and whatever reading the client returns. A provider failure is
 /// not an error here: it is recorded as the client's `failed` status, and
 /// audited, like any pass.
 pub(crate) async fn reassert(
@@ -90,6 +95,7 @@ pub(crate) async fn reassert(
     if stored.revision != *expected {
         return Err(ControlPlaneError::RevisionConflict);
     }
+    crate::projection::require(&stored.document, client)?;
 
     let outcome = reconciler.reassert(stored.document.client()).await;
     let status = state.service.statuses().record(

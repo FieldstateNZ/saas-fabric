@@ -1,5 +1,8 @@
 //! Publishes assigned applications into the existing identity reconciliation contract.
 mod projection;
+mod projection_check;
+#[cfg(test)]
+mod projection_tests;
 
 use crate::{
     ClientDocument, ClientProtocol, DesiredStateError, OidcClient, OidcClientId, PkceMethod,

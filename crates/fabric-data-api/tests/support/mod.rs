@@ -83,7 +83,14 @@ pub fn resolver(bindings: Vec<TenantRuntimeBinding>, sources: Vec<DataSource>) -
         "the fixture must install; a first load this test cannot use is a broken fixture"
     );
 
-    Arc::new(RuntimeResolver::new(tenant_registry, source_registry))
+    Arc::new(RuntimeResolver::new(tenant_registry, source_registry).with_catalogue(served_catalogue()))
+}
+
+/// The fixture catalogue as a runtime view serves it: what every resolver
+/// these suites build carries, since the Data API reads the catalogue from
+/// the view it pins and holds none of its own (G8).
+pub fn served_catalogue() -> fabric_tenant_runtime::DecodedCatalogue {
+    fabric_tenant_runtime::DecodedCatalogue::new(catalog())
 }
 
 /// Builds the assembled router over a given resolver, connector, and Data API
@@ -115,7 +122,6 @@ pub fn app_with_config(
 
     build_data_api(
         config,
-        catalog(),
         authorization,
         runtime,
         ConnectorRegistry::new().with(connector),

@@ -9,7 +9,7 @@ use fabric_core::{ReaderGenerationReport, RecordDigest, ServedOrigin};
 
 use crate::publication::{GenerationOrigin, PublishedState, PublishedStateSource};
 use crate::resolution::PublishedGeneration;
-use crate::testing::{data_source, primary, tenant, tenant_binding};
+use crate::testing::{catalogue, catalogue_served, data_source, primary, tenant, tenant_binding};
 use crate::{
     build_published_runtime, DataSource, DataSourceRegistry, RuntimeConfig, RuntimeResolver, SourceError,
     TenantRegistry, TenantRuntimeBinding,
@@ -59,7 +59,12 @@ fn the_report_moves_in_the_same_store_as_the_view_resolution_reads() {
     let (first_sources, first_tenants) = documents(1, "source-a");
     sources.apply_all(first_sources).unwrap();
     tenants.apply_all(first_tenants).unwrap();
-    published.publish(&tenants, &sources, Some(stamp(1, ServedOrigin::Published)));
+    published.publish(
+        catalogue(1),
+        &tenants,
+        &sources,
+        Some(stamp(1, ServedOrigin::Published)),
+    );
     assert_eq!(
         resolver.served_generation(),
         Some(stamp(1, ServedOrigin::Published))
@@ -79,7 +84,12 @@ fn the_report_moves_in_the_same_store_as_the_view_resolution_reads() {
     );
     assert_eq!(acme_revision(&resolver), 1);
 
-    published.publish(&tenants, &sources, Some(stamp(2, ServedOrigin::Published)));
+    published.publish(
+        catalogue(2),
+        &tenants,
+        &sources,
+        Some(stamp(2, ServedOrigin::Published)),
+    );
     assert_eq!(
         resolver.served_generation(),
         Some(stamp(2, ServedOrigin::Published))
@@ -111,6 +121,7 @@ impl PublishedStateSource for Scripted {
                 origin,
                 data_sources,
                 tenants,
+                catalogue: catalogue(number),
             })
         };
         match self.step.load(Ordering::SeqCst) {
@@ -119,8 +130,8 @@ impl PublishedStateSource for Scripted {
                 cause: "not yet".into(),
             }),
             1 => generation(1, GenerationOrigin::Published, documents(1, "source-a")),
-            // Same revision, another binding: the registry keeps its copy of
-            // acme, so the view is not generation 2.
+            // Same revision, another binding: the registry would keep its
+            // copy of acme, so generation 2 is refused whole.
             2 => generation(2, GenerationOrigin::Published, documents(1, "source-b")),
             3 => generation(
                 3,
@@ -131,8 +142,9 @@ impl PublishedStateSource for Scripted {
             ),
             4 => generation(4, GenerationOrigin::Published, documents(4, "source-b")),
             _ => Ok(PublishedState::Unrecorded {
-                data_sources: Ok(documents(5, "source-a").0),
-                tenants: Ok(documents(5, "source-a").1),
+                data_sources: documents(5, "source-a").0,
+                tenants: documents(5, "source-a").1,
+                catalogue: catalogue(5),
             }),
         }
     }
@@ -180,16 +192,20 @@ async fn the_report_follows_every_kind_of_read_through_the_production_builder() 
     advance(1);
     until(&resolver, Some(stamp(1, ServedOrigin::Published)), 1).await;
 
+    let held = runtime.status.report().held_passes;
     advance(2);
     let deadline = Instant::now() + Duration::from_secs(5);
-    while resolver.served_generation().is_some() {
-        assert!(
-            Instant::now() < deadline,
-            "a partly taken generation was reported"
-        );
+    while runtime.status.report().held_passes == held {
+        assert!(Instant::now() < deadline, "generation 2 was never judged");
         tokio::time::sleep(Duration::from_millis(2)).await;
     }
-    assert_eq!(acme_revision(&resolver), 1, "the held copy still serves");
+    assert_eq!(
+        resolver.served_generation(),
+        Some(stamp(1, ServedOrigin::Published)),
+        "a generation a registry would not take whole is never installed or reported"
+    );
+    assert_eq!(acme_revision(&resolver), 1);
+    assert_eq!(catalogue_served(&resolver), Some(1));
 
     advance(3);
     until(&resolver, Some(stamp(3, ServedOrigin::LastKnownGood)), 3).await;
@@ -199,6 +215,7 @@ async fn the_report_follows_every_kind_of_read_through_the_production_builder() 
 
     advance(5);
     until(&resolver, None, 5).await;
+    assert_eq!(catalogue_served(&resolver), Some(5));
 
     runtime.handles.shutdown().await.unwrap();
 }

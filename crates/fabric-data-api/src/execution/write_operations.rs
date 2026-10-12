@@ -74,11 +74,11 @@ impl DataApiService {
             return Err(DataApiError::BadRequest("no fields to update".to_owned()));
         }
 
-        refuse_key_change(prepared.resource, changes)?;
+        refuse_key_change(&prepared.resource, changes)?;
 
         let spec = MutationSpec::Update {
             collection: prepared.resource.collection.clone(),
-            filter: Some(key_filter(prepared.resource, key)),
+            filter: Some(key_filter(&prepared.resource, key)),
             changes: to_row(changes, &prepared.writable_fields())?,
         };
 
@@ -104,7 +104,7 @@ impl DataApiService {
         // cannot ask to empty a collection, whatever their scopes.
         let spec = MutationSpec::Delete {
             collection: prepared.resource.collection.clone(),
-            filter: Some(key_filter(prepared.resource, key)),
+            filter: Some(key_filter(&prepared.resource, key)),
         };
 
         dispatch(&prepared, &spec, resource_name, &RowBudget::OneRecord).await

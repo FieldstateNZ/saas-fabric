@@ -35,10 +35,13 @@ async fn an_unknown_tenant_is_refused_without_reaching_a_connector() {
 async fn an_unprimed_runtime_returns_service_unavailable_not_forbidden() {
     // §28: a cold start must not tell every caller their tenant is gone.
     let connector = RecordingConnector::new(vec![]);
-    let runtime = Arc::new(RuntimeResolver::new(
-        Arc::new(TenantRegistry::new()),
-        Arc::new(DataSourceRegistry::new()),
-    ));
+    let runtime = Arc::new(
+        RuntimeResolver::new(
+            Arc::new(TenantRegistry::new()),
+            Arc::new(DataSourceRegistry::new()),
+        )
+        .with_catalogue(support::served_catalogue()),
+    );
 
     let app = app_with(runtime, Arc::clone(&connector), scopes_only());
 
@@ -51,6 +54,50 @@ async fn an_unprimed_runtime_returns_service_unavailable_not_forbidden() {
     assert_eq!(body_json(response).await["error"]["code"], "runtime_unavailable");
 }
 
+/// No view installed means no catalogue either (G8): there is no other to
+/// fall back on. The caller is authorised first, exactly as for an unprimed
+/// runtime with a catalogue, so a caller without the scope learns nothing
+/// more than before, and one with it is told the runtime is unavailable.
+#[tokio::test]
+async fn with_no_catalogue_installed_a_request_is_authorised_first_and_then_unavailable() {
+    let connector = RecordingConnector::new(vec![]);
+    let runtime = Arc::new(RuntimeResolver::new(
+        Arc::new(TenantRegistry::new()),
+        Arc::new(DataSourceRegistry::new()),
+    ));
+    let app = app_with(runtime, Arc::clone(&connector), scopes_only());
+
+    let refused = app
+        .clone()
+        .oneshot(request(
+            "GET",
+            "/customers",
+            json!({"tenant_id": "acme", "scope": ""}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(refused.status(), StatusCode::FORBIDDEN);
+
+    let unknown = app
+        .clone()
+        .oneshot(request("GET", "/no-such-resource", json!({"tenant_id": "acme"})))
+        .await
+        .unwrap();
+    assert_eq!(
+        unknown.status(),
+        StatusCode::FORBIDDEN,
+        "no catalogue to say it does not exist"
+    );
+
+    let response = app
+        .oneshot(request("GET", "/customers", json!({"tenant_id": "acme"})))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(body_json(response).await["error"]["code"], "runtime_unavailable");
+    assert_eq!(connector.query_count(), 0);
+}
+
 #[tokio::test]
 async fn an_unprimed_data_source_registry_alone_is_enough_to_be_unavailable() {
     // Tenants loaded, DataSources not: the chain cannot complete.
@@ -60,10 +107,10 @@ async fn an_unprimed_data_source_registry_alone_is_enough_to_be_unavailable() {
         "the fixture must install; a first load this test cannot use is a broken fixture"
     );
 
-    let runtime = Arc::new(RuntimeResolver::new(
-        tenant_registry,
-        Arc::new(DataSourceRegistry::new()),
-    ));
+    let runtime = Arc::new(
+        RuntimeResolver::new(tenant_registry, Arc::new(DataSourceRegistry::new()))
+            .with_catalogue(support::served_catalogue()),
+    );
 
     let connector = RecordingConnector::new(vec![]);
     let app = app_with(runtime, Arc::clone(&connector), scopes_only());

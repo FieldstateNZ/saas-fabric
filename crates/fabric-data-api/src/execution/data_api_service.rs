@@ -5,7 +5,7 @@ use std::sync::Arc;
 use fabric_connector::ConnectorRegistry;
 use fabric_tenant_runtime::RuntimeResolver;
 
-use crate::{DataApiConfig, DataAuthorization, ResourceCatalog};
+use crate::{DataApiConfig, DataAuthorization};
 
 /// Executes Data API operations.
 ///
@@ -22,13 +22,16 @@ use crate::{DataApiConfig, DataAuthorization, ResourceCatalog};
 /// crate responsible for the two ends: what a logical resource means, and what
 /// a caller is allowed to do with it.
 ///
+/// It holds no catalogue of its own. The catalogue is part of the view the
+/// resolver installs with each generation, and every request reads the one
+/// view it pinned (G8).
+///
 /// Nothing here takes a tenant as a parameter. The only source is the
 /// [`TenantIdentity`](fabric_identity::TenantIdentity), which came from the
 /// bearer token (§10, §11).
 pub struct DataApiService {
     pub(super) runtime: Arc<RuntimeResolver>,
     pub(super) connectors: ConnectorRegistry,
-    pub(super) catalog: ResourceCatalog,
     pub(super) authorization: DataAuthorization,
     pub(super) config: DataApiConfig,
 }
@@ -39,14 +42,12 @@ impl DataApiService {
     pub const fn new(
         runtime: Arc<RuntimeResolver>,
         connectors: ConnectorRegistry,
-        catalog: ResourceCatalog,
         authorization: DataAuthorization,
         config: DataApiConfig,
     ) -> Self {
         Self {
             runtime,
             connectors,
-            catalog,
             authorization,
             config,
         }

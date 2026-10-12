@@ -19,8 +19,8 @@ use fabric_api::config::AppConfig;
 use fabric_api::reader_generation::{router, ReaderGenerationListener};
 use fabric_core::{RecordDigest, READER_GENERATION_PATH};
 use fabric_tenant_runtime::{
-    build_published_runtime, GenerationOrigin, PublishedRuntime, PublishedState, PublishedStateSource,
-    RuntimeConfig, RuntimeResolver, SourceError,
+    build_published_runtime, DecodedCatalogue, GenerationOrigin, PublishedRuntime, PublishedState,
+    PublishedStateSource, RuntimeConfig, RuntimeResolver, SourceError,
 };
 use http::{Method, Request, StatusCode};
 use tower::ServiceExt as _;
@@ -45,8 +45,9 @@ impl PublishedStateSource for Example {
             },
             UNRECORDED => {
                 return Ok(PublishedState::Unrecorded {
-                    data_sources: Ok(data_sources()),
-                    tenants: Ok(tenants()),
+                    data_sources: data_sources(),
+                    tenants: tenants(),
+                    catalogue: catalogue(),
                 })
             }
             _ => {
@@ -62,12 +63,18 @@ impl PublishedStateSource for Example {
             origin,
             data_sources: data_sources(),
             tenants: tenants(),
+            catalogue: catalogue(),
         })
     }
 
     fn describe(&self) -> String {
         "example".to_owned()
     }
+}
+
+/// The example catalogue, decoded as the host decodes it.
+fn catalogue() -> DecodedCatalogue {
+    DecodedCatalogue::new(examples_support::catalog())
 }
 
 async fn runtime(answer: u8) -> Arc<RuntimeResolver> {

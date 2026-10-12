@@ -22,7 +22,9 @@ use fabric_core::BindingRevision;
 
 use crate::publication::{PublishedState, PublishedStateSource};
 use crate::resolution::PublishedGeneration;
-use crate::testing::{connection_for, data_source, data_source_id, primary, tenant, tenant_binding};
+use crate::testing::{
+    catalogue, catalogue_served, connection_for, data_source, data_source_id, primary, tenant, tenant_binding,
+};
 use crate::{
     build_published_runtime, DataSource, DataSourceRegistry, RuntimeConfig, RuntimeResolver, SourceError,
     TenantRegistry, TenantRuntimeBinding,
@@ -114,7 +116,7 @@ fn primed_on_the_old_generation() -> (
     );
     source_registry.apply_all(sources).unwrap();
     tenant_registry.apply_all(tenants).unwrap();
-    published.publish(&tenant_registry, &source_registry, None);
+    published.publish(catalogue(1), &tenant_registry, &source_registry, None);
     (published, tenant_registry, source_registry)
 }
 
@@ -134,9 +136,11 @@ fn a_tenant_resolves_to_one_complete_generations_target_at_every_point_of_a_refr
 
     tenants.apply_all(new_tenants).unwrap();
     both_resolve_to(&resolver, 1);
+    assert_eq!(catalogue_served(&resolver), Some(1));
 
-    published.publish(&tenants, &sources, None);
+    published.publish(catalogue(2), &tenants, &sources, None);
     both_resolve_to(&resolver, 2);
+    assert_eq!(catalogue_served(&resolver), Some(2));
 }
 
 /// What the registries hold between the refresher's two writes, resolved
@@ -179,6 +183,7 @@ impl PublishedStateSource for Advancing {
             origin: crate::GenerationOrigin::Published,
             data_sources,
             tenants,
+            catalogue: catalogue(number),
         })
     }
 

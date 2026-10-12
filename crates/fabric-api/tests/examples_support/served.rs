@@ -15,7 +15,7 @@ use fabric_connector::{ConnectorRegistry, DataConnector};
 use fabric_core::SystemClock;
 use fabric_data_api::{build_data_api, DataAuthorization};
 use fabric_identity::{build_identity, TrustedIngressReader};
-use fabric_tenant_runtime::{DataSourceRegistry, RuntimeResolver, TenantRegistry};
+use fabric_tenant_runtime::{DataSourceRegistry, DecodedCatalogue, RuntimeResolver, TenantRegistry};
 
 use super::{catalog, config, data_sources, tenants};
 
@@ -46,13 +46,15 @@ pub fn served_router(request_timeout: Duration, connector: Arc<dyn DataConnector
     )
     .expect("the example identity configuration must build");
 
-    let runtime = Arc::new(RuntimeResolver::new(tenant_registry, data_source_registry));
+    let runtime = Arc::new(
+        RuntimeResolver::new(tenant_registry, data_source_registry)
+            .with_catalogue(DecodedCatalogue::new(catalog())),
+    );
 
     let connectors = ConnectorRegistry::new().with(connector);
 
     let data = build_data_api(
         &config.data_api,
-        catalog(),
         DataAuthorization::default(),
         Arc::clone(&runtime),
         connectors.clone(),

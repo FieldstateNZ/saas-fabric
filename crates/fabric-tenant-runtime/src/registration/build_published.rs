@@ -9,28 +9,23 @@ use crate::resolution::PublishedGeneration;
 use crate::resource::{ResourceRefresher, ResourceRegistry};
 use crate::{RuntimeConfig, RuntimeResolver};
 
-/// A published runtime, and the catalogue of the generation it primed.
+/// A published runtime.
 pub struct PublishedRuntime {
-    /// Resolves against the last complete generation applied.
+    /// Pins the last complete view installed, catalogue included.
     pub resolver: Arc<RuntimeResolver>,
     /// The refresher that keeps it current.
     pub handles: RuntimeHandles,
-    /// The catalogue bytes read in the same read as the generation the
-    /// runtime primed from, and checked against the same record. `None`
-    /// when the source reads no catalogue, or the prime failed and the
-    /// runtime started unprimed: then no generation is held to match.
-    pub catalogue: Option<Vec<u8>>,
     /// What it serves and why, and its last-known-good copy, for readiness.
     pub status: Arc<ReaderStatus>,
 }
 
-/// Validates configuration, primes both registries from one read of the
-/// published documents, and starts the refresher that keeps them current a
+/// Validates configuration, installs the first view from one read of the
+/// published documents, and starts the refresher that keeps it current a
 /// whole generation at a time.
 ///
-/// The resolver it returns reads only the last generation published to it,
+/// The resolver it returns reads only the last view installed: catalogue,
 /// tenant bindings and data sources together, never the registries
-/// directly: see `PublishedGeneration`.
+/// directly. See `PublishedGeneration`.
 ///
 /// This is the production wiring: what [`build_runtime`](crate::build_runtime)
 /// does with two independent sources, except that a publication the reader
@@ -40,9 +35,10 @@ pub struct PublishedRuntime {
 /// [`RuntimeConfig::fail_fast_on_prime`] decides whether that stops it or
 /// starts it unprimed, answering 503 until a complete generation is read.
 ///
-/// The catalogue is taken from the prime's own read
-/// ([`PublishedStateSource::load_at_start`]), so it is the primed
-/// generation's, never one published while the process started (G8).
+/// There is no catalogue apart from the view's (G8). A runtime that starts
+/// unprimed serves no catalogue at all, so a host answers every request as
+/// unavailable until the first complete view installs; it never falls back
+/// on a catalogue read on its own.
 ///
 /// # Errors
 ///
@@ -59,11 +55,9 @@ pub async fn build_published_runtime(
     let generation = Arc::new(PublishedGeneration::default());
     let status = Arc::new(ReaderStatus::over(Arc::clone(&source)));
 
-    let primed =
-        ResourceRefresher::prime_published(&generation, &data_sources, &tenants, source.as_ref(), &status)
-            .await;
-    let catalogue = match primed {
-        Ok(catalogue) => catalogue,
+    let registries = (generation.as_ref(), data_sources.as_ref(), tenants.as_ref());
+    match ResourceRefresher::prime_published(registries, source.as_ref(), &status).await {
+        Ok(()) => {}
         Err(error) if config.fail_fast_on_prime => {
             return Err(format!(
                 "could not load the published runtime state from {}: {error}",
@@ -77,9 +71,8 @@ pub async fn build_published_runtime(
                 reason = %error,
                 "starting unprimed; the runtime will return 503 until a complete generation is read"
             );
-            None
         }
-    };
+    }
 
     let handles = RuntimeHandles {
         refresher: ResourceRefresher::spawn_published(
@@ -95,7 +88,6 @@ pub async fn build_published_runtime(
     Ok(PublishedRuntime {
         resolver: Arc::new(RuntimeResolver::over_published(tenants, data_sources, generation)),
         handles,
-        catalogue,
         status,
     })
 }

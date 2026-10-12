@@ -13,9 +13,11 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use fabric_core::RecordDigest;
+use fabric_data_api::ResourceCatalogDecoder;
 use fabric_tenant_runtime::{
-    JsonFileSource, PublishedFiles, PublishedState, PublishedStateSource, RegistryResource, ResourceSource,
-    SourceError,
+    JsonFileSource, LastKnownGoodState, PublishedFiles, PublishedState, PublishedStateSource,
+    RegistryResource, ResourceSource, SourceError,
 };
 use serde::de::DeserializeOwned;
 
@@ -58,21 +60,39 @@ where
     }
 }
 
-/// The production reader, [`PublishedFiles`], with the same completed-load
-/// counter: one count per read of both documents and their record.
+/// The production reader, [`PublishedFiles`] with the Data API's own
+/// catalogue decoder, with the same completed-load counter: one count per
+/// read of the three documents and their record. Every other call is
+/// forwarded, so the reader behaves exactly as in production.
 pub struct CountingPublished {
     inner: PublishedFiles,
     loads: Arc<AtomicUsize>,
 }
 
 impl CountingPublished {
-    /// Wraps the published files at these two paths, returning the reader
+    /// Wraps the published files at these three paths, returning the reader
     /// alongside the shared counter a test polls.
     #[must_use]
-    pub fn new(tenants: impl AsRef<Path>, data_sources: impl AsRef<Path>) -> (Self, Arc<AtomicUsize>) {
+    pub fn new(
+        tenants: impl AsRef<Path>,
+        data_sources: impl AsRef<Path>,
+        catalog: impl AsRef<Path>,
+    ) -> (Self, Arc<AtomicUsize>) {
+        Self::over(PublishedFiles::new(
+            tenants,
+            data_sources,
+            catalog,
+            Arc::new(ResourceCatalogDecoder),
+        ))
+    }
+
+    /// Wraps an already configured reader, such as one with a
+    /// last-known-good copy.
+    #[must_use]
+    pub fn over(inner: PublishedFiles) -> (Self, Arc<AtomicUsize>) {
         let loads = Arc::new(AtomicUsize::new(0));
         let source = Self {
-            inner: PublishedFiles::new(tenants, data_sources),
+            inner,
             loads: Arc::clone(&loads),
         };
         (source, loads)
@@ -87,7 +107,19 @@ impl PublishedStateSource for CountingPublished {
         result
     }
 
+    async fn load_at_start(&self) -> Result<PublishedState, SourceError> {
+        self.inner.load_at_start().await
+    }
+
+    async fn installed(&self, generation: u64, record_sha256: &RecordDigest) {
+        self.inner.installed(generation, record_sha256).await;
+    }
+
     fn describe(&self) -> String {
         self.inner.describe()
+    }
+
+    fn last_known_good(&self) -> LastKnownGoodState {
+        self.inner.last_known_good()
     }
 }

@@ -18,8 +18,7 @@ use fabric_runtime_publication::{
     DocumentOutcome, RecordStamp, RuntimePublication as _, PUBLICATION_RECORD_FILE,
 };
 use fabric_tenant_runtime::{
-    build_published_runtime, PublishedFiles, PublishedRuntime, PublishedStateSource, RuntimeConfig,
-    RuntimeResolver,
+    build_published_runtime, PublishedRuntime, PublishedStateSource, RuntimeConfig, RuntimeResolver,
 };
 use support::{base_snapshot, TempDir};
 
@@ -28,8 +27,7 @@ fn reported(stamp: RecordStamp) -> ReaderGenerationReport {
 }
 
 async fn reader(dir: &TempDir) -> PublishedRuntime {
-    let files =
-        PublishedFiles::new(dir.tenants_path(), dir.data_sources_path()).with_catalogue(dir.catalog_path());
+    let files = support::published_files(dir);
     let config = RuntimeConfig {
         refresh_interval_seconds: 60,
         fail_fast_on_prime: true,

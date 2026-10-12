@@ -1,20 +1,19 @@
-//! Reading the published tenants and data-sources documents as one
-//! generation.
+//! Reading the published tenants, data-sources and catalogue documents as
+//! one generation.
 //!
 //! The publisher writes data sources, then the catalogue, then tenants, and
 //! last a publication record naming the exact bytes of each. A reader that
-//! finds both documents matching the record holds one complete generation;
-//! one that finds either differing is mid-publication, after an interrupted
-//! one, or ahead on one Kubernetes volume, and keeps the generation it
-//! already serves. That is what makes a publication all-or-nothing to a
+//! finds all three documents matching the record, and the catalogue decoding,
+//! holds one complete generation; one that finds any differing is
+//! mid-publication, after an interrupted one, or ahead on one Kubernetes
+//! volume, and keeps the whole view it already serves. That is what makes a publication all-or-nothing to a
 //! reader, though the three documents are written one at a time (gaps G1b,
 //! G2 and G3 in `docs/roadmap/m2-publication-gap-report.md`).
 //!
 //! The record shape here is this plane's own copy, as for every published
 //! document: the runtime plane may not depend on the publisher's crate.
 
-mod catalogue;
-mod catalogue_check;
+mod catalogue_decoder;
 mod complete_generation;
 mod digest;
 mod file_reads;
@@ -27,8 +26,7 @@ mod published_state;
 mod reader_status;
 mod record;
 
-pub use catalogue::startup_catalogue;
-pub use catalogue_check::CatalogueCheck;
+pub use catalogue_decoder::{CatalogueDecoder, DecodedCatalogue};
 pub use last_known_good::{
     check_separation, DiscardRequest, Discarded, Inspection, LastKnownGoodRefusal, LastKnownGoodState,
     LastKnownGoodStore, Verdict, AUDIT_FILE_NAME,

@@ -4,7 +4,7 @@ use super::envelope::Envelope;
 use super::store::verify;
 use super::LastKnownGoodStore;
 use crate::publication::digest::sha256_hex;
-use crate::publication::CatalogueCheck;
+use crate::publication::CatalogueDecoder;
 
 /// The copy as found on disk, for `fabric-api last-known-good inspect`.
 ///
@@ -49,7 +49,7 @@ impl LastKnownGoodStore {
     ///
     /// `catalogue` is the host's own catalogue check, so a copy is reported
     /// valid only if the host could start from it.
-    pub async fn inspect(&self, catalogue: &dyn CatalogueCheck) -> Inspection {
+    pub async fn inspect(&self, catalogue: &dyn CatalogueDecoder) -> Inspection {
         let path = self.path().display().to_string();
         let bytes = match tokio::fs::read(self.path()).await {
             Ok(bytes) => bytes,

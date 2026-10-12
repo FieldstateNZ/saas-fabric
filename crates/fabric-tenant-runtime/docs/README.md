@@ -280,8 +280,11 @@ The rules (`publication/last_known_good.rs` has the full table):
   served: digests, reader floor, both documents through the real decoders,
   every resource's own validation, no duplicate keys, every binding
   resolvable within the generation, and the catalogue through the host's
-  `CatalogueCheck`. A failure is `SourceError::Unusable` and leaves the copy
-  and floor untouched (or fails the prime with no copy).
+  `CatalogueDecoder`. A failure is `SourceError::Unusable` and leaves the copy
+  and floor untouched (or fails the prime with no copy). The floor is raised
+  and the copy persisted only once the refresher has installed the
+  generation (`PublishedStateSource::installed`), so a candidate it refuses
+  changes neither.
 - **The copy is refused**, never served, on any of those failures or an
   unknown format. A refused copy is kept byte for byte, even beside a
   valid publication, until an operator discards it.

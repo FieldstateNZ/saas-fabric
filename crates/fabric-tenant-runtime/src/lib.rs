@@ -69,12 +69,12 @@ pub use data_source::{
 };
 pub use errors::{ConfigurationError, ResolveError, SourceError, UnusableFirstLoad};
 pub use publication::{
-    check_separation, startup_catalogue, CatalogueCheck, DiscardRequest, Discarded, GenerationOrigin,
+    check_separation, CatalogueDecoder, DecodedCatalogue, DiscardRequest, Discarded, GenerationOrigin,
     Inspection, LastKnownGoodRefusal, LastKnownGoodState, LastKnownGoodStore, PublishedFiles, PublishedState,
     PublishedStateSource, ReaderReport, ReaderStatus, Serving, Verdict, AUDIT_FILE_NAME, READER_CONTRACT,
 };
 pub use registration::{build_published_runtime, build_runtime, PublishedRuntime, RuntimeHandles};
-pub use resolution::{ResolvedDataSource, RuntimeResolver};
+pub use resolution::{ResolutionView, ResolvedDataSource, RuntimeResolver};
 pub use resource::sources::{InMemorySource, JsonFileSource};
 pub use resource::{
     ApplyReport, ChangeKind, LookupError, RefreshHandle, RegistryResource, ResourceChange, ResourceRefresher,

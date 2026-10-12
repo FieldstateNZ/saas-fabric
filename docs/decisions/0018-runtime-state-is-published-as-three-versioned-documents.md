@@ -643,15 +643,21 @@ document belong to one generation:
 - **Where it lives.** The filesystem adapter writes it beside `tenants.json`.
   The Kubernetes adapter writes it as a third data key of
   `fabric-runtime-tenants` (see [The production owner](#the-production-owner)).
-- **Readers.** A reader that finds the record applies tenants and data
-  sources only when both match it, data sources first. Otherwise it keeps
-  the last complete generation it holds. A reader that finds no record (a
-  set published before the record existed) reads each document on its own,
-  as before. A runtime reads the catalogue once, at start, in the same read
-  as the generation it primes from. Where a record is present, the
-  catalogue must match the digest named by the record its tenants and data
-  sources were checked against, or the prime fails (G8). A running replica
-  does not refresh its catalogue.
+- **Readers.** A reader that finds the record installs a generation only
+  when all three documents match it, the catalogue included, and the host
+  decodes the catalogue. It installs the catalogue, tenants, data sources
+  and served stamp as one view, and only when both registries would take
+  every resource as offered. Otherwise it keeps the whole view it serves,
+  at start and on every refresh, with or without a last-known-good copy
+  (G8). Every request pins one view before it looks its resource up, and
+  keeps it to execution. A reader that finds no record (a set published
+  before the record existed) reads all three documents on each pass and
+  installs them as one view under no generation; one that cannot be read
+  or decoded holds the whole view. Once a reader has installed a recorded
+  generation, a missing record or a lower complete generation holds that
+  generation, with or without a copy, rather than reading the documents
+  alone or going back. That floor lives in the process and is not durable. A reader with no view installed serves no catalogue
+  and answers every authorised request as unavailable.
 - **`resources`** (added for O3 and O4). For every tenant binding and
   DataSource that any recorded generation published, the highest revision
   it was published at. Entries are never removed. A resource that the held
@@ -1282,10 +1288,11 @@ ADR 0023's list and `docs/roadmap/m0-contract-decisions.md`.
     swapped in once both are written. The binding, the DataSource, the
     exclusivity check and the execution target therefore always come from
     one generation, within one process. Pinned by
-    `generation_isolation_tests.rs`. Still open: replicas may serve
-    different generations (G7), the catalogue is outside the generation
-    (G8), and `build_runtime` over independent sources still resolves across
-    its registries. Not verified live;
+    `generation_isolation_tests.rs`. Since the G8 refresh disposition, the
+    catalogue is part of the same view, and each request pins it from
+    resource lookup to execution. Still open: replicas may serve different
+    generations (G7), and `build_runtime` over independent sources still
+    resolves across its registries. Not verified live;
   - G2: since #136 a reader never applies a retirement before the unbinding
     that preceded it. The publisher still does not wait for readers;
   - G3: since #136 an interrupted publication leaves readers on the previous
@@ -1351,10 +1358,11 @@ ADR 0023's list and `docs/roadmap/m0-contract-decisions.md`.
     client's tenant cannot reach, grouped by the logical data source it
     does not bind (ADR 0023, amendment 2026-10-12). Still open: an entry
     that some tenant does not bind still gets `UnboundDataSource` for that
-    tenant, and a running replica keeps its startup catalogue. Refreshing
-    it waits on the semantics asked on
-    [#108](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6124222864).
-    Not verified live.
+    tenant. Since the G8 refresh disposition on #108 (comment
+    6125847841), a running replica refreshes its catalogue as part of the
+    generation: one view of catalogue, tenants, data sources and stamp,
+    installed whole or held whole (see Readers, above). Source only; not
+    verified live.
 - **Release rollback floor (D01-21). Recorded and enforced in-product.**
   `compatibility.yaml` records `minimumRollableVersion: 0.3.0-preview.16`.
   Platform Management offers no rollback of Fabric below it and refuses one

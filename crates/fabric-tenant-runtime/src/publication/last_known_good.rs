@@ -24,7 +24,7 @@
 //! (`ParsedGeneration::validate`): both documents decode, every resource
 //! passes its own validation, no key appears twice, every binding names a
 //! DataSource the generation carries, and the catalogue passes the host's
-//! own decoder ([`CatalogueCheck`](crate::CatalogueCheck)). A generation that
+//! own decoder ([`CatalogueDecoder`](crate::CatalogueDecoder)). A generation that
 //! fails is refused as [`SourceError::Unusable`](crate::SourceError): the
 //! copy and the floor stay as they were, or, with no copy, the prime fails.
 //!
@@ -65,7 +65,7 @@ mod store;
 #[cfg(test)]
 mod store_tests;
 
-pub(crate) use choice::Choice;
+pub(crate) use choice::{on_refresh, Choice};
 pub use discard::{DiscardRequest, Discarded, AUDIT_FILE_NAME};
 pub(crate) use holder::LastKnownGood;
 pub use inspection::{Inspection, Verdict};

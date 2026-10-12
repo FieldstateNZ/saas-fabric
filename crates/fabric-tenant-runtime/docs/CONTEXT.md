@@ -81,20 +81,31 @@ physical/provider concerns.
 - `RuntimeConfig { refresh_interval_seconds (30), fail_fast_on_prime (true),
   last_known_good_dir (None) }`.
 - `build_published_runtime(&config, Arc<dyn PublishedStateSource>) ->
-  Result<PublishedRuntime { resolver, handles, catalogue, status }, String>`.
+  Result<PublishedRuntime { resolver, handles, status }, String>`. The
+  resolver's `pin() -> ResolutionView` is the one view a request reads:
+  `catalogue() -> Option<&DecodedCatalogue>`, `resolve_data_source`,
+  `served()`. A generation is installed whole (catalogue, tenants, data
+  sources, stamp) or not at all (G8).
   `status: Arc<ReaderStatus>`; `report() -> ReaderReport { serving: Serving,
   held_passes, last_hold, last_known_good: LastKnownGoodState }`,
   `holding_last_known_good()`.
-- `PublishedFiles::new(tenants, data_sources).with_catalogue(path)
-  .with_last_known_good(LastKnownGoodStore::new(dir), Arc<dyn CatalogueCheck>)`.
-  `CatalogueCheck::check(&[u8]) -> Result<(), String>` is the host's own
-  catalogue decoder (this crate cannot name `ResourceCatalog`).
+- `PublishedFiles::new(tenants, data_sources, catalog, Arc<dyn CatalogueDecoder>)
+  .with_last_known_good(LastKnownGoodStore::new(dir))`.
+  `CatalogueDecoder::decode(&[u8]) -> Result<DecodedCatalogue, String>` is
+  the host's own catalogue decoder (this crate cannot name
+  `ResourceCatalog`); `DecodedCatalogue::get::<T>()` reads it back.
+  `PublishedStateSource::installed(generation, &RecordDigest)` is told once
+  a generation is installed; only then does `PublishedFiles` raise its
+  floor and persist its copy.
+- `RuntimeResolver::new(tenants, data_sources).with_catalogue(DecodedCatalogue)`
+  for a composition over independent sources; `build_runtime` returns the
+  resolver unshared so one can be attached.
   `check_separation(dir, &[published paths])`.
   `PublishedState::Generation { generation, origin: GenerationOrigin, .. }`,
   `GenerationOrigin::{Published, LastKnownGood { held_because }}`.
-- `LastKnownGoodStore` — `new(dir)`, `path()`, `inspect(&dyn CatalogueCheck) -> Inspection
+- `LastKnownGoodStore` — `new(dir)`, `path()`, `inspect(&dyn CatalogueDecoder) -> Inspection
   { path, file_sha256, stated_generation, verdict: Verdict }`,
-  `discard(&DiscardRequest { operator, reason }, at_unix_seconds, &dyn CatalogueCheck) ->
+  `discard(&DiscardRequest { operator, reason }, at_unix_seconds, &dyn CatalogueDecoder) ->
   io::Result<Option<Discarded>>` (audits to `AUDIT_FILE_NAME` first, then
   moves the copy aside). Persisting and loading are crate-private: only the
   reader writes a copy, and only of a published generation it validated.

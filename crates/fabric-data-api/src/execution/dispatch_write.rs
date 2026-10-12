@@ -30,7 +30,7 @@ use crate::{logging, DataApiError, WriteResponse};
 /// Any [`DataApiError`] the connector raises, plus
 /// [`DataApiError::PartiallyApplied`] if fewer rows were written than sent.
 pub(super) async fn dispatch(
-    prepared: &Prepared<'_>,
+    prepared: &Prepared,
     spec: &MutationSpec,
     resource_name: &LogicalResourceName,
     budget: &RowBudget,

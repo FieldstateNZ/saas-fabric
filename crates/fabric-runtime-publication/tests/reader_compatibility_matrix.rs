@@ -34,10 +34,10 @@ use fabric_runtime_publication::{
     FieldName, IsolationModelDocument, RuntimePublication as _, RuntimeSnapshot, TenantBindingDocument,
     TenantDataBindingDocument, TenantDataBindings, PUBLICATION_RECORD_FILE,
 };
-use fabric_tenant_runtime::{startup_catalogue, ResolveError, RuntimeConfig};
+use fabric_tenant_runtime::{ResolveError, RuntimeConfig, RuntimeResolver};
 use http::StatusCode;
 use serde_json::{json, Value};
-use support::{edit_json, poll_until, refresh, resolves_to, rewrite_record, Reader, Stack, TempDir};
+use support::{edit_json, poll_until, refresh, resolves_to, rewrite_record, Reader, Stack};
 
 const SECOND_DATA_SOURCE: &str = "shared-postgres-02";
 
@@ -310,11 +310,13 @@ async fn current_behaviour_a_new_enum_variant_refuses_the_whole_generation() {
 }
 
 /// Row: one resource invalid at a known shape, here a tenant binding with
-/// an empty `data` map. A running reader keeps its held copy of that
-/// resource and applies the rest. A reader starting now drops it and serves
-/// the rest; with nothing left to serve it does not prime.
+/// an empty `data` map. A recorded generation is installed whole or not at
+/// all (G8), so neither reader takes the rest of it: a running reader holds
+/// its whole view, globex included, and a reader starting now does not
+/// prime. Before G8 a running reader kept its held copy of the one resource
+/// and applied the rest beside the new catalogue.
 #[tokio::test]
-async fn one_invalid_resource_keeps_its_held_copy_and_the_rest_of_the_generation_applies() {
+async fn one_invalid_resource_holds_the_whole_generation_for_running_and_starting_readers() {
     let stack = support::build_stack(&support::base_snapshot(1)).await;
     stack.dir.publisher().publish(&both_move()).await.unwrap();
     edit_json(&stack.dir, "tenants.json", |tenants| {
@@ -322,44 +324,34 @@ async fn one_invalid_resource_keeps_its_held_copy_and_the_rest_of_the_generation
     });
     rewrite_record(&stack.dir, 2, |_| {});
 
-    stack.handles.refresh_now();
-    poll_until("globex in generation 2", || {
-        resolves_to(&stack.resolver, "globex").as_deref() == Ok(SECOND_DATA_SOURCE)
-    })
-    .await;
+    refresh(&stack).await;
+    for tenant in ["acme", "globex"] {
+        assert_eq!(
+            resolves_to(&stack.resolver, tenant).unwrap(),
+            support::DATA_SOURCE_ID,
+            "{tenant} stays on generation 1"
+        );
+    }
     assert_eq!(
-        resolves_to(&stack.resolver, "acme").unwrap(),
-        support::DATA_SOURCE_ID
+        stack.resolver.served_generation().map(|report| report.generation),
+        Some(1)
     );
 
-    let (fresh, handles, _) = support::build_reader(&stack.dir, Reader::Generation)
-        .await
-        .unwrap();
-    assert_eq!(resolves_to(&fresh, "globex").unwrap(), SECOND_DATA_SOURCE);
-    assert!(matches!(
-        resolves_to(&fresh, "acme"),
-        Err(ResolveError::UnknownTenant(_))
-    ));
-    handles.shutdown().await.unwrap();
-
-    edit_json(&stack.dir, "tenants.json", |tenants| {
-        entry(tenants, "tenant", "globex")["data"] = json!({});
-    });
-    rewrite_record(&stack.dir, 3, |_| {});
     let Err(message) = support::build_reader(&stack.dir, Reader::Generation).await else {
-        panic!("a reader with no valid tenant binding must not prime");
+        panic!("a reader must not prime from a generation it cannot take whole");
     };
     assert!(message.contains("tenant"), "{message}");
     stack.handles.shutdown().await.unwrap();
 }
 
-/// What `fabric-api`'s `startup::catalog::load` does: the catalogue the
-/// record names, decoded by the host's own type.
-async fn host_catalogue(dir: &TempDir) -> Result<ResourceCatalog, String> {
-    let bytes = startup_catalogue(None, dir.tenants_path(), dir.catalog_path())
-        .await
-        .map_err(|error| error.to_string())?;
-    serde_json::from_slice(&bytes).map_err(|error| error.to_string())
+/// Whether `resolver` serves a catalogue the Data API can read: the one its
+/// installed view carries, since there is no other (G8).
+fn serves_a_catalogue(resolver: &RuntimeResolver) -> bool {
+    resolver
+        .pin()
+        .catalogue()
+        .and_then(|catalogue| catalogue.get::<ResourceCatalog>())
+        .is_some()
 }
 
 async fn articles_status(stack: &Stack) -> StatusCode {
@@ -377,30 +369,56 @@ async fn articles_status(stack: &Stack) -> StatusCode {
         .status()
 }
 
-/// Row: catalogue shape change. A running replica never re-reads its
-/// catalogue: it keeps the one it started with, and its tenants still
-/// refresh. A replica starting now fails to start on a catalogue it cannot
-/// decode. Making the catalogue refreshable is outside ADR 0018 (G8).
+/// Row: catalogue shape change. A catalogue the host cannot decode is never
+/// installed (G8). A running replica holds its whole view -- catalogue,
+/// tenants, data sources and stamp -- rather than taking the new tenants
+/// with its old catalogue. A replica starting now refuses it under
+/// `fail_fast_on_prime`, and otherwise starts unprimed, serving no
+/// catalogue and reporting no generation. A catalogue change the host can
+/// decode is installed: `catalogue_generation.rs`.
 #[tokio::test]
-async fn current_behaviour_a_catalogue_shape_change_leaves_running_replicas_on_their_catalogue_and_stops_new_ones(
-) {
+async fn a_catalogue_shape_change_holds_running_replicas_on_their_whole_view_and_stops_new_ones() {
     let stack = support::build_stack(&support::base_snapshot(1)).await;
     assert_eq!(articles_status(&stack).await, StatusCode::OK);
+    let served = stack.resolver.served_generation();
+    assert!(served.is_some());
+    let first = resolves_to(&stack.resolver, "acme").unwrap();
     stack.dir.publisher().publish(&both_move()).await.unwrap();
     edit_json(&stack.dir, "catalog.json", |catalog| {
         catalog["articles"]["page_size"] = json!(50);
     });
     rewrite_record(&stack.dir, 2, |_| {});
 
-    stack.handles.refresh_now();
-    poll_until("generation 2", || {
-        resolves_to(&stack.resolver, "acme").as_deref() == Ok(SECOND_DATA_SOURCE)
-    })
-    .await;
+    refresh(&stack).await;
+    assert_eq!(
+        resolves_to(&stack.resolver, "acme").unwrap(),
+        first,
+        "tenants held too"
+    );
+    assert_eq!(stack.resolver.served_generation(), served);
     assert_eq!(articles_status(&stack).await, StatusCode::OK);
 
-    let refused = host_catalogue(&stack.dir).await.unwrap_err();
-    assert!(refused.contains("page_size"), "{refused}");
+    let Err(refused) = support::build_reader(&stack.dir, Reader::Generation).await else {
+        panic!("a reader starting on a catalogue the host cannot decode must not prime");
+    };
+    assert!(
+        refused.contains("does not match the catalogue shape"),
+        "{refused}"
+    );
+    assert!(
+        !refused.contains("page_size"),
+        "the decoder never quotes the published bytes: {refused}"
+    );
+    let unprimed = RuntimeConfig {
+        fail_fast_on_prime: false,
+        ..support::runtime_config()
+    };
+    let (fresh, handles, _) = support::build_reader_with(&stack.dir, Reader::Generation, &unprimed)
+        .await
+        .unwrap();
+    assert!(!serves_a_catalogue(&fresh));
+    assert_eq!(fresh.served_generation(), None);
+    handles.shutdown().await.unwrap();
     stack.handles.shutdown().await.unwrap();
 }
 
@@ -431,7 +449,7 @@ async fn current_behaviour_a_bumped_manifest_contract_version_is_ignored_by_ever
         .await
         .unwrap();
     assert_eq!(resolves_to(&fresh, "acme").unwrap(), SECOND_DATA_SOURCE);
-    host_catalogue(&stack.dir).await.unwrap();
+    assert!(serves_a_catalogue(&fresh));
     handles.shutdown().await.unwrap();
     stack.handles.shutdown().await.unwrap();
 }
@@ -465,7 +483,7 @@ async fn v2_documents_beside_v1_reach_no_reader() {
         .await
         .unwrap();
     assert_eq!(resolves_to(&fresh, "acme").unwrap(), SECOND_DATA_SOURCE);
-    host_catalogue(&stack.dir).await.unwrap();
+    assert!(serves_a_catalogue(&fresh));
     handles.shutdown().await.unwrap();
     stack.handles.shutdown().await.unwrap();
 }
@@ -493,7 +511,7 @@ async fn a_key_added_to_the_record_under_an_unchanged_floor_is_ignored_by_every_
         .await
         .unwrap();
     assert_eq!(resolves_to(&fresh, "acme").unwrap(), SECOND_DATA_SOURCE);
-    host_catalogue(&stack.dir).await.unwrap();
+    assert!(serves_a_catalogue(&fresh));
     handles.shutdown().await.unwrap();
     stack.handles.shutdown().await.unwrap();
 }

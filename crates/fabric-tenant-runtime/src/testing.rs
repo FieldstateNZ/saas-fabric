@@ -14,6 +14,20 @@ use crate::tenant::TenantDataBinding;
 use crate::{DataSource, TenantRuntimeBinding};
 
 /// The logical name every fixture binds.
+/// A catalogue as the tests' stand-in host decodes one: its generation.
+pub(crate) fn catalogue(generation: u64) -> crate::DecodedCatalogue {
+    crate::DecodedCatalogue::new(generation)
+}
+
+/// The generation of the catalogue `resolver` serves now, `None` when it
+/// serves none.
+pub(crate) fn catalogue_served(resolver: &crate::RuntimeResolver) -> Option<u64> {
+    resolver
+        .pin()
+        .catalogue()
+        .and_then(|catalogue| catalogue.get::<u64>().copied())
+}
+
 pub(crate) fn primary() -> LogicalDataSourceName {
     LogicalDataSourceName::try_new("primary").unwrap()
 }

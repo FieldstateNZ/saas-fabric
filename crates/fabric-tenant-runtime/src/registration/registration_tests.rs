@@ -187,7 +187,7 @@ async fn survive_the_refresh_loop(tenants: Vec<TenantRuntimeBinding>) -> (Arc<Ru
         .filter(|label| **label == "tenants")
         .count();
 
-    (resolver, loads)
+    (Arc::new(resolver), loads)
 }
 
 #[tokio::test]

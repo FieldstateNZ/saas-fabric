@@ -127,11 +127,10 @@ pub(crate) fn unknown_tenant_probed(tenant: &TenantId, request_id: &str) {
 }
 
 /// The Data API was configured at startup.
-pub(crate) fn data_api_ready(resources: usize, connectors: usize) {
+pub(crate) fn data_api_ready(connectors: usize) {
     tracing::info!(
         event = "data_api.ready",
         event_id = event_id(DOMAIN_ID, EventType::Success, 1),
-        resources,
         connectors,
         "Data API ready"
     );

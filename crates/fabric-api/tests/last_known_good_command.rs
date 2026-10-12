@@ -13,7 +13,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use examples_support::example;
-use fabric_api::catalogue::HostCatalogue;
+use fabric_data_api::ResourceCatalogDecoder;
 use fabric_tenant_runtime::{
     build_published_runtime, LastKnownGoodState, LastKnownGoodStore, PublishedFiles, RuntimeConfig,
     AUDIT_FILE_NAME,
@@ -92,12 +92,13 @@ fn publish_examples(dir: &Dir) -> PublishedFiles {
 }
 
 fn reader(dir: &Dir) -> PublishedFiles {
-    PublishedFiles::new(dir.published("tenants.json"), dir.published("data-sources.json"))
-        .with_catalogue(dir.published("catalog.json"))
-        .with_last_known_good(
-            LastKnownGoodStore::new(dir.last_known_good()),
-            Arc::new(HostCatalogue),
-        )
+    PublishedFiles::new(
+        dir.published("tenants.json"),
+        dir.published("data-sources.json"),
+        dir.published("catalog.json"),
+        Arc::new(ResourceCatalogDecoder),
+    )
+    .with_last_known_good(LastKnownGoodStore::new(dir.last_known_good()))
 }
 
 /// Starts the real reader once, which persists generation 3, and stops it.

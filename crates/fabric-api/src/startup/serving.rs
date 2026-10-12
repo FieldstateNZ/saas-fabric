@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use axum::Router;
 use fabric_connector::{ConnectorRegistry, SecretResolver};
-use fabric_data_api::{build_data_api, DataAuthorization, ResourceCatalog};
+use fabric_data_api::{build_data_api, DataAuthorization};
 use fabric_identity::IdentityResolver;
 use fabric_tenant_runtime::{ReaderStatus, RuntimeResolver};
 
@@ -20,8 +20,8 @@ use crate::health::{health_routes, HealthState};
 use crate::secrets::EnvSecretResolver;
 use crate::startup::background_tasks::stop_connector_retry;
 use crate::startup::compose::compose;
+use crate::startup::connectors;
 use crate::startup::connectors::ConnectorRetryHandle;
-use crate::startup::{catalog, connectors};
 
 /// Negotiates the connectors, builds the Data API, and composes the surface.
 ///
@@ -32,14 +32,9 @@ use crate::startup::{catalog, connectors};
 pub(super) async fn build(
     config: &AppConfig,
     runtime: &Arc<RuntimeResolver>,
-    primed_catalogue: Option<Vec<u8>>,
     identity: &Arc<IdentityResolver>,
     publication: Arc<ReaderStatus>,
 ) -> Result<(Router, ConnectorRetryHandle), String> {
-    // Before the connectors, so a catalogue refused here leaves nothing
-    // running.
-    let catalogue = catalog::load(primed_catalogue, &config.catalog_path, &config.tenants_path).await?;
-
     // Secrets: one resolver shared by every connector.
     let secrets: Arc<dyn SecretResolver> = Arc::new(EnvSecretResolver);
 
@@ -48,7 +43,7 @@ pub(super) async fn build(
     // startup — see `startup::connectors` for the policy (§35).
     let (connectors, connector_retry) = connectors::build(config, &secrets).await?;
 
-    match router(config, catalogue, (runtime, publication), identity, connectors) {
+    match router(config, (runtime, publication), identity, connectors) {
         Ok(router) => Ok((router, connector_retry)),
         Err(error) => {
             stop_connector_retry(connector_retry).await;
@@ -60,7 +55,6 @@ pub(super) async fn build(
 /// Builds the Data API and the probes, and joins them.
 fn router(
     config: &AppConfig,
-    catalogue: ResourceCatalog,
     (runtime, publication): (&Arc<RuntimeResolver>, Arc<ReaderStatus>),
     identity: &Arc<IdentityResolver>,
     connectors: ConnectorRegistry,
@@ -70,7 +64,6 @@ fn router(
     // (D01-10a). Supplying either is a separately reviewed change (ADR 0027).
     let data = build_data_api(
         &config.data_api,
-        catalogue,
         DataAuthorization::default(),
         Arc::clone(runtime),
         connectors.clone(),

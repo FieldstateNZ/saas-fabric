@@ -1,4 +1,7 @@
 //! Wiring for the runtime plane.
+//!
+//! In the 121-150 line band: `build_runtime`, its handle and its prime,
+//! whose long rustdoc records why a first load is refused.
 
 mod build_published;
 #[cfg(test)]
@@ -73,11 +76,16 @@ impl RuntimeHandles {
 /// genuinely publishes an empty set — a deployment with no tenants onboarded
 /// yet, which must be able to start. That is honest, and distinct from a source
 /// that published state none of which could be served.
+///
+/// The resolver is returned unshared, so a composition that serves the Data
+/// API over it can give it a fixed catalogue first
+/// ([`RuntimeResolver::with_catalogue`]). Only a published runtime installs
+/// its catalogue with each generation (G8).
 pub async fn build_runtime(
     config: &RuntimeConfig,
     tenant_source: Arc<dyn ResourceSource<TenantRuntimeBinding>>,
     data_source_source: Arc<dyn ResourceSource<DataSource>>,
-) -> Result<(Arc<RuntimeResolver>, RuntimeHandles), String> {
+) -> Result<(RuntimeResolver, RuntimeHandles), String> {
     config.validate()?;
 
     // DataSources are primed first. A tenant binding referencing a DataSource
@@ -97,7 +105,7 @@ pub async fn build_runtime(
         ),
     };
 
-    Ok((Arc::new(RuntimeResolver::new(tenants, data_sources)), handles))
+    Ok((RuntimeResolver::new(tenants, data_sources), handles))
 }
 
 /// Builds one registry and performs its initial load.

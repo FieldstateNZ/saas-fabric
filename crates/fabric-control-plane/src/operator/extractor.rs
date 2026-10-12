@@ -88,10 +88,11 @@ mod tests {
 
     use super::refusal;
     use crate::operator::OperatorAuthError;
+    use crate::ControlPlaneError;
 
     #[test]
     fn a_missing_bearer_stays_unauthenticated() {
-        let error = refusal(OperatorAuthError::Missing);
+        let (error, _) = refuse(OperatorAuthError::Missing);
 
         assert_eq!(error.code(), "unauthenticated");
         assert_eq!(error.status(), StatusCode::UNAUTHORIZED);
@@ -99,11 +100,31 @@ mod tests {
 
     #[test]
     fn a_refused_bearer_gets_its_own_code_and_a_fixed_message() {
-        let error = refusal(OperatorAuthError::NotAnOperator);
+        let (error, _) = refuse(OperatorAuthError::NotAnOperator);
 
         assert_eq!(error.code(), "operator_refused");
         assert_eq!(error.status(), StatusCode::UNAUTHORIZED);
         assert_eq!(error.public_message(), "A bearer was presented and refused.");
+    }
+
+    /// Calls [`refusal`] under a scoped [`EventCounter`] and returns the error
+    /// with the number of `tracing` events it emitted.
+    ///
+    /// Every test here goes through this, including the ones that ignore the
+    /// count, because `tracing-core` caches each callsite's interest
+    /// process-wide. While a single dispatcher is registered, the thread that
+    /// first reaches a callsite computes that cache from *its own* default
+    /// dispatcher, without taking the registry lock. A parallel test calling
+    /// `refusal` with no subscriber would cache `Interest::never` for
+    /// `logging::operator_refused` — possibly after the counter's own rebuild
+    /// had already run — and the counting test would then see zero events.
+    /// With no call to `refusal` outside a counter, no thread can compute that
+    /// interest against the no-op subscriber.
+    fn refuse(err: OperatorAuthError) -> (ControlPlaneError, usize) {
+        let events = Arc::new(AtomicUsize::new(0));
+        let error = tracing::subscriber::with_default(EventCounter(events.clone()), || refusal(err));
+
+        (error, events.load(Ordering::SeqCst))
     }
 
     /// Counts `tracing` events, so a test can pin that a call happened
@@ -133,29 +154,21 @@ mod tests {
 
     #[test]
     fn a_refused_bearer_is_logged_exactly_once() {
-        let events = Arc::new(AtomicUsize::new(0));
-
-        tracing::subscriber::with_default(EventCounter(events.clone()), || {
-            let _ = refusal(OperatorAuthError::NotAnOperator);
-        });
+        let (_, events) = refuse(OperatorAuthError::NotAnOperator);
 
         // The message is deliberately not asserted on: it is a fixed label
         // (`logging::operator_refused`'s own test-free contract), and this
         // test's job is only that *a* line -- not zero, not two -- was
         // written for the one case a browser is told nothing at all.
-        assert_eq!(events.load(Ordering::SeqCst), 1);
+        assert_eq!(events, 1);
     }
 
     #[test]
     fn a_missing_bearer_is_not_logged() {
         // Nothing about a request with no bearer is worth a warning -- see
         // `OperatorAuthError::Missing`'s own rustdoc.
-        let events = Arc::new(AtomicUsize::new(0));
+        let (_, events) = refuse(OperatorAuthError::Missing);
 
-        tracing::subscriber::with_default(EventCounter(events.clone()), || {
-            let _ = refusal(OperatorAuthError::Missing);
-        });
-
-        assert_eq!(events.load(Ordering::SeqCst), 0);
+        assert_eq!(events, 0);
     }
 }

@@ -21,4 +21,7 @@ pub struct PublicationSink {
     /// The identity provider's public origin, under which each client's
     /// realm is its issuer. `None` publishes no issuer registry (D01-4).
     pub issuer_origin: Option<IssuerOrigin>,
+    /// Samples which generation the runtime's replicas serve (G7). `None`
+    /// observes nothing, and every reader answer is unobserved.
+    pub readers: Option<Arc<dyn fabric_platform_management::ReaderObserver>>,
 }

@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use fabric_core::{DataSourceId, LogicalDataSourceName, TenantId};
+use fabric_core::{DataSourceId, LogicalDataSourceName, ReaderGenerationReport, TenantId};
 
 use crate::resource::{LookupError, RegistryResource, ResourceSnapshot};
 use crate::{
@@ -23,15 +23,29 @@ use crate::{
 pub(crate) struct ResolutionView {
     tenants: Option<Arc<ResourceSnapshot<TenantRuntimeBinding>>>,
     data_sources: Option<Arc<ResourceSnapshot<DataSource>>>,
+    served: Option<ReaderGenerationReport>,
 }
 
 impl ResolutionView {
-    /// What each registry holds now, each loaded once.
-    pub(crate) fn of(tenants: &TenantRegistry, data_sources: &DataSourceRegistry) -> Self {
+    /// What each registry holds now, each loaded once, and the generation
+    /// they hold exactly, when they do.
+    pub(crate) fn of(
+        tenants: &TenantRegistry,
+        data_sources: &DataSourceRegistry,
+        served: Option<ReaderGenerationReport>,
+    ) -> Self {
         Self {
             tenants: tenants.current(),
             data_sources: data_sources.current(),
+            served,
         }
+    }
+
+    /// The generation this view holds whole, installed with it: `None`
+    /// when it holds documents with no record, or a generation one of
+    /// whose resources a registry did not take as offered.
+    pub(crate) const fn served(&self) -> Option<ReaderGenerationReport> {
+        self.served
     }
 
     /// Whether both halves have loaded.

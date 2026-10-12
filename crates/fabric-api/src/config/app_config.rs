@@ -26,6 +26,11 @@ pub struct AppConfig {
     /// Address to bind, for example `0.0.0.0:8080`.
     pub listen: String,
 
+    /// A second address, serving only the generation this replica resolves
+    /// against (G7). `None`, the default, binds nothing: see
+    /// [`crate::reader_generation`].
+    pub reader_generation_listen: Option<String>,
+
     /// How the tenant identity context is derived.
     pub identity: IdentityConfig,
 
@@ -122,6 +127,7 @@ impl Default for AppConfig {
     fn default() -> Self {
         Self {
             listen: "0.0.0.0:8080".to_owned(),
+            reader_generation_listen: None,
             identity: IdentityConfig::default(),
             token: TokenConfig::default(),
             tenant_runtime: RuntimeConfig::default(),

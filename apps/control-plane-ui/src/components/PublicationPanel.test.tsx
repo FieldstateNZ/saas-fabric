@@ -21,12 +21,23 @@ const UNOBSERVED = {
   detail: 'no runtime reads this registry and no edge application is observed',
 }
 
+const READERS = {
+  state: 'unobserved' as const,
+  reasons: ['no reader observation is configured, so nothing reads what the runtime\'s replicas serve'],
+  expected: null,
+  observedAtUnixSeconds: null,
+  desiredReplicas: null,
+  members: [],
+}
+
 const READINESS = {
   documents: UNASSESSED,
   identity: UNASSESSED,
   connectors: UNASSESSED,
   excludedFromRegistry: [],
   registryApplication: UNOBSERVED,
+  readers: READERS,
+  updateComplete: false,
 }
 
 function publication(overrides: Partial<Publication> = {}): Publication {
@@ -312,6 +323,8 @@ describe('publishing now', () => {
             connectors: { met: false, reasons: ['platform composition must deploy and configure postgres-nz'] },
             excludedFromRegistry: [],
             registryApplication: UNOBSERVED,
+            readers: READERS,
+            updateComplete: false,
           },
         })}
       />,
@@ -343,6 +356,8 @@ describe('publishing now', () => {
               { tenant: 'initech', kind: 'retired', detail: 'retirement is recorded (tombstoned)' },
             ],
             registryApplication: UNOBSERVED,
+            readers: READERS,
+            updateComplete: false,
           },
         })}
       />,

@@ -38,6 +38,7 @@ impl PublishedFiles {
         };
         let state = PublishedState::Generation {
             generation: generation.generation(),
+            record_sha256: generation.complete.record_digest(),
             origin: origin_of,
             data_sources: generation.data_sources,
             tenants: generation.tenants,

@@ -28,6 +28,15 @@ function platformState(): PlatformState {
         connectors: { met: false, reasons: ['platform composition must deploy and configure postgres-nz'] },
         excludedFromRegistry: [],
         registryApplication: { state: 'unobserved', detail: 'no runtime reads this registry' },
+        readers: {
+          state: 'unobserved',
+          reasons: ['no reader observation is configured'],
+          expected: null,
+          observedAtUnixSeconds: null,
+          desiredReplicas: null,
+          members: [],
+        },
+        updateComplete: false,
       },
     },
   }

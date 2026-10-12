@@ -14,6 +14,7 @@ pub mod catalogue;
 pub mod config;
 pub mod contracts;
 pub mod health;
+pub mod reader_generation;
 pub mod recovery;
 pub mod secrets;
 pub mod startup;

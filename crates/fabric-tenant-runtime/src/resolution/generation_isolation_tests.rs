@@ -114,7 +114,7 @@ fn primed_on_the_old_generation() -> (
     );
     source_registry.apply_all(sources).unwrap();
     tenant_registry.apply_all(tenants).unwrap();
-    published.publish(&tenant_registry, &source_registry);
+    published.publish(&tenant_registry, &source_registry, None);
     (published, tenant_registry, source_registry)
 }
 
@@ -135,7 +135,7 @@ fn a_tenant_resolves_to_one_complete_generations_target_at_every_point_of_a_refr
     tenants.apply_all(new_tenants).unwrap();
     both_resolve_to(&resolver, 1);
 
-    published.publish(&tenants, &sources);
+    published.publish(&tenants, &sources, None);
     both_resolve_to(&resolver, 2);
 }
 
@@ -175,6 +175,7 @@ impl PublishedStateSource for Advancing {
         let (data_sources, tenants) = generation(number);
         Ok(PublishedState::Generation {
             generation: number,
+            record_sha256: fabric_core::RecordDigest::from_bytes([0; 32]),
             origin: crate::GenerationOrigin::Published,
             data_sources,
             tenants,

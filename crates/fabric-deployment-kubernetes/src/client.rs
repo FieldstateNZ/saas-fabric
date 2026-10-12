@@ -1,7 +1,8 @@
 //! Authenticated GETs only; service-account rotation is read for every request.
-use crate::wire::List;
+use crate::wire::{Deployment, List};
 use serde::de::DeserializeOwned;
 use std::path::PathBuf;
+use std::time::Duration;
 
 pub(crate) struct Client {
     pub http: reqwest::Client,
@@ -9,6 +10,26 @@ pub(crate) struct Client {
     pub token_file: PathBuf,
 }
 impl Client {
+    /// The API server this pod runs in, authenticated with its own service
+    /// account, verified against the cluster CA, never following a redirect.
+    pub fn in_cluster() -> Result<Self, String> {
+        let root = "/var/run/secrets/kubernetes.io/serviceaccount";
+        let pem = std::fs::read(format!("{root}/ca.crt"))
+            .map_err(|_| "observation requires the cluster CA certificate")?;
+        let ca = reqwest::Certificate::from_pem(&pem)
+            .map_err(|_| "observation cluster CA certificate is invalid")?;
+        let http = reqwest::Client::builder()
+            .add_root_certificate(ca)
+            .redirect(reqwest::redirect::Policy::none())
+            .timeout(Duration::from_secs(4))
+            .build()
+            .map_err(|_| "could not build the deployment observation client")?;
+        Ok(Self {
+            http,
+            base: "https://kubernetes.default.svc".into(),
+            token_file: format!("{root}/token").into(),
+        })
+    }
     pub async fn get<T: DeserializeOwned>(&self, path: &str, selector: Option<&str>) -> Result<T, String> {
         let token = tokio::fs::read_to_string(&self.token_file)
             .await
@@ -53,6 +74,20 @@ impl Client {
         }
         Ok(list.items)
     }
+}
+
+/// The equality selector a Deployment's pods and replica sets carry.
+pub(crate) fn selector_of(deployment: &Deployment) -> Result<String, String> {
+    let selector = &deployment.spec.selector;
+    if selector.match_labels.is_empty() || !selector.match_expressions.is_empty() {
+        return Err("Deployment observation requires a nonempty equality label selector.".into());
+    }
+    Ok(selector
+        .match_labels
+        .iter()
+        .map(|(k, v)| format!("{k}={v}"))
+        .collect::<Vec<_>>()
+        .join(","))
 }
 
 #[cfg(test)]

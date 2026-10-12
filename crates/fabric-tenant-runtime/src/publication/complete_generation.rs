@@ -5,7 +5,9 @@
 //! than what the publisher wrote: the record's floor admits this reader, and
 //! every document's SHA-256 is the one the record names.
 
-use super::digest::sha256_hex;
+use fabric_core::RecordDigest;
+
+use super::digest::{sha256_digest, sha256_hex};
 use super::file_reads::parse;
 use super::record::{ReaderRecord, READER_CONTRACT};
 use crate::SourceError;
@@ -90,5 +92,10 @@ impl CompleteGeneration {
     /// are two different generations.
     pub(crate) fn record_sha256(&self) -> String {
         sha256_hex(&self.record)
+    }
+
+    /// [`Self::record_sha256`], as the digest a replica reports serving.
+    pub(crate) fn record_digest(&self) -> RecordDigest {
+        sha256_digest(&self.record)
     }
 }

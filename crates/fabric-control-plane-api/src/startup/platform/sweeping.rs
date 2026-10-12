@@ -270,6 +270,7 @@ mod tests {
             environment: "lucentroot".to_owned(),
             publisher: None,
             publication: Arc::new(PublicationState::new()),
+            readers: None,
         }
     }
 

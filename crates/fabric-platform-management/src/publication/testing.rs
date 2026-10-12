@@ -11,7 +11,8 @@ use std::sync::Mutex;
 
 use fabric_runtime_publication::{
     DocumentKind, DocumentOutcome, PublicationError, PublicationReport, PublishedResources,
-    PublishedRevisions, RegistryGeneration, RegistryOutcome, RuntimePublication, RuntimeSnapshot,
+    PublishedRevisions, RecordStamp, RegistryGeneration, RegistryOutcome, RuntimePublication,
+    RuntimeSnapshot,
 };
 
 use held::{Scripted, State};
@@ -127,10 +128,20 @@ impl RuntimePublication for FakePublication {
                 outcome: DocumentOutcome::Written,
                 generation: RegistryGeneration::FIRST,
             }),
+            record: fake_stamp(state.publish_attempts),
         })
     }
 
     fn describe(&self) -> String {
         "fake".to_owned()
+    }
+}
+
+/// A record stamp that differs on every attempt: this fake keeps no record.
+fn fake_stamp(attempt: usize) -> RecordStamp {
+    let generation = u64::try_from(attempt).unwrap_or(u64::MAX);
+    RecordStamp {
+        generation,
+        sha256: fabric_core::RecordDigest::from_bytes([u8::try_from(attempt % 256).unwrap_or(0); 32]),
     }
 }

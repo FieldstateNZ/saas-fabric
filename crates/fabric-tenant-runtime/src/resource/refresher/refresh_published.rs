@@ -8,6 +8,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
+use super::prime_published::served;
 use super::refresh_once::apply_loaded;
 use super::{refresh_loop, RefreshHandle, ResourceRefresher};
 use crate::publication::{PublishedState, PublishedStateSource, ReaderStatus, Serving};
@@ -93,13 +94,20 @@ async fn refresh_published(
         }
         Ok(PublishedState::Generation {
             generation: number,
+            record_sha256,
             origin: read_from,
             data_sources: published_data_sources,
             tenants: published_tenants,
         }) => {
-            apply_loaded(data_sources, &origin, Ok(published_data_sources));
-            apply_loaded(tenants, &origin, Ok(published_tenants));
-            generation.publish(tenants, data_sources);
+            let applied_data_sources = apply_loaded(data_sources, &origin, Ok(published_data_sources));
+            let applied_tenants = apply_loaded(tenants, &origin, Ok(published_tenants));
+            let served = served(
+                number,
+                record_sha256,
+                &read_from,
+                [applied_data_sources, applied_tenants],
+            );
+            generation.publish(tenants, data_sources, served);
             if applied.swap(number, Ordering::Relaxed) != number {
                 logging::generation_applied(&origin, number);
             }
@@ -112,9 +120,9 @@ async fn refresh_published(
             data_sources: published_data_sources,
             tenants: published_tenants,
         }) => {
-            apply_loaded(data_sources, &origin, published_data_sources);
-            apply_loaded(tenants, &origin, published_tenants);
-            generation.publish(tenants, data_sources);
+            let _ = apply_loaded(data_sources, &origin, published_data_sources);
+            let _ = apply_loaded(tenants, &origin, published_tenants);
+            generation.publish(tenants, data_sources, None);
             status.applied(Serving::Unrecorded);
         }
     }

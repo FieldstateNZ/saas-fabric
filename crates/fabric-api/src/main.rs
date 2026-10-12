@@ -77,26 +77,5 @@ async fn run(config_path: &str) -> Result<(), String> {
     config.validate()?;
 
     let application = startup::build(&config).await?;
-
-    let listener = tokio::net::TcpListener::bind(&application.listen)
-        .await
-        .map_err(|error| format!("could not bind {}: {error}", application.listen))?;
-
-    tracing::info!(
-        event = "fabric.listening",
-        address = application.listen,
-        token_mode = config.token.mode_name(),
-        "runtime plane listening"
-    );
-
-    let result = axum::serve(listener, application.router)
-        .with_graceful_shutdown(startup::shutdown_signal())
-        .await
-        .map_err(|error| format!("server error: {error}"));
-
-    // Stop the background tasks before returning, so the process does not
-    // linger with anything still polling.
-    application.tasks.shutdown().await;
-
-    result
+    startup::serve(application, config.token.mode_name()).await
 }

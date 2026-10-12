@@ -1,6 +1,6 @@
 //! Bounded live reads; failed observations never reuse an earlier success.
 use crate::{
-    client::Client,
+    client::{selector_of, Client},
     evaluate::evaluate,
     wire::{Deployment, Pod, ReplicaSet},
     WorkloadTarget,
@@ -38,23 +38,8 @@ impl KubernetesObserver {
                 target.validate()?;
             }
         }
-        let root = "/var/run/secrets/kubernetes.io/serviceaccount";
-        let pem = std::fs::read(format!("{root}/ca.crt"))
-            .map_err(|_| "observation requires the cluster CA certificate")?;
-        let ca = reqwest::Certificate::from_pem(&pem)
-            .map_err(|_| "observation cluster CA certificate is invalid")?;
-        let http = reqwest::Client::builder()
-            .add_root_certificate(ca)
-            .redirect(reqwest::redirect::Policy::none())
-            .timeout(Duration::from_secs(4))
-            .build()
-            .map_err(|_| "could not build the deployment observation client")?;
         Ok(Self {
-            client: Client {
-                http,
-                base: "https://kubernetes.default.svc".into(),
-                token_file: format!("{root}/token").into(),
-            },
+            client: Client::in_cluster()?,
             environment: environment.into(),
             targets,
             clock,
@@ -66,18 +51,7 @@ impl KubernetesObserver {
             target.namespace, target.deployment
         );
         let before: Deployment = self.client.get(&path, None).await?;
-        if before.spec.selector.match_labels.is_empty() || !before.spec.selector.match_expressions.is_empty()
-        {
-            return Err("Deployment observation requires a nonempty equality label selector.".into());
-        }
-        let selector = before
-            .spec
-            .selector
-            .match_labels
-            .iter()
-            .map(|(k, v)| format!("{k}={v}"))
-            .collect::<Vec<_>>()
-            .join(",");
+        let selector = selector_of(&before)?;
         let sets: Vec<ReplicaSet> = self
             .client
             .list(

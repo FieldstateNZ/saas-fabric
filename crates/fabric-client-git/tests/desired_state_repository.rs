@@ -412,3 +412,69 @@ async fn a_missing_catalogue_file_is_no_catalogue_but_a_missing_repository_is_an
     let error = repository(&unreachable).catalogue().await.unwrap_err();
     assert!(matches!(error, RepositoryError::Unavailable { .. }), "{error}");
 }
+
+/// O5: a revert restores bytes, and the contents API names a revision by
+/// its blob's hash, which is its content's. The revision a client was at
+/// before the reverted commit is therefore current again, and a write held
+/// at it since then is accepted: a conditional write here proves the bytes
+/// are the ones the writer read, not that nothing moved in between.
+#[tokio::test]
+async fn a_revert_to_identical_bytes_brings_the_earlier_revision_back_and_a_write_held_at_it_is_accepted() {
+    let host = FakeGitHost::start(&[(ACME_PATH, ACME)]).await;
+    let repository = repository(&host);
+    let read_before = repository.get(&client()).await.unwrap();
+
+    let moved = repository
+        .update(
+            &client(),
+            &with_extra_role(&read_before.document),
+            &read_before.revision,
+            &change(),
+        )
+        .await
+        .unwrap();
+    assert_ne!(moved, read_before.revision);
+
+    host.revert(ACME_PATH, ACME);
+    let reverted = repository.get(&client()).await.unwrap();
+    assert_eq!(reverted.revision, read_before.revision);
+
+    let written = repository
+        .update(
+            &client(),
+            &with_extra_role(&read_before.document),
+            &read_before.revision,
+            &change(),
+        )
+        .await;
+    assert!(written.is_ok(), "{written:?}");
+}
+
+/// The same for the catalogue: a console tag read before a reverted
+/// catalogue commit is accepted once the revert lands.
+#[tokio::test]
+async fn a_catalogue_revert_brings_the_earlier_revision_back_and_a_write_held_at_it_is_accepted() {
+    let text = fabric_client_model::catalogue::Catalogue::default()
+        .render()
+        .unwrap();
+    let host = FakeGitHost::start(&[("fabric-catalogue.yaml", &text)]).await;
+    let repository = repository(&host);
+    let read_before = repository.catalogue().await.unwrap();
+    let mut renamed = read_before.catalogue.clone();
+    renamed.settings.platform_name = "Renamed".into();
+    repository
+        .save_catalogue(&renamed, read_before.revision.as_ref(), &change())
+        .await
+        .unwrap();
+
+    host.revert("fabric-catalogue.yaml", &text);
+    let reverted = repository.catalogue().await.unwrap();
+    assert_eq!(reverted.revision, read_before.revision);
+
+    let mut held = read_before.catalogue;
+    held.settings.platform_name = "Held since before".into();
+    let written = repository
+        .save_catalogue(&held, read_before.revision.as_ref(), &change())
+        .await;
+    assert!(written.is_ok(), "{written:?}");
+}

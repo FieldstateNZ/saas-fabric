@@ -190,7 +190,8 @@ What is built:
     tokens through the real authenticator are tested in
     `handlers/get_current_user/get_current_user_tests.rs`, and the full
     router in `tests/user_current.rs`. `/api/operator` keeps answering,
-    subject only, for one release; the console's Settings page still reads it.
+    subject only, for one release, and the console no longer calls it: its
+    Settings page reads `/api/user/current` too.
 - **ADR 0024 slices 3–5: not built.** `apps/app-shell` has no sign-in and does
   not load modules at runtime. The runtime has no `/v1/identity` route.
 - **Platform side.** There is an OIDC `SecurityPolicy` at

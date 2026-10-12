@@ -94,7 +94,7 @@ Operator-facing HTTP, in `fabric-control-plane`.
 
 ```text
 GET    /api/user/current                 who is signed in (ADR 0024 §3)
-GET    /api/operator                     the subject alone; kept one release
+GET    /api/operator                     the subject alone; kept one release, no console caller
 POST   /api/reconciliation               converge every client, as you
 GET    /api/integrations/git             can desired state be read?
 POST   /api/integrations/git/connect     describe the app to create
@@ -1428,7 +1428,8 @@ and `email` are `preferred_username` and `email`, or `null`; `displayName` is
 unchanged (`401 unauthenticated`, `401 operator_refused`), and a verified
 token whose payload cannot be read as a profile is `500 profile_unreadable`,
 never a `200`. `GET /api/operator` keeps answering the attribution name for
-one release.
+one release, and the console no longer calls it: its Settings page shows the
+operator's `displayName` from `/api/user/current`.
 
 With no gateway in front — the Vite dev proxy at `npm run dev` — the console
 stops at the sign-in screen. Putting the gateway on the local development path

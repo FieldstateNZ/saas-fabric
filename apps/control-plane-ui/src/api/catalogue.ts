@@ -80,11 +80,6 @@ export function getActivity(): Promise<ActivityView> {
   return request<ActivityView>('/api/activity')
 }
 
-/** Who the control plane believes is making these requests. */
-export function getOperator(): Promise<{ subject: string }> {
-  return request<{ subject: string }>('/api/operator')
-}
-
 /**
  * The derived runtime catalogue: every resource a runtime in this
  * environment would be given right now, from the newest published release

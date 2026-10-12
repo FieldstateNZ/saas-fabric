@@ -60,7 +60,7 @@ impl VerificationKeys {
 
     /// A key set built directly, for tests that sign their own tokens.
     #[cfg(test)]
-    pub(super) fn held(keys: Vec<(Option<&str>, DecodingKey)>) -> Self {
+    pub(crate) fn held(keys: Vec<(Option<&str>, DecodingKey)>) -> Self {
         Self {
             keys: keys
                 .into_iter()

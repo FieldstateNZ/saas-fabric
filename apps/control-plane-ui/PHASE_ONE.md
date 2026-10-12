@@ -33,6 +33,7 @@ workbench that once served this surface with a fixed test operator is retired
 Authenticated additions: GET/POST `/api/catalogue`, GET `/api/catalogue/runtime`
 (the derived runtime catalogue, ADR 0023 part 3), POST `/api/clients`,
 GET/PUT `/api/clients/{id}/product`, GET `/api/activity`, GET `/api/operator`,
+GET `/api/user/current`,
 GET `/api/platform/data-sources`, PUT `/api/platform/data-sources/{dataSourceId}`,
 DELETE `/api/platform/data-sources/{dataSourceId}`, GET `/api/clients/{clientId}/placements`,
 POST `/api/clients/{clientId}/placements/{logical}` (ADR 0023 part 2).

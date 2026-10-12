@@ -97,6 +97,15 @@ fn default_leeway() -> u64 {
 }
 
 impl OperatorConfig {
+    /// The realm role this posture requires, as the authenticator it builds
+    /// holds it: trimmed, the way [`OidcOperators::new`] stores it.
+    #[must_use]
+    pub fn required_role(&self) -> &str {
+        match self {
+            Self::Oidc { required_role, .. } => required_role.trim(),
+        }
+    }
+
     /// Builds the authenticator this posture describes.
     ///
     /// # Errors
@@ -122,5 +131,34 @@ impl OperatorConfig {
                 *leeway_seconds,
             )?)),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::OperatorConfig;
+
+    fn posture(required_role: Option<&str>) -> OperatorConfig {
+        let mut value = serde_json::json!({
+            "mode": "oidc",
+            "issuer": "https://auth.example.test/realms/master",
+        });
+        if let Some(role) = required_role {
+            value["required_role"] = role.into();
+        }
+        serde_json::from_value(value).unwrap()
+    }
+
+    #[test]
+    fn the_required_role_defaults_to_the_operator_role() {
+        assert_eq!(posture(None).required_role(), "fabric-operator");
+    }
+
+    #[test]
+    fn the_required_role_is_what_the_deployment_states_trimmed() {
+        assert_eq!(
+            posture(Some(" platform-admin ")).required_role(),
+            "platform-admin"
+        );
     }
 }

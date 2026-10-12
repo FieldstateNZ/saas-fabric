@@ -63,6 +63,17 @@ pub enum ControlPlaneError {
     #[error("A bearer was presented and refused.")]
     OperatorRefused,
 
+    /// The bearer an accepted operator presented does not read as a profile.
+    ///
+    /// Only `GET /api/user/current` raises it, after the extractor has
+    /// accepted the request: the authenticator verified the token, and its
+    /// payload then has no nonblank `sub` or is not JSON. That is this
+    /// platform's fault, not the caller's, so it is a 500 rather than a
+    /// refusal, and it carries nothing from the token — no claim, no
+    /// fragment of the bearer — into the browser or the log.
+    #[error("The signed-in operator's profile could not be read.")]
+    ProfileUnreadable,
+
     /// A secret operation failed. Carried rather than flattened: a stale
     /// write, an outage and a client with no boundary differ to an operator.
     #[error(transparent)]

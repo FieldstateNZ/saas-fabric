@@ -37,6 +37,9 @@ pub const TEST_OPERATOR_HEADER: &str = "X-Test-Operator";
 pub struct AcceptingOperator {
     /// Who an accepted request is attributed to.
     subject: String,
+
+    /// The bearer an accepted operator carries.
+    bearer: String,
 }
 
 impl AcceptingOperator {
@@ -46,8 +49,23 @@ impl AcceptingOperator {
     /// shape a caller wants: there is nothing to do with a concrete one.
     #[must_use]
     pub fn accepting(subject: impl Into<String>) -> Arc<dyn OperatorAuthenticator> {
+        Self::accepting_with_bearer(subject, "a-fixture-bearer")
+    }
+
+    /// Accepts requests bearing the test header as `subject`, carrying
+    /// `bearer` as though the authenticator had verified it.
+    ///
+    /// For `GET /api/user/current`, which reads its profile from the bearer
+    /// the extractor accepted: a test chooses that payload here, including
+    /// one the profile reader must refuse.
+    #[must_use]
+    pub fn accepting_with_bearer(
+        subject: impl Into<String>,
+        bearer: impl Into<String>,
+    ) -> Arc<dyn OperatorAuthenticator> {
         Arc::new(Self {
             subject: subject.into(),
+            bearer: bearer.into(),
         })
     }
 }
@@ -60,7 +78,7 @@ impl OperatorAuthenticator for AcceptingOperator {
 
         Ok(Operator::new(
             &self.subject,
-            OperatorToken::new("a-fixture-bearer"),
+            OperatorToken::new(self.bearer.clone()),
         ))
     }
 

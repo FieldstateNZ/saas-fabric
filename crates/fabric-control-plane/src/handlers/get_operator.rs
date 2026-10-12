@@ -12,25 +12,16 @@ use crate::Operator;
 /// [`Operator`] extractor, so this is the extractor's answer with nothing
 /// else attached.
 ///
-/// # A contract the console now depends on (ADR 0024)
+/// # Kept one release, subject only (ADR 0024 §3)
 ///
-/// The console probes this exact route to learn whether the gateway has
-/// signed this browser in, and sends it to the gateway's sign-in when it has
-/// not — see `apps/control-plane-ui/src/session/gateway.ts`. That only works because
-/// the [`Operator`] extractor refuses an anonymous request with `401` before
-/// this handler runs at all: a `200` here has to mean a verified operator and
-/// nothing else. A future `GET /api/user/current` that answers this same
-/// question must keep the same property — it must never answer `200` for
-/// "not signed in", or the probe that depends on it stops meaning anything.
-///
-/// The extractor's `401` also carries one more thing the probe reads: a
-/// bearer the gateway forwarded and this platform refused answers
-/// `operator_refused`, not the plain `unauthenticated` a request with no
-/// bearer at all gets ([`ControlPlaneError::OperatorRefused`](crate::ControlPlaneError::OperatorRefused)).
-/// Without that distinction, the one case a first-ever page load cannot
-/// otherwise catch — a gateway session whose forwarded token this platform
-/// refuses — would fall through to the console's own sign-in and quietly
-/// leave the browser holding a token, which ADR 0024 §2 forbids.
+/// The console's gateway probe moved to `GET /api/user/current`, which takes
+/// the same [`Operator`] and so answers the same question the same way: a
+/// `401` from the extractor before any handler runs, `unauthenticated` with
+/// no bearer and `operator_refused` for a refused one
+/// ([`ControlPlaneError::OperatorRefused`](crate::ControlPlaneError::OperatorRefused)),
+/// and a `200` only for a verified operator. This route keeps answering, with
+/// the attribution name and nothing else, for one release, so a caller that
+/// still reads it has that long to move.
 pub(crate) async fn get_operator(operator: Operator) -> Json<OperatorResponse> {
     Json(OperatorResponse {
         subject: operator.subject().to_owned(),

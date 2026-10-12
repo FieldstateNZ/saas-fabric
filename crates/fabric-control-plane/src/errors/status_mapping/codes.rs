@@ -25,6 +25,7 @@ impl ControlPlaneError {
             // from "somebody was, and the bearer was refused" on the very
             // first response it ever sees.
             Self::OperatorRefused => "operator_refused",
+            Self::ProfileUnreadable => "profile_unreadable",
             Self::UnknownClient(_) => "unknown_client",
             Self::InvalidRequest(_) => "invalid_request",
             // The catalogue shares this code with a client's document

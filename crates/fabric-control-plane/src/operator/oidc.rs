@@ -98,7 +98,7 @@ impl OidcOperators {
 
     /// The same authenticator, verifying HS256 so a test can sign a token.
     #[cfg(test)]
-    pub(super) fn signed_symmetrically_for_tests(mut self) -> Self {
+    pub(crate) fn signed_symmetrically_for_tests(mut self) -> Self {
         self.algorithm = Algorithm::HS256;
         self
     }

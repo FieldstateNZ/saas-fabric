@@ -2,7 +2,7 @@
  * What a page load does to find out whether the gateway signed it in.
  *
  * The console holds no token and runs no sign-in of its own (ADR 0024 §2), so
- * every outcome below is decided by one probe of `/api/operator`. What matters
+ * every outcome below is decided by one probe of `/api/user/current`. What matters
  * is that it never starts a flow of its own, never navigates by itself, and
  * reports a gateway it cannot help as a dead end rather than a retry.
  */
@@ -31,6 +31,15 @@ function watchNavigation(): { to: () => string | null } {
   return { to: () => destination }
 }
 
+/** What `/api/user/current` answers for a signed-in operator. */
+const SIGNED_IN = {
+  subject: 'f81d4fae-7dec-11d0-a765-00a0c91e6bf6',
+  userName: 'operator',
+  displayName: 'operator',
+  email: null,
+  roles: ['fabric-operator'],
+}
+
 /** A fetch answering every request with one status and body. */
 function answering(status: number, body: unknown): ReturnType<typeof vi.fn> {
   const fetchMock = vi.fn().mockResolvedValue({
@@ -55,14 +64,14 @@ afterEach(() => {
 
 describe('a page load', () => {
   it('signs in from the gateway session alone, asking nothing else', async () => {
-    const fetchMock = answering(200, { subject: 'operator' })
+    const fetchMock = answering(200, SIGNED_IN)
 
     const { result } = renderHook(() => useSession())
 
     await waitFor(() => {
       expect(result.current.state).toEqual({ status: 'signed-in' })
     })
-    expect(fetchMock.mock.calls).toEqual([['/api/operator', expect.anything()]])
+    expect(fetchMock.mock.calls).toEqual([['/api/user/current', expect.anything()]])
   })
 
   it('offers the gateway sign-in, without navigating by itself, when there is no session', async () => {
@@ -92,7 +101,7 @@ describe('a page load', () => {
       expect(result.current.state.status).toBe('signed-out')
     })
     const requested = (fetchMock.mock.calls as [string][]).map(([url]) => url)
-    expect(requested).toEqual(['/api/operator'])
+    expect(requested).toEqual(['/api/user/current'])
   })
 
   it('treats a control-plane failure as a real failure, not "no session"', async () => {
@@ -122,7 +131,7 @@ describe('a page load', () => {
     // Each load's probe runs first, and `redirectToGatewaySignIn` -- what
     // `client.ts` calls once a panel 401s -- is simulated directly here,
     // since this hook makes no panel calls of its own.
-    answering(200, {})
+    answering(200, SIGNED_IN)
     watchNavigation()
 
     const load1 = renderHook(() => useSession())

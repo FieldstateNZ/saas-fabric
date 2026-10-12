@@ -70,6 +70,7 @@ mod lifecycle;
 mod logging;
 mod models;
 mod operator;
+mod operator_tier;
 mod preconditions;
 mod projection;
 mod reconcile;
@@ -110,6 +111,7 @@ pub use operator::{
 };
 pub use registration::{
     build_control_plane, ControlPlaneDeps, ControlPlaneServices, PlatformBinding, PublicationSink,
+    SuppliedOperators,
 };
 pub use registries::{
     DeploymentRegistry, InMemoryRegistryStore, Readability, RealmOrigin, RegistryClient, RegistryConnection,

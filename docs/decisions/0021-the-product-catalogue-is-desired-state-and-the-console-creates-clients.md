@@ -1198,7 +1198,8 @@ and from the source disposition for #158 in
 [#108 comment 6119136505](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6119136505):
 declare the internal callback scheme per client, omit the public template,
 refuse mixed hosts, and fix new-declaration versus manual-removal
-classification with trusted provenance of the last applied declaration.
+classification with trusted provenance of the last applied declaration. That
+last part is **partial**: see the ledger section below.
 
 This disposes owed decision 4 and amends §4 and the Consequences paragraph
 on `.internal` clients. It does not accept this ADR. It changes source only:
@@ -1260,57 +1261,73 @@ declared, or grant a kind they did not state, which is why a `v1` document
 mixing callback kinds is refused too
 ([client desired state](../architecture/client-desired-state.md)).
 
-### Moving a converged client between hosts: the declaration ledger
+### Moving a converged client between hosts: the declaration ledger (partial)
+
+**Status: partial.** The classification and the fail-closed hold are built
+and tested. Durable provenance is not: it depends on the protected
+continuity store
+([#108 comment 6119161317](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6119161317),
+slices A and B), which does not exist yet. Until it is wired and tested,
+every deployment is built with no ledger, and this stays partial.
 
 Before this, a missing declared callback was always read as a hand removal
-(D01-19b). A product save that changed a converged client's hosts therefore
-held every new callback as `declaredRedirectUriRemoved` while the old ones,
-now undeclared, were removed: a public-to-public move kept only the
-unchanged template callback, and a move between kinds left none. The
-provider cannot tell a callback removed by hand from one not yet written,
+(D01-19b). So a product save that changed a converged client's hosts:
+
+- held every new callback as `declaredRedirectUriRemoved`;
+- removed the old callbacks, now undeclared;
+- left a public-to-public move with only the unchanged template callback;
+- left a move between kinds with no callbacks at all.
+
+The provider cannot tell a callback removed by hand from one not yet written,
 and neither can the declaration.
 
 Reconciliation now classifies a missing callback against a **declaration
-ledger**: Fabric's own record of what it wrote.
+ledger**: trusted provenance of the last successful projection. It is a port
+(`fabric_reconciliation::DeclarationLedger`) that the control plane scopes
+per pass. `fabric_control_plane::DeclarationLedgers` hands each pass the
+ledger for one client at the revision it converges, acting as its operator.
 
-- **Recorded on both sides of every client write.** A pass appends
-  `control_plane.audit.identity_declaration_writing` before asking the
-  provider to create or update a client, and
-  `control_plane.audit.identity_declaration_written` once it confirms. Each
-  names the client, its realm, the identity client, its strategy and the
-  SHA-256 of each declared callback — never a callback itself — and the
-  operator whose authority ran the pass (ADR 0012). A write whose callbacks
-  the ledger already confirms exactly is not recorded again, so a converged
-  pass appends nothing.
-- **Classified.** A missing callback the ledger confirms Fabric wrote is a
-  hand removal: held, as before. One it never recorded is the operator's
-  transition: written, with the old callbacks removed. One recorded only as
-  being written, never confirmed, cannot be placed.
-- **Fail closed.** When a missing callback cannot be placed — no ledger, an
-  unreadable or unverifiable one, a client converged before the ledger
-  existed, or a write that was never confirmed — the client is **not
-  written at all** under an ordinary pass, so none of its old callbacks is
-  removed. It is reported as `handEdited` with the new field
-  `redirectUrisUnconfirmed`, identity readiness stays unmet, and the
-  existing audited re-assertion writes it whole and records the baseline. A
-  `Writing` record that cannot be appended stops that write before the
-  provider is called; a `Written` record that cannot be appended leaves the
-  write counted and its callbacks unconfirmed.
-- **Where it lives.** The ledger is the durable, hash-chained audit trail
-  (ADR 0028), in each client's stream, verified on every read. Not
-  desired-state bytes, which anyone with write access edits; not provider
-  metadata, which a hand edit changes; not a process cache, which a restart
-  empties. Keeping it in the trail rather than a second store keeps one
-  history of a client, the one O5's revert work
-  ([#159](https://github.com/FieldstateNZ/saas-fabric/pull/159)) also reads.
-  It is bound to the realm and each callback's digest rather than to a
-  client revision, because a Git revert to earlier bytes can bring an
-  earlier revision back (#159) and must not bring an earlier baseline back
-  with it.
+- **Recorded on both sides of every client write.**
+  - `Writing` is recorded before the provider is asked to create or update a
+    client, and `Written` once the provider confirms.
+  - Each record names the client, its realm, the identity client and the
+    SHA-256 of each declared callback, never a callback itself. It is bound
+    to the revision the pass converged.
+  - A write whose callbacks the ledger already confirms exactly is not
+    recorded again.
+- **Classified.**
+  - A missing callback the ledger confirms Fabric wrote is a hand removal,
+    and is held as before.
+  - One the ledger never recorded is the operator's transition. It is
+    written, and the old callbacks are removed.
+  - One recorded only as being written, never confirmed, cannot be placed.
+- **Fail closed.**
+  - A missing callback cannot be placed when there is no ledger, when the
+    ledger is unreadable, when its provenance is stale or unenrolled, after a
+    restart that lost it, or when a write was never confirmed.
+  - The client is then **not written at all** under an ordinary pass, so none
+    of its old callbacks is removed. It is reported as `handEdited` with the
+    new field `redirectUrisUnconfirmed`, and identity readiness stays unmet.
+  - The existing audited re-assertion writes the client whole, and records
+    the baseline where a ledger exists.
+  - A `Writing` record that cannot be appended stops that write before the
+    provider is called.
+- **What may implement it.** An implementation answers only with provenance
+  it can vouch is current for the client's identity instance. It must never
+  read from:
+  - desired-state Git bytes, which anyone with write access edits and a
+    revert can replay (#159 showed a revert can bring an old revision back);
+  - the provider's current fields, which a hand edit changes;
+  - a process cache, which a restart empties;
+  - the audit trail, which is written after a mutation, does not fail it, and
+    is not a prewrite authority (6119161317).
+
+  The protected continuity store is the named dependency. The shared O5
+  continuity work stays separate from this change.
 - **Containment is unchanged.** A disabled client, a switched-off standard
   flow and a callback removed by hand are held through a move exactly as
-  before; nothing is restored or revoked by inference, and nothing
-  enrolls ambiguous provider state automatically.
+  before. Nothing is restored or revoked by inference, and nothing enrolls
+  ambiguous provider state automatically.
 
 ### What does not change
 
@@ -1334,8 +1351,8 @@ ledger**: Fabric's own record of what it wrote.
   only when nothing diverges. The `withheld` and `handEdited` precedence and
   readiness rules of #147 and #151 are unchanged.
 - **Permission boundaries, the realm, roles, PKCE, the audience mapper and
-  every reconciliation status** are unchanged. The ledger records use the
-  audit trail's existing append; no credential, grant or scope is added.
+  every reconciliation status** are unchanged. No credential, grant, scope or
+  store is added.
 
 ### Verified against the code (at the base of this amendment)
 
@@ -1346,9 +1363,9 @@ ledger**: Fabric's own record of what it wrote.
 | Only `http` and `https` parse; a product write records the scheme and clears it with public hosts; a legacy document is unverifiable and otherwise consistent only when its entries match a scheme | `crates/fabric-client-model/src/private_network_scheme.rs`; `application_identity/scheme_tests.rs`; `application_identity/legacy_scheme.rs` |
 | A missing callback is classified as removed, not yet written or unplaceable against the baseline; an unplaceable one holds the whole client under an ordinary pass and is written whole by a re-assertion; a disabled client and a hand removal stay held through a transition | `crates/fabric-reconciliation/src/plan/classify.rs`, `diff.rs`; `plan/baseline_tests.rs` |
 | A write is recorded before and after, once; a refused `Writing` record calls no provider write; a refused `Written` record leaves the write counted and its callbacks unplaceable; no or an unreadable ledger holds a transition, and a re-assertion writes it | `crates/fabric-reconciliation/src/reconciler/recorded.rs`; `reconciler/ledger_tests.rs` |
-| The ledger over the audit trail: verified on read, realm-bound, digests only | `crates/fabric-control-plane/src/declaration_ledger.rs`; `src/audit/declaration.rs` |
+| Each pass is handed the ledger scoped to the client, the revision it converges and its operator; a deployment is built with none | `crates/fabric-control-plane/src/declaration_ledger.rs`; `src/reconcile/pass.rs`; `fabric-control-plane-api/src/startup/application.rs` |
 | Through the router: each scheme is projected as declared and reported on the client; a missing, misplaced or unknown scheme is refused before anything is written; a public client is unchanged; Git divergences, a host move in Git and mixed hosts in Git are reported, withheld, leave identity unmet and refuse a product save or re-assertion; a legacy document is held and migrated by a save declaring a scheme, but not over edited entries | `crates/fabric-control-plane/tests/internal_host_projection.rs` |
-| Through the router: converged public-to-internal and public-to-public saves write the new callbacks, remove the old ones and report no hand edit; internal-to-public and a scheme change likewise; each write is recorded by digest and the stream verifies; a hand removal after a move is held; a disabled client moves and stays disabled; with no baseline a move is held whole with no provider write, and an audited re-assertion establishes the baseline for the next | `crates/fabric-control-plane/tests/host_transition.rs` |
+| Through the router, with the test-only in-memory ledger: converged public-to-public saves and moves in both cross-kind directions, and a scheme change, write `analytics` exactly once, remove the old callbacks and report no hand edit; each write is recorded before and after, by digest, bound to the revision it converged. Negatives: a hand removal after a move, a hand removal beside a move, and a disabled client stay contained; with no ledger, and after a restart that lost the baseline, a move is held whole with zero provider writes until an audited re-assertion; with no ledger a hand removal is held and never written back. Every case asserts the provider calls | `crates/fabric-control-plane/tests/host_transition.rs` |
 | A mixed client's creation is refused with `400 invalid_request` | `crates/fabric-control-plane/tests/product_workflows.rs::an_assignment_is_refused_for_a_client_mixing_internal_and_public_hosts` |
 | The console asks for the scheme only for `.internal` hosts, never pre-fills it, clears it with a public host, and names `redirectUrisUnconfirmed` | `apps/control-plane-ui/src/product/PrivateNetworkSchemeSelect.tsx` and its test; `components/ReconciliationBadge.tsx` and its test |
 | The D01-19b suites pass unchanged | `crates/fabric-client-model/src/document/application_identity/projection_tests.rs`; `crates/fabric-control-plane/tests/projected_divergence.rs`, `projected_identity.rs`, `projected_identity_git.rs`, `issuer_registry.rs`; `crates/fabric-keycloak/tests/keycloak_hand_edits.rs` |
@@ -1359,24 +1376,20 @@ ledger**: Fabric's own record of what it wrote.
   application, no `privateNetwork` projected client has been converged into
   a real Keycloak by this change, and no live HTTP, private CA or gateway
   listener is approved by it.
-- **The ledger needs a durable trail.** Storage for the audit trail in a live
-  environment is still deferred (ADR 0028). A deployment without one keeps
-  no ledger, so every host move after a client's first convergence is held
-  as `redirectUrisUnconfirmed` until an operator re-asserts.
-- **Clients converged before the ledger have no baseline.** They stay
-  converged and report nothing while nothing is missing. Their first host
-  move, and any hand removal before a write records a baseline, is held
-  whole until re-asserted.
+- **Partial: no durable provenance.** No deployment has a ledger until the
+  protected continuity store exists, with its reviewed enrollment procedure.
+  Until then every host move after a client's first convergence, and every
+  hand removal of a callback, is held whole as `redirectUrisUnconfirmed`
+  until an operator re-asserts; nothing is lost, and nothing is fought.
+- **Clients converged before a ledger exists have no baseline.** They stay
+  converged and report nothing while nothing is missing; their enrollment is
+  the continuity store's reviewed procedure, never automatic.
 - **A held client is not corrected.** While a client is held as
   `redirectUrisUnconfirmed`, product-owned drift on it, widening drift
   included, is not corrected, as for a withheld one.
 - **A `Written` record that fails leaves a confirmed write unconfirmed.** Its
   callbacks are then unplaceable until re-asserted; reported, never
   re-written over a possible hand removal.
-- **Reading is linear in a client's stream.** Each pass reads and verifies
-  the client's whole audit stream. A record holds one digest per callback,
-  so a client with very many callbacks can exceed the trail's per-entry
-  bound, which refuses the write rather than recording less.
 - **An internal client has no callback on the template hostname.** An
   application reached inside the private network on its template name,
   rather than under a client host, cannot sign that client's users in.

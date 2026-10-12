@@ -634,16 +634,18 @@ ADR 0026.** Owner: **Brett**.
   - **B.** Projected clients are marked as the product's and refused in
     identity edits.
   - *Recommendation:* **B**.
-  - *Disposed 2026-10-11; first slice built 2026-10-12, not complete:*
-    **B**, extended to the identity provider.
+  - *Disposed 2026-10-11; first slice built 2026-10-12; the owed follow-up
+    built 2026-10-12, under review:* **B**, extended to the identity
+    provider.
     - An identity edit to a projected client is refused, except on a retired
       client.
     - A product save refuses a stored projected entry that diverges from the
       stored projection.
     - In Keycloak, a hand edit that only narrows a managed field is held and
       reported as `handEdited`, and an audited re-assertion overwrites it.
-    - Read-time divergence reporting, and refusing convergence onto a
-      diverged entry, are owed. See
+    - Every client read reports a stored projected entry that diverges from
+      its projection. A sweep withholds it as `withheld`, and a re-assertion
+      onto it is refused. See
       [Dispositions recorded](#dispositions-recorded).
 - **D01-19c: activity and the document size limit** (ADR 0021 owed decision 6,
   `0021-…:629-633`). Evidence: today activity is bounded only by
@@ -995,10 +997,22 @@ a complete D01-19b. Built:
 - the pre-write guard: a product save refuses a stored projected entry that
   diverges from the stored document's own projection.
 
-No permission, credential or service-account scope changed. Owed:
-- read-time reporting of a stored divergence;
-- refusing projection-based convergence and re-assertion onto a diverged
-  entry.
+No permission, credential or service-account scope changed.
+
+The owed follow-up is built and under review. Its defaults are asked on
+[#108](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6117200254):
+- read-time reporting: `projection` (`consistent`, `diverged` with each
+  `{client, field}`, or `unverifiable`) on `GET /api/clients`,
+  `GET /api/clients/{clientId}` and `GET /api/clients/{clientId}/identity`,
+  and in the console. It reports a stored inconsistency. It does not say who
+  edited Git.
+- refusing projection-based convergence: a sweep withholds each diverged or
+  unverifiable projected entry. The entry is neither written nor corrected,
+  and the client is reported as the new `withheld` status.
+- refusing re-assertion: a re-assertion onto a diverged entry answers `409
+  projected_client_diverged` before any provider call, and is not audited.
+
+D01-19b is complete once that review accepts it.
 
 **D01-14 and D01-19a: what stays open.** Built: the state machine, its
 refusals, the API and console state, and `lifecycle.withdrawal`, which reports
@@ -1066,7 +1080,7 @@ IDs are not reused.
 | D01-16 | Lifecycle | Client upgrades, and `automatic` for application components (ADR 0021 owed 7) | Operator save per client for the pilot |
 | D01-18 | Lifecycle | How the runtime is raised from `replicas: 0` (amends ADR 0023 §5) | Fabric reports a gate; a person flips it |
 | D01-19a | Lifecycle | What "client created" means (ADR 0021 owed 2) | **Disposed 2026-10-11:** explicit incomplete state until provisioning, identity and publication are met. Built. See [Dispositions recorded](#dispositions-recorded) |
-| D01-19b | Lifecycle | Who owns a projected identity client (ADR 0021 owed 5) | **Disposed 2026-10-11; first slice built, not complete:** product-owned projection; unsupported hand edits refused, not silently fought. Built: identity edits to a projected client refused except when retired; product saves refuse a stored projection divergence; held Keycloak hand edits on managed fields reported as `handEdited`, overwritten only by an audited re-assertion. Owed: read-time divergence reporting, refusing convergence onto a diverged entry. See [Dispositions recorded](#dispositions-recorded) |
+| D01-19b | Lifecycle | Who owns a projected identity client (ADR 0021 owed 5) | **Disposed 2026-10-11; first slice built; owed follow-up built, under review:** product-owned projection; unsupported hand edits refused, not silently fought. Built: identity edits to a projected client refused except when retired; product saves refuse a stored projection divergence; held Keycloak hand edits on managed fields reported as `handEdited`, overwritten only by an audited re-assertion. Follow-up: every client read reports a stored divergence (`projection`); sweeps withhold a diverged entry (`withheld`); re-assertion onto one is refused. See [Dispositions recorded](#dispositions-recorded) |
 | D01-19c | Lifecycle | Activity and the size limit (ADR 0021 owed 6) | **Disposed 2026-10-11:** bounded view; durable audit source. Designed and tested, not activated (ADR 0028). Retention, storage activation and customer-data commitments deferred |
 | D01-19d | Lifecycle | Accept ADR 0021 and ADR 0026 (0026 has six owed decisions; it comes after D01-2) | **Disposed 2026-10-11:** in order 0023, 0021, 0026; owed items stay owed |
 | D01-20 | Rollback | Order updates as well as creation (`RollingSync`, platform #44) | Creation-only for the trial; `RollingSync` before the pilot |

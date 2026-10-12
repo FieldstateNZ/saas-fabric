@@ -55,6 +55,7 @@ mod errors;
 mod identity;
 mod ids;
 pub mod lifecycle;
+mod private_network_scheme;
 mod secrets;
 
 pub use authorization::{AuthorizationConfiguration, Relation, ResourceAuthorization};
@@ -69,4 +70,5 @@ pub use identity::{
 };
 pub use ids::{ClientId, ClientRevision, Host, OidcClientId, RealmName, RelationName, RoleName};
 pub use lifecycle::{ClientLifecycle, LifecycleRecord, LifecycleRefusal, LifecycleState, LifecycleUse};
+pub use private_network_scheme::PrivateNetworkScheme;
 pub use secrets::{SecretNamespace, SecretsConfiguration};

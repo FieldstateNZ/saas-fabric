@@ -40,6 +40,7 @@
 //! in the console is a bounded view kept in desired state; it is not either
 //! copy, and nothing here reads from it except the catalogue's own entry name.
 
+mod declaration;
 mod identity;
 mod lifecycle;
 mod product;
@@ -48,6 +49,7 @@ mod registry;
 mod secret;
 mod selection;
 
+pub(crate) use declaration::{identity_declaration, DeclarationStage};
 pub(crate) use identity::{identity_projection_reasserted, identity_updated};
 pub(crate) use lifecycle::{client_deletion_confirmed, client_tombstoned};
 pub(crate) use product::{catalogue_changed, client_created, product_updated};

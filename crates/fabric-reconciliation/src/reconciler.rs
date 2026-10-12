@@ -4,11 +4,19 @@
 //! observe-plan-apply path (`run.rs`), which is the point. A re-assertion
 //! that ran a different path from an ordinary pass could diverge from it in
 //! what it observes or how it reports.
+//!
+//! In the 121–150 line band: one type, its constructors and its three entry
+//! points, each of whose rustdoc states a contract — the failure shape, the
+//! hand-edit policy, the withheld and ledger semantics — that belongs beside
+//! the signature it constrains.
 
 mod apply;
+#[cfg(test)]
+mod ledger_tests;
 mod outcome;
 #[cfg(test)]
 mod reconciler_tests;
+mod recorded;
 mod run;
 mod withhold;
 #[cfg(test)]
@@ -18,10 +26,12 @@ use std::sync::Arc;
 
 use fabric_client_model::{Client, OidcClientId};
 
+use crate::ledger::{AppliedBaseline, DeclarationLedger};
 use crate::logging;
 use crate::plan::{self, HandEditPolicy, IdentityPlan};
 use crate::provider::{IdentityProvider, ProviderError};
 
+pub(crate) use apply::ApplyError;
 pub use outcome::ReconciliationOutcome;
 
 /// Converges an identity provider onto a client's desired identity state.
@@ -39,13 +49,29 @@ pub use outcome::ReconciliationOutcome;
 pub struct IdentityReconciler {
     /// The provider being converged.
     provider: Arc<dyn IdentityProvider>,
+
+    /// Where what Fabric writes is recorded, and read back as the baseline
+    /// a missing callback is classified against. `None`: nothing is known,
+    /// and every ambiguous transition is held.
+    ledger: Option<Arc<dyn DeclarationLedger>>,
 }
 
 impl IdentityReconciler {
     /// Builds a reconciler over a provider.
     #[must_use]
     pub fn new(provider: Arc<dyn IdentityProvider>) -> Self {
-        Self { provider }
+        Self {
+            provider,
+            ledger: None,
+        }
+    }
+
+    /// Records every client write in `ledger` and classifies against what it
+    /// holds. See the `ledger` module for what may implement one.
+    #[must_use]
+    pub fn with_ledger(mut self, ledger: Arc<dyn DeclarationLedger>) -> Self {
+        self.ledger = Some(ledger);
+        self
     }
 
     /// Works out what would have to change, without changing anything.
@@ -61,7 +87,8 @@ impl IdentityReconciler {
     /// indistinguishable from "already converged", which is the most
     /// dangerous possible answer to give here.
     pub async fn plan(&self, client: &Client) -> Result<IdentityPlan, ProviderError> {
-        self.plan_under(client, HandEditPolicy::Hold).await
+        let baseline = self.baseline(client).await;
+        self.plan_under(client, HandEditPolicy::Hold, &baseline).await
     }
 
     /// Brings the provider in line with the desired state, holding every
@@ -103,6 +130,7 @@ impl IdentityReconciler {
         &self,
         client: &Client,
         policy: HandEditPolicy,
+        baseline: &AppliedBaseline,
     ) -> Result<IdentityPlan, ProviderError> {
         let observed = self.provider.observe_realm(&client.identity.realm).await?;
 
@@ -111,6 +139,6 @@ impl IdentityReconciler {
             .configured_audience()
             .ok_or(ProviderError::NoAudienceConfigured)?;
 
-        Ok(plan::plan(client, observed.as_ref(), audience, policy))
+        Ok(plan::plan(client, observed.as_ref(), audience, policy, baseline))
     }
 }

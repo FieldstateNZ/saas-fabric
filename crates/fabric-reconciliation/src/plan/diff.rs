@@ -3,14 +3,20 @@
 //! Which client difference is product-owned drift and which is an
 //! unsupported hand edit is decided in `classify`; this file only turns the
 //! answer into actions, under a [`HandEditPolicy`].
+//!
+//! In the 121–150 line band: one function, whose rustdoc carries the
+//! contract for each of its three inputs beyond the desired state — the
+//! audience, the policy and the ledger baseline — beside the code that uses
+//! them.
 
 use std::collections::BTreeSet;
 
 use fabric_client_model::Client;
 
+use crate::ledger::AppliedBaseline;
 use crate::plan::classify::compare;
 use crate::plan::{HandEditPolicy, IdentityAction, IdentityPlan};
-use crate::provider::{HandEdit, HeldEdits, ObservedRealm};
+use crate::provider::{HandEdit, HandEditedField, HeldEdits, ObservedRealm};
 
 /// Works out what has to change for `observed` to match `client`.
 ///
@@ -33,12 +39,20 @@ use crate::provider::{HandEdit, HeldEdits, ObservedRealm};
 /// one that also has product-owned drift is written with them preserved; both
 /// are listed in [`IdentityPlan::hand_edits`]. Under
 /// [`HandEditPolicy::Overwrite`] every client carrying one is written whole.
+///
+/// `baseline` is what the declaration ledger says Fabric wrote, which decides
+/// whether a missing declared callback was removed by hand, is not yet
+/// written, or cannot be placed (see `classify`). A client whose missing
+/// callback cannot be placed is not written at all under
+/// [`HandEditPolicy::Hold`], and is reported as
+/// [`HandEditedField::RedirectUrisUnconfirmed`].
 #[must_use]
 pub fn plan(
     client: &Client,
     observed: Option<&ObservedRealm>,
     configured_audience: &str,
     policy: HandEditPolicy,
+    baseline: &AppliedBaseline,
 ) -> IdentityPlan {
     let identity = &client.identity;
     let mut actions = Vec::new();
@@ -79,16 +93,27 @@ pub fn plan(
             continue;
         };
 
-        let comparison = compare(declared, existing, configured_audience);
+        let comparison = compare(
+            declared,
+            existing,
+            configured_audience,
+            baseline.callbacks(&declared.id),
+        );
         hand_edits.extend(comparison.held.fields().into_iter().map(|field| HandEdit {
             client: declared.id.clone(),
             field,
         }));
+        if comparison.unconfirmed {
+            hand_edits.push(HandEdit {
+                client: declared.id.clone(),
+                field: HandEditedField::RedirectUrisUnconfirmed,
+            });
+        }
 
         let (write, held) = match policy {
-            HandEditPolicy::Hold => (comparison.drift, comparison.held),
+            HandEditPolicy::Hold => (comparison.drift && !comparison.unconfirmed, comparison.held),
             HandEditPolicy::Overwrite => (
-                comparison.drift || !comparison.held.is_empty(),
+                comparison.drift || comparison.unconfirmed || !comparison.held.is_empty(),
                 HeldEdits::default(),
             ),
         };

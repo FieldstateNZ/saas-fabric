@@ -57,6 +57,7 @@ mod audit_trail;
 mod client_secrets;
 mod config;
 mod converge;
+mod declaration_ledger;
 mod document_size;
 mod errors;
 mod extraction;

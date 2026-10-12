@@ -11,7 +11,8 @@ use crate::{
 const FIXTURE: &str = include_str!("../../../tests/fixtures/client.yaml");
 const PUBLIC_HOSTS: &str = "  hosts:\n  - acme.example.com\n";
 const PUBLIC_REDIRECT: &str = "        strategy: claimedHttps\n        uris:\n        - https://acme.reports.example.com/callback\n        - https://acme.example.com/reports/callback\n";
-const INTERNAL_HOSTS: &str = "  hosts:\n  - acme.lucentroot.internal\n  - reports.acme.internal\n";
+const INTERNAL_HOSTS: &str =
+    "  hosts:\n  - acme.lucentroot.internal\n  - reports.acme.internal\n  privateNetworkScheme: http\n";
 const INTERNAL_REDIRECT: &str = "        strategy: privateNetwork\n        uris:\n        - http://acme.lucentroot.internal/reports/callback\n        - http://reports.acme.internal/reports/callback\n";
 
 fn edited(edit: impl FnOnce(String) -> String) -> ClientDocument {

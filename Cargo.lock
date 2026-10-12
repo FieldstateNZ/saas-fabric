@@ -611,6 +611,7 @@ dependencies = [
  "async-trait",
  "fabric-client-model",
  "fabric-core",
+ "ring",
  "serde",
  "thiserror",
  "tokio",

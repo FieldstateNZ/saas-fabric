@@ -102,10 +102,12 @@ impl ReconciliationOutcome {
     /// failing one took effect, and the count says so rather than claiming
     /// the pass changed nothing.
     #[must_use]
-    pub fn failed_after(completed: usize, error: &ProviderError) -> Self {
+    pub fn failed_after(completed: usize, error: &impl std::fmt::Display) -> Self {
         Self {
+            status: ReconciliationStatus::Failed,
             actions: completed,
-            ..Self::failed(error)
+            detail: Some(error.to_string()),
+            ..Self::converged()
         }
     }
 

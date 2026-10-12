@@ -31,6 +31,7 @@ use http::{header, Request, Response};
 use tower::ServiceExt as _;
 
 pub mod described_registry;
+pub mod newco;
 pub mod platform_fixture;
 pub mod projected;
 pub mod selection;

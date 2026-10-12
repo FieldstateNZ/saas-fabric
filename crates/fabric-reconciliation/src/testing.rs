@@ -29,5 +29,7 @@
 
 mod fake_identity_provider;
 mod fake_provider_behaviour;
+mod in_memory_ledger;
 
 pub use fake_identity_provider::FakeIdentityProvider;
+pub use in_memory_ledger::{InMemoryDeclarationLedger, LedgerRecord};

@@ -6,29 +6,16 @@
 //! be constructed (ADR 0012).
 //!
 //! In the 121–150 line band: the three ways in — a sweep, a sweep after a
-//! write, and one client's re-assertion — share the one constructor that
-//! binds a reconciler to an operator. Keeping them together is what makes
-//! "every path starts with an operator" checkable in one file.
+//! write, and one client's re-assertion — are kept together, and each starts
+//! from `declaration_ledger::reconciler`, the one constructor that binds a
+//! reconciler and its declaration ledger to an operator.
 
 use fabric_client_model::{ClientId, ClientRevision};
-use fabric_reconciliation::IdentityReconciler;
 
+use crate::declaration_ledger::reconciler;
 use crate::repository::StoredClient;
 use crate::state::ControlPlaneState;
 use crate::{audit, logging, reconcile, ControlPlaneError, Operator};
-
-/// A reconciler acting as this operator, or the reason there is none.
-fn reconciler(
-    state: &ControlPlaneState,
-    operator: &Operator,
-) -> Result<IdentityReconciler, ControlPlaneError> {
-    let factory = state
-        .identity_provider
-        .as_ref()
-        .ok_or(ControlPlaneError::ConvergenceUnavailable)?;
-
-    Ok(IdentityReconciler::new(factory.acting_as(operator.token())))
-}
 
 /// Converges every client, acting as this operator.
 ///

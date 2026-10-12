@@ -199,6 +199,7 @@ fn a_client_document_holds_its_own_copy_of_the_resolution() {
     let request = ClientProductRequest {
         display_name: "Acme".into(),
         hosts: vec![crate::Host::try_new("acme.example.com").unwrap()],
+        private_network_scheme: None,
         legal_name: "Acme Ltd".into(),
         region: "NZ".into(),
         timezone: "Pacific/Auckland".into(),

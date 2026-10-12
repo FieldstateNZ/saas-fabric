@@ -9,7 +9,10 @@
 
 use std::collections::BTreeSet;
 
-use crate::{ClientDocument, DesiredStateError, OidcClient, ProjectedClientDivergence, ProjectedClientField};
+use crate::{
+    ClientDocument, DesiredStateError, OidcClient, PrivateNetworkScheme, ProjectedClientDivergence,
+    ProjectedClientField,
+};
 
 impl ClientDocument {
     /// The entries this document's own assignments project, computed from
@@ -20,7 +23,16 @@ impl ClientDocument {
     /// Returns [`DesiredStateError`] if the product section does not parse or
     /// the stored assignments cannot be projected at all.
     pub fn projected_clients(&self) -> Result<Vec<OidcClient>, DesiredStateError> {
-        let projected = self.with_application_identity()?;
+        self.projected_clients_over(self.client().private_network_scheme)
+    }
+
+    /// As [`Self::projected_clients`], under `scheme` in place of the one
+    /// the document declares.
+    pub(super) fn projected_clients_over(
+        &self,
+        scheme: Option<PrivateNetworkScheme>,
+    ) -> Result<Vec<OidcClient>, DesiredStateError> {
+        let projected = self.with_application_identity_over(scheme)?;
         let ids: BTreeSet<String> = self
             .product()?
             .applications
@@ -46,10 +58,18 @@ impl ClientDocument {
     ///
     /// As [`Self::projected_clients`].
     pub fn projection_divergences(&self) -> Result<Vec<ProjectedClientDivergence>, DesiredStateError> {
+        self.divergences_over(self.client().private_network_scheme)
+    }
+
+    /// As [`Self::projection_divergences`], under `scheme`.
+    pub(super) fn divergences_over(
+        &self,
+        scheme: Option<PrivateNetworkScheme>,
+    ) -> Result<Vec<ProjectedClientDivergence>, DesiredStateError> {
         let stored = &self.client().identity.clients;
 
         Ok(self
-            .projected_clients()?
+            .projected_clients_over(scheme)?
             .into_iter()
             .filter_map(|expected| {
                 let field = match stored.iter().find(|client| client.id == expected.id) {

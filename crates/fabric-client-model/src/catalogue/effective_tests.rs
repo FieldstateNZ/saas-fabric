@@ -53,6 +53,7 @@ fn request(configuration: &[(&str, &str)]) -> ClientProductRequest {
     ClientProductRequest {
         display_name: "Acme".into(),
         hosts: vec![],
+        private_network_scheme: None,
         legal_name: "Acme Ltd".into(),
         region: "NZ".into(),
         timezone: "Pacific/Auckland".into(),

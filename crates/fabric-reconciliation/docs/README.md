@@ -96,7 +96,25 @@ fighting" D01-19b refuses:
 - the client is **disabled** (`clientDisabled`) — possibly incident
   containment, which re-enabling automatically would undo;
 - its **standard flow** is off (`standardFlowDisabled`);
-- a **declared redirect URI is missing** (`declaredRedirectUriRemoved`).
+- a **declared redirect URI is missing** that the declaration ledger says
+  Fabric wrote (`declaredRedirectUriRemoved`).
+
+**A missing declared callback is placed by the declaration ledger (D01-15).**
+The provider cannot tell a callback removed by hand from one Fabric has not
+written yet — a host the operator just added — so each write is recorded in a
+`DeclarationLedger` before the provider is called (`Writing`) and once it
+confirms (`Written`), by client, realm and each callback's SHA-256. A missing
+callback the ledger confirms is a hand removal, held. One it never recorded is
+a transition, written; the old callbacks, now undeclared, are removed as
+before. One recorded only as being written, or any missing callback when no
+baseline is known (no ledger, an unreadable one, or a client converged before
+it existed), cannot be placed: the client is not written at all under an
+ordinary pass, so nothing it holds is removed, and it is reported as
+`redirectUrisUnconfirmed` until an operator re-asserts. A `Writing` record that
+cannot be appended stops the write before the provider is called. The ledger
+must be durable and Fabric's own — never desired-state bytes, provider
+metadata or a process cache; `fabric-control-plane` keeps it in the audit
+trail.
 
 A held edit is listed in `IdentityPlan::hand_edits` and the pass is recorded
 as `HandEdited`. A client carrying *only* held edits plans no write, so

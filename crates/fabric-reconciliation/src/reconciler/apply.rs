@@ -5,6 +5,10 @@ use fabric_client_model::RealmName;
 use crate::plan::{IdentityAction, IdentityPlan};
 use crate::provider::{HandEdit, IdentityProvider, ProviderError};
 
+use super::recorded::recorded;
+pub(crate) use super::recorded::ApplyError;
+pub(super) use super::recorded::Recording;
+
 /// A plan that stopped part-way.
 ///
 /// Carries how many actions completed before the failing one, because
@@ -14,8 +18,14 @@ pub(super) struct Interrupted {
     /// How many actions, from the start of the plan, the provider confirmed.
     pub(super) completed: usize,
 
-    /// Why the next one failed. Whether it took effect is unknown.
-    pub(super) error: ProviderError,
+    /// Why the next one failed. Whether it took effect is unknown, unless
+    /// `recorded_late` says otherwise.
+    pub(super) error: ApplyError,
+
+    /// The failing action's provider write was confirmed and only its
+    /// `Written` record failed: it is counted in `completed`, and nothing is
+    /// left unconfirmed by it.
+    pub(super) recorded_late: bool,
 }
 
 /// Applies every action in order, stopping at the first failure.
@@ -32,13 +42,21 @@ pub(super) struct Interrupted {
 /// reason worth stating: every action is additive and idempotent, so the next
 /// pass re-plans against what actually exists and continues from there. There
 /// is no half-applied state that a retry would make worse.
-pub(super) async fn apply(provider: &dyn IdentityProvider, plan: &IdentityPlan) -> Result<(), Interrupted> {
+pub(super) async fn apply(
+    provider: &dyn IdentityProvider,
+    plan: &IdentityPlan,
+    recording: &Recording<'_>,
+) -> Result<(), Interrupted> {
     let realm = plan.realm();
 
     for (completed, action) in plan.actions().iter().enumerate() {
-        apply_one(provider, realm, action)
+        recorded(provider, realm, action, recording)
             .await
-            .map_err(|error| Interrupted { completed, error })?;
+            .map_err(|(error, recorded_late)| Interrupted {
+                completed: completed + usize::from(recorded_late),
+                error,
+                recorded_late,
+            })?;
     }
 
     Ok(())
@@ -76,7 +94,7 @@ pub(super) fn overwrites_after(
 }
 
 /// Performs one action.
-async fn apply_one(
+pub(super) async fn apply_one(
     provider: &dyn IdentityProvider,
     realm: &RealmName,
     action: &IdentityAction,

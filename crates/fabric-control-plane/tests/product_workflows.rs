@@ -463,6 +463,7 @@ async fn activity_merges_catalogue_and_client_events_newest_first() {
     let request = ClientProductRequest {
         display_name: "Acme".into(),
         hosts: vec![Host::try_new("www.example.com").unwrap()],
+        private_network_scheme: None,
         legal_name: "Acme Ltd".into(),
         region: "NZ".into(),
         timezone: "Pacific/Auckland".into(),

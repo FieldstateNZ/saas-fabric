@@ -6,7 +6,7 @@ use fabric_core::LogicalDataSourceName;
 
 use crate::{
     AuthorizationConfiguration, ClientId, DataIntent, Host, IdentityConfiguration, LifecycleRecord,
-    SecretsConfiguration,
+    PrivateNetworkScheme, SecretsConfiguration,
 };
 
 /// A client's desired state, as far as this increment models it.
@@ -43,6 +43,14 @@ pub struct Client {
     /// Modelled here because they identify the client to an operator, and
     /// reconciled by nothing yet: routing is a later increment (ADR 0008).
     pub hosts: Vec<Host>,
+
+    /// The scheme callbacks on this client's `.internal` hosts use (D01-15).
+    ///
+    /// Required before a client on `.internal` hosts can be assigned an
+    /// application, and refused on any other client. `None` for every
+    /// document written before it existed: such a document is never read as
+    /// either scheme.
+    pub private_network_scheme: Option<PrivateNetworkScheme>,
 
     /// The client's identity configuration.
     pub identity: IdentityConfiguration,

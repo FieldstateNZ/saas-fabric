@@ -13,6 +13,15 @@
 //! | client disabled | **held** | narrows; may be incident containment |
 //! | standard flow disabled | **held** | narrows |
 //! | a declared redirect URI removed | **held** | narrows |
+//! | a declared redirect URI not yet written | product-owned | a transition the operator made (D01-15) |
+//! | a declared redirect URI nobody can place | **held, whole client** | see below |
+//!
+//! Which of the last three a missing declared callback is comes from the
+//! [`AppliedBaseline`]: confirmed written before means removed by hand; never
+//! recorded means not yet written; recorded as being written but never
+//! confirmed, or no baseline at all, means nobody can say. That last case
+//! writes nothing to the client, so its old callbacks are not removed while
+//! its new ones are withheld, and an operator's re-assertion decides.
 //!
 //! Everything the adapter neither reads nor writes — description, web
 //! origins, consent, client scopes and their mappers, token lifespans,
@@ -31,6 +40,7 @@ use std::collections::BTreeSet;
 
 use fabric_client_model::{OidcClient, RedirectUri};
 
+use crate::ledger::{CallbackDigest, WrittenCallbacks};
 use crate::provider::{HeldEdits, ObservedOidcClient};
 
 /// How an existing client differs from its declaration.
@@ -41,21 +51,42 @@ pub(super) struct Comparison {
 
     /// The unsupported hand edits it carries.
     pub(super) held: HeldEdits,
+
+    /// Whether a declared callback is missing that nothing durable places:
+    /// the client must not be written under an ordinary pass.
+    pub(super) unconfirmed: bool,
 }
 
-/// Compares one existing client with its declaration.
+/// Compares one existing client with its declaration, against what the
+/// ledger says was written for it (`None`: nothing is known).
 pub(super) fn compare(
     declared: &OidcClient,
     existing: &ObservedOidcClient,
     configured_audience: &str,
+    written: Option<&WrittenCallbacks>,
 ) -> Comparison {
     let declared_uris: BTreeSet<RedirectUri> = declared.redirect.uris().iter().cloned().collect();
 
     let undeclared_uri = existing.redirect_uris.difference(&declared_uris).next().is_some();
 
+    let mut removed_redirect_uris = BTreeSet::new();
+    let mut not_yet_written = false;
+    let mut unconfirmed = false;
+    for missing in declared_uris.difference(&existing.redirect_uris) {
+        let digest = CallbackDigest::of(missing);
+        match written {
+            Some(written) if written.confirmed.contains(&digest) => {
+                removed_redirect_uris.insert(missing.clone());
+            }
+            Some(written) if !written.unconfirmed.contains(&digest) => not_yet_written = true,
+            _ => unconfirmed = true,
+        }
+    }
+
     let drift = !existing.public
         || existing.unmodellable_redirect_uris != 0
         || undeclared_uri
+        || not_yet_written
         || existing.challenge_method != Some(declared.pkce)
         || existing.audience_mapper.as_deref() != Some(configured_audience)
         || existing.other_protocol_mappers != 0
@@ -64,11 +95,12 @@ pub(super) fn compare(
     let held = HeldEdits {
         client_disabled: !existing.enabled,
         standard_flow_disabled: !existing.standard_flow_enabled,
-        removed_redirect_uris: declared_uris
-            .difference(&existing.redirect_uris)
-            .cloned()
-            .collect(),
+        removed_redirect_uris,
     };
 
-    Comparison { drift, held }
+    Comparison {
+        drift,
+        held,
+        unconfirmed,
+    }
 }

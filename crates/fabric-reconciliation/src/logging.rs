@@ -114,7 +114,7 @@ pub(crate) fn planning_refused(client: &Client, error: &ProviderError) {
 /// The desired state is untouched by this: nothing in reconciliation writes to
 /// the desired-state repository, so a failure here leaves Git exactly as it
 /// was and the next pass re-plans from the same document.
-pub(crate) fn apply_failed(client: &Client, error: &ProviderError) {
+pub(crate) fn apply_failed(client: &Client, error: &crate::reconciler::ApplyError) {
     tracing::error!(
         event = "reconciliation.apply_failed",
         event_id = event_id(DOMAIN_ID, EventType::Error, 2),
@@ -123,5 +123,18 @@ pub(crate) fn apply_failed(client: &Client, error: &ProviderError) {
         transient = error.is_transient(),
         detail = %error,
         "could not converge client identity"
+    );
+}
+
+/// The declaration ledger could not be read, so every client is
+/// reconciled as having no baseline: what is ambiguous is held.
+pub(crate) fn baseline_unreadable(client: &Client, error: &crate::LedgerError) {
+    tracing::warn!(
+        event = "reconciliation.baseline_unreadable",
+        event_id = event_id(DOMAIN_ID, EventType::Warning, 3),
+        client_id = %client.id,
+        realm = %client.identity.realm,
+        detail = %error,
+        "could not read what was last written; ambiguous callbacks are held"
     );
 }

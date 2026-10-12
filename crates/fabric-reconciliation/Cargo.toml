@@ -11,6 +11,8 @@ fabric-client-model.workspace = true
 fabric-core.workspace = true
 
 async-trait.workspace = true
+# `ring::digest` only: the declaration ledger names a callback by its SHA-256.
+ring.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 tracing.workspace = true

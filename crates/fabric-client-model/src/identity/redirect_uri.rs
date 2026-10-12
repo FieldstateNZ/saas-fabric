@@ -21,6 +21,7 @@ use std::fmt;
 
 use fabric_core::IdentifierError;
 
+pub(crate) use host_kind::is_private_network;
 pub use kind::RedirectUriKind;
 pub use private_use_scheme::AppScheme;
 

@@ -27,6 +27,7 @@ pub use oidc_client::{ClientProtocol, OidcClient};
 pub use pkce_method::PkceMethod;
 pub use projected_client_divergence::{ProjectedClientDivergence, ProjectedClientField, ProjectionCheck};
 pub use redirect_strategy::{RedirectStrategy, RedirectStrategyKind};
+pub(crate) use redirect_uri::is_private_network;
 pub use redirect_uri::{AppScheme, RedirectUri, RedirectUriKind};
 
 /// What a client's identity should look like.

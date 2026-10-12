@@ -1526,7 +1526,10 @@ refusal. None of it is verified live.
   source, the application release that declares it, and whether
   `spec.data` asks for it: if it does, placing it binds it; if not, the
   document has to ask first. The console shows it as the Data tab's
-  "Unreachable resources" panel.
+  "Unreachable resources" panel. Both of the panel's checked states say on
+  screen that they compare desired state, not what a running replica
+  serves. The 500 is stated as what follows once that catalogue and those
+  placements are published and served.
 - **When it cannot be checked.** If the catalogue cannot be read, or two
   applications declare one resource, `unbound` says so with the reason
   and the placements are still served. Placing data does not depend on
@@ -1537,7 +1540,7 @@ refusal. None of it is verified live.
 | The bound set is every recorded placement of this tenant, and no other tenant's | `fabric-platform-management` `placements/service/for_client.rs`, `outcome.rs` | `service_tests.rs::for_client_reports_every_logical_data_source_this_tenant_has_recorded_and_no_other_tenants` |
 | Unbound pairs, grouped by logical data source, with each resource's release | `fabric-client-model` `catalogue/unbound_resources.rs::DerivedCatalogue::unbound_for` | `unbound_resources_tests.rs::each_logical_data_source_the_tenant_does_not_bind_lists_every_resource_on_it_with_its_release`, `::a_tenant_that_binds_every_named_logical_data_source_has_no_unbound_pair`, `::a_tenant_with_no_placement_cannot_reach_any_resource`, `::an_empty_catalogue_names_nothing_unbound` |
 | Both routes answer it; placing updates it; an underivable catalogue leaves placements readable | `fabric-control-plane` `handlers/placements/view.rs`, `body/unbound.rs` | `placements_unbound.rs::every_resource_on_a_logical_data_source_the_client_does_not_bind_is_listed_until_it_is_placed`, `::a_catalogue_that_cannot_be_derived_leaves_the_placements_readable_and_says_why_nothing_was_checked` |
-| The Data tab panel | `apps/control-plane-ui` `product/UnboundResources.tsx`, `ClientDataTab.tsx`, `api/placement-types.ts` | `UnboundResources.test.tsx` (six tests: every resource and release listed, place-or-declare guidance, nothing unbound, unchecked with its reason, the panel updated from the `POST` response, placements still shown when unchecked) |
+| The Data tab panel | `apps/control-plane-ui` `product/UnboundResources.tsx`, `ClientDataTab.tsx`, `api/placement-types.ts` | `UnboundResources.test.tsx` (eight tests: both checked states visibly scoped to desired state, with the failure conditional on it being published and served; every resource and release listed, place-or-declare guidance, nothing unbound, unchecked with its reason, the panel updated from the `POST` response, placements still shown when unchecked) |
 
 Limits:
 

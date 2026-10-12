@@ -13,8 +13,22 @@ import { Panel } from '../console/Panel'
  *
  * Checked against the derived runtime catalogue and the recorded
  * placements: what the next publication offers, not what a running replica
- * serves.
+ * serves. Both checked states say so visibly (`DesiredStateScope`), and the
+ * failure is stated as conditional on that state being published and
+ * served: a held publication, or a replica on its startup or last-known-good
+ * catalogue, can serve other resources and bindings.
  */
+function DesiredStateScope() {
+  return (
+    <p className="panel-body">
+      Checked against desired state: the runtime catalogue the next publication would offer, and
+      this client&rsquo;s recorded placements. This is not what a running replica is serving. A
+      held publication, or a replica still on its startup or last-known-good catalogue, can
+      serve other resources and bindings.
+    </p>
+  )
+}
+
 export function UnboundResources({ unbound }: { unbound: UnboundCheck }) {
   if (unbound.state === 'unchecked') {
     return (
@@ -29,9 +43,10 @@ export function UnboundResources({ unbound }: { unbound: UnboundCheck }) {
   if (unbound.dataSources.length === 0) {
     return (
       <Panel title="Unreachable resources">
+        <DesiredStateScope />
         <p className="panel-body">
-          Every resource in the runtime catalogue is on a logical data source this client has
-          placed.
+          In this desired catalogue, every resource is on a logical data source this client has a
+          placement for.
         </p>
       </Panel>
     )
@@ -39,9 +54,11 @@ export function UnboundResources({ unbound }: { unbound: UnboundCheck }) {
 
   return (
     <Panel title="Unreachable resources">
+      <DesiredStateScope />
       <p className="panel-body">
-        This client has no placement for these logical data sources, so a request for any
-        resource on them fails with <span className="mono">UnboundDataSource</span>.
+        This client has no recorded placement for these logical data sources. Once this catalogue
+        and these placements are published and a replica serves them, a request from this client
+        for any resource on them fails with <span className="mono">UnboundDataSource</span>.
       </p>
       <div className="table-wrap">
         <table className="fabric-table">

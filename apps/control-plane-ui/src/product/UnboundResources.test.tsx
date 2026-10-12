@@ -106,8 +106,32 @@ describe('Unreachable resources: what the panel shows', () => {
   it('says every resource is reachable when nothing is unbound', () => {
     render(<UnboundResources unbound={{ state: 'checked', dataSources: [] }} />)
 
-    expect(within(panel()).getByText(/every resource in the runtime catalogue/i)).toBeInTheDocument()
+    expect(
+      within(panel()).getByText(/in this desired catalogue, every resource is on a logical data source/i),
+    ).toBeInTheDocument()
     expect(within(panel()).queryByRole('table')).not.toBeInTheDocument()
+  })
+
+  it('scopes a checked result with unbound pairs to desired state, and makes the failure conditional on it being served', () => {
+    render(<UnboundResources unbound={stored.unbound} />)
+
+    expect(within(panel()).getByText(/checked against desired state/i)).toHaveTextContent(
+      /not what a running replica is serving/i,
+    )
+    const consequence = within(panel()).getByText(/no recorded placement for these logical data sources/i)
+    expect(consequence).toHaveTextContent(
+      /once this catalogue and these placements are published and a replica serves them/i,
+    )
+    expect(within(panel()).queryByText(/so a request for any resource on them fails/i)).not.toBeInTheDocument()
+  })
+
+  it('scopes a checked result with nothing unbound to desired state, not the catalogue a replica serves', () => {
+    render(<UnboundResources unbound={{ state: 'checked', dataSources: [] }} />)
+
+    expect(within(panel()).getByText(/checked against desired state/i)).toHaveTextContent(
+      /last-known-good catalogue/i,
+    )
+    expect(within(panel()).queryByText(/every resource in the runtime catalogue/i)).not.toBeInTheDocument()
   })
 
   it('says why nothing was checked when the catalogue could not be read', () => {

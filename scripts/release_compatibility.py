@@ -31,6 +31,15 @@ every pull request. This script holds a *release* to the file:
         floor carries a format: if the floor was cut without that support,
         without provenance, or never completed, the floor must advance.
 
+    binary-contracts --role ROLE --version V --reported FILE
+        Refuses an image whose binary, run with `--contracts`, reports
+        anything compatibility.yaml does not state. FILE holds that output.
+        The runtime binary reports the reader contract it enforces, which
+        must be able to serve the minimum compatibility.yaml states; the
+        control plane's reports the publisher contract, the minimum reader
+        contract and the floor, which must equal the file's. Each binary
+        reports the version core of V, as the workspace version is.
+
     show KEY
         Prints minimumRollableVersion or repository, for the workflow.
 
@@ -427,6 +436,75 @@ def check_floor_artifact(proof: Path, source: str, roles: dict[str, str], root: 
 
 
 # ---------------------------------------------------------------------------
+# The shipped binaries
+# ---------------------------------------------------------------------------
+
+# What each shipped binary reports for `--contracts`, by the role of the image
+# that carries it. The runtime plane may not link the publisher or the
+# component crate (ADR 0018), so it reports only its reader contract.
+BINARY_REPORTS = {
+    "runtime": ("fabric-api", frozenset({"readerContract"})),
+    PUBLISHER_ROLE: (
+        "fabric-control-plane-api",
+        frozenset({"publisherContract", "minimumReaderContract", "minimumRollableVersion"}),
+    ),
+}
+
+
+def check_binary_contracts(role: str, version: str, reported: str, root: Path = REPO_ROOT) -> str:
+    """The binary, once what it reported agrees with compatibility.yaml."""
+    if role not in BINARY_REPORTS:
+        raise Refused(f"the {role} image has no binary that reports contracts")
+    binary, keys = BINARY_REPORTS[role]
+    spec = load_compatibility(root)
+    wanted = stated(spec)
+    core, _ = parse_version(version)
+    try:
+        report = json.loads(reported)
+    except ValueError as error:
+        raise Refused(f"the {role} image's {binary} did not print JSON for --contracts: {error}") from error
+    if not isinstance(report, dict):
+        raise Refused(f"the {role} image's {binary} did not print a JSON object for --contracts")
+
+    expected_keys = keys | {"binary", "version"}
+    if set(report) != expected_keys:
+        raise Refused(
+            f"the {role} image's {binary} reported {sorted(report)}, not {sorted(expected_keys)}"
+        )
+    if report["binary"] != binary:
+        raise Refused(f"the {role} image runs {report['binary']!r}, not {binary}")
+    if report["version"] != "{}.{}.{}".format(*core):
+        raise Refused(
+            f"the {role} image's {binary} reports version {report['version']!r}, "
+            f"not the version core of {version}"
+        )
+
+    # `bool` is an `int` in Python; a flag is not a contract.
+    for key in keys - {"minimumRollableVersion"}:
+        if type(report[key]) is not int or report[key] < 1:
+            raise Refused(f"the {role} image's {binary} reports {key} {report[key]!r}, not a positive integer")
+
+    if role == "runtime":
+        # A reader below the minimum would refuse every record this source
+        # publishes and keep serving a stale generation for ever.
+        if report["readerContract"] < wanted["minimumReaderContract"]:
+            raise Refused(
+                f"the {role} image's {binary} implements reader contract {report['readerContract']}, "
+                f"below the minimumReaderContract {wanted['minimumReaderContract']} "
+                f"{COMPATIBILITY_FILE} states, so it cannot serve what the publisher writes"
+            )
+    else:
+        disagreements = [
+            f"{key}: {COMPATIBILITY_FILE} states {wanted[key]!r}, the {binary} image is built with {report[key]!r}"
+            for key in sorted(keys)
+            if report[key] != wanted[key]
+        ]
+        if disagreements:
+            raise Refused("; ".join(disagreements))
+    return binary
+
+
+# ---------------------------------------------------------------------------
 # Provenance
 # ---------------------------------------------------------------------------
 
@@ -500,6 +578,10 @@ def main(argv: list[str] | None = None, root: Path = REPO_ROOT) -> int:
     provenance.add_argument("--source", required=True)
     provenance.add_argument("--image", action="append", default=[])
     provenance.add_argument("--out", required=True)
+    binary = commands.add_parser("binary-contracts")
+    binary.add_argument("--role", required=True)
+    binary.add_argument("--version", required=True)
+    binary.add_argument("--reported", required=True)
     artifact = commands.add_parser("floor-artifact")
     artifact.add_argument("--proof", required=True)
     artifact.add_argument("--source", required=True)
@@ -518,6 +600,13 @@ def main(argv: list[str] | None = None, root: Path = REPO_ROOT) -> int:
                 arguments.version, arguments.commit, arguments.source, arguments.image, root
             )
             Path(arguments.out).write_text(rendered, encoding="utf-8")
+        elif arguments.command == "binary-contracts":
+            try:
+                reported = Path(arguments.reported).read_text(encoding="utf-8")
+            except (OSError, ValueError) as error:
+                raise Refused(f"the reported contracts could not be read: {error}") from error
+            name = check_binary_contracts(arguments.role, arguments.version, reported, root)
+            print(f"{name} reports contracts {COMPATIBILITY_FILE} admits")
         elif arguments.command == "floor-artifact":
             roles = read_roles(Path(arguments.roles))
             check_floor_artifact(Path(arguments.proof), arguments.source, roles, root)

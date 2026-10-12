@@ -189,6 +189,92 @@ class Contracts(TreeCase):
         rc.check_floor(contracts["minimumRollableVersion"], REPO_ROOT)
 
 
+class BinaryContracts(TreeCase):
+    VERSION = "0.3.0-preview.16"
+
+    def setUp(self) -> None:
+        super().setUp()
+        write_tree(self.root)
+        self.runtime = {"binary": "fabric-api", "readerContract": 1, "version": "0.3.0"}
+        self.control_plane = {
+            "binary": "fabric-control-plane-api",
+            "minimumReaderContract": 1,
+            "minimumRollableVersion": "0.3.0-preview.16",
+            "publisherContract": 3,
+            "version": "0.3.0",
+        }
+
+    def check(self, role: str, report: object, version: str | None = None) -> tuple[int, str, str]:
+        reported = self.root / "reported.json"
+        reported.write_text(report if isinstance(report, str) else json.dumps(report), encoding="utf-8")
+        return self.run_cli(
+            "binary-contracts", "--role", role, "--version", version or self.VERSION, "--reported", str(reported)
+        )
+
+    def assert_refused(self, role: str, report: object, reason: str, version: str | None = None) -> None:
+        status, out, err = self.check(role, report, version)
+        self.assertEqual(status, 1, out)
+        self.assertIn("::error::", err)
+        self.assertIn(reason, err)
+
+    def test_binaries_that_agree_with_the_file_are_admitted(self) -> None:
+        for role, report in (("runtime", self.runtime), ("controlPlane", self.control_plane)):
+            with self.subTest(role=role):
+                status, out, _ = self.check(role, report)
+                self.assertEqual(status, 0)
+                self.assertIn(report["binary"], out)
+
+    def test_a_dev_build_and_a_stable_release_report_the_same_core(self) -> None:
+        for version in ("0.3.0-dev", "0.3.0"):
+            with self.subTest(version=version):
+                self.assertEqual(self.check("controlPlane", self.control_plane, version)[0], 0)
+
+    def test_a_publisher_contract_the_file_does_not_state_is_refused(self) -> None:
+        for key, value in (
+            ("publisherContract", 2),
+            ("minimumReaderContract", 2),
+            ("minimumRollableVersion", "0.3.0-preview.15"),
+        ):
+            with self.subTest(key=key):
+                self.assert_refused("controlPlane", {**self.control_plane, key: value}, key)
+
+    def test_a_reader_below_the_minimum_the_file_states_is_refused(self) -> None:
+        write_tree(self.root, reader=2)
+        self.assert_refused("runtime", self.runtime, "below the minimumReaderContract 2")
+
+    def test_a_reader_above_the_minimum_is_admitted(self) -> None:
+        self.assertEqual(self.check("runtime", {**self.runtime, "readerContract": 2})[0], 0)
+
+    def test_a_binary_reporting_the_wrong_shape_is_refused(self) -> None:
+        missing = {key: value for key, value in self.control_plane.items() if key != "publisherContract"}
+        self.assert_refused("controlPlane", missing, "reported")
+        self.assert_refused("controlPlane", {**self.control_plane, "extra": 1}, "reported")
+        self.assert_refused("runtime", self.control_plane, "reported")
+        self.assert_refused("controlPlane", [], "JSON object")
+        self.assert_refused("controlPlane", "not json", "did not print JSON")
+        self.assert_refused("controlPlane", "", "did not print JSON")
+
+    def test_a_contract_that_is_not_a_positive_integer_is_refused(self) -> None:
+        for value in (True, "3", 0, 3.0, None):
+            with self.subTest(value=value):
+                self.assert_refused("controlPlane", {**self.control_plane, "publisherContract": value}, "positive integer")
+
+    def test_another_binary_or_version_is_refused(self) -> None:
+        self.assert_refused("runtime", {**self.runtime, "binary": "fabric-control-plane-api"}, "not fabric-api")
+        self.assert_refused("runtime", {**self.runtime, "version": "0.2.0"}, "version core")
+        self.assert_refused("runtime", self.runtime, "version core", version="0.4.0-preview.1")
+
+    def test_an_image_with_no_reporting_binary_is_refused(self) -> None:
+        self.assert_refused("console", self.runtime, "no binary")
+
+    def test_an_unreadable_report_is_refused(self) -> None:
+        status, _, err = self.run_cli(
+            "binary-contracts", "--role", "runtime", "--version", self.VERSION, "--reported", str(self.root / "none")
+        )
+        self.assertEqual(status, 1)
+        self.assertIn("could not be read", err)
+
+
 class Parser(unittest.TestCase):
     def test_the_subset_is_parsed(self) -> None:
         parsed = rc.parse_subset("a: 1\nb:\n  c: 'x y'\n  d:\n    e: f\ng: h\n")

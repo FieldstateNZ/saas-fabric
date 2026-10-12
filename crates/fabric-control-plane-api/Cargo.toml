@@ -33,6 +33,8 @@ fabric-reconciliation.workspace = true
 # validates a configured namespace against, and the Kubernetes adapter it
 # builds `ControlPlaneDeps.publication` from when a deployment states one.
 fabric-runtime-publication.workspace = true
+# The rollback floor `--contracts` reports beside the publisher's contract.
+fabric-component.workspace = true
 fabric-publication-kubernetes.workspace = true
 
 async-trait.workspace = true

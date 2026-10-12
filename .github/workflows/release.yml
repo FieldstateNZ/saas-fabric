@@ -47,6 +47,9 @@ on:
       - 'crates/fabric-component/src/compatibility.rs'
       - 'crates/fabric-runtime-publication/src/manifest.rs'
       - 'crates/fabric-runtime-publication/src/record.rs'
+      - 'crates/fabric-tenant-runtime/src/publication/record.rs'
+      - 'crates/fabric-api/src/contracts.rs'
+      - 'crates/fabric-control-plane-api/src/contracts.rs'
   workflow_dispatch:
     inputs:
       # Checks a version as if it were being tagged — its grammar and the
@@ -100,12 +103,10 @@ jobs:
       # the workspace. A tag that disagreed would publish an image claiming a
       # version its source was never on.
       #
-      # Not "an image whose name and `--version` disagree", which is what this
-      # comment used to say: there is no `--version`. Nothing in the workspace
-      # reads `CARGO_PKG_VERSION`, and no binary reports one. The artifact
-      # version is an *image* fact — it is the tag, and it is
-      # `org.opencontainers.image.version` below — which is where anything
-      # reporting "what is running" reads it from.
+      # The artifact version is an *image* fact — it is the tag, and it is
+      # `org.opencontainers.image.version` below. The binaries report only the
+      # workspace's version core (`--contracts`), which this check makes the
+      # tag's own core, and the build legs hold them to it.
       #
       # "Core" rather than "the whole tag" is what admits a preview.
       # `v0.3.0-preview.42` is a prerelease of 0.3.0, so the workspace has to
@@ -549,6 +550,26 @@ jobs:
           echo "$output"
           echo "$output" | grep -q "could not start" \
             || { echo "::error::the image did not start and refuse a missing configuration"; exit 1; }
+
+      # The shipped binary states what it was built with, and the release holds
+      # that to compatibility.yaml: `compatibility` checks the source's
+      # declarations and `verify` the compiled test, but only the image's own
+      # binary says what the image contains. `--contracts` prints JSON and
+      # exits before any configuration is read, so the bare image runs it.
+      # Before any push: a disagreement leaves nothing published.
+      - name: Check the image's contracts
+        if: matrix.target != 'console'
+        env:
+          OWNER: ${{ needs.version.outputs.owner }}
+          IMAGE: ${{ matrix.image }}
+          ROLE: ${{ matrix.role }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          docker run --rm --network none "${REGISTRY}/${OWNER}/${IMAGE}:${VERSION}" --contracts > reported-contracts.json
+          cat reported-contracts.json
+          python3 scripts/release_compatibility.py binary-contracts \
+            --role "${ROLE}" --version "${VERSION}" --reported reported-contracts.json
 
       # The version tag is pushed last. Everything that can fail after a push
       # — reading back the digest, keeping it for the descriptor — happens

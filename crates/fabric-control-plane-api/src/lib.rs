@@ -24,6 +24,7 @@
 //! into something that is trusted and wrong.
 
 pub mod config;
+pub mod contracts;
 pub mod secrets;
 pub mod startup;
 pub mod telemetry;

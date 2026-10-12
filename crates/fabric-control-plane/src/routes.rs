@@ -59,7 +59,7 @@ pub const API_PREFIX: &str = "/api";
 /// GET        /api/user/current                      who is signed in, ADR 0024 §3's shape
 /// GET/POST   /api/clients                           list clients / create one
 /// GET        /api/clients/{clientId}                one client's overview and lifecycle
-/// POST       /api/clients/{clientId}/{tombstone,deletion-confirmation}  see routes::lifecycle
+/// POST       /api/clients/{clientId}/{tombstone,deletion-confirmation,restoration}  see routes::lifecycle
 /// GET/PUT    /api/clients/{clientId}/product        its product config / replace it   (If-Match)
 /// GET/PUT    /api/clients/{clientId}/identity…      its identity / replace it / re-assert it: see routes::identity
 /// GET        /api/clients/{clientId}/placements               every logical data source, and what is true of each

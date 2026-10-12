@@ -3,10 +3,12 @@
 use fabric_core::Clock;
 use fabric_reconciliation::{IdentityReconciler, ReconciliationStatusStore};
 
+use crate::continuity::{admit, Admission};
 use crate::declaration_ledger::PassLedgers;
 use crate::integration::{IntegrationHealth, Observation};
 use crate::logging;
 use crate::repository::ClientRepository;
+use crate::LifecycleContinuity;
 
 /// Reconciles every client the repository holds, and records what happened.
 ///
@@ -24,9 +26,16 @@ use crate::repository::ClientRepository;
 /// and converges a provider onto it; if the provider cannot be converged, Git
 /// is exactly as it was and the next sweep starts from the same documents.
 ///
+/// # A client the continuity store does not confirm is left alone
+///
+/// No provider client is created, updated, corrected or removed for it, and
+/// its recorded status is left as it was: identity readiness is unmet for it
+/// anyway (O5). Holding changes nothing that exists.
+///
 /// Returns the number of clients reconciled.
 pub(crate) async fn run(
     repository: &dyn ClientRepository,
+    continuity: Option<&dyn LifecycleContinuity>,
     reconciler: &IdentityReconciler,
     ledgers: Option<&PassLedgers<'_>>,
     statuses: &ReconciliationStatusStore,
@@ -55,6 +64,10 @@ pub(crate) async fn run(
 
     for stored in &clients {
         let client = stored.document.client();
+        if let Admission::Held(hold) = admit(continuity, stored).await {
+            logging::identity_held(&client.id, hold);
+            continue;
+        }
         // D01-19b: a stored projected entry that is not the stored
         // document's own projection is not converged as though it were.
         let withheld = stored.document.projection_check().withheld();

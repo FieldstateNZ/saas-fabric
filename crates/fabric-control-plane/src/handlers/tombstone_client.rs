@@ -30,7 +30,13 @@ pub(crate) async fn tombstone_client(
 
     let stored = state
         .service
-        .tombstone(&operator, &id, &request.reason, &expected)
+        .tombstone(
+            &operator,
+            &id,
+            &request.reason,
+            &expected,
+            state.lifecycle_continuity.as_deref(),
+        )
         .await?;
 
     crate::converge::in_background(&state, &operator);

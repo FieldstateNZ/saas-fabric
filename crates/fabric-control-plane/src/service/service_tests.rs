@@ -382,7 +382,7 @@ async fn a_create_conflict_with_nothing_stored_is_a_revision_conflict_not_a_take
     );
 
     let error = service
-        .create_client(&operator(), new_client_request())
+        .create_client(&operator(), new_client_request(), None)
         .await
         .unwrap_err();
 
@@ -401,7 +401,7 @@ async fn a_create_rejection_with_nothing_stored_stays_a_rejection_not_a_revision
     );
 
     let error = service
-        .create_client(&operator(), new_client_request())
+        .create_client(&operator(), new_client_request(), None)
         .await
         .unwrap_err();
 

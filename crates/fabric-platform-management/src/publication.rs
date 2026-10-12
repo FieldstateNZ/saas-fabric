@@ -43,6 +43,7 @@ mod reads;
 mod registry_application;
 mod registry_pass;
 mod report_outcome;
+mod retained;
 mod snapshot;
 mod state;
 
@@ -63,5 +64,6 @@ pub use published::Accepted;
 pub use publisher::RuntimePublisher;
 pub use readiness::{GateStatus, ReadinessReport, RegistryApplication};
 pub use readiness_evidence::{ReadinessEvidence, RegistryEvidenceSummary};
+pub use retained::placements_retained;
 pub use snapshot::compose;
 pub use state::PublicationState;

@@ -8,6 +8,8 @@
   [2026-10-12 projected-client amendment](#amendment-2026-10-12-a-projected-identity-client-is-the-products-d01-19b);
   owed decision 4 by the
   [2026-10-12 host-kind amendment](#amendment-2026-10-12-a-projected-client-follows-the-kind-of-its-hosts-d01-15);
+  restoring a tombstone and lifecycle continuity are built and held by the
+  [2026-10-12 restore amendment](#amendment-2026-10-12-restoring-a-tombstone-and-lifecycle-continuity-d01-14-held);
   acceptance follows ADR 0023 through its own reviewed change (D01-19d).
 - **Date:** 2026-09-16; amended 2026-10-11 and 2026-10-12
 - **Applies to:** `fabric-client-model`, `fabric-client-git`,
@@ -754,7 +756,8 @@ this ADR.
 |---|---|---|
 | Tombstone | Only from `incomplete` or `ready`, at the current revision, with a reason | `409 client_already_tombstoned`, `409 deletion_already_confirmed`, `422 invalid_tombstone_reason`, `409 revision_conflict` |
 | Confirm deletion | Only from `tombstoned`, as its own write at the revision the tombstone produced, naming the client again in the body | `409 deletion_requires_tombstone`, `409 deletion_already_confirmed`, `422 deletion_confirmation_mismatch`, `409 revision_conflict` |
-| Leave `tombstoned` or `deletionConfirmed` | No transition exists | — |
+| Leave `tombstoned` | Restore, an explicit operator write; held where no continuity store exists. See the [restore amendment](#amendment-2026-10-12-restoring-a-tombstone-and-lifecycle-continuity-d01-14-held) | `409 client_not_tombstoned`, `409 revision_conflict`, `503 lifecycle_continuity_unavailable` and others listed there |
+| Leave `deletionConfirmed` | No transition exists | `409 deletion_confirmed_not_restorable` |
 | Edit product configuration | Refused when retired | `409 client_retired` |
 | Remove a secret | Refused when retired: it would not be retained | `409 client_retired` |
 | Place a data source | Refused when retired | `409 client_retired` |
@@ -869,7 +872,9 @@ the user-only parts stay open.
   retained-placement checks, never lowering document or resource history
   revisions and never regenerating retained secrets. No automatic restore.
   A deletion-confirmed client needs an explicit disposition before it can be
-  restored. Not built here: there is no route back.
+  restored. Built as source, and held until the protected continuity store
+  exists: see the
+  [restore amendment](#amendment-2026-10-12-restoring-a-tombstone-and-lifecycle-continuity-d01-14-held).
 - **Identity at tombstone:** a tombstone disables no sign-in, revokes no
   token or session, removes no projected client and rotates no credential.
   The remediation paths that stay open (identity edits, secret writes) are
@@ -1415,3 +1420,318 @@ ledger for one client at the revision it converges, acting as its operator.
   application reached inside the private network on its template name,
   rather than under a client host, cannot sign that client's users in.
 - **A client cannot mix host kinds** while it has an application assigned.
+
+## Amendment 2026-10-12: restoring a tombstone, and lifecycle continuity (D01-14, held)
+
+Recorded from item 3 of
+[#108 comment 6113749198](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6113749198):
+
+> **Restore:** default engineering design is reversible tombstone via a
+> separate explicit operator write, current-revision CAS, audit and
+> retained-placement checks. Never lower document/resource history revisions
+> or regenerate retained secrets. No automatic restore; deletion-confirmed
+> intent requires explicit disposition before restoration.
+
+It is bounded by item 2 of the O5 disposition in
+[#108 comment 6119161317](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6119161317):
+a tombstone cannot be undone by Git, and a supported reinstatement is a new
+forward transition, not a reset of retirement history. The restore
+disposition in
+[#108 comment 6120741272](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6120741272)
+answers the questions in
+[6120483179](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6120483179).
+It puts a narrow `LifecycleContinuity` port in place as O5's lifecycle seam,
+and puts lifecycle admission guards in this slice. It also requires the
+retained-placement check to compare whole bindings.
+[Review 5489320331](https://github.com/FieldstateNZ/saas-fabric/pull/165#pullrequestreview-5489320331)
+then required four more things:
+- protected attestation of the exact identity instance and context;
+- a held registry for unconfirmed retired and missing bound clients;
+- a recovery that checks its preconditions again;
+- a frozen pending operation.
+
+It also settled the readings asked in
+[6121284955](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6121284955).
+Each is built below.
+
+This builds the "Restoring a tombstone" item under "Deferred, and how each
+is bounded", and the lifecycle part of O5's guard (slice A). It does not
+accept this ADR. It changes source only. No adapter, enrollment or live
+activation is authorized, and nothing is applied to a running environment.
+
+**Status: held.** No deployment has a continuity store. So:
+
+- every restore is refused with `503 lifecycle_continuity_unavailable`, with
+  no `Retry-After`, before anything is written;
+- no client is admitted. Identity readiness is unmet for every client, no
+  pass creates, updates or re-asserts a provider client, and a publication
+  pass with an issuer registry holds when a bound client needs an
+  admission.
+
+Holding changes nothing that exists. Provider clients, enabled state,
+callbacks, secrets, bindings, accepted publication artifacts and last-good
+readers stay as they were. Creation, tombstones and deletion confirmations
+still write desired state: creation only stages intent, and the other two
+only restrict.
+
+### Lifecycle continuity
+
+The authority is a protected store, independent of editable desired state.
+It holds three things for each client:
+
+- the **identity instance**: 32 hexadecimal characters, minted by the
+  control plane when the client is created and attested by the store. It is
+  written into the document as `spec.lifecycle.instance`;
+- a **continuity sequence**;
+- the **fingerprint** of what it last confirmed: the SHA-256 of the
+  canonical JSON of the lifecycle record (instance included) together with
+  the client id and realm, its identity context.
+
+The control plane sees it through `fabric_control_plane::LifecycleContinuity`
+(`src/continuity/`):
+
+- `accepted(client)`;
+- `reserve(transition)`;
+- `complete(reservation, revision)`;
+- `release(reservation)`.
+
+The audit trail, Git, provider attributes and timestamps are never the
+authority.
+
+**Admission.** A stored client is admitted only when all of these hold:
+
+- the store has history for it;
+- nothing is pending;
+- the document carries the exact identity instance the store attested;
+- the accepted fingerprint is exactly the document's: lifecycle, instance,
+  client id and realm.
+
+A matching lifecycle alone is not enough. A client id created again, or a
+creation the store refused, carries no instance or another one, so it is
+held as `resurrection` whatever its lifecycle says. The check covers every
+identity instance, including one with no lifecycle history, because a check
+that only looked at a visible tombstone or restoration would be bypassed by
+erasing it. A held client is shown with `lifecycle.continuity` and a reason:
+
+- `noStore`;
+- `unavailable`;
+- `unenrolled`;
+- `mismatch`;
+- `pending`;
+- `resurrection`.
+
+The admission guard runs before each of these:
+
+| Where | Held means |
+|---|---|
+| Identity readiness (`lifecycle/evidence.rs`) | identity unmet, whatever the reconciliation status and projection |
+| A sweep and the convergence a write starts (`reconcile/pass.rs`) | the client is skipped: no provider read or write, and its status is left as it was |
+| Re-assertion (`converge.rs`) | refused after the revision and projection checks, before any provider call: `503 lifecycle_continuity_unavailable` or `409 lifecycle_continuity_{unenrolled,mismatch,pending,resurrection}` |
+| The issuer registry (`service/issuer_registry_source.rs`) | the whole pass fails, so no registry is decided without the authority and the target keeps the record, registry, documents, bindings and last-good readers it accepted. This covers every bound tenant whose client is held, retired or not, and every bound tenant with no client document. A tombstone or a removal the store has not confirmed is not authority to withdraw anything |
+
+**Every lifecycle write goes through it** when a store exists:
+
+- **Creation** mints an instance and reserves it. When the store grants it,
+  the document is written with `spec.lifecycle.instance`. When the store
+  refuses, for example because the id is a retired or active identity whose
+  document was removed, the document is staged with no instance and stays
+  held as `resurrection`.
+- **A tombstone and a deletion confirmation** reserve before the document
+  write. A refused reservation refuses the write. With no store they still
+  stage the restriction in desired state, but that grants no admission and
+  changes no accepted publication.
+- **A restore** reserves the same way, and with no store it is held.
+
+Each reservation is one operation, frozen as it was reserved:
+
+- the identity instance and expected sequence;
+- the reviewed revision (`If-Match`);
+- the starting and destination fingerprints;
+- the exact lifecycle record it writes;
+- the operator;
+- for a restore, the exact tombstone reversed.
+
+Reserving exactly that transition again, by a retry or an identical
+concurrent request, is another **attempt** at the same operation, with a
+token of its own; tokens are never reused. Anything else while it is pending
+is refused with `409 lifecycle_continuity_pending`. A completion by any
+attempt, or by the operation, completes it. A release names one attempt
+whose own write conclusively did not land, and clears the operation only
+when no other attempt at it is outstanding. So an attempt that lost its CAS
+never erases the uncertainty of one that wrote or may have written
+([review 5489623418](https://github.com/FieldstateNZ/saas-fabric/pull/165#pullrequestreview-5489623418)).
+A token from a completed or released operation changes nothing.
+
+**The partial-success and retry contract** (`service/lifecycle/record.rs`,
+`replay.rs`):
+
+- A refused reservation writes nothing.
+- A document write that conclusively lost its revision did not land, so it
+  releases its own attempt and nothing else.
+- Any other failed write may have landed, so its reservation stays pending,
+  `control_plane.continuity.write_unconfirmed` is logged, and the client is
+  held.
+- A failed completion leaves the written transition pending.
+  `control_plane.continuity.completion_failed` is logged. The response
+  reports `continuity: pending`, never a confirmed transition, and a restore
+  is not audited until it is confirmed.
+- **The same request sent again, with the same `If-Match`, is the only way
+  on.**
+  - If the document is still at the reviewed revision, the request must ask
+    for the same thing (the same reason and operator; only the second it was
+    stamped may differ). The frozen record is then replayed exactly. Any
+    other intent is refused as pending. An equal blob revision is not taken
+    as proof that nothing moved: the replay is the frozen operation, written
+    by CAS, and completed only on that write's own success.
+  - If the document carries exactly the pending fingerprint, the request is
+    first validated as the original was: its transition is applied again to
+    the lifecycle the frozen operation moved from. An invalid body gets
+    `422`. A valid body must then equal the frozen intent exactly: the same
+    operator and reason, with only the second it was stamped allowed to
+    differ. Anything else is refused as pending
+    ([review 5489726594](https://github.com/FieldstateNZ/saas-fabric/pull/165#pullrequestreview-5489726594)).
+    Then the write's preconditions are checked again against what is true
+    now. For a restore
+    that means the retained placements. Only then is the reservation
+    completed. A failed check refuses with nothing reserved, written,
+    completed or audited, and the transition stays pending.
+  - Otherwise it stays pending.
+
+### The restore write
+
+`POST /api/clients/{clientId}/restoration` takes `If-Match` naming the
+tombstoned revision and the body `{ "reason": "…" }`. The reason follows a
+tombstone's rules. In order:
+
+1. **Operator and revision**: `401`, `428`, `409 revision_conflict`.
+2. **Replay or recovery** of a pending restore reviewed at that revision, as
+   above.
+3. **Lifecycle**:
+   - `409 client_not_tombstoned`;
+   - `409 deletion_confirmed_not_restorable` (no disposition route exists);
+   - `422 invalid_restoration_reason`.
+4. **Retained placements** (`lifecycle/retained.rs`). The check reads the
+   publication target itself, never this process's memory of a pass, so a
+   restart loses nothing. It refuses with:
+   - `503 placements_unavailable` when the placements or the held
+     publication cannot be read;
+   - `409 restore_placements_unverified` when nothing establishes what was
+     published: no platform is managed, no publication target is
+     configured, or the target holds no accepted publication. A missing
+     configuration is not proof of never having published;
+   - `409 restore_placements_not_retained` when any of these is true:
+     - a placement names a logical source the client no longer declares;
+     - a held binding is no longer recorded with the same data source and
+       isolation. A raised revision does not excuse a replaced binding;
+     - the O4 guard refuses a removed or lowered record;
+     - the records sum below the tenant's resource-history frontier;
+     - history shows the tenant was published but the held document no
+       longer carries it.
+
+   "Never published" passes only when the target's own history establishes
+   it.
+5. **Continuity**: with no store, `503 lifecycle_continuity_unavailable`
+   (held). Otherwise the reservation, and the store's own refusals.
+6. **The document write**: one CAS update, with an activity entry.
+   Reconciliation is marked pending at the new revision.
+7. **Completion**, then `control_plane.audit.client_restored` to the durable
+   trail. It carries the new revision and the reversed tombstone's
+   `tombstonedAt`, never its free-text reason. The append is best-effort
+   under ADR 0028; it is a record, not the prewrite authority.
+
+### The record only moves forward
+
+A restore moves the current tombstone into `spec.lifecycle.restorations`,
+with who reversed it, when and why. It never clears the history:
+
+```yaml
+spec:
+  lifecycle:
+    restorations:
+      - tombstone: { at: 1760140800, by: brett@example.com, reason: Contract ended }
+        at: 1760313600
+        by: brett@example.com
+        reason: Contract renewed
+```
+
+- **Later transitions keep the list.** A later tombstone or confirmed
+  deletion keeps it.
+- **Reads check the order.** Each restoration follows the tombstone it
+  reverses and the restoration before it, and a current tombstone follows
+  the last restoration.
+  - Equal seconds are valid. The store's sequence orders transitions, not
+    clock precision.
+  - A misspelt key is refused.
+- **The bytes always move forward.** The restored bytes never equal the bytes
+  from before the tombstone, and the store holds the fingerprint. So a Git
+  revert, an erased or forged history, or a blob-SHA ABA to an earlier
+  document is held, even where a stale `If-Match` would match again.
+
+### What a restored client is
+
+- **Saved intent.** It reads `incomplete`, admitted, with identity `pending`
+  at the new revision.
+- **Ready only on evidence.** It becomes `ready` only when the existing
+  evidence says so: identity applied at the restored revision with a
+  `consistent` projection (D01-19b, D01-15), and continuity admitted. A
+  projection that diverged in Git while it was retired is withheld, and
+  identity stays unmet.
+- **Routing.** The issuer registry registers it again only once it is
+  `ready`, in a new generation. The generation never goes back.
+- **Nothing else moves.** The tombstone withdrew nothing, so the restore
+  changes no tenant binding, placement or resource-history revision. It
+  reads, writes and regenerates no secret. It calls no identity provider
+  itself.
+- **The console** shows each restoration and any continuity hold beside the
+  lifecycle pill. It offers no restore action, as it offers none for a
+  tombstone.
+
+### Verified against the code (at the base of this amendment)
+
+| Claim | Where |
+|---|---|
+| The restore transition, its refusals, history that only grows, and the identity instance kept through every transition and refused when malformed | `crates/fabric-client-model/src/lifecycle/record.rs`, `lifecycle/instance.rs`; `lifecycle/lifecycle_tests.rs`; `document/document_lifecycle_tests.rs` |
+| `restorations` round-trips; out-of-order, reversed, blank-reason and misspelt hand edits are refused; a restored document never reads as the one before its tombstone | `lifecycle/record/invariants.rs`; `document/document_lifecycle_tests.rs` |
+| Admission compares the instance and the fingerprint of lifecycle, instance and identity context; a hold leaves identity unmet whatever the status | `crates/fabric-control-plane/src/continuity/admission.rs`, `fingerprint.rs`; `lifecycle/evidence.rs`; `lifecycle/evidence_tests.rs::identity_held_by_the_continuity_store_is_never_in_effect_whatever_the_status` |
+| A sweep leaves a held client alone, with no store, a missing instance or a mismatch | `src/reconcile/pass.rs`; `reconcile/pass_tests.rs::a_client_the_continuity_store_does_not_confirm_is_left_alone` |
+| The test store keeps the port's contract: a frozen pending transition, exact replay only, a token per attempt never reused, a release that keeps the operation while another attempt is outstanding, and stale tokens that change nothing | `src/testing/lifecycle_continuity/port_tests.rs` |
+| The retained-placement rules, each alone, including a replacement masked by a raised revision, the history frontier, and unknown retention (no platform, no target, no accepted publication) | `src/lifecycle/retained.rs`; `lifecycle/retained_tests.rs`; `crates/fabric-platform-management/src/publication/retained.rs` |
+| With no store: a restore is held with nothing written or audited, after the revision, lifecycle and placement checks; creation stages intent, nothing reaches the provider, re-assertion is held, a tombstone stages a restriction that grants nothing | `crates/fabric-control-plane/tests/client_restore.rs::without_a_continuity_store_*` |
+| With no store, a bound client, retired or not, holds the registry and nothing is published | `tests/issuer_registry.rs::without_a_continuity_store_a_bound_client_holds_the_registry_and_publishes_nothing` |
+| A tombstone the store never confirmed, and a bound tenant whose client document is gone, hold the registry and keep every accepted document | `tests/issuer_registry.rs::a_tombstone_the_continuity_store_never_confirmed_holds_the_registry`; `tests/client_document_revert.rs::reverting_a_clients_creation_holds_the_registry_and_keeps_every_published_document` |
+| The forward restore: new revision and `ETag`, saved intent, admitted, the tombstone and instance kept, reserved at the tombstoned revision and completed at the new one, audited and verified, data, identity, secrets reference, placements and the tenants document unchanged across a pass, `ready` once applied | `client_restore.rs::a_restore_reverses_the_tombstone_forward_and_leaves_the_client_saved_intent` |
+| Retire again in the same second; history grows and the store orders it | `client_restore.rs::a_restored_client_can_be_retired_again_in_the_same_second_and_its_history_only_grows` |
+| Refusals write and reserve nothing: deletion confirmed, request validation, a removed or replaced placement, an unreadable held publication, no accepted publication, store refusals with no detail in the body, missing and unavailable history | `client_restore.rs` |
+| Two identical real POSTs: one writes and fails to complete, the other loses its CAS and releases its own attempt; the operation stays pending and the same request recovers it once. A blank reason against a landed restore is `422`, a changed one is refused, and neither completes, writes or audits | `client_restore.rs::two_identical_posts_a_landed_one_and_a_losing_one_keep_the_operation_pending`, `::a_retry_against_a_landed_restore_is_validated_and_must_be_the_same_request` |
+| A losing concurrent attempt's release keeps the landed attempt's pending operation; a different reason is refused; the same request then recovers it once, and the stale attempt's release and completion change nothing | `client_restore.rs::a_losing_concurrent_attempt_cannot_clear_the_landed_attempts_pending_operation`; `src/testing/lifecycle_continuity/port_tests.rs::releasing_one_attempt_keeps_the_operation_while_another_is_outstanding` |
+| A conclusively lost revision releases only its own attempt; a write that may have landed stays pending, a different intent is refused and only the same request replays it; a failed completion stays pending across a restart and the same request completes it without rewriting; recovery checks the retained bindings again and completes, writes and audits nothing when they moved; a conflicting transition while one is pending is refused | `client_restore.rs::a_write_that_loses_its_revision_after_the_reservation_releases_only_its_own`, `::a_write_that_may_have_landed_stays_pending_and_only_the_same_request_replays_it`, `::a_failed_completion_stays_pending_across_a_restart_until_the_same_request_recovers_it`, `::recovery_checks_the_retained_bindings_again_and_completes_nothing_when_they_moved`, `::a_conflicting_transition_while_one_is_pending_is_refused_and_writes_nothing` |
+| A forged restoration, an erased history, an earlier blob and another realm are held; a reverted tombstone is held by the sweep, the write after it and re-assertion with no provider call, and holds the publication pass with every published file kept (inverting #159's characterization) | `client_restore.rs::a_restoration_forged_in_git_is_held_and_publishes_nothing_new`, `::an_erased_history_an_earlier_blob_or_another_realm_is_held`, `::a_reverted_tombstone_is_held_by_the_sweep_the_write_after_it_and_reassertion`; `tests/client_document_revert.rs::reverting_a_tombstone_is_held_and_never_reinstates_the_client_or_its_issuer` |
+| A new client id is attested and admitted; the same id created again after its document was removed, whether its identity was active or retired, is staged with no instance and held as `resurrection`, with no provider call | `client_restore.rs::a_new_client_id_is_attested_and_admitted`, `::a_client_id_created_again_is_held_whether_its_identity_was_active_or_retired` |
+| Identity returns only converged with a consistent projection; a projection diverged while retired stays withheld | `client_restore.rs::a_restored_client_is_identity_ready_only_once_converged_with_a_consistent_projection`, `::a_restored_client_whose_projection_diverged_in_git_stays_identity_unmet` |
+| The issuer returns only once identity is applied at the restored revision, in the next generation, with the binding byte-identical | `tests/issuer_registry.rs::a_restored_client_is_registered_again_only_once_identity_is_applied_at_its_new_revision` |
+| A deployment is built with no store | `crates/fabric-control-plane-api/src/startup/application.rs` |
+| The console shows restorations and continuity holds | `apps/control-plane-ui/src/console/LifecycleStatus.tsx`; `LifecycleStatus.test.tsx` |
+
+### Known limits
+
+- **Held everywhere, by design.** Until a continuity adapter and its reviewed
+  enrollment procedure exist, every deployment's clients are held:
+  - no restore;
+  - no identity convergence or re-assertion;
+  - no readiness;
+  - no publication pass while an issuer registry has a bound client.
+
+  Existing provider and published state is kept, never revoked. This is
+  source guard behavior, not a deployment instruction. No enrollment is
+  automatic: clients that existed before the store need the reviewed
+  procedure.
+- **The test-only store proves classification and order, not durability.**
+  It forgets everything outside a test, coordinates no processes, and holds
+  one pending operation per client. The adapter's prerequisites are O5 slice B's. They are the
+  ones D01-15's ledger lists, plus this port's contract. The concurrency
+  debt of the D01-15 ledger stays separate.
+- **Scope of the guard.** It covers lifecycle and identity-instance
+  continuity. O5's release-number, catalogue and assignment guards (items
+  1, 3 and 4) are separate, unfinished work.
+- **Not verified live.** Nothing here was run against a deployed control
+  plane, Keycloak or publication target.

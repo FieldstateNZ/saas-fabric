@@ -356,6 +356,20 @@ pub async fn platform_binding_with_floors(
     floors: RollbackFloors,
 ) -> (PlatformBinding, Arc<FakeRepository>) {
     let fake = FakeRepository::new(components);
+    (bind(Arc::clone(&fake), registry, floors).await, fake)
+}
+
+/// [`platform_binding`] over `fake`, an existing platform repository: what a
+/// restarted control plane binds to.
+pub async fn platform_binding_on(fake: Arc<FakeRepository>) -> PlatformBinding {
+    bind(fake, Arc::new(UnusedRegistry), RollbackFloors::default()).await
+}
+
+async fn bind(
+    fake: Arc<FakeRepository>,
+    registry: Arc<dyn Registry>,
+    floors: RollbackFloors,
+) -> PlatformBinding {
     let repository = PlatformDesiredState::unconnected();
     repository
         .connect(Arc::clone(&fake) as Arc<dyn PlatformRepository>)
@@ -369,7 +383,7 @@ pub async fn platform_binding_with_floors(
         floors,
     );
 
-    let binding = PlatformBinding {
+    PlatformBinding {
         service: Arc::new(service),
         environment: ENVIRONMENT.to_owned(),
         data_sources: Arc::new(DataSources::new(
@@ -387,7 +401,5 @@ pub async fn platform_binding_with_floors(
         publisher: None,
         publication: Arc::new(fabric_platform_management::PublicationState::new()),
         readers: None,
-    };
-
-    (binding, fake)
+    }
 }

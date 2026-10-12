@@ -21,6 +21,7 @@ impl ClientService {
         &self,
         operator: &Operator,
         request: CreateClientRequest,
+        continuity: Option<&dyn crate::LifecycleContinuity>,
     ) -> Result<StoredClient, ControlPlaneError> {
         let repository = self.repository.current();
 
@@ -84,22 +85,13 @@ impl ClientService {
         // the ordinary case to retry a write that will never succeed. A
         // 502 nobody could act on for one rare race is a smaller cost than
         // advice that cannot help for the common one.
-        let revision = match repository.create(&document, &change).await {
-            Ok(revision) => revision,
-            Err(lost_race @ (RepositoryError::Conflict | RepositoryError::Rejected { .. })) => {
-                return Err(match repository.get(&request.id).await {
-                    Ok(_) => ControlPlaneError::ClientExists {
-                        id: request.id.clone(),
-                    },
-                    Err(RepositoryError::NotFound { .. }) => match lost_race {
-                        RepositoryError::Conflict => ControlPlaneError::RevisionConflict,
-                        other => ControlPlaneError::from_repository(other),
-                    },
-                    Err(other) => ControlPlaneError::from_repository(other),
-                });
-            }
-            Err(other) => return Err(ControlPlaneError::from_repository(other)),
-        };
+        let (document, reservation) = self.reserve_creation(continuity, document, operator).await;
+        let written = self
+            .write_created(&repository, &document, &change, &request.id)
+            .await;
+        self.settle_creation(continuity, &request.id, reservation, written.as_ref())
+            .await;
+        let revision = written?;
 
         self.reconciliation
             .mark_pending(&request.id, revision.clone(), self.clock.now_unix_seconds());
@@ -109,5 +101,32 @@ impl ClientService {
             .await;
 
         Ok(StoredClient { document, revision })
+    }
+
+    /// Writes a new client's document, telling a taken id from a lost race.
+    async fn write_created(
+        &self,
+        repository: &std::sync::Arc<dyn crate::ClientRepository>,
+        document: &ClientDocument,
+        change: &ChangeContext,
+        id: &fabric_client_model::ClientId,
+    ) -> Result<fabric_client_model::ClientRevision, ControlPlaneError> {
+        let request_id = id;
+        match repository.create(document, change).await {
+            Ok(revision) => Ok(revision),
+            Err(lost_race @ (RepositoryError::Conflict | RepositoryError::Rejected { .. })) => {
+                Err(match repository.get(request_id).await {
+                    Ok(_) => ControlPlaneError::ClientExists {
+                        id: request_id.clone(),
+                    },
+                    Err(RepositoryError::NotFound { .. }) => match lost_race {
+                        RepositoryError::Conflict => ControlPlaneError::RevisionConflict,
+                        other => ControlPlaneError::from_repository(other),
+                    },
+                    Err(other) => ControlPlaneError::from_repository(other),
+                })
+            }
+            Err(other) => Err(ControlPlaneError::from_repository(other)),
+        }
     }
 }

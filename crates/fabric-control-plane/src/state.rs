@@ -65,6 +65,11 @@ pub(crate) struct ControlPlaneState {
     /// continuity store exists: no baseline, so host moves are held.
     pub(crate) declaration_ledgers: Option<Arc<dyn crate::DeclarationLedgers>>,
 
+    /// Where a restoration is reserved before it is written (D01-14
+    /// restore). `None` until a protected continuity store exists: every
+    /// restore is then held.
+    pub(crate) lifecycle_continuity: Option<Arc<dyn crate::LifecycleContinuity>>,
+
     /// Where this control plane is reachable from a browser.
     pub(crate) public_base_url: String,
 

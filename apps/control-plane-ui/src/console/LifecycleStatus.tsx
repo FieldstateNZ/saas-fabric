@@ -17,6 +17,16 @@ const WITHDRAWAL: Record<Withdrawal['state'], string> = {
   notPublished: 'Not in the published tenants document',
 }
 
+/** How each continuity hold reads. */
+const HELD: Record<Exclude<ClientLifecycle['continuity']['reason'], null>, string> = {
+  noStore: 'Lifecycle not confirmed: no continuity store',
+  unavailable: 'Lifecycle not confirmed: continuity store unreachable',
+  unenrolled: 'Lifecycle not confirmed: not enrolled',
+  mismatch: 'Lifecycle held: it does not match the confirmed history',
+  pending: 'Lifecycle change not confirmed yet',
+  resurrection: 'Lifecycle held: not the attested identity instance',
+}
+
 /** What each readiness condition is called. */
 const CONDITION: Record<ClientLifecycle['unmet'][number]['condition'], string> = {
   provisioning: 'Provisioning',
@@ -55,6 +65,11 @@ export function LifecycleStatus({
           ))}
         </ul>
       )}
+      {lifecycle.continuity.state === 'held' && (
+        <p className="lifecycle__note">
+          <strong>{HELD[lifecycle.continuity.reason]}</strong>: {lifecycle.continuity.detail}.
+        </p>
+      )}
       {lifecycle.tombstone !== null && (
         <p className="lifecycle__note">
           Retirement recorded {when(lifecycle.tombstone.at)} by {lifecycle.tombstone.by}:{' '}
@@ -66,6 +81,13 @@ export function LifecycleStatus({
           <strong>{WITHDRAWAL[lifecycle.withdrawal.state]}</strong>: {lifecycle.withdrawal.detail}.
         </p>
       )}
+      {lifecycle.restorations.map((restoration) => (
+        <p className="lifecycle__note" key={`${String(restoration.tombstone.at)}-${String(restoration.at)}`}>
+          Restored {when(restoration.at)} by {restoration.by}: {restoration.reason}. Retirement recorded{' '}
+          {when(restoration.tombstone.at)} by {restoration.tombstone.by} ({restoration.tombstone.reason}) is kept
+          in its history.
+        </p>
+      ))}
       {lifecycle.deletionConfirmed !== null && (
         <p className="lifecycle__note">
           Deletion confirmed {when(lifecycle.deletionConfirmed.at)} by {lifecycle.deletionConfirmed.by}. This

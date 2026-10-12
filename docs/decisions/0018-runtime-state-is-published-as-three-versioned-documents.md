@@ -1258,11 +1258,16 @@ ADR 0023's list and `docs/roadmap/m0-contract-decisions.md`.
   - `client_document_revert.rs`: a client revert reaches the published
     documents only through the issuer registry, and none of it is audited.
     A console tag read before it is refused. **Findings:** a reverted
-    tombstone reinstates the client, and its issuer is registered again in
-    a new generation once identity is applied at the reverted revision. A
+    tombstone reinstated the client and registered its issuer again; since
+    ADR 0021's restore amendment it is held instead, because the lifecycle
+    continuity store no longer confirms it, and the pass is held with every
+    published file kept (`reverting_a_tombstone_is_held_and_never_reinstates_the_client_or_its_issuer`).
+    With no store, every client is held this way. A
     reverted assignment removes an application, with its projected identity
     client, which the console refuses to remove. A reverted creation keeps
-    the tenant binding published and leaves the issuer out (`noClient`).
+    the tenant binding published; since ADR 0021's restore amendment it holds
+    the pass instead of leaving the issuer out, because nothing protected says
+    that identity ended.
   - `fabric-client-git` `desired_state_repository.rs`: a revision is the
     blob's hash. A revert to identical bytes therefore brings the earlier
     revision back, and a write held at it since then is accepted.
@@ -1318,9 +1323,16 @@ ADR 0023's list and `docs/roadmap/m0-contract-decisions.md`.
     mounted by the platform; not verified live;
   - G6: since #136 the record's `minimum_reader_contract` is the version
     handshake, with reader tests at contract N and N+1 in both directions
-    (`reader_compatibility.rs`). Still open: §9's dual-key path is not built,
-    no check fails CI when a document shape changes without raising the
-    floor, and there are no per-row matrix tests;
+    (`reader_compatibility.rs`). Since the G6 question on #108, every row of
+    the reader-compatibility matrix has a test against the production
+    reader (`reader_compatibility_matrix.rs`). CI also fails when the shape
+    this publisher writes changes without `MINIMUM_READER_CONTRACT` rising.
+    The shape is locked in `published-shapes.json`, held to the publisher by
+    `published_shapes.rs`, and compared with the base by
+    `scripts/check_reader_floor.py`, which refuses any base it cannot read.
+    The defaults are accepted in #108 comment 6122127775. Still open: §9's dual-key path is not built, and
+    nothing at the publisher waits for readers at a raised floor to be rolled
+    out;
   - G7: since the G7 disposition on #108, the runtime's served generation
     (number, record SHA-256, origin), which comes from the snapshot
     resolution reads, can be served on an off-by-default, separate

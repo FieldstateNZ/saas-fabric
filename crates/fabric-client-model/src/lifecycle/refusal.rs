@@ -73,4 +73,21 @@ pub enum LifecycleRefusal {
         /// What is wrong with it.
         detail: &'static str,
     },
+
+    /// Only a tombstoned client can be restored.
+    #[error("only a tombstoned client can be restored")]
+    RestoreRequiresTombstone,
+
+    /// Deletion is confirmed, and a confirmed deletion is not restored: it
+    /// needs an explicit disposition first (ADR 0021, "Restoring a
+    /// tombstone"), and none exists.
+    #[error("deletion of the client is confirmed, so it cannot be restored")]
+    DeletionConfirmedNotRestorable,
+
+    /// The restoration reason is not acceptable.
+    #[error("{detail}")]
+    InvalidRestorationReason {
+        /// What is wrong with it.
+        detail: &'static str,
+    },
 }

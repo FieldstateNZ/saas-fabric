@@ -30,13 +30,47 @@ export interface Withdrawal {
   readonly detail: string
 }
 
+/** A recorded tombstone. */
+export interface Tombstone {
+  readonly at: number
+  readonly by: string
+  readonly reason: string
+}
+
+/**
+ * A tombstone an operator reversed (D01-14 restore). The tombstone is kept:
+ * restoring a client never erases that it was retired.
+ */
+export interface Restoration {
+  readonly tombstone: Tombstone
+  readonly at: number
+  readonly by: string
+  readonly reason: string
+}
+
+/**
+ * Whether the protected continuity store confirms the recorded lifecycle.
+ * A held client is never identity-ready, and nothing converges its identity:
+ * with no store, which is every deployment today, every client is held.
+ */
+export type Continuity =
+  | { readonly state: 'admitted'; readonly reason: null; readonly detail: null }
+  | {
+      readonly state: 'held'
+      readonly reason: 'noStore' | 'unavailable' | 'unenrolled' | 'mismatch' | 'pending' | 'resurrection'
+      readonly detail: string
+    }
+
 /** A client's lifecycle, as the API derives it on every read. */
 export interface ClientLifecycle {
   readonly state: LifecycleState
   /** Empty unless the state is `incomplete`. */
   readonly unmet: readonly UnmetCondition[]
-  readonly tombstone: { readonly at: number; readonly by: string; readonly reason: string } | null
+  readonly tombstone: Tombstone | null
   readonly deletionConfirmed: { readonly at: number; readonly by: string } | null
   /** Null unless retirement is recorded. */
   readonly withdrawal: Withdrawal | null
+  /** Every reversed tombstone, oldest first, in every state. */
+  readonly restorations: readonly Restoration[]
+  readonly continuity: Continuity
 }

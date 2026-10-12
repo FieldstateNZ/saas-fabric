@@ -26,7 +26,10 @@ pub(crate) async fn create_client(
     State(state): State<ControlPlaneState>,
     BoundedJson(request): BoundedJson<CreateClientRequest>,
 ) -> Result<Response, ControlPlaneError> {
-    let stored = state.service.create_client(&operator, request).await?;
+    let stored = state
+        .service
+        .create_client(&operator, request, state.lifecycle_continuity.as_deref())
+        .await?;
     let reconciliation = state.service.reconciliation(&stored);
     let body = ClientProductResponse::from_stored(&stored, reconciliation, state.lifecycle(&stored).await)?;
 

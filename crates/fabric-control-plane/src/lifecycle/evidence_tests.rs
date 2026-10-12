@@ -11,6 +11,8 @@ use fabric_reconciliation::ReconciliationStatus;
 
 use super::evidence::{identity, provisioning, publication};
 use super::facts::{Placements, PlatformFacts, Publication};
+use crate::continuity::Admission;
+use crate::ContinuityHold;
 
 /// What a test says is known about publication.
 enum Published {
@@ -129,17 +131,33 @@ fn no_platform_or_unreadable_placements_is_never_provisioned_or_published() {
 fn identity_is_met_only_when_in_effect_at_this_revision() {
     let consistent = ProjectionCheck::Consistent;
     assert_eq!(
-        identity(ReconciliationStatus::Applied, &consistent),
+        identity(ReconciliationStatus::Applied, &consistent, Admission::Admitted),
         Evidence::Met
     );
     assert_eq!(
-        identity(ReconciliationStatus::Drifted, &consistent),
+        identity(ReconciliationStatus::Drifted, &consistent, Admission::Admitted),
         Evidence::Met
     );
-    assert!(is_unmet(&identity(ReconciliationStatus::Pending, &consistent)));
-    assert!(is_unmet(&identity(ReconciliationStatus::Failed, &consistent)));
-    assert!(is_unmet(&identity(ReconciliationStatus::HandEdited, &consistent)));
-    assert!(is_unmet(&identity(ReconciliationStatus::Withheld, &consistent)));
+    assert!(is_unmet(&identity(
+        ReconciliationStatus::Pending,
+        &consistent,
+        Admission::Admitted
+    )));
+    assert!(is_unmet(&identity(
+        ReconciliationStatus::Failed,
+        &consistent,
+        Admission::Admitted
+    )));
+    assert!(is_unmet(&identity(
+        ReconciliationStatus::HandEdited,
+        &consistent,
+        Admission::Admitted
+    )));
+    assert!(is_unmet(&identity(
+        ReconciliationStatus::Withheld,
+        &consistent,
+        Admission::Admitted
+    )));
 }
 
 #[test]
@@ -153,8 +171,16 @@ fn a_projection_that_is_not_consistent_is_never_in_effect_whatever_the_status() 
     };
 
     for projection in [&missing, &unverifiable] {
-        assert!(is_unmet(&identity(ReconciliationStatus::Applied, projection)));
-        assert!(is_unmet(&identity(ReconciliationStatus::Drifted, projection)));
+        assert!(is_unmet(&identity(
+            ReconciliationStatus::Applied,
+            projection,
+            Admission::Admitted
+        )));
+        assert!(is_unmet(&identity(
+            ReconciliationStatus::Drifted,
+            projection,
+            Admission::Admitted
+        )));
     }
 }
 
@@ -194,5 +220,27 @@ fn publication_is_unmet_without_a_publisher_a_pass_or_the_tenant() {
             &two_intents(),
             &read(placements(), published)
         )));
+    }
+}
+
+#[test]
+fn identity_held_by_the_continuity_store_is_never_in_effect_whatever_the_status() {
+    for hold in [
+        ContinuityHold::NoStore,
+        ContinuityHold::Unavailable,
+        ContinuityHold::Unenrolled,
+        ContinuityHold::Mismatch,
+        ContinuityHold::Pending,
+        ContinuityHold::Resurrection,
+    ] {
+        let evidence = identity(
+            ReconciliationStatus::Applied,
+            &ProjectionCheck::Consistent,
+            Admission::Held(hold),
+        );
+        let Evidence::Unmet(detail) = evidence else {
+            panic!("{hold:?} must leave identity unmet");
+        };
+        assert!(detail.starts_with("the client's identity is held"), "{detail}");
     }
 }

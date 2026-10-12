@@ -19,29 +19,22 @@ mod support;
 
 use std::collections::BTreeMap;
 use std::sync::atomic::Ordering;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use fabric_core::{BindingRevision, DataSourceId, LogicalDataSourceName, TenantId};
 use fabric_runtime_publication::{
     tenants_canonical_json, ConnectionName, ConnectionSelectorDocument, DataSourceDocument, DocumentInput,
     DocumentRevision, FieldName, IsolationModelDocument, PublicationError, PublicationRecord,
-    RecordedDocument, RecordedDocuments, ResourceHistory, RuntimePublication as _, RuntimeSnapshot,
-    TenantBindingDocument, TenantDataBindingDocument, TenantDataBindings, CONTRACT_VERSION,
-    PUBLICATION_RECORD_FILE,
+    RecordedDocument, RuntimePublication as _, RuntimeSnapshot, TenantBindingDocument,
+    TenantDataBindingDocument, TenantDataBindings, CONTRACT_VERSION, PUBLICATION_RECORD_FILE,
 };
-use fabric_tenant_runtime::{ResolveError, RuntimeConfig, RuntimeResolver, READER_CONTRACT};
-use support::Reader;
+use fabric_tenant_runtime::{ResolveError, RuntimeConfig, READER_CONTRACT};
+use support::{poll_until, refresh, resolves_to, rewrite_record, Reader};
 
 const SECOND_DATA_SOURCE: &str = "shared-postgres-02";
 
 fn logical_primary() -> LogicalDataSourceName {
     LogicalDataSourceName::try_new("primary").unwrap()
-}
-
-fn resolves_to(resolver: &RuntimeResolver, tenant: &str) -> Result<String, ResolveError> {
-    resolver
-        .resolve_data_source(&TenantId::try_new(tenant).unwrap(), &logical_primary())
-        .map(|resolved| resolved.data_source.id.to_string())
 }
 
 fn tenant_on(
@@ -103,41 +96,6 @@ fn acme_moves() -> RuntimeSnapshot {
         catalog: DocumentInput::new(DocumentRevision::new(1), support::articles_catalog()),
         registry: None,
     }
-}
-
-async fn poll_until(what: &str, mut condition: impl FnMut() -> bool) {
-    let start = Instant::now();
-    while !condition() {
-        assert!(start.elapsed() < Duration::from_secs(2), "{what} did not happen");
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-}
-
-async fn refresh(stack: &support::Stack) {
-    let before = stack.loads.load(Ordering::SeqCst);
-    stack.handles.refresh_now();
-    support::poll_for_load_count_above(&stack.loads, before, Duration::from_secs(2)).await;
-}
-
-/// Writes a record over the files in `dir` that names them exactly, with
-/// `edit` applied to the record's JSON -- how a test publishes a generation
-/// under a contract this publisher does not write.
-fn rewrite_record(dir: &support::TempDir, generation: u64, edit: impl FnOnce(&mut serde_json::Value)) {
-    let documents = RecordedDocuments {
-        tenants: RecordedDocument::of(DocumentRevision::new(generation), &dir.read_raw("tenants.json")),
-        data_sources: RecordedDocument::of(
-            DocumentRevision::new(generation),
-            &dir.read_raw("data-sources.json"),
-        ),
-        catalog: RecordedDocument::of(DocumentRevision::new(1), &dir.read_raw("catalog.json")),
-    };
-    let record = PublicationRecord::new(generation, documents, ResourceHistory::default());
-    let mut json: serde_json::Value = serde_json::from_slice(&record.canonical_json().unwrap()).unwrap();
-    edit(&mut json);
-    dir.write_raw(
-        PUBLICATION_RECORD_FILE,
-        &serde_json::to_vec_pretty(&json).unwrap(),
-    );
 }
 
 /// A reader at contract N, against a publication at N+1. It never reads the
@@ -242,8 +200,12 @@ async fn a_publication_above_the_reader_floor_keeps_running_readers_on_their_gen
 /// it. A document whose shape changed -- here a field the reader does not
 /// know -- published under an unchanged floor is still refused only by
 /// `deny_unknown_fields` on the reader's own types. The running reader keeps
-/// its generation and a new one fails to prime, naming the field. Nothing
-/// yet fails CI when a shape change ships without the floor bump it needs.
+/// its generation and a new one fails to prime, naming the field. In this
+/// repository, `published_shapes.rs` and `scripts/check_reader_floor.py`
+/// now fail CI when the publisher's shape changes without the floor rising;
+/// a publisher built elsewhere, or bytes written past the publisher, are
+/// still caught only here. `reader_compatibility_matrix.rs` covers the
+/// other rows of the matrix.
 #[tokio::test]
 async fn current_behaviour_a_shape_change_published_without_raising_the_floor_is_refused_only_by_unknown_fields(
 ) {

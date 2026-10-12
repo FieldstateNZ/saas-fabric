@@ -6,6 +6,9 @@
 //! the most it can say is that the tenants document the publication target
 //! last accepted does not carry the tenant, and even then no reader is
 //! observed applying it.
+//!
+//! A restored client is not retired and reports no withdrawal: its tombstone
+//! withdrew nothing, so a restore has nothing to undo here (D01-14 restore).
 
 use fabric_core::TenantId;
 use fabric_platform_management::PassOutcome;

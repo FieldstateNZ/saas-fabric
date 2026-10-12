@@ -17,12 +17,17 @@ that floor:
     python3 scripts/check_reader_floor.py --base REF
 
 Refused:
+    - a base that cannot be read, or whose source and compatibility.yaml
+      disagree on the floor;
     - the lock's floor is not the source's MINIMUM_READER_CONTRACT, or
       compatibility.yaml disagrees with the source (release_compatibility);
     - the floor fell since REF;
     - the shape changed since REF and the floor did not rise.
 
-A base with no lock (before this check existed) has nothing to compare.
+A base whose tree provably has no lock (before this check existed) adopts
+it, provided the floor does not fall from the base's source and
+compatibility.yaml. Any base that cannot be read -- an unknown commit, an
+unreadable tree, a missing blob -- is refused, never taken as absent.
 Standard library and git only.
 
     python3 -m unittest discover -s scripts/tests -v
@@ -66,24 +71,71 @@ def parse_lock(text: str, where: str) -> tuple[int, dict[str, list[str]]]:
     return floor, shapes
 
 
-def base_lock(base: str, root: Path) -> str | None:
-    """The lock's text at `base`, or None if `base` has no lock."""
-    resolved = subprocess.run(
-        ["git", "-C", str(root), "rev-parse", "--verify", "--quiet", f"{base}^{{commit}}"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+def git(root: Path, *argv: str) -> subprocess.CompletedProcess:
+    return subprocess.run(["git", "-C", str(root), *argv], capture_output=True, check=False)
+
+
+def base_commit(base: str, root: Path) -> str:
+    """The full commit `base` names, or Refused."""
+    resolved = git(root, "rev-parse", "--verify", "--quiet", f"{base}^{{commit}}")
     if resolved.returncode != 0:
         raise Refused(f"the base {base!r} is not a commit in this repository")
-    commit = resolved.stdout.strip()
-    shown = subprocess.run(
-        ["git", "-C", str(root), "show", f"{commit}:{LOCK}"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    return shown.stdout if shown.returncode == 0 else None
+    return resolved.stdout.decode().strip()
+
+
+def read_at(commit: str, relative: str, root: Path) -> str | None:
+    """`relative`'s text at `commit`; None only when the commit's tree
+    provably has no such path.
+
+    Absence is taken from `git ls-tree`, which reads only trees. Every other
+    failure -- an unreadable tree, a missing or corrupt blob, a path that is
+    not a file -- is Refused: a base that cannot be read is no evidence that
+    the lock did not exist.
+    """
+    listed = git(root, "ls-tree", "-z", "--full-tree", commit, "--", relative)
+    if listed.returncode != 0:
+        raise Refused(f"cannot read the tree of {commit} for {relative}: {listed.stderr.decode().strip()}")
+    entries = [entry for entry in listed.stdout.decode().split("\0") if entry]
+    if not entries:
+        return None
+    if len(entries) != 1:
+        raise Refused(f"{relative} at {commit} is listed {len(entries)} times")
+    metadata, _, path = entries[0].partition("\t")
+    mode, kind, blob = (metadata.split(" ") + ["", "", ""])[:3]
+    if path != relative or kind != "blob" or not mode.startswith("100"):
+        raise Refused(f"{relative} at {commit} is not a file ({entries[0]!r})")
+    shown = git(root, "cat-file", "blob", blob)
+    if shown.returncode != 0:
+        raise Refused(f"{relative} at {commit} names blob {blob}, which cannot be read: "
+                      f"{shown.stderr.decode().strip()}")
+    try:
+        return shown.stdout.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise Refused(f"{relative} at {commit} is not UTF-8") from error
+
+
+def base_source_floor(commit: str, root: Path) -> int:
+    """The minimum reader contract the base's source and compatibility.yaml
+    state. Both must be readable and agree."""
+    relative, declaration = rc.SOURCE_CONSTANTS["minimumReaderContract"]
+    source = read_at(commit, relative, root)
+    if source is None:
+        raise Refused(f"{relative} does not exist at {commit}, so its reader floor is unknown")
+    matches = declaration.findall(source)
+    if len(matches) != 1:
+        raise Refused(f"{relative} at {commit} declares MINIMUM_READER_CONTRACT {len(matches)} times, not once")
+    text = read_at(commit, rc.COMPATIBILITY_FILE, root)
+    if text is None:
+        raise Refused(f"{rc.COMPATIBILITY_FILE} does not exist at {commit}, so its reader floor is unknown")
+    try:
+        stated = rc.parse_subset(text)["spec"]["publication"]["minimumReaderContract"]
+    except (rc.Refused, KeyError, TypeError) as error:
+        raise Refused(f"{rc.COMPATIBILITY_FILE} at {commit} states no minimumReaderContract") from error
+    if stated != int(matches[0]):
+        raise Refused(
+            f"at {commit}, {rc.COMPATIBILITY_FILE} states reader floor {stated} and the source {matches[0]}"
+        )
+    return stated
 
 
 def difference(before: dict[str, list[str]], after: dict[str, list[str]]) -> list[str]:
@@ -113,12 +165,19 @@ def check(base: str, root: Path = REPO_ROOT) -> str:
             f"regenerate it with {REGENERATE}"
         )
 
-    text = base_lock(base, root)
+    commit = base_commit(base, root)
+    source_floor = base_source_floor(commit, root)
+    if floor < source_floor:
+        raise Refused(f"the reader floor fell from {source_floor} to {floor} since {base}; a floor never falls")
+    text = read_at(commit, LOCK, root)
     if text is None:
-        return f"{base} has no {LOCK}: nothing to compare; the shape is recorded at reader contract {floor}"
+        return (
+            f"{base} provably has no {LOCK}: the lock is adopted at reader contract {floor} "
+            f"(the base's floor is {source_floor})"
+        )
     base_floor, base_shapes = parse_lock(text, f"{LOCK} at {base}")
-    if floor < base_floor:
-        raise Refused(f"the reader floor fell from {base_floor} to {floor}; a floor never falls")
+    if base_floor != source_floor:
+        raise Refused(f"{LOCK} at {base} was recorded at {base_floor}, but that commit's floor is {source_floor}")
     changes = difference(base_shapes, shapes)
     if not changes:
         return f"the published shape is unchanged since {base}; reader floor {floor}"

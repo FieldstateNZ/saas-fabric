@@ -167,3 +167,91 @@ fn each_kind_of_shape_change_changes_the_shape() {
     .into_iter();
     assert!(optional.any(|line| line == "$[].id: may be absent"));
 }
+
+/// Every variant a derive knows reaches the specimens, with no list to keep
+/// beside it: a variant added to an enum is enumerated, and so changes the
+/// shape, without any specimen being edited.
+#[test]
+fn every_variant_comes_from_the_enums_own_derive() {
+    use shapes::variants::{every_tagged, every_unit};
+
+    #[derive(Debug, PartialEq, serde::Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    enum Placement {
+        Shared,
+        HighAvailability,
+        Archive,
+    }
+    #[derive(Debug, PartialEq, serde::Deserialize)]
+    #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+    enum Selector {
+        Default {},
+        Vault { path: String, role: String },
+    }
+    assert_eq!(
+        every_unit::<Placement>(),
+        [Placement::Shared, Placement::HighAvailability, Placement::Archive]
+    );
+
+    assert_eq!(
+        every_tagged::<Selector>("kind"),
+        [
+            Selector::Default {},
+            Selector::Vault {
+                path: "specimen".to_owned(),
+                role: "specimen".to_owned()
+            }
+        ]
+    );
+}
+
+/// The specimens carry every variant of every published enum: the shape
+/// names every distinct output each derive writes. A deserialize-only alias
+/// is enumerated too, but writes its variant's own name, so it adds nothing.
+#[test]
+fn the_shape_names_every_variant_each_derive_knows() {
+    use std::collections::BTreeSet;
+
+    use fabric_runtime_publication::{
+        ConnectionSelectorDocument, IsolationModelDocument, PlacementClassDocument,
+    };
+    use shapes::variants::{every_tagged, every_unit};
+
+    fn written<T: serde::Serialize>(variants: &[T], tag: Option<&str>) -> BTreeSet<String> {
+        variants
+            .iter()
+            .map(|variant| {
+                let value = serde_json::to_value(variant).unwrap();
+                match tag {
+                    Some(tag) => value[tag].as_str().unwrap().to_owned(),
+                    None => value.as_str().unwrap().to_owned(),
+                }
+            })
+            .collect()
+    }
+    let shape = shapes::published_shape();
+    let named = |document: &str, prefix: &str, suffix: &str| -> BTreeSet<String> {
+        shape[document]
+            .iter()
+            .filter_map(|line| line.strip_prefix(prefix)?.strip_suffix(suffix).map(str::to_owned))
+            .filter(|name| !name.contains(['.', '<', '>', ':']))
+            .collect()
+    };
+
+    assert_eq!(
+        named("tenants.json", "$[].data.*.isolation<kind=", ">: object"),
+        written(&every_tagged::<IsolationModelDocument>("kind"), Some("kind"))
+    );
+    assert_eq!(
+        named("data-sources.json", "$[].connection<kind=", ">: object"),
+        written(&every_tagged::<ConnectionSelectorDocument>("kind"), Some("kind"))
+    );
+    assert_eq!(
+        named("data-sources.json", "$[].placement: one of \"", "\""),
+        written(&every_unit::<PlacementClassDocument>(), None)
+    );
+    assert_eq!(
+        named("catalog.json", "$.*.operations[]: one of \"", "\""),
+        written(&every_unit::<fabric_core::OperationKind>(), None)
+    );
+}

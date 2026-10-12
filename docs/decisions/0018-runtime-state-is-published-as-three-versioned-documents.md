@@ -1321,8 +1321,8 @@ ADR 0023's list and `docs/roadmap/m0-contract-decisions.md`.
     this publisher writes changes without `MINIMUM_READER_CONTRACT` rising.
     The shape is locked in `published-shapes.json`, held to the publisher by
     `published_shapes.rs`, and compared with the base by
-    `scripts/check_reader_floor.py`. The defaults this rests on await
-    confirmation there. Still open: §9's dual-key path is not built, and
+    `scripts/check_reader_floor.py`, which refuses any base it cannot read.
+    The defaults are accepted in #108 comment 6122127775. Still open: §9's dual-key path is not built, and
     nothing at the publisher waits for readers at a raised floor to be rolled
     out;
   - G7: since the G7 disposition on #108, the runtime's served generation

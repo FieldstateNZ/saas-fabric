@@ -1260,8 +1260,10 @@ G6's two engineering items: a test for each row of the reader-compatibility
 matrix, and a CI check that fails when a producer change ships without the
 consumer change it needs (ADR 0018 Consequences). They are asked on
 [#108 comment 6121406084](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6121406084).
-The check is built on the defaults proposed there, which are restated below
-and await confirmation. This change is source and CI only. It does not
+The disposition in
+[#108 comment 6122127775](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6122127775)
+accepts those defaults, with fail-closed base reads and automatic variant
+coverage, both below. This change is source and CI only. It does not
 change the release workflow, any tag or any publication, and none of it is
 verified live.
 
@@ -1306,9 +1308,15 @@ the reader sees what such a publisher would leave.
   `tests/published_shapes.rs` renders it from specimen documents through
   the publisher's own canonical renderers, and fails if it differs from
   the lock. The specimens (`tests/shapes/specimens.rs`) destructure every
-  document type without `..` and match every enum variant. A new field or
-  variant therefore does not compile until it is given a specimen, and a
-  full specimen that leaves an optional field unset fails at run time.
+  document type without `..`, so a new field does not compile until it is
+  given a specimen, and a full specimen that leaves an optional field unset
+  fails at run time. Enum variants are not listed by hand
+  (`tests/shapes/variants.rs`): each enum's own serde derive names every
+  variant in its unknown-variant error, and each name is deserialized into
+  its variant, with every required field filled. A variant added to an
+  enum is therefore a specimen with nothing else changed, and the lock test
+  fails until the floor rises. A deserialize-only alias is enumerated too
+  but writes its variant's own name, so it changes nothing.
   The same suite checks:
   - the lock's floor is `MINIMUM_READER_CONTRACT`;
   - `READER_CONTRACT` reaches it;
@@ -1322,7 +1330,12 @@ the reader sees what such a publisher would leave.
   - a `compatibility.yaml` that disagrees with the source
     (`release_compatibility.check_contracts`).
 
-  A base with no lock has nothing to compare. CI's `scripts` job runs the
+  The base is read fail-closed. The lock counts as absent only when
+  `git ls-tree` proves the base's tree has no such path. An unknown commit,
+  an unreadable tree, or a blob the tree names but the repository cannot
+  supply is refused. The base's `MINIMUM_READER_CONTRACT` and
+  `compatibility.yaml` must be readable and agree, and the head's floor may
+  not fall below them, even when the lock is first adopted. CI's `scripts` job runs the
   check after the offline script tests. A pull request is compared with its
   base commit, a push to `main` with the commit it replaced, and any other
   push with its merge base with `main`.
@@ -1334,6 +1347,8 @@ the reader sees what such a publisher would leave.
 | The lock, the constants and `compatibility.yaml` agree | `published_shapes.rs`; `check_reader_floor.py` | `::the_lock_is_recorded_at_the_floor_this_publisher_writes`, `::this_sources_reader_serves_the_floor_this_publisher_writes`; `test_check_reader_floor.py::test_a_lock_raised_alone_is_refused`, `::test_a_constant_raised_without_compatibility_yaml_is_refused`; existing `this_repositorys_compatibility.rs` |
 | CI fails a shape change without a floor raise | `check_reader_floor.py`, `ci.yml` `scripts` job | `test_check_reader_floor.py::test_a_shape_change_without_a_floor_raise_is_refused`, `::test_a_removed_line_is_a_shape_change_too`, `::test_a_falling_floor_is_refused`; a deliberate shape change, checked locally and reverted (in the pull request) |
 | A raise admits the change | as above | `::test_a_shape_change_with_a_floor_raise_passes`, `::test_a_floor_raise_without_a_shape_change_passes` |
+| A base that cannot be read is refused, never taken as absent; the floor cannot fall when the lock is adopted | `check_reader_floor.py::read_at`, `::base_source_floor` | `::test_the_review_probe_a_missing_lock_blob_with_a_falling_floor_is_refused`, `::test_a_lock_blob_missing_at_the_same_floor_is_refused_too`, `::test_a_base_tree_that_cannot_be_read_is_refused`, `::test_a_floor_decrease_during_bootstrap_is_refused`, `::test_a_base_whose_source_and_compatibility_disagree_is_refused` |
+| A new variant cannot get a match arm without becoming a specimen | `tests/shapes/variants.rs` | `published_shapes.rs::every_variant_comes_from_the_enums_own_derive`, `::the_shape_names_every_variant_each_derive_knows`. Locally, adding `PlacementClassDocument::Archive` with no specimen edit fails `the_lock_is_the_shape_this_publisher_writes` (`+ data-sources.json $[].placement: one of "archive"`), and an input-only `#[serde(alias)]` passes |
 
 Limits:
 
@@ -1348,7 +1363,7 @@ Limits:
   operator.
 - **Each change needs a raise.** The check does not class any change as
   safe. Removing a field that may be absent is harmless to an older reader,
-  but it still needs a raise (default 2 on #108).
+  but it still needs a raise (default 2 on #108, accepted).
 - **The rules name the maps and enums.** `tests/shapes/mod.rs` says which
   paths are maps, tagged enums and string enums. If a new map or enum
   field is not added there, its keys or values are read as fields and

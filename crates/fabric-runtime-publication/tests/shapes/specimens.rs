@@ -1,106 +1,42 @@
 //! Specimen documents that use every field and every variant the publisher
 //! can write.
 //!
-//! The patterns below have no `..`: a field added to a document type does
-//! not compile until it is added here, and a `match` names every variant of
-//! each enum. A full resource must set every optional field, and a sparse
-//! one must leave each out, so the shape also says which fields a reader
-//! may find absent. Both are checked when the specimens are built.
+//! The struct patterns below have no `..`: a field added to a document type
+//! does not compile until it is added here. Every enum variant comes from
+//! the enum's own serde derive ([`super::variants`]), so a new variant is
+//! a specimen without anything here changing. A full resource must set
+//! every optional field, and a sparse one must leave each out, so the shape
+//! also says which fields a reader may find absent. Both are checked when
+//! the specimens are built.
 
 use std::collections::BTreeMap;
+
+use super::variants::{every_tagged, every_unit};
 
 use fabric_core::{
     BindingRevision, DataSourceId, LogicalDataSourceName, LogicalResourceName, OperationKind, TenantId,
 };
 use fabric_runtime_publication::{
-    CatalogDocument, CollectionName, ConfigurationBindingDocument, ConnectionName,
-    ConnectionSelectorDocument, ConnectorId, DataResidencyDocument, DataSourceCapabilitiesDocument,
-    DataSourceDocument, FieldName, IsolationModelDocument, PlacementClassDocument, PoolSettingsDocument,
-    ResourceDefinitionDocument, SchemaName, StorageBindingDocument, TenantBindingDocument,
-    TenantDataBindingDocument, TenantDataBindings,
+    CatalogDocument, CollectionName, ConfigurationBindingDocument, ConnectionSelectorDocument, ConnectorId,
+    DataResidencyDocument, DataSourceCapabilitiesDocument, DataSourceDocument, FieldName,
+    IsolationModelDocument, PlacementClassDocument, PoolSettingsDocument, ResourceDefinitionDocument,
+    StorageBindingDocument, TenantBindingDocument, TenantDataBindingDocument, TenantDataBindings,
 };
 
 fn every_isolation() -> Vec<IsolationModelDocument> {
-    let every = vec![
-        IsolationModelDocument::Database {},
-        IsolationModelDocument::Schema {
-            schema: SchemaName::try_new("tenant_a").unwrap(),
-        },
-        IsolationModelDocument::Discriminator {
-            column: FieldName::try_new("tenant_key").unwrap(),
-            value: "tenant-a".to_owned(),
-        },
-    ];
-    for isolation in &every {
-        match isolation {
-            IsolationModelDocument::Database {}
-            | IsolationModelDocument::Schema { schema: _ }
-            | IsolationModelDocument::Discriminator { column: _, value: _ } => {}
-        }
-    }
-    every
+    every_tagged("kind")
 }
 
 fn every_connection() -> Vec<ConnectionSelectorDocument> {
-    let every = vec![
-        ConnectionSelectorDocument::Default {},
-        ConnectionSelectorDocument::Named {
-            name: ConnectionName::try_new("primary").unwrap(),
-        },
-        ConnectionSelectorDocument::Secret {
-            reference: "tenant/a/data-primary".to_owned(),
-        },
-    ];
-    for connection in &every {
-        match connection {
-            ConnectionSelectorDocument::Default {}
-            | ConnectionSelectorDocument::Named { name: _ }
-            | ConnectionSelectorDocument::Secret { reference: _ } => {}
-        }
-    }
-    every
+    every_tagged("kind")
 }
 
 fn every_placement() -> Vec<PlacementClassDocument> {
-    let every = vec![
-        PlacementClassDocument::Shared,
-        PlacementClassDocument::Dedicated,
-        PlacementClassDocument::HighAvailability,
-        PlacementClassDocument::Regulated,
-        PlacementClassDocument::Development,
-        PlacementClassDocument::Ephemeral,
-    ];
-    for placement in &every {
-        match placement {
-            PlacementClassDocument::Shared
-            | PlacementClassDocument::Dedicated
-            | PlacementClassDocument::HighAvailability
-            | PlacementClassDocument::Regulated
-            | PlacementClassDocument::Development
-            | PlacementClassDocument::Ephemeral => {}
-        }
-    }
-    every
+    every_unit()
 }
 
 fn every_operation() -> Vec<OperationKind> {
-    let every = vec![
-        OperationKind::Read,
-        OperationKind::List,
-        OperationKind::Create,
-        OperationKind::Update,
-        OperationKind::Delete,
-    ];
-    for operation in &every {
-        match operation {
-            OperationKind::Read
-            | OperationKind::List
-            | OperationKind::Create
-            | OperationKind::Update
-            | OperationKind::Delete => {}
-        }
-    }
-    every
+    every_unit()
 }
 
 fn storage(full: bool) -> StorageBindingDocument {

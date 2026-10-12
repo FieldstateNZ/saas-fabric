@@ -3,6 +3,7 @@
 //! for [`specimens`].
 
 pub mod specimens;
+pub mod variants;
 pub mod walk;
 
 use std::collections::{BTreeMap, BTreeSet};

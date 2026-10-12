@@ -90,6 +90,12 @@ class Repository(unittest.TestCase):
         git(self.root, "commit", "--quiet", "--allow-empty", "-m", "base")
         return git(self.root, "rev-parse", "HEAD")
 
+    def remove_object(self, oid: str) -> None:
+        """Deletes a loose object, leaving every commit that names it valid."""
+        path = self.root / ".git" / "objects" / oid[:2] / oid[2:]
+        path.chmod(0o644)
+        path.unlink()
+
     def run_cli(self, *argv: str) -> tuple[int, str, str]:
         out, err = io.StringIO(), io.StringIO()
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
@@ -174,7 +180,50 @@ class ShapeAndFloor(Repository):
         self.write()
         status, out, err = self.run_cli("--base", base)
         self.assertEqual(status, 0, err)
-        self.assertIn("nothing to compare", out)
+        self.assertIn("provably has no", out)
+
+    def test_a_floor_decrease_during_bootstrap_is_refused(self) -> None:
+        self.write(reader=2, lock=False)
+        base = self.commit()
+        self.write(reader=1, shapes=changed_shape())
+        status, _, err = self.run_cli("--base", base)
+        self.assertEqual(status, 1)
+        self.assertIn("fell from 2 to 1", err)
+
+    def test_the_review_probe_a_missing_lock_blob_with_a_falling_floor_is_refused(self) -> None:
+        self.write(reader=2)
+        base = self.commit()
+        self.remove_object(git(self.root, "rev-parse", f"{base}:{crf.LOCK}"))
+        self.write(reader=1, shapes=changed_shape())
+        status, out, err = self.run_cli("--base", base)
+        self.assertEqual(status, 1, out)
+        self.assertIn("refused:", err)
+
+    def test_a_lock_blob_missing_at_the_same_floor_is_refused_too(self) -> None:
+        self.write()
+        base = self.commit()
+        self.remove_object(git(self.root, "rev-parse", f"{base}:{crf.LOCK}"))
+        self.write(shapes=changed_shape())
+        status, _, err = self.run_cli("--base", base)
+        self.assertEqual(status, 1)
+        self.assertIn("cannot be read", err)
+
+    def test_a_base_tree_that_cannot_be_read_is_refused(self) -> None:
+        self.write()
+        base = self.commit()
+        self.remove_object(git(self.root, "rev-parse", f"{base}:crates/fabric-runtime-publication"))
+        status, _, err = self.run_cli("--base", base)
+        self.assertEqual(status, 1)
+        self.assertIn("cannot read the tree", err)
+
+    def test_a_base_whose_source_and_compatibility_disagree_is_refused(self) -> None:
+        self.write(lock=False)
+        (self.root / "compatibility.yaml").write_text(COMPATIBILITY.format(reader=2), encoding="utf-8")
+        base = self.commit()
+        self.write()
+        status, _, err = self.run_cli("--base", base)
+        self.assertEqual(status, 1)
+        self.assertIn("states reader floor 2 and the source 1", err)
 
     def test_a_missing_lock_is_refused(self) -> None:
         self.write()

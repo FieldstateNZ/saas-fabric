@@ -1089,3 +1089,111 @@ async fn a_losing_concurrent_attempt_cannot_clear_the_landed_attempts_pending_op
     );
     assert_eq!(continuity_of(&plane, "acme").await["state"], "admitted");
 }
+
+/// Review 5489726594's inverse test, through two real POSTs: B reserves,
+/// then, before B writes, an identical request A reserves, writes and fails
+/// to complete. B then loses its CAS and releases its own attempt. A's
+/// landed operation must still be pending, and the same request recovers it.
+#[tokio::test]
+async fn two_identical_posts_a_landed_one_and_a_losing_one_keep_the_operation_pending() {
+    let Published { plane, dir: _dir, .. } = Published::new(true, None).await;
+    let retired = tombstoned(&plane).await;
+    store(&plane).fail_completions(true);
+
+    let fired = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let landed = Arc::new(std::sync::Mutex::new(None::<Value>));
+    let (router, at, hook_fired, hook_landed) = (
+        plane.router.clone(),
+        retired.clone(),
+        fired.clone(),
+        landed.clone(),
+    );
+    store(&plane).on_reserve(move || {
+        if hook_fired.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            return;
+        }
+        let (router, at) = (router.clone(), at.clone());
+        // Request A, on its own runtime, while request B holds its
+        // reservation and has not written yet.
+        let response = std::thread::spawn(move || {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(async move {
+                    let response = send(
+                        &router,
+                        as_operator("POST", "/api/clients/acme/restoration")
+                            .header("content-type", "application/json")
+                            .header("if-match", format!("\"{at}\""))
+                            .body(Body::from(json!({"reason": "Contract renewed"}).to_string()))
+                            .unwrap(),
+                    )
+                    .await;
+                    (response.status(), body_of(response).await)
+                })
+        })
+        .join()
+        .unwrap();
+        *hook_landed.lock().unwrap() = Some(json!({"status": response.0.as_u16(), "body": response.1}));
+    });
+
+    // Request B.
+    let (status, body) = restore(&plane, "acme", &retired).await;
+    store(&plane).on_reserve(|| {});
+    let a = landed.lock().unwrap().clone().expect("request A ran");
+
+    assert_eq!(a["status"], 200, "{a}");
+    assert_eq!(a["body"]["lifecycle"]["continuity"]["reason"], "pending", "{a}");
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["error"]["code"], "revision_conflict");
+    let continuity = continuity_of(&plane, "acme").await;
+    assert_eq!(
+        continuity["reason"], "pending",
+        "B's release kept A's landed operation: {continuity}"
+    );
+
+    store(&plane).fail_completions(false);
+    let (status, body) = restore(&plane, "acme", &retired).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["revision"], a["body"]["revision"]);
+    assert_eq!(body["lifecycle"]["continuity"]["state"], "admitted", "{body}");
+    assert_eq!(restored_audits(&audited(&plane, "acme").await), 1);
+}
+
+/// Review 5489726594: a retry against a landed, unconfirmed restore is
+/// validated as the original was. A blank reason is `422`; a changed one is
+/// not the frozen operation. Neither completes, writes or audits anything.
+#[tokio::test]
+async fn a_retry_against_a_landed_restore_is_validated_and_must_be_the_same_request() {
+    let Published { plane, dir: _dir, .. } = Published::new(true, None).await;
+    let retired = tombstoned(&plane).await;
+    store(&plane).fail_completions(true);
+    let (status, body) = restore(&plane, "acme", &retired).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let landed = body["revision"].as_str().unwrap().to_owned();
+    store(&plane).fail_completions(false);
+    let events = store(&plane).events();
+
+    let (status, body) = restore_because(&plane, "acme", &retired, "  ").await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert_eq!(body["error"]["code"], "invalid_restoration_reason");
+
+    let (status, body) = restore_because(&plane, "acme", &retired, "A different reason").await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["error"]["code"], "lifecycle_continuity_pending");
+
+    assert_eq!(store(&plane).events(), events, "nothing completed or reserved");
+    assert_eq!(revision_of(&plane, "acme").await, landed, "nothing written");
+    assert_eq!(continuity_of(&plane, "acme").await["reason"], "pending");
+    assert_eq!(restored_audits(&audited(&plane, "acme").await), 0);
+
+    let (status, body) = restore_because(&plane, "acme", &retired, " Contract renewed ").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        body["revision"],
+        landed.as_str(),
+        "the original write, not a new one"
+    );
+    assert_eq!(body["lifecycle"]["continuity"]["state"], "admitted", "{body}");
+}

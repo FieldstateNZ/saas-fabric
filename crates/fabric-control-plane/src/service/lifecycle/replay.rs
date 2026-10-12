@@ -2,7 +2,7 @@
 //! recovering one the document already carries (see `record` for the
 //! contract).
 
-use fabric_client_model::{ClientDocument, LifecycleRecord};
+use fabric_client_model::{ClientDocument, LifecycleRecord, LifecycleRefusal};
 
 use super::record::{Asked, Ran};
 use crate::{
@@ -36,9 +36,15 @@ impl ClientService {
         asked: &Asked<'_>,
         frozen: &PendingTransition,
         current: StoredClient,
+        transition: &(dyn Fn(&LifecycleRecord) -> Result<LifecycleRecord, LifecycleRefusal> + Sync),
         precondition: &(dyn Fn(&ClientDocument) -> Result<(), ControlPlaneError> + Sync),
     ) -> Result<Ran, ControlPlaneError> {
-        if frozen.to != LifecycleFingerprint::of_document(&current.document) || !asks_for(asked, frozen) {
+        // The request is validated and must ask for exactly the frozen
+        // operation, whether or not its write landed.
+        let fresh = transition(&before(frozen))?;
+        if !same_intent(frozen.kind, &fresh, &frozen.to_record)
+            || frozen.to != LifecycleFingerprint::of_document(&current.document)
+        {
             return Err(ContinuityHold::Pending.into());
         }
         precondition(&current.document)?;
@@ -53,23 +59,18 @@ impl ClientService {
     }
 }
 
-/// Whether the retried request asks for the operation `frozen` holds: the
-/// same operator and, for a write that takes one, the same reason.
-fn asks_for(asked: &Asked<'_>, frozen: &PendingTransition) -> bool {
-    let reason = match frozen.kind {
-        TransitionKind::Tombstone => frozen
-            .to_record
-            .tombstone
-            .as_ref()
-            .map(|entry| entry.reason.as_str()),
-        TransitionKind::Restore => frozen
-            .to_record
-            .restorations
-            .last()
-            .map(|entry| entry.reason.as_str()),
-        TransitionKind::ConfirmDeletion | TransitionKind::Create => None,
-    };
-    frozen.operator == asked.operator.subject() && reason == asked.reason.map(str::trim)
+/// The lifecycle `frozen` moved from, rebuilt from the exact record it
+/// writes: the request's own transition is applied to it again, so a retry
+/// is validated as the original was and compared with it exactly.
+fn before(frozen: &PendingTransition) -> LifecycleRecord {
+    let mut record = frozen.to_record.clone();
+    match frozen.kind {
+        TransitionKind::Tombstone => record.tombstone = None,
+        TransitionKind::ConfirmDeletion => record.deletion_confirmed = None,
+        TransitionKind::Restore => record.tombstone = record.restorations.pop().map(|entry| entry.tombstone),
+        TransitionKind::Create => {}
+    }
+    record
 }
 
 /// Whether `fresh` asks for the same write as the frozen `pending` record:

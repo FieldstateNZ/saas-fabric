@@ -42,7 +42,6 @@ impl ClientService {
             expected,
             kind: TransitionKind::Tombstone,
             action: "Client tombstoned",
-            reason: Some(reason),
             continuity,
         };
         let stored = match self
@@ -86,7 +85,6 @@ impl ClientService {
             expected,
             kind: TransitionKind::ConfirmDeletion,
             action: "Client deletion confirmed",
-            reason: None,
             continuity,
         };
         let confirm = |record: &fabric_client_model::LifecycleRecord| {

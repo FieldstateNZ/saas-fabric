@@ -33,7 +33,7 @@ pub enum ContinuityEvent {
 }
 
 /// Runs inside a reservation, standing in for a concurrent writer.
-type ReserveHook = Box<dyn Fn() + Send + Sync>;
+type ReserveHook = std::sync::Arc<dyn Fn() + Send + Sync>;
 
 /// Enrolls only what a test enrolls or an API creation reserves.
 #[derive(Default)]
@@ -102,7 +102,7 @@ impl InMemoryLifecycleContinuity {
 
     /// Runs `hook` inside every later successful reservation.
     pub fn on_reserve(&self, hook: impl Fn() + Send + Sync + 'static) {
-        *lock(&self.on_reserve) = Some(Box::new(hook));
+        *lock(&self.on_reserve) = Some(std::sync::Arc::new(hook));
     }
 
     /// Every call so far, in order.

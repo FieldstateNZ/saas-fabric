@@ -47,8 +47,6 @@ pub(super) struct Asked<'a> {
     pub(super) expected: &'a ClientRevision,
     pub(super) kind: TransitionKind,
     pub(super) action: &'static str,
-    /// The reason the request gives, for a write that takes one.
-    pub(super) reason: Option<&'a str>,
     pub(super) continuity: Option<&'a dyn LifecycleContinuity>,
 }
 
@@ -74,7 +72,9 @@ impl ClientService {
             Some(frozen) => {
                 let current = self.get(asked.id).await?;
                 if current.revision != *asked.expected {
-                    return self.recover(asked, frozen, current, &precondition).await;
+                    return self
+                        .recover(asked, frozen, current, &transition, &precondition)
+                        .await;
                 }
                 let fresh = self.prepare(asked, &transition).await?;
                 if !same_intent(asked.kind, &fresh.to, &frozen.to_record) {

@@ -1583,9 +1583,15 @@ A token from a completed or released operation changes nothing.
     other intent is refused as pending. An equal blob revision is not taken
     as proof that nothing moved: the replay is the frozen operation, written
     by CAS, and completed only on that write's own success.
-  - If the document carries exactly the pending fingerprint, the request
-    must still ask for the same thing (operator and reason), and the write's
-    preconditions are checked again against what is true now. For a restore
+  - If the document carries exactly the pending fingerprint, the request is
+    first validated as the original was: its transition is applied again to
+    the lifecycle the frozen operation moved from. An invalid body gets
+    `422`. A valid body must then equal the frozen intent exactly: the same
+    operator and reason, with only the second it was stamped allowed to
+    differ. Anything else is refused as pending
+    ([review 5489726594](https://github.com/FieldstateNZ/saas-fabric/pull/165#pullrequestreview-5489726594)).
+    Then the write's preconditions are checked again against what is true
+    now. For a restore
     that means the retained placements. Only then is the reservation
     completed. A failed check refuses with nothing reserved, written,
     completed or audited, and the transition stays pending.
@@ -1696,6 +1702,7 @@ spec:
 | The forward restore: new revision and `ETag`, saved intent, admitted, the tombstone and instance kept, reserved at the tombstoned revision and completed at the new one, audited and verified, data, identity, secrets reference, placements and the tenants document unchanged across a pass, `ready` once applied | `client_restore.rs::a_restore_reverses_the_tombstone_forward_and_leaves_the_client_saved_intent` |
 | Retire again in the same second; history grows and the store orders it | `client_restore.rs::a_restored_client_can_be_retired_again_in_the_same_second_and_its_history_only_grows` |
 | Refusals write and reserve nothing: deletion confirmed, request validation, a removed or replaced placement, an unreadable held publication, no accepted publication, store refusals with no detail in the body, missing and unavailable history | `client_restore.rs` |
+| Two identical real POSTs: one writes and fails to complete, the other loses its CAS and releases its own attempt; the operation stays pending and the same request recovers it once. A blank reason against a landed restore is `422`, a changed one is refused, and neither completes, writes or audits | `client_restore.rs::two_identical_posts_a_landed_one_and_a_losing_one_keep_the_operation_pending`, `::a_retry_against_a_landed_restore_is_validated_and_must_be_the_same_request` |
 | A losing concurrent attempt's release keeps the landed attempt's pending operation; a different reason is refused; the same request then recovers it once, and the stale attempt's release and completion change nothing | `client_restore.rs::a_losing_concurrent_attempt_cannot_clear_the_landed_attempts_pending_operation`; `src/testing/lifecycle_continuity/port_tests.rs::releasing_one_attempt_keeps_the_operation_while_another_is_outstanding` |
 | A conclusively lost revision releases only its own attempt; a write that may have landed stays pending, a different intent is refused and only the same request replays it; a failed completion stays pending across a restart and the same request completes it without rewriting; recovery checks the retained bindings again and completes, writes and audits nothing when they moved; a conflicting transition while one is pending is refused | `client_restore.rs::a_write_that_loses_its_revision_after_the_reservation_releases_only_its_own`, `::a_write_that_may_have_landed_stays_pending_and_only_the_same_request_replays_it`, `::a_failed_completion_stays_pending_across_a_restart_until_the_same_request_recovers_it`, `::recovery_checks_the_retained_bindings_again_and_completes_nothing_when_they_moved`, `::a_conflicting_transition_while_one_is_pending_is_refused_and_writes_nothing` |
 | A forged restoration, an erased history, an earlier blob and another realm are held; a reverted tombstone is held by the sweep, the write after it and re-assertion with no provider call, and holds the publication pass with every published file kept (inverting #159's characterization) | `client_restore.rs::a_restoration_forged_in_git_is_held_and_publishes_nothing_new`, `::an_erased_history_an_earlier_blob_or_another_realm_is_held`, `::a_reverted_tombstone_is_held_by_the_sweep_the_write_after_it_and_reassertion`; `tests/client_document_revert.rs::reverting_a_tombstone_is_held_and_never_reinstates_the_client_or_its_issuer` |

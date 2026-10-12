@@ -47,7 +47,9 @@ impl LifecycleContinuity for InMemoryLifecycleContinuity {
             transition.at_revision.cloned(),
         );
         lock(&self.events).push(reserved);
-        if let Some(hook) = lock(&self.on_reserve).as_ref() {
+        // Called with no lock held, so the hook may drive the store itself.
+        let hook = lock(&self.on_reserve).clone();
+        if let Some(hook) = hook {
             hook();
         }
         Ok(reservation)

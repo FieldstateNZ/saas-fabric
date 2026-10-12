@@ -12,6 +12,7 @@ use fabric_core::TenantId;
 use fabric_reconciliation::ReconciliationStatus;
 
 use super::facts::{Placements, PlatformFacts, Publication};
+use crate::continuity::Admission;
 
 /// Every logical data source the client declares has a placement.
 pub(crate) fn provisioning(client: &Client, facts: &PlatformFacts) -> Evidence {
@@ -55,7 +56,18 @@ pub(crate) fn provisioning(client: &Client, facts: &PlatformFacts) -> Evidence {
 /// projected entry withholds nothing and can leave the rest `applied`, and a
 /// projection that cannot be computed shows nothing at all. Neither is the
 /// projection in effect, even with nothing withheld.
-pub(crate) fn identity(status: ReconciliationStatus, projection: &ProjectionCheck) -> Evidence {
+///
+/// Nor is identity in effect while the continuity store does not confirm
+/// the client's lifecycle (O5): a reverted tombstone or an erased history
+/// would otherwise make a retired identity usable again on Git's word.
+pub(crate) fn identity(
+    status: ReconciliationStatus,
+    projection: &ProjectionCheck,
+    admission: Admission,
+) -> Evidence {
+    if let Admission::Held(hold) = admission {
+        return Evidence::Unmet(format!("the client's identity is {hold}"));
+    }
     match projection {
         ProjectionCheck::Consistent => {}
         ProjectionCheck::Diverged(_) => {

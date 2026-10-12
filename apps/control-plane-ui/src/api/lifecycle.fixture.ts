@@ -12,4 +12,5 @@ export const SAVED_INTENT: ClientLifecycle = {
   deletionConfirmed: null,
   withdrawal: null,
   restorations: [],
+  continuity: { state: 'admitted', reason: null, detail: null },
 }

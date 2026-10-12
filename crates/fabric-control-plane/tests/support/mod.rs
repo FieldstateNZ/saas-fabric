@@ -429,7 +429,12 @@ pub fn control_plane_with_operators(operators: SuppliedOperators) -> TestControl
 struct Continuity {
     ledger: Option<Arc<InMemoryDeclarationLedger>>,
     lifecycle: Option<Arc<InMemoryLifecycleContinuity>>,
+    kept: Kept,
 }
+
+/// The desired state a restarted plane reads again: the repository, and the
+/// revision `acme` is at in it.
+type Kept = Option<(Arc<InMemoryClientRepository>, ClientRevision)>;
 
 impl Continuity {
     /// Both, empty.
@@ -437,6 +442,7 @@ impl Continuity {
         Self {
             ledger: Some(Arc::new(InMemoryDeclarationLedger::new())),
             lifecycle: Some(Arc::new(InMemoryLifecycleContinuity::new())),
+            kept: None,
         }
     }
 }
@@ -449,6 +455,7 @@ fn build(
     Continuity {
         ledger,
         lifecycle: continuity,
+        kept,
     }: Continuity,
     identity_provider: Option<Arc<dyn IdentityProviderFactory>>,
     platform: Option<PlatformBinding>,
@@ -457,10 +464,17 @@ fn build(
     resolution: ResolutionParts,
     operators: SuppliedOperators,
 ) -> TestControlPlane {
-    let repository = Arc::new(InMemoryClientRepository::new());
-    let revision = repository
-        .insert(&ClientDocument::parse(ACME).expect("the fixture document must parse"))
-        .expect("the fixture must store");
+    let (repository, revision) = kept.unwrap_or_else(|| {
+        let repository = Arc::new(InMemoryClientRepository::new());
+        let acme = ClientDocument::parse(ACME).expect("the fixture document must parse");
+        let revision = repository.insert(&acme).expect("the fixture must store");
+        // The reviewed enrollment a real store would need, stood in for:
+        // `acme` is accepted as the fixture records it.
+        if let Some(continuity) = &continuity {
+            continuity.enroll(&acme.client().id, acme.lifecycle());
+        }
+        (repository, revision)
+    });
 
     let config: ControlPlaneConfig = serde_json::from_value(serde_json::json!({
         "operator": {
@@ -550,6 +564,7 @@ pub fn control_plane_with_identity_provider_and_no_ledger(
         Continuity {
             ledger: None,
             lifecycle: Some(Arc::new(InMemoryLifecycleContinuity::new())),
+            kept: None,
         },
         Some(Arc::new(FakeIdentityProviderFactory(provider))),
         None,
@@ -648,21 +663,64 @@ impl Drop for TempDir {
     }
 }
 
-/// As [`control_plane_with_publication`] (or [`control_plane`] when `platform`
-/// is `None`), with no lifecycle continuity store: what every deployment is
-/// today, so every restore is held.
+/// A plane with no lifecycle continuity store, optionally managing
+/// `platform`, publishing to `publication` and converging into `provider`:
+/// what every deployment is today, so every restore and every identity side
+/// effect is held.
 pub fn control_plane_with_no_continuity(
     platform: Option<PlatformBinding>,
     publication: Option<PublicationSink>,
+    provider: Option<Arc<FakeIdentityProvider>>,
 ) -> TestControlPlane {
     build(
         Continuity {
             ledger: Some(Arc::new(InMemoryDeclarationLedger::new())),
             lifecycle: None,
+            kept: None,
         },
-        None,
+        provider.map(|provider| {
+            Arc::new(FakeIdentityProviderFactory(provider)) as Arc<dyn IdentityProviderFactory>
+        }),
         platform,
         publication,
+        no_registries(),
+        no_resolution(),
+        accepting_operators(),
+    )
+}
+
+impl TestControlPlane {
+    /// Enrolls `client` in the test continuity store as its document now
+    /// records it: the reviewed enrollment a deployment's store would need,
+    /// for a client a test put in the repository directly.
+    pub async fn enroll(&self, client: &str) {
+        use fabric_control_plane::ClientRepository as _;
+
+        let id = fabric_client_model::ClientId::try_new(client).expect("a valid client id");
+        let stored = self.repository.get(&id).await.expect("the client must be stored");
+        self.continuity
+            .as_ref()
+            .expect("this plane has a continuity store")
+            .enroll(&id, stored.document.lifecycle());
+    }
+}
+
+/// A plane over the same desired state and continuity store as `plane`,
+/// after a restart: the declaration ledger, reconciliation statuses and
+/// publication evidence are process memory and start empty; the repository
+/// and the continuity store are durable and kept.
+pub fn restarted(plane: &TestControlPlane, provider: Option<Arc<FakeIdentityProvider>>) -> TestControlPlane {
+    build(
+        Continuity {
+            ledger: None,
+            lifecycle: plane.continuity.clone(),
+            kept: Some((plane.repository.clone(), plane.revision.clone())),
+        },
+        provider.map(|provider| {
+            Arc::new(FakeIdentityProviderFactory(provider)) as Arc<dyn IdentityProviderFactory>
+        }),
+        None,
+        None,
         no_registries(),
         no_resolution(),
         accepting_operators(),

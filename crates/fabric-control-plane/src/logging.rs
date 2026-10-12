@@ -23,7 +23,7 @@ mod lifecycle;
 
 pub(crate) use integration::*;
 pub(crate) use lifecycle::{
-    restore_completion_failed, restore_reservation_refused, restore_write_unconfirmed,
+    continuity_completion_failed, continuity_refused, continuity_write_unconfirmed, identity_held,
 };
 
 use fabric_client_model::ClientId;

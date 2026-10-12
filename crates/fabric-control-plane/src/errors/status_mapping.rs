@@ -74,6 +74,7 @@ impl ControlPlaneError {
 
             // A refused restore's own statuses, next door for the same reason.
             Self::Restore(refusal) => refusal.status(),
+            Self::Continuity(hold) => hold.status(),
 
             // 428, not 400. The request is well-formed; what is missing is the
             // precondition that makes it safe to apply, and 428 is the status

@@ -142,7 +142,7 @@ POST   /api/clients/{clientId}/deletion-confirmation  confirm deletion; intent o
 POST   /api/clients/{clientId}/restoration            reverse a tombstone; held with 503 until a continuity store exists (If-Match required)
 GET    /api/clients/{clientId}/identity  its identity, and reconciliation state
 PUT    /api/clients/{clientId}/identity  replace its identity   (If-Match required; a projected client is refused unless retired)
-POST   /api/clients/{clientId}/identity/reassertion   overwrite held hand edits in the provider, as you; audited (If-Match required)
+POST   /api/clients/{clientId}/identity/reassertion   overwrite held hand edits in the provider, as you; audited (If-Match required; held while continuity does not confirm the lifecycle)
 GET    /api/clients/{clientId}/product   its product configuration, and what it resolves to
 PUT    /api/clients/{clientId}/product   replace it             (If-Match required; refused over a stored projection divergence)
 GET    /api/clients/{clientId}/placements              every logical data source, and what is true of each

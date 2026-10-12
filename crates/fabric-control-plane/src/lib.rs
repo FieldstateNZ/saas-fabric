@@ -56,6 +56,7 @@ mod audit;
 mod audit_trail;
 mod client_secrets;
 mod config;
+mod continuity;
 mod converge;
 mod declaration_ledger;
 mod document_size;
@@ -68,7 +69,6 @@ mod handlers;
 mod identity_authority;
 mod integration;
 mod lifecycle;
-mod lifecycle_continuity;
 mod logging;
 mod models;
 mod operator;
@@ -95,6 +95,10 @@ pub use audit_trail::{
 };
 pub use client_secrets::{ClientSecrets, SecretMetadata, SecretPath, SecretValues, SecretsError};
 pub use config::{ControlPlaneConfig, OperatorConfig, ReconciliationConfig};
+pub use continuity::{
+    AcceptedLifecycle, ContinuityHold, ContinuityRefusal, ContinuityReservation, LifecycleContinuity,
+    LifecycleFingerprint, PendingTransition, Transition, TransitionKind,
+};
 pub use declaration_ledger::DeclarationLedgers;
 pub use errors::{ControlPlaneError, RealmUnavailableReason};
 pub use fabric_client_model::SecretNamespace;
@@ -109,7 +113,6 @@ pub use git_integration::{
 pub use identity_authority::IdentityProviderFactory;
 pub use integration::{IntegrationHealth, IntegrationStatus, Observation};
 pub use lifecycle::RestoreRefusal;
-pub use lifecycle_continuity::{ContinuityRefusal, ContinuityReservation, LifecycleContinuity, Restoring};
 pub use operator::{
     KeyHolder, OidcOperators, Operator, OperatorAuthError, OperatorAuthenticator, OperatorToken,
     VerificationKeys,

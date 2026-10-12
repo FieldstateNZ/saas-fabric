@@ -160,6 +160,31 @@ describe('the lifecycle status', () => {
     expectNoServingClaim()
   })
 
+  it('says when the continuity store does not confirm the lifecycle', () => {
+    render(
+      <LifecycleStatus
+        lifecycle={lifecycle({
+          unmet: [{ condition: 'identity', detail: "the client's identity is held: no store" }],
+          continuity: {
+            state: 'held',
+            reason: 'mismatch',
+            detail: "held: the client's recorded lifecycle does not match the continuity store's",
+          },
+        })}
+      />,
+    )
+
+    expect(screen.getByText('Lifecycle held: it does not match the confirmed history')).toBeInTheDocument()
+    expect(screen.getByText(/does not match the continuity store's/)).toBeInTheDocument()
+    expect(screen.queryByText('Ready')).not.toBeInTheDocument()
+  })
+
+  it('says nothing about continuity for an admitted client', () => {
+    render(<LifecycleStatus lifecycle={SAVED_INTENT} />)
+
+    expect(screen.queryByText(/Lifecycle (held|not confirmed|change)/)).not.toBeInTheDocument()
+  })
+
   it('renders only the pill when compact', () => {
     render(<LifecycleStatus lifecycle={SAVED_INTENT} compact />)
 

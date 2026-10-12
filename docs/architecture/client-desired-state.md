@@ -469,7 +469,7 @@ Recorded by
 (D01-14). What an operator has decided about the client's lifecycle: nothing,
 a tombstone, or a tombstone and a deletion confirmation, beside every
 tombstone an operator reversed
-([restore amendment](../decisions/0021-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md#amendment-2026-10-12-restoring-a-tombstone-d01-14-held)).
+([restore amendment](../decisions/0021-the-product-catalogue-is-desired-state-and-the-console-creates-clients.md#amendment-2026-10-12-restoring-a-tombstone-and-lifecycle-continuity-d01-14-held)).
 
 ```yaml
 spec:
@@ -502,8 +502,13 @@ spec:
 tombstone and the confirmation never land together. A restoration moves the
 tombstone into `restorations` and never removes it. Every restore is held
 until the protected continuity store exists, so no deployment writes one
-today. A `restorations` entry written into Git by hand is not refused yet
-(O5).
+today.
+
+**Git cannot change a lifecycle.** The continuity store holds the fingerprint
+of each client's accepted lifecycle. A section reverted, erased or forged in
+Git, or a document reverted to earlier bytes, no longer matches it. The client
+is then held: identity unmet, never converged or registered, and shown as
+`lifecycle.continuity.state: held`. With no store, every client is held.
 
 **Unknown keys are refused**, unlike `spec`'s other unmodelled sections. A
 misspelt `tombstoned:` would otherwise read as an active client.

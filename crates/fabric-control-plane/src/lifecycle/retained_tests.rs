@@ -1,13 +1,13 @@
-//! The retained-placement check a restore passes, rule by rule.
-
-use std::collections::BTreeMap;
+//! The retained-placement check a restore passes, rule by rule, against the
+//! publication the target holds.
 
 use fabric_client_model::{Client, ClientDocument};
 use fabric_core::{BindingRevision, DataSourceId, LogicalDataSourceName, TenantId};
-use fabric_platform_management::{IsolationModelDocument, PlacementRecord, PublishedTenants};
+use fabric_platform_management::{IsolationModelDocument, PlacementRecord};
+use fabric_runtime_publication::{PublishedResources, ResourceHistory, TenantBindingDocument};
+use serde_json::json;
 
-use super::facts::{Placements, PlatformFacts, Publication};
-use super::retained::check;
+use super::retained::{check, RetainedEvidence};
 use crate::RestoreRefusal;
 
 fn client(data: &str) -> Client {
@@ -32,46 +32,77 @@ fn two_intents() -> Client {
     client("  data:\n    primary:\n      class: dedicated\n    audit:\n      class: dedicated\n")
 }
 
-fn record(tenant: &str, logical: &str, revision: u64) -> PlacementRecord {
+fn record(tenant: &str, logical: &str, revision: u64, data_source: &str) -> PlacementRecord {
     PlacementRecord {
         tenant: TenantId::try_new(tenant).unwrap(),
         logical: LogicalDataSourceName::try_new(logical).unwrap(),
         revision: BindingRevision::new(revision),
-        data_source: DataSourceId::try_new("shared-a").unwrap(),
+        data_source: DataSourceId::try_new(data_source).unwrap(),
         isolation: IsolationModelDocument::Database {},
         placed_at: "2026-10-11T00:00:00Z".to_owned(),
     }
 }
 
-fn published_at(revision: u64) -> Publication {
-    Publication::Observed {
-        last_pass: None,
-        published: Some(PublishedTenants {
-            at_unix_seconds: 1,
-            tenants: BTreeMap::from([(TenantId::try_new("acme").unwrap(), BindingRevision::new(revision))]),
-        }),
-    }
-}
-
-fn facts(placements: Vec<PlacementRecord>, publication: Publication) -> PlatformFacts {
-    PlatformFacts {
-        placements: Placements::Read(placements),
-        publication,
-    }
-}
-
-fn placed_twice() -> Vec<PlacementRecord> {
+fn placed() -> Vec<PlacementRecord> {
     vec![
-        record("acme", "primary", 2),
-        record("acme", "audit", 1),
-        record("globex", "primary", 9),
+        record("acme", "primary", 2, "shared-a"),
+        record("acme", "audit", 1, "shared-a"),
+        record("globex", "primary", 9, "shared-a"),
     ]
 }
 
+/// `acme` held at `revision`, bound as `placed` binds it.
+fn held(revision: u64) -> TenantBindingDocument {
+    let binding = json!({"data_source": "shared-a", "isolation": IsolationModelDocument::Database {}});
+    serde_json::from_value(json!({
+        "tenant": "acme",
+        "revision": revision,
+        "data": {"primary": binding, "audit": binding},
+    }))
+    .unwrap()
+}
+
+fn published(tenants: Vec<TenantBindingDocument>, frontier: Option<u64>) -> PublishedResources {
+    let mut history = ResourceHistory::default();
+    if let Some(revision) = frontier {
+        history
+            .tenants
+            .insert(TenantId::try_new("acme").unwrap(), BindingRevision::new(revision));
+    }
+    PublishedResources {
+        tenants,
+        data_sources: Vec::new(),
+        catalog: None,
+        history,
+    }
+}
+
+fn read(placements: Vec<PlacementRecord>, published: PublishedResources) -> RetainedEvidence {
+    RetainedEvidence::Read {
+        placements,
+        published: Some(published),
+    }
+}
+
+/// No publication target: nothing was ever published.
+fn no_target(placements: Vec<PlacementRecord>) -> RetainedEvidence {
+    RetainedEvidence::Read {
+        placements,
+        published: None,
+    }
+}
+
+fn not_retained(result: Result<(), RestoreRefusal>) -> String {
+    match result {
+        Err(RestoreRefusal::PlacementsNotRetained { detail }) => detail,
+        other => panic!("expected not retained, got {other:?}"),
+    }
+}
+
 #[test]
-fn placements_retained_at_the_published_revision_pass() {
+fn placements_as_published_pass() {
     assert_eq!(
-        check(&two_intents(), &facts(placed_twice(), published_at(3))),
+        check(&two_intents(), &read(placed(), published(vec![held(3)], Some(3)))),
         Ok(())
     );
 }
@@ -79,95 +110,109 @@ fn placements_retained_at_the_published_revision_pass() {
 #[test]
 fn placements_raised_since_publication_pass() {
     assert_eq!(
-        check(&two_intents(), &facts(placed_twice(), published_at(2))),
+        check(&two_intents(), &read(placed(), published(vec![held(2)], Some(2)))),
         Ok(())
     );
 }
 
 #[test]
-fn a_removed_placement_is_refused() {
-    let removed = vec![record("acme", "primary", 2)];
+fn a_removed_binding_is_refused() {
+    let removed = vec![record("acme", "primary", 3, "shared-a")];
 
-    let refusal = check(&two_intents(), &facts(removed, published_at(3))).unwrap_err();
+    let detail = not_retained(check(
+        &two_intents(),
+        &read(removed, published(vec![held(3)], Some(3))),
+    ));
 
-    let RestoreRefusal::PlacementsNotRetained { detail } = refusal else {
-        panic!("expected not retained, got {refusal:?}");
-    };
-    assert!(detail.contains("last published at revision 3"), "{detail}");
-    assert!(detail.contains("add up to 2"), "{detail}");
+    assert!(detail.contains("audit"), "{detail}");
 }
 
 #[test]
-fn a_lowered_placement_is_refused() {
-    let lowered = vec![record("acme", "primary", 1), record("acme", "audit", 1)];
+fn a_replaced_binding_masked_by_a_raised_total_is_refused() {
+    let replaced = vec![
+        record("acme", "primary", 2, "elsewhere"),
+        record("acme", "audit", 1, "shared-a"),
+    ];
 
-    assert!(matches!(
-        check(&two_intents(), &facts(lowered, published_at(3))),
-        Err(RestoreRefusal::PlacementsNotRetained { .. })
+    not_retained(check(
+        &two_intents(),
+        &read(replaced, published(vec![held(3)], Some(3))),
     ));
+}
+
+#[test]
+fn a_lowered_binding_is_refused() {
+    let lowered = vec![
+        record("acme", "primary", 1, "shared-a"),
+        record("acme", "audit", 1, "shared-a"),
+    ];
+
+    not_retained(check(
+        &two_intents(),
+        &read(lowered, published(vec![held(3)], Some(3))),
+    ));
+}
+
+#[test]
+fn records_below_the_resource_history_frontier_are_refused() {
+    let detail = not_retained(check(
+        &two_intents(),
+        &read(placed(), published(vec![held(3)], Some(5))),
+    ));
+
+    assert!(detail.contains("resource history reached revision 5"), "{detail}");
+}
+
+#[test]
+fn a_tenant_published_once_and_no_longer_held_is_refused() {
+    let detail = not_retained(check(&two_intents(), &read(placed(), published(vec![], Some(3)))));
+
+    assert!(detail.contains("no longer carries it"), "{detail}");
 }
 
 #[test]
 fn a_placement_for_a_logical_source_no_longer_declared_is_refused() {
     let only_primary = client("  data:\n    primary:\n      class: dedicated\n");
 
-    let refusal = check(&only_primary, &facts(placed_twice(), published_at(3))).unwrap_err();
-
     assert_eq!(
-        refusal,
-        RestoreRefusal::PlacementsNotRetained {
-            detail: "a placement records audit, which the client no longer declares".to_owned()
-        }
+        not_retained(check(
+            &only_primary,
+            &read(placed(), published(vec![held(3)], Some(3)))
+        )),
+        "a placement records audit, which the client no longer declares"
     );
 }
 
 #[test]
-fn unreadable_placements_are_refused() {
-    let unreadable = PlatformFacts {
-        placements: Placements::Unreadable,
-        publication: published_at(3),
-    };
-
+fn unreadable_evidence_is_refused() {
     assert_eq!(
-        check(&two_intents(), &unreadable),
+        check(&two_intents(), &RetainedEvidence::Unreadable),
         Err(RestoreRefusal::PlacementsUnreadable)
     );
 }
 
 #[test]
-fn no_publication_since_start_is_refused_rather_than_assumed() {
-    let not_yet = Publication::Observed {
-        last_pass: None,
-        published: None,
-    };
+fn never_published_passes_only_when_the_targets_history_establishes_it() {
+    let mut other = held(4);
+    other.tenant = TenantId::try_new("globex").unwrap();
+    let elsewhere = || published(vec![other.clone()], None);
 
+    assert_eq!(check(&two_intents(), &read(placed(), elsewhere())), Ok(()));
+    assert_eq!(check(&two_intents(), &read(vec![], elsewhere())), Ok(()));
+}
+
+#[test]
+fn a_target_holding_no_accepted_publication_is_unknown_evidence() {
     assert_eq!(
-        check(&two_intents(), &facts(placed_twice(), not_yet)),
+        check(&two_intents(), &read(placed(), published(vec![], None))),
         Err(RestoreRefusal::PlacementsUnverified)
     );
 }
 
 #[test]
-fn a_tenant_never_published_or_never_placed_passes() {
-    let elsewhere = Publication::Observed {
-        last_pass: None,
-        published: Some(PublishedTenants {
-            at_unix_seconds: 1,
-            tenants: BTreeMap::new(),
-        }),
-    };
-
-    assert_eq!(check(&two_intents(), &facts(placed_twice(), elsewhere)), Ok(()));
-    assert_eq!(check(&two_intents(), &facts(vec![], published_at(0))), Ok(()));
-}
-
-#[test]
-fn a_deployment_without_a_platform_or_publisher_has_only_the_declaration_check() {
-    assert_eq!(check(&two_intents(), &PlatformFacts::not_managed()), Ok(()));
-    assert_eq!(
-        check(&two_intents(), &facts(placed_twice(), Publication::NotConfigured)),
-        Ok(())
-    );
+fn a_deployment_without_a_platform_or_target_has_only_the_declaration_check() {
+    assert_eq!(check(&two_intents(), &RetainedEvidence::NotManaged), Ok(()));
+    assert_eq!(check(&two_intents(), &no_target(placed())), Ok(()));
     let only_primary = client("  data:\n    primary:\n      class: dedicated\n");
-    assert!(check(&only_primary, &facts(placed_twice(), Publication::NotConfigured)).is_err());
+    assert!(check(&only_primary, &no_target(placed())).is_err());
 }

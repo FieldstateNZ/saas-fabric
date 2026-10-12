@@ -27,7 +27,7 @@ pub(crate) async fn restore_client(
 ) -> Result<Response, ControlPlaneError> {
     let expected = preconditions::required_revision(&headers)?;
 
-    let facts = state.platform_facts().await;
+    let evidence = state.retained_evidence().await;
     let stored = state
         .service
         .restore(
@@ -35,7 +35,7 @@ pub(crate) async fn restore_client(
             &id,
             &request.reason,
             &expected,
-            &facts,
+            &evidence,
             state.lifecycle_continuity.as_deref(),
         )
         .await?;

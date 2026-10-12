@@ -73,6 +73,7 @@ async fn a_client_becomes_ready_once_placed_applied_and_published_and_retirement
         .repository
         .insert(&ClientDocument::parse(GLOBEX).unwrap())
         .unwrap();
+    plane.enroll("globex").await;
 
     let (_, saved) = get(&plane.router, "/api/clients/globex").await;
     assert_eq!(saved["lifecycle"]["state"], "incomplete", "{saved}");
@@ -460,6 +461,7 @@ async fn a_tombstoned_client_refuses_placement() {
         .repository
         .insert(&ClientDocument::parse(GLOBEX).unwrap())
         .unwrap();
+    plane.enroll("globex").await;
     fake.seed(DesiredRevision::new("ds-1"), vec![declared_data_source()]);
     fake.seed_placements(DesiredRevision::new("pl-1"), vec![]);
     tombstone(&plane.router, "globex", revision.as_str()).await;

@@ -48,6 +48,19 @@ export interface Restoration {
   readonly reason: string
 }
 
+/**
+ * Whether the protected continuity store confirms the recorded lifecycle.
+ * A held client is never identity-ready, and nothing converges its identity:
+ * with no store, which is every deployment today, every client is held.
+ */
+export type Continuity =
+  | { readonly state: 'admitted'; readonly reason: null; readonly detail: null }
+  | {
+      readonly state: 'held'
+      readonly reason: 'noStore' | 'unavailable' | 'unenrolled' | 'mismatch' | 'pending' | 'resurrection'
+      readonly detail: string
+    }
+
 /** A client's lifecycle, as the API derives it on every read. */
 export interface ClientLifecycle {
   readonly state: LifecycleState
@@ -59,4 +72,5 @@ export interface ClientLifecycle {
   readonly withdrawal: Withdrawal | null
   /** Every reversed tombstone, oldest first, in every state. */
   readonly restorations: readonly Restoration[]
+  readonly continuity: Continuity
 }

@@ -51,7 +51,7 @@ impl IntoResponse for ControlPlaneError {
 
         let retryable = match &self {
             ControlPlaneError::IntegrationNotConfigured => false,
-            ControlPlaneError::Restore(refusal) => refusal.retryable(),
+            ControlPlaneError::Continuity(hold) => hold.retryable(),
             _ => true,
         };
         let mut response = (status, Json(body)).into_response();

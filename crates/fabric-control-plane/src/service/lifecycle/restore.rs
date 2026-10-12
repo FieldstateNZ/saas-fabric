@@ -9,11 +9,14 @@
 //! 2. the lifecycle reverses its tombstone, keeping it in `restorations`, and
 //!    refuses a client that is not tombstoned or whose deletion is confirmed;
 //! 3. its placements must be as it left them (`lifecycle::retained`);
-//! 4. the continuity store reserves the transition, and with no store the
-//!    restore is held;
+//! 4. with no continuity store the restore is held; otherwise the store
+//!    reserves the transition, bound to the identity instance, sequence,
+//!    reviewed revision, starting lifecycle and the tombstone reversed;
 //! 5. the document is written at that revision, and reconciliation is marked
 //!    pending at the new one;
-//! 6. the reservation is completed, and the durable trail records it.
+//! 6. the reservation is completed and, once it is, the durable trail
+//!    records the restore. Until it is, the client stays held, and the same
+//!    request sent again completes it (`record`).
 //!
 //! The restore touches nothing else: no placement, tenant binding, resource
 //! history, secret or identity provider. Identity comes back only when a
@@ -21,11 +24,11 @@
 
 use fabric_client_model::{ClientId, ClientRevision};
 
-use crate::lifecycle::facts::PlatformFacts;
-use crate::lifecycle::retained;
+use super::record::Confirmed;
+use crate::lifecycle::retained::{self, RetainedEvidence};
 use crate::{
-    audit, logging, ClientService, ContinuityRefusal, ControlPlaneError, LifecycleContinuity, Operator,
-    RestoreRefusal, Restoring, StoredClient,
+    audit, ClientService, ContinuityHold, ControlPlaneError, LifecycleContinuity, Operator, StoredClient,
+    TransitionKind,
 };
 
 impl ClientService {
@@ -35,79 +38,56 @@ impl ClientService {
     ///
     /// [`ControlPlaneError::RevisionConflict`] if `expected` is stale;
     /// [`ControlPlaneError::Lifecycle`] if the client is not tombstoned, its
-    /// deletion is confirmed, or the reason is not acceptable; and
-    /// [`ControlPlaneError::Restore`] if its placements were not retained, or
-    /// the continuity store is absent or refuses. Nothing is written after
-    /// any of these.
+    /// deletion is confirmed, or the reason is not acceptable;
+    /// [`ControlPlaneError::Restore`] if its placements were not retained;
+    /// and [`ControlPlaneError::Continuity`] if there is no continuity store
+    /// or it refuses. Nothing is written after any of these.
     pub(crate) async fn restore(
         &self,
         operator: &Operator,
         id: &ClientId,
         reason: &str,
         expected: &ClientRevision,
-        facts: &PlatformFacts,
+        evidence: &RetainedEvidence,
         continuity: Option<&dyn LifecycleContinuity>,
     ) -> Result<StoredClient, ControlPlaneError> {
+        let kind = TransitionKind::Restore;
+        if let Some(recovered) = self.recover_transition(id, expected, continuity, kind).await? {
+            self.audit_restore(operator, id, &recovered).await;
+            return Ok(recovered);
+        }
         let at = self.clock.now_unix_seconds();
         let prepared = self
             .prepare_lifecycle(operator, id, expected, "Client restored", |record| {
                 record.restore(at, operator.subject(), reason)
             })
             .await?;
-        retained::check(prepared.current.client(), facts)?;
-
-        let continuity = continuity.ok_or(RestoreRefusal::ContinuityAbsent)?;
-        let reservation = continuity
-            .reserve(&Restoring {
-                client: id,
-                at_revision: expected,
-                from: &prepared.from,
-                to: &prepared.to,
-                operator: operator.subject(),
-            })
-            .await
-            .map_err(|refusal| {
-                logging::restore_reservation_refused(id, &refusal);
-                refused(&refusal)
-            })?;
-
-        let reversed = prepared
-            .to
-            .restorations
-            .last()
-            .map(|restoration| restoration.tombstone.clone());
-        let stored = match self.write_lifecycle(operator, id, expected, prepared).await {
-            Ok(stored) => stored,
-            // Only a lost revision proves nothing was written. Any other
-            // failure may have landed, so its reservation stays pending for
-            // the store to resolve rather than being released over a write.
-            Err(ControlPlaneError::RevisionConflict) => {
-                continuity.release(&reservation).await;
-                return Err(ControlPlaneError::RevisionConflict);
-            }
-            Err(error) => {
-                logging::restore_write_unconfirmed(id, reservation.id());
-                return Err(error);
-            }
-        };
-
-        if let Err(refusal) = continuity.complete(&reservation, &stored.revision).await {
-            logging::restore_completion_failed(id, reservation.id(), &refusal);
+        retained::check(prepared.current.client(), evidence)?;
+        if continuity.is_none() {
+            return Err(ContinuityHold::NoStore.into());
         }
-        if let Some(reversed) = reversed {
-            self.audit
-                .record(audit::client_restored(operator, id, &stored.revision, &reversed))
-                .await;
+
+        let (stored, confirmed) = self
+            .record_transition(operator, id, expected, prepared, continuity, kind)
+            .await?;
+        if confirmed == Confirmed::Yes {
+            self.audit_restore(operator, id, &stored).await;
         }
 
         Ok(stored)
     }
-}
 
-const fn refused(refusal: &ContinuityRefusal) -> RestoreRefusal {
-    match refusal {
-        ContinuityRefusal::Unenrolled => RestoreRefusal::ContinuityUnenrolled,
-        ContinuityRefusal::Mismatch => RestoreRefusal::ContinuityMismatch,
-        ContinuityRefusal::Unavailable { .. } => RestoreRefusal::ContinuityUnavailable,
+    /// Audits a confirmed restore, naming the tombstone it reversed.
+    async fn audit_restore(&self, operator: &Operator, id: &ClientId, stored: &StoredClient) {
+        if let Some(restoration) = stored.document.lifecycle().restorations.last() {
+            self.audit
+                .record(audit::client_restored(
+                    operator,
+                    id,
+                    &stored.revision,
+                    &restoration.tombstone,
+                ))
+                .await;
+        }
     }
 }

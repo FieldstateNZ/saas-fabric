@@ -11,10 +11,18 @@ use fabric_reconciliation::{
 use crate::fixtures::{repository_with_acme, FixedClock};
 use crate::reconcile::pass;
 use crate::repository::ClientRepository;
+use crate::testing::InMemoryLifecycleContinuity;
 use crate::IntegrationHealth;
 
 fn client() -> ClientId {
     ClientId::try_new("acme").unwrap()
+}
+
+/// A continuity store that accepts `acme` as the fixture records it.
+fn enrolled() -> InMemoryLifecycleContinuity {
+    let store = InMemoryLifecycleContinuity::new();
+    store.enroll(&client(), &fabric_client_model::LifecycleRecord::default());
+    store
 }
 
 #[tokio::test]
@@ -26,6 +34,7 @@ async fn a_sweep_reconciles_every_client_and_records_the_result() {
 
     let swept = pass::run(
         repository.as_ref(),
+        Some(&enrolled()),
         &reconciler,
         None,
         &statuses,
@@ -52,6 +61,7 @@ async fn a_second_sweep_changes_nothing() {
 
     pass::run(
         repository.as_ref(),
+        Some(&enrolled()),
         &reconciler,
         None,
         &statuses,
@@ -62,6 +72,7 @@ async fn a_second_sweep_changes_nothing() {
     provider.clear_calls();
     pass::run(
         repository.as_ref(),
+        Some(&enrolled()),
         &reconciler,
         None,
         &statuses,
@@ -89,6 +100,7 @@ async fn a_provider_failure_is_recorded_and_desired_state_is_untouched() {
 
     pass::run(
         repository.as_ref(),
+        Some(&enrolled()),
         &reconciler,
         None,
         &statuses,
@@ -115,6 +127,7 @@ async fn an_unreadable_repository_leaves_recorded_status_alone() {
 
     pass::run(
         repository.as_ref(),
+        Some(&enrolled()),
         &reconciler,
         None,
         &statuses,
@@ -127,6 +140,7 @@ async fn an_unreadable_repository_leaves_recorded_status_alone() {
     repository.set_unavailable(Some("connection refused".to_owned()));
     let swept = pass::run(
         repository.as_ref(),
+        Some(&enrolled()),
         &reconciler,
         None,
         &statuses,
@@ -137,4 +151,38 @@ async fn an_unreadable_repository_leaves_recorded_status_alone() {
 
     assert_eq!(swept, 0);
     assert_eq!(statuses.report(&client()), before);
+}
+
+#[tokio::test]
+async fn a_client_the_continuity_store_does_not_confirm_is_left_alone() {
+    let tombstoned = fabric_client_model::LifecycleRecord::default()
+        .tombstone(1, "o", "retired")
+        .unwrap();
+    let mismatched = InMemoryLifecycleContinuity::new();
+    mismatched.enroll(&client(), &tombstoned);
+
+    for continuity in [None, Some(&InMemoryLifecycleContinuity::new()), Some(&mismatched)] {
+        let (repository, _) = repository_with_acme();
+        let provider = Arc::new(FakeIdentityProvider::new());
+        let reconciler = IdentityReconciler::new(provider.clone());
+        let statuses = ReconciliationStatusStore::new();
+
+        let swept = pass::run(
+            repository.as_ref(),
+            continuity.map(|store| store as &dyn crate::LifecycleContinuity),
+            &reconciler,
+            None,
+            &statuses,
+            &IntegrationHealth::new(),
+            &FixedClock,
+        )
+        .await;
+
+        assert_eq!(swept, 0);
+        assert!(statuses.report(&client()).is_none(), "no status recorded");
+        assert!(
+            provider.realm(&RealmName::try_new("acme").unwrap()).is_none(),
+            "no provider write"
+        );
+    }
 }

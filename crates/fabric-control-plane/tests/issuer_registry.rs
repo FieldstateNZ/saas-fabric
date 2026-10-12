@@ -214,7 +214,9 @@ async fn only_routable_clients_are_registered_and_each_change_is_one_new_generat
     let (platform, fake) = platform_binding().await;
     let plane = control_plane_with_publication(platform, sink(&dir));
     let globex = plane.repository.insert(&client_document("globex")).unwrap();
+    plane.enroll("globex").await;
     let initech = plane.repository.insert(&client_document("initech")).unwrap();
+    plane.enroll("initech").await;
     fake.seed(DesiredRevision::new("ds-1"), vec![declared_data_source()]);
     fake.seed_placements(
         DesiredRevision::new("pl-1"),
@@ -329,6 +331,7 @@ async fn the_platform_panel_reports_the_three_gates_and_never_meets_connectors_i
     }
 
     let globex = plane.repository.insert(&client_document("globex")).unwrap();
+    plane.enroll("globex").await;
     fake.seed(DesiredRevision::new("ds-1"), vec![declared_data_source()]);
     fake.seed_placements(DesiredRevision::new("pl-1"), vec![placement("globex")]);
     publish_one_application_with_a_resource(&plane.router).await;
@@ -381,6 +384,7 @@ async fn ready_plane(dir: &TempDir) -> (TestControlPlane, ClientRevision) {
     let (platform, fake) = platform_binding().await;
     let plane = control_plane_with_publication(platform, sink(dir));
     let globex = plane.repository.insert(&client_document("globex")).unwrap();
+    plane.enroll("globex").await;
     fake.seed(DesiredRevision::new("ds-1"), vec![declared_data_source()]);
     fake.seed_placements(DesiredRevision::new("pl-1"), vec![placement("globex")]);
     publish_one_application_with_a_resource(&plane.router).await;
@@ -459,7 +463,9 @@ async fn a_withheld_or_unverifiable_projection_is_not_registered_and_its_binding
     let (platform, fake) = platform_binding().await;
     let plane = control_plane_with_publication(platform, sink(&dir));
     let globex = plane.repository.insert(&client_document("globex")).unwrap();
+    plane.enroll("globex").await;
     let initech = plane.repository.insert(&client_document("initech")).unwrap();
+    plane.enroll("initech").await;
     let unreadable = ClientDocument::parse(&format!(
         "{}  product:\n    region: [nz]\n",
         client_document("umbrella").render().unwrap()
@@ -467,6 +473,7 @@ async fn a_withheld_or_unverifiable_projection_is_not_registered_and_its_binding
     .unwrap();
     assert!(unreadable.product().is_err());
     let umbrella = plane.repository.insert(&unreadable).unwrap();
+    plane.enroll("umbrella").await;
     fake.seed(DesiredRevision::new("ds-1"), vec![declared_data_source()]);
     fake.seed_placements(
         DesiredRevision::new("pl-1"),
@@ -569,6 +576,7 @@ async fn a_projected_entry_missing_in_git_is_not_ready_and_not_registered_after_
     let plane =
         support::control_plane_with_publication_and_identity_provider(platform, sink(&dir), provider.clone());
     let inserted = plane.repository.insert(&client_document("initech")).unwrap();
+    plane.enroll("initech").await;
     fake.seed(DesiredRevision::new("ds-1"), vec![declared_data_source()]);
     fake.seed_placements(DesiredRevision::new("pl-1"), vec![placement("initech")]);
     publish_one_application_with_a_resource(&plane.router).await;
@@ -697,11 +705,7 @@ async fn a_projected_entry_missing_in_git_is_not_ready_and_not_registered_after_
 async fn a_restored_client_is_registered_again_only_once_identity_is_applied_at_its_new_revision() {
     let dir = TempDir::new("issuer-registry-restore");
     let (plane, globex) = ready_plane(&dir).await;
-    plane
-        .continuity
-        .as_ref()
-        .unwrap()
-        .enroll(&ClientId::try_new("globex").unwrap());
+    plane.enroll("globex").await;
     applied(&plane, "globex", &globex);
     publish(&plane.router).await;
     assert_eq!(registered(&dir), [(issuer("globex"), "globex".to_owned())]);
@@ -742,4 +746,29 @@ async fn a_restored_client_is_registered_again_only_once_identity_is_applied_at_
         bound,
         "the binding was never withdrawn, so nothing republished it"
     );
+}
+
+/// O5 (#108 comment 6120741272 item 2): with no continuity store, a bound
+/// client cannot be admitted or decided out of the registry, so the pass is
+/// held and the target keeps every document it accepted.
+#[tokio::test]
+async fn without_a_continuity_store_a_bound_client_holds_the_registry_and_publishes_nothing() {
+    let dir = TempDir::new("issuer-registry-no-continuity");
+    let (platform, fake) = platform_binding().await;
+    let plane = support::control_plane_with_no_continuity(Some(platform), Some(sink(&dir)), None);
+    let globex = plane.repository.insert(&client_document("globex")).unwrap();
+    fake.seed(DesiredRevision::new("ds-1"), vec![declared_data_source()]);
+    fake.seed_placements(DesiredRevision::new("pl-1"), vec![placement("globex")]);
+    publish_one_application_with_a_resource(&plane.router).await;
+    applied(&plane, "globex", &globex);
+
+    let held = publish(&plane.router).await;
+
+    assert_eq!(held["lastPass"]["outcome"], "failed", "{held}");
+    assert!(
+        held["lastPass"]["detail"].as_str().unwrap().contains("held"),
+        "{held}"
+    );
+    assert!(!dir.path().join("tenants.json").exists(), "nothing was published");
+    assert!(!dir.path().join("issuer-registry.json").exists());
 }

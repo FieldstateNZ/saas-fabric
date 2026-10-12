@@ -1258,8 +1258,11 @@ ADR 0023's list and `docs/roadmap/m0-contract-decisions.md`.
   - `client_document_revert.rs`: a client revert reaches the published
     documents only through the issuer registry, and none of it is audited.
     A console tag read before it is refused. **Findings:** a reverted
-    tombstone reinstates the client, and its issuer is registered again in
-    a new generation once identity is applied at the reverted revision. A
+    tombstone reinstated the client and registered its issuer again; since
+    ADR 0021's restore amendment it is held instead, because the lifecycle
+    continuity store no longer confirms it, and the pass is held with every
+    published file kept (`reverting_a_tombstone_is_held_and_never_reinstates_the_client_or_its_issuer`).
+    With no store, every client is held this way. A
     reverted assignment removes an application, with its projected identity
     client, which the console refuses to remove. A reverted creation keeps
     the tenant binding published and leaves the issuer out (`noClient`).

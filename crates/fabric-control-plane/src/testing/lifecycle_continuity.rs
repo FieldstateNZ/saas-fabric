@@ -1,36 +1,40 @@
 //! A process-only stand-in for the protected continuity store, for tests. It
-//! proves the order a restore writes in and nothing else: it forgets all on
-//! restart, coordinates no processes, and no deployment builds it (#108).
+//! proves classification and order, nothing else: it forgets all on restart,
+//! coordinates no processes, and no deployment builds it (#108).
+//!
+//! The controls are here; the port and its rules are in `port`.
 
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 use std::sync::Mutex;
 
-use async_trait::async_trait;
-use fabric_client_model::{ClientId, ClientRevision};
+use fabric_client_model::{ClientId, ClientRevision, LifecycleRecord};
 
-use crate::{ContinuityRefusal, ContinuityReservation, LifecycleContinuity, Restoring};
+use crate::{AcceptedLifecycle, ContinuityRefusal, LifecycleFingerprint, TransitionKind};
 
-/// What happened to one reservation.
+mod port;
+
+/// What happened, in order.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ContinuityEvent {
-    /// Reserved for a client, from the revision it was read at.
-    Reserved(ClientId, ClientRevision),
+    /// A transition reserved, with the revision it was reviewed at.
+    Reserved(ClientId, TransitionKind, Option<ClientRevision>),
     /// Completed at the revision the write produced.
     Completed(ClientId, ClientRevision),
     /// Released because the write did not happen.
     Released(ClientId),
 }
 
-/// Runs while a reservation is being made, standing in for a concurrent
-/// writer that moves the document between the reservation and the write.
+/// Runs inside a reservation, standing in for a concurrent writer.
 type ReserveHook = Box<dyn Fn() + Send + Sync>;
 
-/// Records every call in order. Clients are enrolled explicitly; anything
-/// else is refused as unenrolled, as an adapter must.
+/// Enrolls only what a test enrolls or an API creation reserves; anything
+/// else is unenrolled, as an adapter must answer.
 #[derive(Default)]
 pub struct InMemoryLifecycleContinuity {
-    enrolled: Mutex<BTreeSet<ClientId>>,
+    clients: Mutex<BTreeMap<ClientId, AcceptedLifecycle>>,
+    instances: Mutex<u64>,
     refuse_with: Mutex<Option<ContinuityRefusal>>,
+    unavailable: Mutex<bool>,
     fail_completion: Mutex<bool>,
     on_reserve: Mutex<Option<ReserveHook>>,
     events: Mutex<Vec<ContinuityEvent>>,
@@ -43,9 +47,19 @@ impl InMemoryLifecycleContinuity {
         Self::default()
     }
 
-    /// Enrolls `client`, so its restorations can be reserved.
-    pub fn enroll(&self, client: &ClientId) {
-        lock(&self.enrolled).insert(client.clone());
+    /// Enrolls `client` as a new instance whose accepted lifecycle is
+    /// `record`: the reviewed enrollment a test stands in for.
+    pub fn enroll(&self, client: &ClientId, record: &LifecycleRecord) {
+        let instance = self.next_instance();
+        lock(&self.clients).insert(
+            client.clone(),
+            AcceptedLifecycle {
+                instance,
+                sequence: 0,
+                fingerprint: LifecycleFingerprint::of(record),
+                pending: None,
+            },
+        );
     }
 
     /// Refuses every later reservation with `refusal`.
@@ -53,9 +67,14 @@ impl InMemoryLifecycleContinuity {
         *lock(&self.refuse_with) = Some(refusal);
     }
 
-    /// Fails every later completion.
-    pub fn fail_completions(&self) {
-        *lock(&self.fail_completion) = true;
+    /// Makes every later call fail as unreachable, or stops it.
+    pub fn set_unavailable(&self, unavailable: bool) {
+        *lock(&self.unavailable) = unavailable;
+    }
+
+    /// Fails, or stops failing, every later completion.
+    pub fn fail_completions(&self, failing: bool) {
+        *lock(&self.fail_completion) = failing;
     }
 
     /// Runs `hook` inside every later successful reservation.
@@ -68,52 +87,14 @@ impl InMemoryLifecycleContinuity {
     pub fn events(&self) -> Vec<ContinuityEvent> {
         lock(&self.events).clone()
     }
-}
 
-#[async_trait]
-impl LifecycleContinuity for InMemoryLifecycleContinuity {
-    async fn reserve(&self, restoration: &Restoring<'_>) -> Result<ContinuityReservation, ContinuityRefusal> {
-        if let Some(refusal) = lock(&self.refuse_with).clone() {
-            return Err(refusal);
-        }
-        if !lock(&self.enrolled).contains(restoration.client) {
-            return Err(ContinuityRefusal::Unenrolled);
-        }
-        if restoration.from.tombstone.is_none() || restoration.to.tombstone.is_some() {
-            return Err(ContinuityRefusal::Mismatch);
-        }
-        lock(&self.events).push(ContinuityEvent::Reserved(
-            restoration.client.clone(),
-            restoration.at_revision.clone(),
-        ));
-        if let Some(hook) = lock(&self.on_reserve).as_ref() {
-            hook();
-        }
-        Ok(ContinuityReservation::new(restoration.client.as_str()))
-    }
-
-    async fn complete(
-        &self,
-        reservation: &ContinuityReservation,
-        revision: &ClientRevision,
-    ) -> Result<(), ContinuityRefusal> {
-        if *lock(&self.fail_completion) {
-            return Err(ContinuityRefusal::Unavailable {
-                detail: "the test store fails completions".to_owned(),
-            });
-        }
-        let client = ClientId::try_new(reservation.id()).map_err(|_| ContinuityRefusal::Mismatch)?;
-        lock(&self.events).push(ContinuityEvent::Completed(client, revision.clone()));
-        Ok(())
-    }
-
-    async fn release(&self, reservation: &ContinuityReservation) {
-        if let Ok(client) = ClientId::try_new(reservation.id()) {
-            lock(&self.events).push(ContinuityEvent::Released(client));
-        }
+    pub(super) fn next_instance(&self) -> u64 {
+        let mut instances = lock(&self.instances);
+        *instances += 1;
+        *instances
     }
 }
 
-fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+pub(super) fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }

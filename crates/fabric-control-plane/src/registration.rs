@@ -1,7 +1,5 @@
-//! Wiring the control-plane domain.
-//!
-//! Past 120 lines for one reason: `build_control_plane` is the whole graph,
-//! and splitting the one function that assembles it would hide half of it.
+//! Wiring the control-plane domain. Past 120 lines for one reason: `build_control_plane`
+//! is the whole graph, and splitting the one function that assembles it would hide half of it.
 
 use std::sync::Arc;
 
@@ -86,10 +84,11 @@ pub fn build_control_plane(
 
     // The publisher is built here, not passed in whole: it needs the client binding
     // and service, which only this function has in scope beside the platform binding.
+    let continuity = lifecycle_continuity.as_ref();
     let platform = platform.map(|binding| {
         let publisher = publication
             .as_ref()
-            .map(|sink| publisher::build(&binding, sink, repository, &service, &clock));
+            .map(|sink| publisher::build(&binding, sink, repository, &service, &clock, continuity));
 
         // Declarations are placed above what was published (O3).
         let data_sources = publication.as_ref().map_or_else(

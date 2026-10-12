@@ -144,9 +144,13 @@ reports `withdrawal` (`pending`/`refused`/`unobserved`/`notPublished`) for retir
 clients from `PublicationState` evidence only; never "withdrawn". Nothing here deletes
 anything. Restore (`service/restore.rs`, `POST .../restoration`): CAS, then
 `LifecycleRecord::restore` (tombstone kept in `restorations`), then
-`lifecycle/retained.rs`, then a reservation in the `LifecycleContinuity` port
-(`lifecycle_continuity.rs`), then the write, completion and audit S20. No deployment
-has a store, so every restore is held (`503 lifecycle_continuity_unavailable`, codes in
+`lifecycle/retained.rs` (against the target's held publication), then a reservation
+in the `LifecycleContinuity` port (`continuity/`), then the write, completion and
+audit S20 (`service/lifecycle/record.rs` holds the retry contract). Every lifecycle
+write reserves when a store exists. `continuity::admit` guards readiness
+(`evidence::identity`), the sweep (`reconcile/pass.rs`), re-assertion (`converge.rs`)
+and the issuer registry (a held bound client fails the pass). No deployment has a
+store, so every restore and every identity side effect is held (codes in
 `errors/status_mapping/restore.rs`); `testing::InMemoryLifecycleContinuity` is
 test-only.
 

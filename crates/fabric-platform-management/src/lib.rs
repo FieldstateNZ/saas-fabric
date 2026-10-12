@@ -70,8 +70,8 @@ pub use placements::{
 };
 pub use policy::UpdatePolicy;
 pub use publication::{
-    compose, Accepted, CatalogueSourceError, ComposeError, Excluded, Exclusion, GateStatus,
-    IssuerRegistrySource, LastPass, PassOutcome, PassResult, PublicationState, PublishedTenants,
+    compose, placements_retained, Accepted, CatalogueSourceError, ComposeError, Excluded, Exclusion,
+    GateStatus, IssuerRegistrySource, LastPass, PassOutcome, PassResult, PublicationState, PublishedTenants,
     ReadinessEvidence, ReadinessReport, Registrations, RegistryApplication, RegistryEvidence,
     RegistryEvidenceSummary, RegistrySourceError, RuntimeCatalogueSource, RuntimePublisher, WaitingReason,
 };

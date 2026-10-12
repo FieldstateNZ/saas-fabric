@@ -34,6 +34,7 @@ const stored: Placements = {
   environment: 'lucentroot',
   revision: 'rev-1',
   placements: [placedRow, refusedRow],
+  unbound: { state: 'checked', dataSources: [] },
 }
 
 describe('usePlacements: loading', () => {

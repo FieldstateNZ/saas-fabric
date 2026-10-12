@@ -4,6 +4,7 @@ import { Panel } from '../console/Panel'
 import { usePlacements } from '../hooks/usePlacements'
 import { PlacementRow } from './PlacementRow'
 import { SaveNotice } from './SaveNotice'
+import { UnboundResources } from './UnboundResources'
 
 /**
  * The Data tab of `ClientWorkspace`: every logical data source this
@@ -21,6 +22,11 @@ import { SaveNotice } from './SaveNotice'
  * console. A refusal Fabric can name (`422 placement_refused`) is shown
  * beside the row it is about instead -- see `usePlacements`'
  * `saveErrorLogical`.
+ *
+ * Below it, the runtime catalogue's resources this client cannot reach,
+ * because it has no placement for their logical data source
+ * (`UnboundResources`, G8). It comes in the same response, so placing a row
+ * updates both.
  */
 export function ClientDataTab({ data }: { data: ClientProductResponse }) {
   const placements = usePlacements(data.client.id)
@@ -51,45 +57,48 @@ export function ClientDataTab({ data }: { data: ClientProductResponse }) {
   const rows = placements.value.placements
 
   return (
-    <Panel title="Data">
-      <SaveNotice
-        error={placements.conflict ? placements.saveError : null}
-        success={null}
-        onReload={placements.conflict ? placements.refresh : undefined}
-      />
-      {rows.length === 0 ? (
-        <p className="panel-body">This client's document declares no data sources.</p>
-      ) : (
-        <div className="table-wrap">
-          <table className="fabric-table">
-            <thead>
-              <tr>
-                <th>Logical</th>
-                <th>Intent</th>
-                <th>Placement</th>
-                <th />
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((row) => (
-                <PlacementRow
-                  key={row.logical}
-                  placement={row}
-                  saving={placements.saving}
-                  error={
-                    !placements.conflict && placements.saveErrorLogical === row.logical
-                      ? placements.saveError
-                      : null
-                  }
-                  onPlace={() => {
-                    void placements.place(row.logical)
-                  }}
-                />
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </Panel>
+    <>
+      <Panel title="Data">
+        <SaveNotice
+          error={placements.conflict ? placements.saveError : null}
+          success={null}
+          onReload={placements.conflict ? placements.refresh : undefined}
+        />
+        {rows.length === 0 ? (
+          <p className="panel-body">This client's document declares no data sources.</p>
+        ) : (
+          <div className="table-wrap">
+            <table className="fabric-table">
+              <thead>
+                <tr>
+                  <th>Logical</th>
+                  <th>Intent</th>
+                  <th>Placement</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((row) => (
+                  <PlacementRow
+                    key={row.logical}
+                    placement={row}
+                    saving={placements.saving}
+                    error={
+                      !placements.conflict && placements.saveErrorLogical === row.logical
+                        ? placements.saveError
+                        : null
+                    }
+                    onPlace={() => {
+                      void placements.place(row.logical)
+                    }}
+                  />
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Panel>
+      <UnboundResources unbound={placements.value.unbound} />
+    </>
   )
 }

@@ -96,6 +96,12 @@ The control plane's desired-state model. Depends on `fabric-core`,
   `Catalogue::runtime_catalogue() -> Result<DerivedCatalogue, CatalogueConflict>`
   (`catalogue/runtime_catalogue.rs`): newest release per application,
   sorted by name, pure; `DerivedCatalogue::into_document() -> CatalogDocument`.
+- `catalogue::UnboundDataSource { logical, resources: Vec<DerivedResource> }`
+  and `DerivedCatalogue::unbound_for(&BTreeSet<LogicalDataSourceName>) ->
+  Vec<UnboundDataSource>` (`catalogue/unbound_resources.rs`): every logical
+  data source a derived resource names that a tenant's bound set does not
+  hold, with the resources on it, sorted by name. Pure. The control plane's
+  placements routes render it as `unbound` (G8).
 - **Described components (ADR 0026 sections 7 and 8).** `ComponentKind::Described`
   (`"described"`); `ApplicationComponent.resolution: Option<ComponentResolution>`
   (`#[serde(default, skip_serializing_if = "Option::is_none")]`, so every

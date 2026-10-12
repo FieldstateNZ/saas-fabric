@@ -57,9 +57,41 @@ export interface PlacementEntry {
   readonly refusal: string | null
 }
 
+/** A catalogue resource, and the application release that declares it. */
+export interface UnboundResource {
+  readonly resource: string
+  readonly application: string
+  readonly version: number
+}
+
 /**
- * Every logical data source one client's document asks for, and the
- * placements document revision to condition the next `place` on.
+ * A logical data source the runtime catalogue names and this client's tenant
+ * does not bind, so every resource on it answers `UnboundDataSource` (500) to
+ * this client (G8, ADR 0018 part 4).
+ *
+ * `declared` says whether the client's document asks for it: when it does,
+ * placing that intent binds it; when it does not, the document has to ask
+ * for it first.
+ */
+export interface UnboundDataSource {
+  readonly logical: string
+  readonly declared: boolean
+  readonly resources: readonly UnboundResource[]
+}
+
+/**
+ * Whether the client's placements were checked against the environment's
+ * derived runtime catalogue. `unchecked` when the catalogue could not be read
+ * or derived; `reason` says why, and placing data still works.
+ */
+export type UnboundCheck =
+  | { readonly state: 'checked'; readonly dataSources: readonly UnboundDataSource[] }
+  | { readonly state: 'unchecked'; readonly reason: string }
+
+/**
+ * Every logical data source one client's document asks for, the catalogue
+ * resources its tenant cannot reach, and the placements document revision to
+ * condition the next `place` on.
  *
  * `revision` is never null, for the same reason `DataSources.revision` is
  * not (see `./data-source-types`): the late-bound binding always has a
@@ -71,4 +103,5 @@ export interface Placements {
   readonly environment: string
   readonly revision: string
   readonly placements: readonly PlacementEntry[]
+  readonly unbound: UnboundCheck
 }

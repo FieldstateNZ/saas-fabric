@@ -538,6 +538,9 @@ generation it primes. An entry that *some* tenant does not bind is still
 published, as part 4 says. The Data tab item and catalogue refresh in a
 running replica are still owed. See
 [Revision history, placements and the catalogue](#revision-history-placements-and-the-catalogue).
+The Data tab item is since built; see
+[Unbound pairs on the Data tab (G8)](#unbound-pairs-on-the-data-tab-g8).
+Catalogue refresh is not.
 
 ## What this branch adds
 
@@ -1501,6 +1504,56 @@ under established ownership, any discard (#108), §9's dual-key path and
 G6's versioning rule (D01-1), G7's live wiring, the platform reader mount,
 G4 `Lease`, G2's publisher wait, withdrawal, the O5 continuity and
 issuance guards, and the platform contract follow-ups.
+
+## Unbound pairs on the Data tab (G8)
+
+G8 classified one part as engineering: surfacing on a client's Data tab
+the catalogue entries its tenant does not bind, which ADR 0023 already owed.
+ADR 0018 part 4 still publishes such an entry, so this is a report, not a
+refusal. None of it is verified live.
+
+- **What is unbound.** A pair is the client's tenant and a logical data
+  source that a resource in the environment's derived runtime catalogue
+  names, where the tenant has no recorded placement for it. Every resource
+  on that logical data source answers `UnboundDataSource` (500) to this
+  tenant. The bound set is every placement recorded for the tenant
+  (`ClientPlacements::bound`), not only the logical data sources its
+  document still names, so it is exactly what the composed tenant binding
+  binds.
+- **Where it is shown.** `GET /api/clients/{clientId}/placements` and the
+  placing `POST` both answer `unbound`, so a placement updates the list in
+  the same response. Each entry gives every resource on the logical data
+  source, the application release that declares it, and whether
+  `spec.data` asks for it: if it does, placing it binds it; if not, the
+  document has to ask first. The console shows it as the Data tab's
+  "Unreachable resources" panel. Both of the panel's checked states say on
+  screen that they compare desired state, not what a running replica
+  serves. The 500 is stated as what follows once that catalogue and those
+  placements are published and served.
+- **When it cannot be checked.** If the catalogue cannot be read, or two
+  applications declare one resource, `unbound` says so with the reason
+  and the placements are still served. Placing data does not depend on
+  the catalogue.
+
+| Item | Code | Tests |
+|---|---|---|
+| The bound set is every recorded placement of this tenant, and no other tenant's | `fabric-platform-management` `placements/service/for_client.rs`, `outcome.rs` | `service_tests.rs::for_client_reports_every_logical_data_source_this_tenant_has_recorded_and_no_other_tenants` |
+| Unbound pairs, grouped by logical data source, with each resource's release | `fabric-client-model` `catalogue/unbound_resources.rs::DerivedCatalogue::unbound_for` | `unbound_resources_tests.rs::each_logical_data_source_the_tenant_does_not_bind_lists_every_resource_on_it_with_its_release`, `::a_tenant_that_binds_every_named_logical_data_source_has_no_unbound_pair`, `::a_tenant_with_no_placement_cannot_reach_any_resource`, `::an_empty_catalogue_names_nothing_unbound` |
+| Both routes answer it; placing updates it; an underivable catalogue leaves placements readable | `fabric-control-plane` `handlers/placements/view.rs`, `body/unbound.rs` | `placements_unbound.rs::every_resource_on_a_logical_data_source_the_client_does_not_bind_is_listed_until_it_is_placed`, `::a_catalogue_that_cannot_be_derived_leaves_the_placements_readable_and_says_why_nothing_was_checked` |
+| The Data tab panel | `apps/control-plane-ui` `product/UnboundResources.tsx`, `ClientDataTab.tsx`, `api/placement-types.ts` | `UnboundResources.test.tsx` (eight tests: both checked states visibly scoped to desired state, with the failure conditional on it being published and served; every resource and release listed, place-or-declare guidance, nothing unbound, unchecked with its reason, the panel updated from the `POST` response, placements still shown when unchecked) |
+
+Limits:
+
+- **Desired state, not what a replica serves.** The check uses the derived
+  catalogue and the recorded placements. While the controller holds the
+  catalogue (an entry no tenant binds yet), or before a pass publishes, a
+  running replica serves another catalogue or tenants. Catalogue refresh in
+  a running replica is still owed. Its semantics are asked on #108 (comment
+  6124222864).
+- **One environment.** As for placements, a deployment checks the one
+  environment it manages.
+- **Not a guard.** Nothing refuses an assignment or a publication because
+  of an unbound pair (ADR 0018 part 4).
 
 ## Not covered here
 

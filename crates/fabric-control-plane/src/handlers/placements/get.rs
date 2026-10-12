@@ -1,20 +1,18 @@
 //! `GET /api/clients/{clientId}/placements`
 
 use axum::extract::State;
-use axum::response::{IntoResponse, Response};
-use axum::Json;
-use http::header::ETAG;
-use http::HeaderValue;
+use axum::response::Response;
 
 use crate::extraction::ClientPath;
-use crate::handlers::placements::body::{self, PlacementsBody};
-use crate::handlers::placements::intent::to_platform_intents;
+use crate::handlers::placements::view::placements_view;
 use crate::state::ControlPlaneState;
-use crate::{preconditions, ControlPlaneError, Operator};
+use crate::{ControlPlaneError, Operator};
 
 /// Every logical data source a client's document names, and what is true
 /// of each -- already placed, placeable, or refused and why (ADR 0023
-/// part 2).
+/// part 2). Beside them, every catalogue resource the client's tenant
+/// cannot reach because none of its placements binds the resource's logical
+/// data source (G8): see `placements_view`.
 ///
 /// Reading this changes nothing, the same property `list_data_sources`
 /// keeps and for the same reason: a refresh, a second operator's tab, or a
@@ -38,31 +36,5 @@ pub(crate) async fn list_placements(
 ) -> Result<Response, ControlPlaneError> {
     let platform = state.platform()?;
     let stored = state.service.get(&client_id).await?;
-
-    let intents = &stored.document.client().data;
-    let outcomes = platform
-        .placements
-        .for_client(
-            &platform.environment,
-            client_id.as_str(),
-            &to_platform_intents(intents),
-        )
-        .await?;
-    let revision = body::current_revision(&outcomes)?;
-
-    let response_body = PlacementsBody::of(
-        client_id.as_str(),
-        &platform.environment,
-        revision,
-        intents,
-        &outcomes.entries,
-    );
-
-    let mut response = Json(response_body).into_response();
-
-    if let Ok(tag) = HeaderValue::from_str(&preconditions::platform_entity_tag(revision)) {
-        response.headers_mut().insert(ETAG, tag);
-    }
-
-    Ok(response)
+    placements_view(&state, platform, &client_id, &stored.document.client().data).await
 }

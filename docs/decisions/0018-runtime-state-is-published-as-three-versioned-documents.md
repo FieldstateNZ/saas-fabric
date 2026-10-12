@@ -1347,10 +1347,14 @@ ADR 0023's list and `docs/roadmap/m0-contract-decisions.md`.
   - G8: a catalogue entry that no tenant binds is refused, the controller
     keeps the last published catalogue while one exists, and a runtime takes
     its catalogue from the same read and record as the generation it primes.
-    Still open: an entry that
-    some tenant does not bind gets `UnboundDataSource` for that tenant, a
-    running replica keeps its startup catalogue, and the Data tab does not
-    show unbound pairs. Not verified live.
+    Since then, the client's Data tab shows every catalogue resource the
+    client's tenant cannot reach, grouped by the logical data source it
+    does not bind (ADR 0023, amendment 2026-10-12). Still open: an entry
+    that some tenant does not bind still gets `UnboundDataSource` for that
+    tenant, and a running replica keeps its startup catalogue. Refreshing
+    it waits on the semantics asked on
+    [#108](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6124222864).
+    Not verified live.
 - **Release rollback floor (D01-21). Recorded and enforced in-product.**
   `compatibility.yaml` records `minimumRollableVersion: 0.3.0-preview.16`.
   Platform Management offers no rollback of Fabric below it and refuses one

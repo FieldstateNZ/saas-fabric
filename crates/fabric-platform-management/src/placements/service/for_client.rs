@@ -70,9 +70,17 @@ impl Placements {
             entries.insert(logical.clone(), outcome);
         }
 
+        let bound = held
+            .placements
+            .iter()
+            .filter(|placement| placement.tenant == tenant)
+            .map(|placement| placement.logical.clone())
+            .collect();
+
         Ok(ClientPlacements {
             revision: held.revision,
             entries,
+            bound,
         })
     }
 }

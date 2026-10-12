@@ -1174,6 +1174,25 @@ data sources or the placements, being a hand edit made incoherent answers
 `500 desired_state_invalid`, the same code a broken client document
 already does.
 
+Both routes also answer `unbound`: the runtime catalogue's resources this
+client's tenant cannot reach (G8). The runtime serves one catalogue to
+every tenant, and a resource on a logical data source the tenant does not
+bind answers `UnboundDataSource` (500) to it (ADR 0018 part 4). The
+publisher refuses only an entry that *no* tenant binds, so these pairs are
+published and are shown here. The check compares the environment's derived
+runtime catalogue (`Catalogue::runtime_catalogue`, what the next
+publication offers) with every placement recorded for the tenant, including
+one whose intent the document no longer names. `{"state": "checked",
+"dataSources": [...]}` lists one entry per unbound logical data source,
+sorted by name. Each entry gives `declared` (whether `spec.data` asks for
+it, so placing it binds it) and every resource on it, with the application
+and release version that declares it. When the catalogue cannot be read,
+or two applications declare one resource, the body is `{"state":
+"unchecked", "reason": ...}` and the placements are still returned. The
+console shows the result as the Data tab's "Unreachable resources" panel.
+It is desired state: a running replica may serve an older catalogue or
+older tenants.
+
 **On a shared data source, the discriminator value recorded is the tenant
 id** — unique within the platform by construction, and the placements
 document refuses two tenants recorded with one value on one data source

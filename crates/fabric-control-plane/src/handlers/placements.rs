@@ -5,12 +5,14 @@
 //! write, delegated whole to `fabric_platform_management::Placements`.
 //! Nothing here decides anything -- these handlers read a client, convert
 //! its intent into the one the selector reads (`intent.rs`), and render
-//! what the service answers.
+//! what the service answers, beside the catalogue resources the client's
+//! tenant cannot reach (G8).
 
 mod body;
 mod get;
 mod intent;
 mod post;
+mod view;
 
 pub(crate) use get::list_placements;
 pub(crate) use post::place_data_source;

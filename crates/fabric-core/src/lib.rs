@@ -34,7 +34,9 @@
 //!
 //! Applications see the first. They never see the third.
 
+pub mod authorization_names;
 mod clock;
+mod collection_object;
 mod identifier_error;
 mod ids;
 mod logging;
@@ -51,6 +53,7 @@ pub mod naming {
 }
 
 pub use clock::{Clock, SystemClock};
+pub use collection_object::CollectionObject;
 pub use identifier_error::IdentifierError;
 pub use ids::{
     BindingRevision, DataSourceId, LogicalDataSourceName, LogicalResourceName, RelationName, SubjectId,

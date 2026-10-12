@@ -20,12 +20,16 @@ code. **Nothing depends on it.** `fabric-api` composes no Check.
 - `FrontCheck::new(FrontEndpoint) -> Result<Self, String>` — `reqwest` client
   with a 5s timeout, `redirect::Policy::none()`, `no_proxy()` and
   `https_only(endpoint.requires_tls())`. Implements `AuthorizationCheck`.
-- `computed_relation(OperationKind) -> String` — `can_<operation>`.
 
 ## Mapping (do not change without ADR 0027)
 
-- `CheckTarget::Collection` → `CheckFailure::Internal`, and nothing is sent.
-  There is no collection model contract yet (ADR 0027 §2a).
+- `Record(o)` with `read`/`update`/`delete` → `{"relation":
+  "can_<op>", "object": "<resource>:<id>"}`; `Collection(c)` with
+  `list`/`create` → `{"relation": "can_<op>", "object":
+  "<resource>_collection:<resource>"}` (ADR 0027 §2a). The relation is
+  `OperationKind::computed_relation`, the object `Display`.
+- An operation with the other kind of target → `CheckFailure::Internal`, and
+  nothing is sent.
 - Transport error, or any `5xx` → `CheckFailure::Unavailable`.
 - Any status other than exactly `200` (including `201`, `202`, `401`, `403`
   and `3xx`) → `CheckFailure::Internal`.
@@ -48,4 +52,4 @@ code. **Nothing depends on it.** `fabric-api` composes no Check.
 
 - `wire.rs` — `CheckBody<'a> { relation, object }` and `CheckAnswer { allowed }`.
 - `front_check.rs` (tests in `front_check/front_check_tests.rs`),
-  `front_endpoint.rs`, `computed_relation.rs`.
+  `front_endpoint.rs`.

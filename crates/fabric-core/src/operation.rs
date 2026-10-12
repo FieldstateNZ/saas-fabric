@@ -62,10 +62,79 @@ impl OperationKind {
     pub const fn is_write(self) -> bool {
         matches!(self, Self::Create | Self::Update | Self::Delete)
     }
+
+    /// Whether the operation is asked about a resource's collection rather
+    /// than one of its records (ADR 0027 §2a).
+    ///
+    /// `list` and `create` name no record. The authorization model defines
+    /// them only on the collection object, and `read`, `update` and `delete`
+    /// only on a record, so the two partitions are one fact both planes read
+    /// here rather than two copies that could disagree.
+    #[must_use]
+    pub const fn is_collection_operation(self) -> bool {
+        matches!(self, Self::List | Self::Create)
+    }
+
+    /// The computed relation that answers whether the operation is permitted:
+    /// `can_<operation>`.
+    ///
+    /// ADR 0013 maps a client's declared relations onto direct relations plus
+    /// one computed relation per operation. The control plane writes these
+    /// names into the model and the runtime plane asks them, so they are
+    /// spelled once, here.
+    #[must_use]
+    pub const fn computed_relation(self) -> &'static str {
+        match self {
+            Self::Read => "can_read",
+            Self::List => "can_list",
+            Self::Create => "can_create",
+            Self::Update => "can_update",
+            Self::Delete => "can_delete",
+        }
+    }
 }
 
 impl std::fmt::Display for OperationKind {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str(self.as_str())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::RelationName;
+
+    #[test]
+    fn list_and_create_are_collection_operations_and_nothing_else_is() {
+        let collection: Vec<OperationKind> = OperationKind::ALL
+            .into_iter()
+            .filter(|operation| operation.is_collection_operation())
+            .collect();
+
+        assert_eq!(collection, [OperationKind::List, OperationKind::Create]);
+    }
+
+    #[test]
+    fn each_operation_asks_its_own_computed_relation() {
+        let relations: Vec<&str> = OperationKind::ALL
+            .into_iter()
+            .map(OperationKind::computed_relation)
+            .collect();
+
+        assert_eq!(
+            relations,
+            ["can_read", "can_list", "can_create", "can_update", "can_delete"]
+        );
+    }
+
+    #[test]
+    fn every_computed_relation_is_can_and_the_operation_and_a_valid_relation_name() {
+        for operation in OperationKind::ALL {
+            let relation = operation.computed_relation();
+
+            assert_eq!(relation, format!("can_{operation}"));
+            assert!(RelationName::try_new(relation).is_ok(), "{relation}");
+        }
     }
 }

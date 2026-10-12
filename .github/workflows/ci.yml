@@ -163,6 +163,40 @@ jobs:
         env:
           FABRIC_REQUIRE_CONNECTOR_ACCEPTANCE: "1"
 
+  authorization-model:
+    name: cargo test -p fabric-fga-model (real OpenFGA)
+    runs-on: ubuntu-latest
+    # The semantic proof behind ADR 0027 §2a's collection Check: the model
+    # fabric-fga-model writes, against a real OpenFGA, decides records and
+    # collections apart. An ephemeral container on the runner, on loopback,
+    # with synthetic subjects -- nothing is deployed, no credential is used,
+    # and nothing outside this job is touched.
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      # See "The toolchain" above: installs exactly what rust-toolchain.toml
+      # pins, then records which version ran.
+      - run: rustup toolchain install
+      - run: rustup show active-toolchain
+      - uses: Swatinem/rust-cache@v2
+      # The version the authorization front image ships (Dockerfile,
+      # `authorization-source`), pinned by digest. The test asserts this line
+      # names the same image it documents (`OPENFGA_IMAGE`).
+      - name: Start the pinned OpenFGA
+        run: |
+          docker run -d --name openfga -p 127.0.0.1:18200:8080 openfga/openfga:v1.19.0@sha256:78d1fa601d42340ecb131305d80d3767d0f254f9b1bc3646f9a557e11b24c63a run
+          for attempt in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:18200/healthz >/dev/null; then exit 0; fi
+            sleep 1
+          done
+          docker logs openfga
+          exit 1
+      # Required mode: a missing port fails the run instead of skipping it.
+      - run: cargo test -p fabric-fga-model --test model_against_openfga
+        env:
+          FABRIC_REQUIRE_OPENFGA: "1"
+          FABRIC_TEST_OPENFGA_PORT: "18200"
+
   deny:
     name: cargo deny check
     runs-on: ubuntu-latest

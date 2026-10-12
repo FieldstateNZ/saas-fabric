@@ -75,6 +75,7 @@ CONTROL_PLANE = frozenset(
         "fabric-client-model",
         "fabric-reconciliation",
         "fabric-control-plane",
+        "fabric-fga-model",
         "fabric-client-git",
         "fabric-keycloak",
         "fabric-openbao",
@@ -610,6 +611,14 @@ def check_dependency_direction(graph: Graph) -> list[Failure]:
         # re-exported here at their old paths.
         "fabric-client-model": {"fabric-core", "fabric-runtime-publication", "fabric-component"},
         "fabric-reconciliation": {"fabric-core", "fabric-client-model"},
+        # The model writer (ADR 0027 §2a): `spec.authorization` as the
+        # authorization model a tenant's store is pinned to. A pure
+        # translation with no transport. The collection type and the
+        # `can_<operation>` names it writes are `fabric-core`'s, the same ones
+        # `fabric-fga-check` asks about from the runtime plane, so the two
+        # planes agree without an edge between them. Nothing depends on it
+        # yet: writing the model through the front is owed.
+        "fabric-fga-model": {"fabric-core", "fabric-client-model"},
         "fabric-control-plane": {
             "fabric-core",
             "fabric-client-model",

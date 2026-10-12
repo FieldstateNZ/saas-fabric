@@ -1,84 +1,44 @@
-//! Every variant of an enum, enumerated by the enum's own serde derive.
+//! Every variant of a published enum, from one table.
 //!
-//! A hand-written list of variants beside an exhaustive `match` can drift:
-//! a new variant gets its match arm and never reaches a specimen, so the
-//! lock never sees what the writer emits. Here the names come from the
-//! derive itself. Deserializing a name no variant has fails with every
-//! variant's name ("expected one of ..."), and each name is then
-//! deserialized into its variant, filling each required field the error
-//! names with a specimen string, so a new variant is a specimen the moment
-//! it exists.
+//! [`every_variant!`] takes one list of variants, each with a specimen value
+//! for every field, and generates from that same list both an exhaustive
+//! `match` and the specimens. A variant added to an enum does not compile
+//! until it has an entry, and an entry is a specimen, so the writer's
+//! output for it reaches the lock whether or not it deserializes.
+//!
+//! A variant the writer cannot write goes under `unwritten`: it is matched
+//! too, and serializing it must fail, so leaving a variant out of the
+//! specimens is proved rather than assumed.
 
-use serde::de::DeserializeOwned;
-use serde_json::{json, Map, Value};
-
-/// A name no variant of any published enum has.
-const NO_VARIANT: &str = "no-such-variant";
-
-/// The value every required field of a variant is given.
-const FIELD: &str = "specimen";
-
-/// The variant names an error from the derive lists after "expected".
-fn expected_names(error: &str) -> Vec<String> {
-    let (_, expected) = error
-        .split_once("expected")
-        .unwrap_or_else(|| panic!("not an unknown-variant error: {error}"));
-    expected
-        .split('`')
-        .skip(1)
-        .step_by(2)
-        .map(str::to_owned)
-        .collect()
-}
-
-/// The field a "missing field `x`" error names.
-fn missing_field(error: &str) -> Option<String> {
-    let (_, rest) = error.split_once("missing field `")?;
-    rest.split_once('`').map(|(field, _)| field.to_owned())
-}
-
-/// Every variant of a unit-variant enum serialized as a plain string.
-pub fn every_unit<T: DeserializeOwned>() -> Vec<T> {
-    let error = serde_json::from_value::<T>(json!(NO_VARIANT))
-        .err()
-        .unwrap()
-        .to_string();
-    let names = expected_names(&error);
-    assert!(!names.is_empty(), "{error}");
-    names
-        .iter()
-        .map(|name| serde_json::from_value(json!(name)).unwrap())
-        .collect()
-}
-
-/// Every variant of an internally tagged enum whose tag is `tag`, each with
-/// every required field set.
-pub fn every_tagged<T: DeserializeOwned>(tag: &str) -> Vec<T> {
-    let error = serde_json::from_value::<T>(json!({ tag: NO_VARIANT }))
-        .err()
-        .unwrap()
-        .to_string();
-    let names = expected_names(&error);
-    assert!(!names.is_empty(), "{error}");
-    names
-        .iter()
-        .map(|name| {
-            let mut object = Map::new();
-            object.insert(tag.to_owned(), json!(name));
-            loop {
-                match serde_json::from_value::<T>(Value::Object(object.clone())) {
-                    Ok(variant) => break variant,
-                    Err(error) => {
-                        let error = error.to_string();
-                        let field = missing_field(&error)
-                            .unwrap_or_else(|| panic!("variant {name} cannot be built: {error}"));
-                        assert!(
-                            object.insert(field.clone(), json!(FIELD)).is_none(),
-                            "variant {name}: {field} given and still missing"
-                        );
-                    }
-                }
+/// `every_variant!(Enum [written variants] unwritten [variants])`, each
+/// variant as `Name` or `Name { field: specimen, ... }`. Evaluates to the
+/// written variants, in order.
+macro_rules! every_variant {
+    (
+        $ty:ident
+        [ $( $variant:ident $( { $( $field:ident : $value:expr ),* $(,)? } )? ),* $(,)? ]
+        unwritten
+        [ $( $unwritten:ident $( { $( $ufield:ident : $uvalue:expr ),* $(,)? } )? ),* $(,)? ]
+    ) => {{
+        fn covered(variant: &$ty) {
+            match variant {
+                $( $ty::$variant $( { $( $field: _ ),* } )? => {} )*
+                $( $ty::$unwritten $( { $( $ufield: _ ),* } )? => {} )*
             }
-        })
-        .collect()
+        }
+        let written = vec![ $( $ty::$variant $( { $( $field: $value ),* } )? ),* ];
+        written.iter().for_each(covered);
+        $(
+            let unwritten = $ty::$unwritten $( { $( $ufield: $uvalue ),* } )?;
+            covered(&unwritten);
+            assert!(
+                serde_json::to_value(&unwritten).is_err(),
+                "{} is listed as unwritten, but the writer serializes it",
+                stringify!($unwritten)
+            );
+        )*
+        written
+    }};
 }
+
+pub(crate) use every_variant;

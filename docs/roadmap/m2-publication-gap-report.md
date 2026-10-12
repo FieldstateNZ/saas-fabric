@@ -1310,13 +1310,14 @@ the reader sees what such a publisher would leave.
   the lock. The specimens (`tests/shapes/specimens.rs`) destructure every
   document type without `..`, so a new field does not compile until it is
   given a specimen, and a full specimen that leaves an optional field unset
-  fails at run time. Enum variants are not listed by hand
-  (`tests/shapes/variants.rs`): each enum's own serde derive names every
-  variant in its unknown-variant error, and each name is deserialized into
-  its variant, with every required field filled. A variant added to an
-  enum is therefore a specimen with nothing else changed, and the lock test
-  fails until the floor rises. A deserialize-only alias is enumerated too
-  but writes its variant's own name, so it changes nothing.
+  fails at run time. Each enum's variants come from one table
+  (`every_variant!` in `tests/shapes/variants.rs`). The table generates both
+  an exhaustive `match` and the specimens, so a variant added to an enum
+  does not compile until it has an entry, and every entry is serialized
+  into the lock. That holds whether or not the variant deserializes. A
+  variant the writer cannot write is listed as `unwritten`: it is matched
+  too, and serializing it must fail. A deserialize-only alias changes no
+  writer output, so it changes nothing.
   The same suite checks:
   - the lock's floor is `MINIMUM_READER_CONTRACT`;
   - `READER_CONTRACT` reaches it;
@@ -1348,7 +1349,7 @@ the reader sees what such a publisher would leave.
 | CI fails a shape change without a floor raise | `check_reader_floor.py`, `ci.yml` `scripts` job | `test_check_reader_floor.py::test_a_shape_change_without_a_floor_raise_is_refused`, `::test_a_removed_line_is_a_shape_change_too`, `::test_a_falling_floor_is_refused`; a deliberate shape change, checked locally and reverted (in the pull request) |
 | A raise admits the change | as above | `::test_a_shape_change_with_a_floor_raise_passes`, `::test_a_floor_raise_without_a_shape_change_passes` |
 | A base that cannot be read is refused, never taken as absent; the floor cannot fall when the lock is adopted | `check_reader_floor.py::read_at`, `::base_source_floor` | `::test_the_review_probe_a_missing_lock_blob_with_a_falling_floor_is_refused`, `::test_a_lock_blob_missing_at_the_same_floor_is_refused_too`, `::test_a_base_tree_that_cannot_be_read_is_refused`, `::test_a_floor_decrease_during_bootstrap_is_refused`, `::test_a_base_whose_source_and_compatibility_disagree_is_refused` |
-| A new variant cannot get a match arm without becoming a specimen | `tests/shapes/variants.rs` | `published_shapes.rs::every_variant_comes_from_the_enums_own_derive`, `::the_shape_names_every_variant_each_derive_knows`. Locally, adding `PlacementClassDocument::Archive` with no specimen edit fails `the_lock_is_the_shape_this_publisher_writes` (`+ data-sources.json $[].placement: one of "archive"`), and an input-only `#[serde(alias)]` passes |
+| A new variant cannot get a match arm without becoming a specimen, whether or not it deserializes | `every_variant!` (`tests/shapes/variants.rs`) | `published_shapes.rs::the_variant_table_yields_written_variants_and_proves_unwritten_ones`, `::a_written_variant_cannot_be_listed_as_unwritten`. Checked locally against `PlacementClassDocument`:<br>- `#[serde(skip_deserializing)] Archive` or a plain `Archive` with no table entry does not compile (`non-exhaustive patterns`);<br>- with an entry, the lock test fails (`+ data-sources.json $[].placement: one of "archive"`);<br>- listed as `unwritten`, the table fails because the writer serializes it;<br>- with the lock regenerated, the floor check refuses it unless the floor rises;<br>- an input-only `#[serde(alias)]` passes |
 
 Limits:
 

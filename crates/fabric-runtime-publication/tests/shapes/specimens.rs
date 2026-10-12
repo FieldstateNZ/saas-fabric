@@ -3,40 +3,60 @@
 //!
 //! The struct patterns below have no `..`: a field added to a document type
 //! does not compile until it is added here. Every enum variant comes from
-//! the enum's own serde derive ([`super::variants`]), so a new variant is
-//! a specimen without anything here changing. A full resource must set
+//! one table per enum ([`super::variants`]) that generates both an
+//! exhaustive `match` and the specimens, so a new variant does not compile
+//! until it is a specimen. A full resource must set
 //! every optional field, and a sparse one must leave each out, so the shape
 //! also says which fields a reader may find absent. Both are checked when
 //! the specimens are built.
 
 use std::collections::BTreeMap;
 
-use super::variants::{every_tagged, every_unit};
+use super::variants::every_variant;
 
 use fabric_core::{
     BindingRevision, DataSourceId, LogicalDataSourceName, LogicalResourceName, OperationKind, TenantId,
 };
 use fabric_runtime_publication::{
-    CatalogDocument, CollectionName, ConfigurationBindingDocument, ConnectionSelectorDocument, ConnectorId,
-    DataResidencyDocument, DataSourceCapabilitiesDocument, DataSourceDocument, FieldName,
-    IsolationModelDocument, PlacementClassDocument, PoolSettingsDocument, ResourceDefinitionDocument,
-    StorageBindingDocument, TenantBindingDocument, TenantDataBindingDocument, TenantDataBindings,
+    CatalogDocument, CollectionName, ConfigurationBindingDocument, ConnectionName,
+    ConnectionSelectorDocument, ConnectorId, DataResidencyDocument, DataSourceCapabilitiesDocument,
+    DataSourceDocument, FieldName, IsolationModelDocument, PlacementClassDocument, PoolSettingsDocument,
+    ResourceDefinitionDocument, SchemaName, StorageBindingDocument, TenantBindingDocument,
+    TenantDataBindingDocument, TenantDataBindings,
 };
 
 fn every_isolation() -> Vec<IsolationModelDocument> {
-    every_tagged("kind")
+    every_variant!(IsolationModelDocument [
+        Database {},
+        Schema { schema: SchemaName::try_new("tenant_a").unwrap() },
+        Discriminator {
+            column: FieldName::try_new("tenant_key").unwrap(),
+            value: "tenant-a".to_owned(),
+        },
+    ] unwritten [])
 }
 
 fn every_connection() -> Vec<ConnectionSelectorDocument> {
-    every_tagged("kind")
+    every_variant!(ConnectionSelectorDocument [
+        Default {},
+        Named { name: ConnectionName::try_new("primary").unwrap() },
+        Secret { reference: "tenant/a/data-primary".to_owned() },
+    ] unwritten [])
 }
 
 fn every_placement() -> Vec<PlacementClassDocument> {
-    every_unit()
+    every_variant!(PlacementClassDocument [
+        Shared,
+        Dedicated,
+        HighAvailability,
+        Regulated,
+        Development,
+        Ephemeral,
+    ] unwritten [])
 }
 
 fn every_operation() -> Vec<OperationKind> {
-    every_unit()
+    every_variant!(OperationKind [Read, List, Create, Update, Delete] unwritten [])
 }
 
 fn storage(full: bool) -> StorageBindingDocument {

@@ -90,7 +90,10 @@ impl Walk<'_> {
         let path = match tag {
             Some(tag) => {
                 self.line(path, &format!("object tagged by {tag}"));
-                let variant = object[tag].as_str().unwrap();
+                let variant = object
+                    .get(tag)
+                    .and_then(Value::as_str)
+                    .unwrap_or_else(|| panic!("{path} is not tagged by {tag}: the tag changed"));
                 format!("{path}<{tag}={variant}>")
             }
             None => path.to_owned(),

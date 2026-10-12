@@ -164,6 +164,17 @@ export interface ProductActivity {
 }
 
 /**
+ * `GET /api/activity`: the newest recorded actions, bounded. A view of recent
+ * activity, not the audit trail (ADR 0028) — `omitted` counts the older
+ * actions this view leaves out, so it is never presented as everything.
+ */
+export interface ActivityView {
+  readonly activity: readonly ProductActivity[]
+  readonly limit: number
+  readonly omitted: number
+}
+
+/**
  * The catalogue: every application, the shared client definition fields,
  * platform settings, registered environments, and recorded activity.
  *

@@ -104,7 +104,9 @@ impl ClientService {
         self.reconciliation
             .mark_pending(&request.id, revision.clone(), self.clock.now_unix_seconds());
 
-        audit::client_created(operator, &request.id, &revision);
+        self.audit
+            .record(audit::client_created(operator, &request.id, &revision))
+            .await;
 
         Ok(StoredClient { document, revision })
     }

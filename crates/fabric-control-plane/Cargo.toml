@@ -28,6 +28,9 @@ base64.workspace = true
 getrandom.workspace = true
 http.workspace = true
 jsonwebtoken.workspace = true
+# SHA-256 for the audit trail's hash chain (ADR 0028), through the one hash
+# implementation the workspace already trusts.
+ring.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

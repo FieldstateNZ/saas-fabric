@@ -32,7 +32,9 @@ impl ClientService {
                 record.tombstone(at, operator.subject(), reason)
             })
             .await?;
-        audit::client_tombstoned(operator, id, &stored.revision);
+        self.audit
+            .record(audit::client_tombstoned(operator, id, &stored.revision))
+            .await;
 
         Ok(stored)
     }
@@ -57,7 +59,9 @@ impl ClientService {
                 record.confirm_deletion(id, confirming, at, operator.subject())
             })
             .await?;
-        audit::client_deletion_confirmed(operator, id, &stored.revision);
+        self.audit
+            .record(audit::client_deletion_confirmed(operator, id, &stored.revision))
+            .await;
 
         Ok(stored)
     }

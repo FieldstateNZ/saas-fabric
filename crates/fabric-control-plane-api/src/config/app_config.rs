@@ -3,8 +3,8 @@
 use fabric_control_plane::ControlPlaneConfig;
 
 use crate::config::{
-    DesiredStateConfig, GitHostConfig, IdentityProviderConfig, PlatformManagementConfig, RegistriesConfig,
-    SecretStoreConfig,
+    AuditTrailConfig, DesiredStateConfig, GitHostConfig, IdentityProviderConfig, PlatformManagementConfig,
+    RegistriesConfig, SecretStoreConfig,
 };
 
 /// The process's configuration, in one struct.
@@ -61,6 +61,11 @@ pub struct ControlPlaneAppConfig {
     /// a week why an environment never advanced.
     #[serde(default)]
     pub platform_management: Option<PlatformManagementConfig>,
+
+    /// Where the durable audit trail is stored. Defaulted to disabled:
+    /// storage activation is a deferred decision (ADR 0028).
+    #[serde(default)]
+    pub audit_trail: AuditTrailConfig,
 
     /// The image registries operators register: their call timeout.
     /// Defaulted, because registries exist in every deployment.

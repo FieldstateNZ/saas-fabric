@@ -333,6 +333,7 @@ dependencies = [
  "getrandom 0.4.3",
  "http",
  "jsonwebtoken",
+ "ring",
  "serde",
  "serde_json",
  "thiserror",

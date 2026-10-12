@@ -404,6 +404,7 @@ pub async fn registries_held(repositories: &[&str], credential: bool, held: Held
         }),
         clock: Arc::new(FixedClock),
         deployment: None,
+        audit: fabric_control_plane::AuditRecorder::disabled(Arc::new(FixedClock)),
     }));
     if held != Held::Recorded {
         assert!(service.restore().await, "the harness's records restore");
@@ -420,6 +421,7 @@ pub fn registries_over(store: Arc<dyn RegistryStore>) -> Arc<RegistryService> {
         connector: Arc::new(Idle { refused: false }),
         clock: Arc::new(FixedClock),
         deployment: None,
+        audit: fabric_control_plane::AuditRecorder::disabled(Arc::new(FixedClock)),
     }))
 }
 

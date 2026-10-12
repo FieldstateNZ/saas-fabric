@@ -5,7 +5,7 @@
 
 use fabric_core::{event_id, EventType};
 
-use crate::{ControlPlaneError, Operator, DOMAIN_ID};
+use crate::{AuditRecord, AuditStream, ControlPlaneError, Operator, DOMAIN_ID};
 
 /// What an operator asked to select.
 pub(crate) struct Selecting<'a> {
@@ -55,7 +55,9 @@ pub(crate) fn component_selected(
     operator: &Operator,
     selecting: &Selecting<'_>,
     outcome: &SelectionOutcome<'_>,
-) {
+) -> AuditRecord {
+    const EVENT: &str = "control_plane.audit.component_selected";
+    const OPERATION: &str = "select_component_version";
     let (outcome, answer, reason, primary_digest, descriptor_digest) = match outcome {
         SelectionOutcome::Selected {
             primary_digest,
@@ -70,9 +72,9 @@ pub(crate) fn component_selected(
         }
     };
     tracing::info!(
-        event = "control_plane.audit.component_selected",
+        event = EVENT,
         event_id = event_id(DOMAIN_ID, EventType::Success, 15),
-        operation = "select_component_version",
+        operation = OPERATION,
         requested_by = operator.subject(),
         resource = "catalogue",
         entry = selecting.entry,
@@ -85,4 +87,13 @@ pub(crate) fn component_selected(
         descriptor_digest,
         "operator selected a component version"
     );
+    AuditRecord::new(AuditStream::Catalogue, EVENT, OPERATION, operator.subject())
+        .with("entry", selecting.entry)
+        .with("repository", selecting.repository)
+        .with("version", selecting.version)
+        .with("outcome", outcome)
+        .with("answer", answer)
+        .with("reason", reason)
+        .with("primary_digest", primary_digest)
+        .with("descriptor_digest", descriptor_digest)
 }

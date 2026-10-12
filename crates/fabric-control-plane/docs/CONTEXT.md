@@ -139,6 +139,23 @@ reports `withdrawal` (`pending`/`refused`/`unobserved`/`notPublished`) for retir
 clients from `PublicationState` evidence only; never "withdrawn". Nothing here deletes
 anything.
 
+## Audit trail (ADR 0028, D01-19c)
+
+`audit_trail/`: the `AuditTrail` port (`append`, `read`; no update or delete),
+`AuditRecord` (stream, event, operation, requested_by, sorted string fields),
+`AuditStream` (`Client(ClientId)` | `Catalogue` | `Registries` | `Publication`,
+text `client.<id>` etc.), `AuditEntry::seal` (sequence from 1, previous hash,
+SHA-256 over the canonical JSON; refuses over `MAX_AUDIT_ENTRY_BYTES` = 4 KiB,
+never shortens), `verify` (`ChainBreak`: `Tampered`, `BrokenLink`, `Missing`,
+`OutOfOrder`, `ForeignEntry`, `Truncated`, `AnchorMismatch`), `InMemoryAuditTrail`
+for tests, and `AuditRecorder` (`disabled` | `durable`), one per process, held by
+`ClientService` (`audit()`), `CatalogueRead` and `RegistryService`. Every `audit::*`
+function logs its line and returns the `AuditRecord`; callers
+`recorder.record(..).await`. An append failure logs `append_failed`/`refused` and
+does not fail the operation. `GET /api/activity` is a bounded view
+(`ActivityResponse::newest`, 200, `limit`/`omitted`); nothing prunes desired
+state or the trail. Retention and storage activation are deferred.
+
 ## Issuer registry (D01-4)
 
 `service/issuer_registry_source.rs` (`LifecycleIssuerRegistry`) implements

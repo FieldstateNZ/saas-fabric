@@ -9,7 +9,9 @@ use fabric_control_plane::{build_control_plane, ControlPlaneDeps};
 use fabric_core::SystemClock;
 
 use crate::config::ControlPlaneAppConfig;
-use crate::startup::{adapters, integration, operator_keys, platform, registries, reserved_names, serving};
+use crate::startup::{
+    adapters, audit, integration, operator_keys, platform, registries, reserved_names, serving,
+};
 
 /// The assembled control plane, plus the work that must outlive a request.
 pub struct Application {
@@ -31,16 +33,12 @@ pub struct Application {
 ///    posture has one. Neither requires the identity provider to be reachable
 ///    now: keys arrive on a task, and a control plane that refused to start
 ///    without its provider could not be used to diagnose the provider.
-/// 4. The API, which is given the repository and the reconciliation status —
-///    and **not** the provider. There is no wiring here by which a handler
-///    could reach Keycloak, which is the structural form of ADR 0008.
+/// 4. The API, given the repository, the reconciliation status and the audit
+///    recorder — **not** the provider: no handler can reach Keycloak (ADR 0008).
 /// 5. This instance's stores and the image registries over them, before the
 ///    Platform Management that reads through their router; then the Git flows,
-///    each given the binding it drives, so a connection needs no restart.
-///
-/// There is no sixth step for *clients* any more. A reconciliation loop used to
-/// be spawned here holding a service account's credential; ADR 0012 removed it,
-/// so convergence happens when an operator asks, carrying their authority.
+///    each given the binding it drives, so a connection needs no restart. No
+///    reconciliation loop is spawned: convergence is on request (ADR 0012).
 ///
 /// 6. Platform Management, when this deployment manages a platform repository,
 ///    and the sweep that advances it. This one *is* unattended, and
@@ -88,8 +86,9 @@ pub async fn build(config: &ControlPlaneAppConfig) -> Result<Application, String
 
     let (keys, sign_in) = operator_keys::establish(&config.control_plane.operator)?;
 
+    let audit = audit::recorder(&config.audit_trail, &clock)?;
     let stores = integration::build_stores(config, &clock)?;
-    let registries = registries::establish(config, &stores, &clock).await?;
+    let registries = registries::establish(config, &stores, &clock, &audit).await?;
 
     // Before the flows, because one of them connects it.
     // Plus the host's call timeout: that sum is what a disconnect must fit in.
@@ -109,6 +108,7 @@ pub async fn build(config: &ControlPlaneAppConfig) -> Result<Application, String
         ControlPlaneDeps {
             desired_state: Arc::clone(&repository),
             clock: Arc::clone(&clock),
+            audit,
             keys,
             identity_provider,
             sign_in,

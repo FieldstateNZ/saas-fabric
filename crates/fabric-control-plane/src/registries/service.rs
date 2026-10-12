@@ -31,6 +31,7 @@ use fabric_core::Clock;
 use crate::git_integration::SecretStore;
 use crate::registries::record::SecretId;
 use crate::registries::{DeploymentRegistry, RegistryClient, RegistryConnector, RegistryHost, RegistryStore};
+use crate::AuditRecorder;
 
 pub(crate) use listed::{CredentialState, Listed};
 pub(crate) use resolve::Registration;
@@ -56,6 +57,9 @@ pub struct RegistryServiceParts {
     /// The deployment's own registry, when Platform Management is
     /// configured.
     pub deployment: Option<DeploymentRegistry>,
+
+    /// Where every registry change's audit record goes (ADR 0028).
+    pub audit: AuditRecorder,
 }
 
 /// The registries an operator registers (ADR 0026 section 5).
@@ -83,6 +87,9 @@ pub(super) struct Inner {
 
     /// The deployment's own registry.
     pub(super) deployment: Option<DeploymentRegistry>,
+
+    /// Where audit records go.
+    pub(super) audit: AuditRecorder,
 
     /// One change at a time: see `turn.rs`.
     pub(super) order: tokio::sync::Mutex<()>,
@@ -118,6 +125,7 @@ impl RegistryService {
                 connector: parts.connector,
                 clock: parts.clock,
                 deployment: parts.deployment,
+                audit: parts.audit,
                 order: tokio::sync::Mutex::new(()),
                 live: std::sync::Mutex::new(BTreeMap::new()),
                 marks: std::sync::Mutex::new(BTreeMap::new()),

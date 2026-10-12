@@ -49,9 +49,10 @@ use axum::http::{header::HOST, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use fabric_control_plane::{
-    build_control_plane, testing::AcceptingOperator, ControlPlaneConfig, ControlPlaneDeps,
+    build_control_plane, testing::AcceptingOperator, AuditRecorder, ControlPlaneConfig, ControlPlaneDeps,
     DesiredStateBinding, InMemoryRegistryStore, InMemorySecretStore, KeyHolder,
 };
+use fabric_control_plane_api::local_audit_trail::LocalAuditTrail;
 use fabric_control_plane_api::local_repository::LocalClientRepository;
 use fabric_control_plane_api::startup::{compose_registries, RegistryComposition};
 use fabric_core::SystemClock;
@@ -82,6 +83,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let directory = std::env::var_os("FABRIC_WORKBENCH_DATA")
         .map_or_else(|| PathBuf::from(".local/workbench"), PathBuf::from);
     let repository = LocalClientRepository::open(&directory).await?;
+    // The audit trail defaults to a local development path beside the
+    // workbench's desired state: the workbench is local development only.
+    let audit = AuditRecorder::durable(
+        Arc::new(LocalAuditTrail::open(&directory.join("audit"))?),
+        SystemClock::shared(),
+    );
     let config: ControlPlaneConfig = serde_json::from_value(serde_json::json!({
         "operator": {"mode":"oidc", "issuer":"https://auth.example.test/realms/master",
             "redirect_uri":"http://127.0.0.1:5174/"}
@@ -95,6 +102,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         store: Arc::new(InMemoryRegistryStore::new()),
         secrets: Arc::new(InMemorySecretStore::new()),
         clock: SystemClock::shared(),
+        audit: audit.clone(),
     })
     .await?;
     let services = build_control_plane(
@@ -106,6 +114,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             client_secrets: None,
             desired_state: DesiredStateBinding::to(Arc::new(repository)),
             clock: SystemClock::shared(),
+            audit,
             keys: KeyHolder::empty(),
             identity_provider: None,
             sign_in: None,

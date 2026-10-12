@@ -22,6 +22,7 @@ fn service(repository: Arc<InMemoryClientRepository>) -> ClientService {
         crate::DesiredStateBinding::to(repository),
         Arc::new(ReconciliationStatusStore::new()),
         Arc::new(FixedClock),
+        crate::AuditRecorder::disabled(Arc::new(FixedClock)),
         Arc::new(std::collections::BTreeSet::new()),
         Arc::new(std::collections::BTreeSet::new()),
     )
@@ -374,6 +375,7 @@ async fn a_create_conflict_with_nothing_stored_is_a_revision_conflict_not_a_take
         crate::DesiredStateBinding::to(Arc::new(ConflictingRepository)),
         Arc::new(ReconciliationStatusStore::new()),
         Arc::new(FixedClock),
+        crate::AuditRecorder::disabled(Arc::new(FixedClock)),
         Arc::new(BTreeSet::new()),
         Arc::new(BTreeSet::new()),
     );
@@ -392,6 +394,7 @@ async fn a_create_rejection_with_nothing_stored_stays_a_rejection_not_a_revision
         crate::DesiredStateBinding::to(Arc::new(RejectingRepository)),
         Arc::new(ReconciliationStatusStore::new()),
         Arc::new(FixedClock),
+        crate::AuditRecorder::disabled(Arc::new(FixedClock)),
         Arc::new(BTreeSet::new()),
         Arc::new(BTreeSet::new()),
     );
@@ -473,6 +476,7 @@ async fn a_lost_catalogue_race_says_the_catalogue_changed_not_the_client() {
         crate::DesiredStateBinding::to(Arc::new(RacingCatalogueRepository)),
         Arc::new(ReconciliationStatusStore::new()),
         Arc::new(FixedClock),
+        crate::AuditRecorder::disabled(Arc::new(FixedClock)),
         Arc::new(BTreeSet::new()),
         Arc::new(BTreeSet::new()),
     );

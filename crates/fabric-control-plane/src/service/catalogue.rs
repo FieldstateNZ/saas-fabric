@@ -22,6 +22,9 @@ pub(crate) struct CatalogueRead {
     /// Where it was read, and where the write goes.
     repository: Arc<dyn ClientRepository>,
 
+    /// Where the save's audit record goes.
+    audit: crate::AuditRecorder,
+
     /// What was read.
     pub(crate) stored: StoredCatalogue,
 }
@@ -54,7 +57,11 @@ impl ClientService {
         if stored.revision.as_ref() != expected {
             return Err(ControlPlaneError::CatalogueRevisionConflict);
         }
-        Ok(CatalogueRead { repository, stored })
+        Ok(CatalogueRead {
+            repository,
+            audit: self.audit.clone(),
+            stored,
+        })
     }
     /// Applies one catalogue command with optimistic concurrency.
     /// # Errors
@@ -128,7 +135,9 @@ impl CatalogueRead {
             .activity
             .last()
             .map_or("catalogue", |event| event.resource.as_str());
-        audit::catalogue_changed(operator, operation, entry, &revision);
+        self.audit
+            .record(audit::catalogue_changed(operator, operation, entry, &revision))
+            .await;
 
         Ok(StoredCatalogue {
             catalogue: updated,

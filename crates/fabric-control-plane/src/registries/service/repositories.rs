@@ -39,7 +39,7 @@ impl RegistryService {
             let failure = RegistryFailure::Invalid(format!(
                 "{repository} is not on {host}: a repository is registered under the registry its host names"
             ));
-            return Self::refused(operator, Some(&host), operation, failure);
+            return self.refused(operator, Some(&host), operation, failure).await;
         }
 
         self.change(operator, Some(host.clone()), operation, move |inner| {

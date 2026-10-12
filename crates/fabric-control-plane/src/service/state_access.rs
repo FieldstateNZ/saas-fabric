@@ -5,7 +5,7 @@
 use fabric_core::Clock;
 use fabric_reconciliation::ReconciliationStatusStore;
 
-use crate::ClientService;
+use crate::{AuditRecorder, ClientService};
 
 impl ClientService {
     /// What is known about whether desired state has taken effect.
@@ -22,5 +22,12 @@ impl ClientService {
     #[must_use]
     pub(crate) fn clock(&self) -> &dyn Clock {
         self.clock.as_ref()
+    }
+
+    /// Where audit records go, shared with the handlers and services that
+    /// audit beside this one.
+    #[must_use]
+    pub(crate) fn audit(&self) -> &AuditRecorder {
+        &self.audit
     }
 }

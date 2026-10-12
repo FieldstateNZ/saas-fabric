@@ -19,7 +19,7 @@ pub(crate) async fn remove_registry(
     State(state): State<ControlPlaneState>,
     host: Result<RegistryHostPath, ControlPlaneError>,
 ) -> Result<StatusCode, ControlPlaneError> {
-    let RegistryHostPath(host) = admitted(&operator, RegistryOperation::Remove, None, host)?;
+    let RegistryHostPath(host) = admitted(&state, &operator, RegistryOperation::Remove, None, host).await?;
     state.registries.remove(&operator, host).await?;
     Ok(StatusCode::NO_CONTENT)
 }

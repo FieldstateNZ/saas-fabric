@@ -24,6 +24,11 @@ pub struct ControlPlaneDeps {
     /// Stamps writes and reconciliation outcomes.
     pub clock: Arc<dyn Clock>,
 
+    /// Where every audit record goes: the durable trail, or the log pipeline
+    /// only while storage activation is deferred (ADR 0028). The same one the
+    /// host hands [`RegistryServiceParts`](crate::RegistryServiceParts).
+    pub audit: crate::AuditRecorder,
+
     /// The keys operator tokens are verified against.
     pub keys: Arc<crate::KeyHolder>,
 

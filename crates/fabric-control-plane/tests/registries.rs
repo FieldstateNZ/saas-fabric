@@ -222,6 +222,7 @@ fn over(
         connector: Arc::clone(&connector) as Arc<dyn RegistryConnector>,
         clock: Arc::new(FixedClock),
         deployment,
+        audit: fabric_control_plane::AuditRecorder::disabled(Arc::new(FixedClock)),
     }));
     Harness {
         plane: control_plane_with_registries(service),
@@ -1005,6 +1006,7 @@ async fn a_credential_that_cannot_be_read_at_startup_leaves_its_registry_read_an
         connector: Arc::clone(&connector) as Arc<dyn RegistryConnector>,
         clock: Arc::new(FixedClock),
         deployment: None,
+        audit: fabric_control_plane::AuditRecorder::disabled(Arc::new(FixedClock)),
     }));
     assert!(!service.restore().await, "incomplete, so it is asked again");
     let restarted = control_plane_with_registries(service);
@@ -1052,6 +1054,7 @@ async fn registries_whose_records_cannot_be_read_are_unavailable_not_absent() {
         connector: Arc::new(FakeConnector::default()),
         clock: Arc::new(FixedClock),
         deployment: None,
+        audit: fabric_control_plane::AuditRecorder::disabled(Arc::new(FixedClock)),
     }));
     service.restore().await;
     let plane = control_plane_with_registries(service);

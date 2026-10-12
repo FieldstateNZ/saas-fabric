@@ -260,6 +260,7 @@ fn service(
         connector: Arc::clone(connector) as Arc<dyn RegistryConnector>,
         clock: Arc::new(FixedClock),
         deployment,
+        audit: crate::AuditRecorder::disabled(Arc::new(FixedClock)),
     })
 }
 

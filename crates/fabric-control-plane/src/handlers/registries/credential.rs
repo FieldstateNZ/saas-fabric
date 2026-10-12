@@ -36,8 +36,8 @@ pub(crate) async fn set_registry_credential(
     request: Result<BoundedJson<CredentialRequest>, ControlPlaneError>,
 ) -> Result<Json<RegistryView>, ControlPlaneError> {
     let operation = RegistryOperation::SetCredential;
-    let RegistryHostPath(host) = admitted(&operator, operation, None, host)?;
-    let BoundedJson(request) = admitted(&operator, operation, Some(&host), request)?;
+    let RegistryHostPath(host) = admitted(&state, &operator, operation, None, host).await?;
+    let BoundedJson(request) = admitted(&state, &operator, operation, Some(&host), request).await?;
     let listed = state
         .registries
         .set_credential(&operator, host, request.username, SecretValue::new(request.token))
@@ -55,7 +55,8 @@ pub(crate) async fn remove_registry_credential(
     State(state): State<ControlPlaneState>,
     host: Result<RegistryHostPath, ControlPlaneError>,
 ) -> Result<Json<RegistryView>, ControlPlaneError> {
-    let RegistryHostPath(host) = admitted(&operator, RegistryOperation::RemoveCredential, None, host)?;
+    let RegistryHostPath(host) =
+        admitted(&state, &operator, RegistryOperation::RemoveCredential, None, host).await?;
     let listed = state.registries.remove_credential(&operator, host).await?;
     Ok(Json(RegistryView::of(listed)))
 }

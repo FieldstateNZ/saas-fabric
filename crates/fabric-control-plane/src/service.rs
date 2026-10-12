@@ -1,12 +1,9 @@
 //! The control plane's domain operations.
 //!
-//! In the 121–150 line band. The reason is that this is one struct,
-//! [`ClientService`], its four fields' own rustdoc — which is where the
-//! reasoning for two of them, `reserved_realms` and `reserved_client_ids`,
-//! actually lives — together with its constructor and its two plain reads,
-//! `list` and `get`. Every rule that *does* something to a client is
-//! already one file per rule (`create_client.rs`, `set_product.rs`, and the
-//! rest); what stays here is the struct they share and its smallest methods.
+//! In the 121–150 line band: one struct, [`ClientService`], its fields' own
+//! rustdoc, its constructor and its two plain reads. Every rule that *does*
+//! something to a client is one file per rule; what stays here is the struct
+//! they share and its smallest methods.
 
 mod application_id_available;
 mod catalogue;
@@ -38,7 +35,7 @@ use fabric_reconciliation::ReconciliationStatusStore;
 
 use crate::models::ReconciliationResponse;
 use crate::repository::{DesiredStateBinding, StoredClient};
-use crate::ControlPlaneError;
+use crate::{AuditRecorder, ControlPlaneError};
 
 /// Everything an operator can do to a client, expressed once.
 ///
@@ -53,10 +50,9 @@ use crate::ControlPlaneError;
 ///
 /// # What it cannot reach
 ///
-/// Not Keycloak, not any platform service. The only two things it holds are
-/// the desired-state repository and what is known about reconciliation. That
-/// is not a coincidence of the current wiring: it is the structural form of
-/// ADR 0008, and it is why no operator action can bypass Git.
+/// Not Keycloak, not any platform service: it holds the desired-state
+/// repository, what is known about reconciliation, and the audit trail. That
+/// is the structural form of ADR 0008, and why no action can bypass Git.
 pub struct ClientService {
     /// Where desired state lives — or the fact that it does not yet.
     ///
@@ -72,6 +68,8 @@ pub struct ClientService {
     /// Stamps audit and reconciliation records.
     clock: Arc<dyn Clock>,
 
+    /// Where every operation's audit record goes (ADR 0028).
+    audit: AuditRecorder,
     /// Realms a new client may never declare. Computed at startup by
     /// whoever assembles this deployment — see
     /// [`create_client`](Self::create_client) for what it protects.
@@ -100,6 +98,7 @@ impl ClientService {
         repository: Arc<DesiredStateBinding>,
         reconciliation: Arc<ReconciliationStatusStore>,
         clock: Arc<dyn Clock>,
+        audit: AuditRecorder,
         reserved_realms: Arc<BTreeSet<String>>,
         reserved_client_ids: Arc<BTreeSet<String>>,
     ) -> Self {
@@ -107,6 +106,7 @@ impl ClientService {
             repository,
             reconciliation,
             clock,
+            audit,
             reserved_realms,
             reserved_client_ids,
         }

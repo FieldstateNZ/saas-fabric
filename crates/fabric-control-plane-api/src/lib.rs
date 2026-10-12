@@ -29,5 +29,7 @@ pub mod secrets;
 pub mod startup;
 pub mod telemetry;
 
+/// Append-only local development audit trail adapter (ADR 0028).
+pub mod local_audit_trail;
 /// Durable local development desired-state adapter.
 pub mod local_repository;

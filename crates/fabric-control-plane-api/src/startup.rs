@@ -2,6 +2,7 @@
 
 mod adapters;
 mod application;
+mod audit;
 mod health;
 mod integration;
 mod operator_keys;

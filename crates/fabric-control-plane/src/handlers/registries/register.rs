@@ -53,7 +53,8 @@ pub(crate) async fn register_registry(
     State(state): State<ControlPlaneState>,
     request: Result<BoundedJson<RegisterRequest>, ControlPlaneError>,
 ) -> Result<(StatusCode, Json<RegistryView>), ControlPlaneError> {
-    let BoundedJson(request) = admitted(&operator, RegistryOperation::Register, None, request)?;
+    let BoundedJson(request) =
+        admitted(&state, &operator, RegistryOperation::Register, None, request).await?;
     let registration = Registration {
         kind: request.kind,
         endpoint: request.endpoint,

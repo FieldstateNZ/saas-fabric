@@ -355,6 +355,10 @@ and `control_plane.audit.catalogue_changed`. The catalogue event names no
 client; it reads its operation and entry back from the activity entry the
 command appended, so the audit record and the console cannot disagree about
 what happened. Where those events are durably retained is not built here.
+*Amended by [ADR 0028](0028-the-activity-feed-is-a-bounded-view-and-the-audit-trail-is-a-separate-durable-source.md)
+(2026-10-12, D01-19c): each event is also appended to a hash-chained,
+append-only audit trail behind a port, disabled until storage is activated,
+and `GET /api/activity` returns a bounded view of the newest 200 actions.*
 
 **Reconciliation passes are not recorded.** An earlier revision of this pull
 request appended a "pass completed" entry to the catalogue after every sweep. It
@@ -599,6 +603,9 @@ application enforces its own permissions.
 a catalogue command each emit a structured audit event, but to the log pipeline;
 where those events are retained, and for how long, is not decided here. Activity
 is not that record and does not replace one.
+*Designed in [ADR 0028](0028-the-activity-feed-is-a-bounded-view-and-the-audit-trail-is-a-separate-durable-source.md)
+(D01-19c): the port, the hash chain, the entry cap and a local development
+adapter are built; storage activation and retention are still not decided.*
 
 **Replicas.** Every write here is a conditional write the Git host checks
 atomically, so none of it rests on process-local coordination. The local
@@ -632,7 +639,11 @@ repository is single-process by its lock, and is a development mode only.
 5. **Who owns a projected identity client.** Whether a product save may keep
    overwriting hand edits, or a projected client should be marked as the
    product's and refused in identity edits.
-6. **Activity, and what the size limits leave.** Activity is bounded today only
+6. **Activity, and what the size limits leave.** *Disposed 2026-10-11
+   (D01-19c): activity is a bounded view and a separate durable audit source
+   is the trail; see [ADR 0028](0028-the-activity-feed-is-a-bounded-view-and-the-audit-trail-is-a-separate-durable-source.md).
+   Trimming the stored feed waits on storage activation; what an operator
+   does when releases fill the catalogue is still owed.* Activity is bounded today only
    by `422 document_too_large`, and by the margin an identity edit keeps above
    it. Keep it in desired state with a trimming rule, move it to a durable store
    beside §24's audit events, or drop it in favour of Git history — and decide

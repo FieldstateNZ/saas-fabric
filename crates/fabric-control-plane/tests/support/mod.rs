@@ -18,10 +18,10 @@ use axum::Router;
 use fabric_client_model::{ClientDocument, ClientRevision};
 use fabric_control_plane::testing::AcceptingOperator;
 use fabric_control_plane::{
-    build_control_plane, ControlPlaneConfig, ControlPlaneDeps, DesiredStateBinding, IdentityProviderFactory,
-    InMemoryClientRepository, InMemoryRegistryStore, InMemorySecretStore, OperatorToken, PlatformBinding,
-    PublicationSink, RegistryClient, RegistryConnection, RegistryConnector, RegistryHost, RegistryService,
-    RegistryServiceParts, ResolutionParts,
+    build_control_plane, AuditRecorder, ControlPlaneConfig, ControlPlaneDeps, DesiredStateBinding,
+    IdentityProviderFactory, InMemoryAuditTrail, InMemoryClientRepository, InMemoryRegistryStore,
+    InMemorySecretStore, OperatorToken, PlatformBinding, PublicationSink, RegistryClient, RegistryConnection,
+    RegistryConnector, RegistryHost, RegistryService, RegistryServiceParts, ResolutionParts,
 };
 use fabric_core::Clock;
 use fabric_platform_management::{Attached, Registry, RegistryError, Resolved};
@@ -126,6 +126,10 @@ pub struct TestControlPlane {
     /// desired state while the control plane is running — which is what an
     /// operator does, and what no restart-based test would exercise.
     pub binding: Arc<DesiredStateBinding>,
+
+    /// The durable audit trail every operation records to, so a test can read
+    /// back what was audited and verify its chain.
+    pub audit: Arc<InMemoryAuditTrail>,
 }
 
 /// A stand-in for a client's secret store.
@@ -267,6 +271,7 @@ pub fn no_registries() -> Arc<RegistryService> {
         connector: Arc::new(NoConnector),
         clock: Arc::new(FixedClock),
         deployment: None,
+        audit: fabric_control_plane::AuditRecorder::disabled(Arc::new(FixedClock)),
     }))
 }
 
@@ -338,6 +343,7 @@ fn build(
     .expect("the fixture configuration must load");
 
     let binding = DesiredStateBinding::to(repository.clone());
+    let audit = Arc::new(InMemoryAuditTrail::new());
 
     // What a real composition root computes and hands in — see
     // `fabric-control-plane-api`'s `startup::application::build`. Named here
@@ -356,6 +362,7 @@ fn build(
             client_secrets: Some(Arc::new(FakeClientSecrets)),
             desired_state: Arc::clone(&binding),
             clock: Arc::new(FixedClock),
+            audit: AuditRecorder::durable(audit.clone(), Arc::new(FixedClock)),
             keys: fabric_control_plane::KeyHolder::empty(),
             identity_provider,
             sign_in: None,
@@ -380,6 +387,7 @@ fn build(
         revision,
         statuses: services.statuses,
         binding,
+        audit,
     }
 }
 

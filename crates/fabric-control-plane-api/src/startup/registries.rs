@@ -30,7 +30,9 @@ mod kind;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use fabric_control_plane::{DeploymentRegistry, RegistryConnector, RegistryService, RegistryServiceParts};
+use fabric_control_plane::{
+    AuditRecorder, DeploymentRegistry, RegistryConnector, RegistryService, RegistryServiceParts,
+};
 use fabric_core::Clock;
 use fabric_registry::Registries;
 
@@ -73,6 +75,7 @@ pub async fn compose_registries(parts: RegistryComposition) -> Result<ComposedRe
         connector: Arc::new(connector) as Arc<dyn RegistryConnector>,
         clock: parts.clock,
         deployment: described,
+        audit: parts.audit,
     }));
     // Never fatal, and never given up on: a store that did not answer now is
     // asked again in the background until it does.
@@ -97,6 +100,7 @@ pub(super) async fn establish(
     config: &ControlPlaneAppConfig,
     stores: &InstanceStores,
     clock: &Arc<dyn Clock>,
+    audit: &AuditRecorder,
 ) -> Result<ComposedRegistries, String> {
     budget::validate(
         config.registries.resolution_budget_seconds,
@@ -113,6 +117,7 @@ pub(super) async fn establish(
         store: Arc::clone(&stores.registries),
         secrets: Arc::clone(&stores.secrets),
         clock: Arc::clone(clock),
+        audit: audit.clone(),
     })
     .await
 }

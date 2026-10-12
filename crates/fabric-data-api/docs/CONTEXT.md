@@ -15,7 +15,8 @@ in this crate's public contract.
   reads its catalogue, binding, DataSource and target from it (G8). With no
   view installed it authorises the request and answers 503.
 - `decode_catalogue(&[u8]) -> Result<ResourceCatalog, String>` (refuses an
-  empty catalogue) and `ResourceCatalogDecoder`, the runtime plane's
+  empty catalogue; a refusal names a category and a line and column, never
+  the published content) and `ResourceCatalogDecoder`, the runtime plane's
   `CatalogueDecoder` over it.
 - `data_routes(DataApiState) -> Router` — returns a router already rooted at
   `API_PREFIX`; the host must mount it as-is, not nest it under a further

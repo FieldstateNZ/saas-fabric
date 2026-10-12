@@ -42,7 +42,8 @@ use fabric_runtime_publication::{
     CatalogDocument, CollectionName as PublishedCollection, ConnectionName, ConnectionSelectorDocument,
     DataSourceDocument, DocumentInput, DocumentRevision, FieldName, IsolationModelDocument,
     ResourceDefinitionDocument, RuntimePublication as _, RuntimeSnapshot, TenantBindingDocument,
-    TenantDataBindingDocument, TenantDataBindings, CATALOG_FILE, PUBLICATION_RECORD_FILE,
+    TenantDataBindingDocument, TenantDataBindings, CATALOG_FILE, CATALOG_MANIFEST_FILE, DATA_SOURCES_FILE,
+    DATA_SOURCES_MANIFEST_FILE, PUBLICATION_RECORD_FILE, TENANTS_FILE, TENANTS_MANIFEST_FILE,
 };
 use fabric_tenant_runtime::{
     build_published_runtime, LastKnownGoodState, LastKnownGoodStore, PublishedRuntime, RuntimeConfig,
@@ -566,7 +567,7 @@ impl Breakage {
     const fn named(self) -> &'static str {
         match self {
             Self::Lags => "catalog",
-            Self::Undecodable => "page_size",
+            Self::Undecodable => "does not match the catalogue shape",
             Self::Missing => "could not read",
         }
     }
@@ -716,6 +717,93 @@ async fn losing_the_record_after_a_recorded_view_holds_that_view_rather_than_rea
             last_hold.contains("no publication record"),
             "copy {with_copy}: {last_hold}"
         );
+        replica.shutdown().await;
+    }
+}
+
+/// Every file a publication leaves, to capture a whole published set and put
+/// it back.
+const PUBLISHED: [&str; 7] = [
+    TENANTS_FILE,
+    TENANTS_MANIFEST_FILE,
+    DATA_SOURCES_FILE,
+    DATA_SOURCES_MANIFEST_FILE,
+    CATALOG_FILE,
+    CATALOG_MANIFEST_FILE,
+    PUBLICATION_RECORD_FILE,
+];
+
+/// Generation 2 changes only the catalogue: `articles` becomes `posts`,
+/// with every tenant and DataSource at the revision generation 1 published,
+/// so no resource revision can tell the two apart.
+fn catalogue_only() -> RuntimeSnapshot {
+    RuntimeSnapshot {
+        catalog: DocumentInput::new(DocumentRevision::new(2), catalogue("posts", &["id", "body"])),
+        ..first_generation()
+    }
+}
+
+/// Review of #170: a complete generation below the one installed was taken
+/// without a copy, because only a lost record was held against. A
+/// catalogue-only rollback is invisible to the resource revision checks, so
+/// only the installed generation can refuse it. It is now held, with or
+/// without a copy, and a later generation still installs.
+#[tokio::test]
+async fn a_complete_generation_below_the_one_installed_is_held_with_or_without_a_copy() {
+    for with_copy in [false, true] {
+        let replica = Replica::start(with_copy).await;
+        let first = replica.dir.capture(&PUBLISHED);
+        replica.dir.publisher().publish(&catalogue_only()).await.unwrap();
+        replica.refresh().await;
+        assert_eq!(replica.served(), Some(2), "copy {with_copy}");
+        let copy_before = replica.copy_bytes();
+        let second = replica.dir.capture(&PUBLISHED);
+
+        replica.dir.restore(&first);
+        replica.refresh().await;
+
+        assert_eq!(replica.served(), Some(2), "copy {with_copy}: the stamp stays");
+        let (status, _) = replica.send(request("GET", "/posts/1", &posts())).await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "copy {with_copy}: generation 2's catalogue serves"
+        );
+        let (status, _) = replica.send(request("GET", "/articles/1", &articles())).await;
+        assert_eq!(
+            status,
+            StatusCode::NOT_FOUND,
+            "copy {with_copy}: generation 1's does not"
+        );
+        let report = replica.runtime.status.report();
+        assert_eq!(report.held_passes, 1, "copy {with_copy}");
+        let last_hold = report.last_hold.unwrap();
+        assert!(
+            last_hold.contains("below generation 2"),
+            "copy {with_copy}: {last_hold}"
+        );
+        assert_eq!(
+            replica.copy_bytes(),
+            copy_before,
+            "copy {with_copy}: the copy is untouched"
+        );
+
+        replica.dir.restore(&second);
+        replica
+            .dir
+            .publisher()
+            .publish(&second_generation())
+            .await
+            .unwrap();
+        replica.refresh().await;
+        assert_eq!(
+            replica.served(),
+            Some(3),
+            "copy {with_copy}: a later generation installs"
+        );
+        let (status, _) = replica.send(request("GET", "/posts/1", &posts())).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(data_source_of(&replica.connector.last()), SECOND_DATA_SOURCE);
         replica.shutdown().await;
     }
 }

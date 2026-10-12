@@ -1009,6 +1009,8 @@ Limits of this change:
 - **Running replicas keep what they serve.** The copy matters only at
   start. A replica that holds a generation in memory refuses a lower one
   only when a directory is configured; without one, behaviour is as before.
+  **Since then** it refuses a lower one without a directory too; see
+  [Catalogue refresh in a running replica (G8)](#catalogue-refresh-in-a-running-replica-g8).
 - **Replicas may hold different copies.** Each replica persists what it
   read, so after a restart two replicas can serve different generations
   until the published files converge. Nothing reports this across replicas
@@ -1609,9 +1611,22 @@ floor 1.
   reported `Unrecorded` with no G7 generation. A document it cannot read or
   decode holds the whole previous view. Once a recorded generation is
   installed, a lost record holds it (`SourceError::Regressed`, "no
-  publication record"), with or without a copy. The existing regression
-  rule is unchanged: with a copy, a lower generation is held; without one,
-  it is applied.
+  publication record"), with or without a copy.
+- **Roll forward only, with or without a copy.** Review of #170 found that
+  without a copy a complete generation below the one installed was taken. A
+  catalogue-only rollback is invisible to the resource revision checks, so
+  the old catalogue served again under a lower stamp. A reader without a
+  copy now applies the same rule as the copy's holder, with the highest
+  recorded generation it installed as the floor: a lower one is held as
+  `Regressed`, and the view, stamp and copy stay as they were. A later
+  generation still installs. The floor lives in the process, so it is not
+  durable and is no O5 authority.
+- **Catalogue refusals carry no content.** The shared decoder reports a
+  category (not JSON, wrong shape, ends early) and a line and column, never
+  the decoder's own message, which quoted the offending value or key. Review
+  of #170 found a malformed value in `last_hold` and the
+  `runtime.generation_refused` log. Tenant and data-source diagnostics are
+  unchanged.
 - **Empty catalogue.** The decoder refuses an empty catalogue, which
   `build_data_api` used to refuse at start.
 
@@ -1639,7 +1654,9 @@ and the disposition rules it out:
 | A recorded candidate a registry would not take whole is held whole | `resource/registry/takes_whole.rs` | `takes_whole_tests.rs` (six); `served_generation_tests.rs::the_report_follows_every_kind_of_read_through_the_production_builder` (step 2); `reader_compatibility_matrix.rs::one_invalid_resource_holds_the_whole_generation_for_running_and_starting_readers` |
 | Torn-target restart boots the copy's triple | `last_known_good/holder.rs::at_start` | `last_known_good_restart.rs::a_replica_restarting_on_a_torn_volume_serves_its_last_known_good_generation`, `::a_restart_serving_its_copy_serves_the_copys_catalogue_not_a_newer_mounted_one` |
 | Fail-fast, and unprimed until the first valid triple | `registration/build_published.rs`, `DataApiService::unavailable` | `catalogue_generation.rs::a_replica_that_cannot_install_a_first_view_fails_fast_or_serves_nothing_until_one_installs`; `fabric-data-api` `failure_modes.rs::with_no_catalogue_installed_a_request_is_authorised_first_and_then_unavailable` |
-| Legacy refresh and refusal; recorded record loss and regression | `published_files/apply_choice.rs` | `catalogue_generation.rs::with_no_record_a_pass_installs_all_three_together_and_holds_the_whole_view_on_a_bad_catalogue`, `::losing_the_record_after_a_recorded_view_holds_that_view_rather_than_reading_the_documents_alone`; `published_files_tests.rs::without_a_record_all_three_documents_are_read_and_decoded_together`, `::without_a_record_any_document_that_cannot_be_read_or_decoded_holds_the_whole_view`, `::once_a_recorded_generation_is_installed_losing_the_record_holds_it`; regression: `last_known_good_restart.rs::a_running_replica_holds_against_a_complete_generation_below_the_one_it_holds` (unchanged) |
+| A complete generation below the one installed is held, with or without a copy, and a later one installs | `published_files/apply_choice.rs::without_copy`, `last_known_good/choice.rs::on_refresh` | `catalogue_generation.rs::a_complete_generation_below_the_one_installed_is_held_with_or_without_a_copy` (a catalogue-only generation 2, then generation 1's bytes and record restored). It fails with the floor removed |
+| A refused catalogue's value reaches neither the hold nor the log | `fabric-data-api` `catalog/decoder.rs::describe` | `catalogue_diagnostics.rs::a_refused_catalogue_value_reaches_neither_the_hold_nor_the_log` (a sentinel value with matching digests, no copy; it fails with the decoder's own message restored); `decoder.rs::a_refusal_names_a_category_and_a_location_and_never_the_offending_value_or_key` |
+| Legacy refresh and refusal; recorded record loss and regression | `published_files/apply_choice.rs` | `catalogue_generation.rs::with_no_record_a_pass_installs_all_three_together_and_holds_the_whole_view_on_a_bad_catalogue`, `::losing_the_record_after_a_recorded_view_holds_that_view_rather_than_reading_the_documents_alone`; `published_files_tests.rs::without_a_record_all_three_documents_are_read_and_decoded_together`, `::without_a_record_any_document_that_cannot_be_read_or_decoded_holds_the_whole_view`, `::once_a_recorded_generation_is_installed_losing_the_record_holds_it`; regression: the row above, and `last_known_good_restart.rs::a_running_replica_holds_against_a_complete_generation_below_the_one_it_holds` (unchanged) |
 | A supported refresh is separate from the unknown `page_size` case, which holds the running view whole and stops a fresh reader | as above | `reader_compatibility_matrix.rs::a_catalogue_shape_change_holds_running_replicas_on_their_whole_view_and_stops_new_ones` (fail-fast refusal and unprimed start) |
 | The served stamp names the installed view, catalogue included | `PublishedGeneration::publish` | `served_generation_tests.rs::the_report_moves_in_the_same_store_as_the_view_resolution_reads`; `generation_isolation_tests.rs::a_tenant_resolves_to_one_complete_generations_target_at_every_point_of_a_refresh` (catalogue moves only with the store) |
 | One decoder for the host, the reader, the copy and the recovery command | `fabric-data-api` `catalog/decoder.rs` | `decoder.rs::the_shipped_example_catalogue_decodes_as_a_resource_catalog_and_other_json_does_not`, `::an_empty_catalogue_is_refused`; `last_known_good_command.rs` (unchanged) |

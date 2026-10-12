@@ -401,7 +401,14 @@ async fn a_catalogue_shape_change_holds_running_replicas_on_their_whole_view_and
     let Err(refused) = support::build_reader(&stack.dir, Reader::Generation).await else {
         panic!("a reader starting on a catalogue the host cannot decode must not prime");
     };
-    assert!(refused.contains("page_size"), "{refused}");
+    assert!(
+        refused.contains("does not match the catalogue shape"),
+        "{refused}"
+    );
+    assert!(
+        !refused.contains("page_size"),
+        "the decoder never quotes the published bytes: {refused}"
+    );
     let unprimed = RuntimeConfig {
         fail_fast_on_prime: false,
         ..support::runtime_config()

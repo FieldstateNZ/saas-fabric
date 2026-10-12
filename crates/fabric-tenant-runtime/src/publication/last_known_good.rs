@@ -65,7 +65,7 @@ mod store;
 #[cfg(test)]
 mod store_tests;
 
-pub(crate) use choice::Choice;
+pub(crate) use choice::{on_refresh, Choice};
 pub use discard::{DiscardRequest, Discarded, AUDIT_FILE_NAME};
 pub(crate) use holder::LastKnownGood;
 pub use inspection::{Inspection, Verdict};

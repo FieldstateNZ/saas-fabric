@@ -654,8 +654,9 @@ document belong to one generation:
   before the record existed) reads all three documents on each pass and
   installs them as one view under no generation; one that cannot be read
   or decoded holds the whole view. Once a reader has installed a recorded
-  generation, a missing record holds that generation rather than reading
-  the documents alone. A reader with no view installed serves no catalogue
+  generation, a missing record or a lower complete generation holds that
+  generation, with or without a copy, rather than reading the documents
+  alone or going back. That floor lives in the process and is not durable. A reader with no view installed serves no catalogue
   and answers every authorised request as unavailable.
 - **`resources`** (added for O3 and O4). For every tenant binding and
   DataSource that any recorded generation published, the highest revision

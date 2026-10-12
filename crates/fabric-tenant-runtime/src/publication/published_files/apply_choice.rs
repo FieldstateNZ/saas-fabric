@@ -3,7 +3,7 @@
 use super::PublishedFiles;
 use crate::publication::complete_generation::CompleteGeneration;
 use crate::publication::file_reads::read;
-use crate::publication::last_known_good::Choice;
+use crate::publication::last_known_good::{on_refresh, Choice};
 use crate::publication::parsed_generation::ParsedGeneration;
 use crate::publication::{CatalogueDecoder, GenerationOrigin, PublishedState, PublishedStateSource as _};
 use crate::{JsonFileSource, ResourceSource as _, SourceError};
@@ -57,29 +57,22 @@ impl PublishedFiles {
 }
 
 /// Without a copy: a complete generation is decoded, catalogue included, and
-/// offered; anything else is refused. No record is read per document only
-/// while no recorded generation has been installed: once one has
-/// (`recorded`), losing the record holds it rather than downgrading to
-/// documents nothing proves belong together (G8).
+/// offered under the same roll-forward rule a copy's holder applies, with
+/// `recorded`, the highest recorded generation this process installed, as
+/// the floor (G8). A lower generation, or a lost record, holds the installed
+/// view as `SourceError::Regressed` rather than going back to it or to
+/// documents nothing proves belong together. With nothing recorded
+/// installed yet, no record is read per document. The floor is this
+/// process's own and is not durable.
 pub(super) fn without_copy(
     read: Result<Option<CompleteGeneration>, SourceError>,
     decoder: &dyn CatalogueDecoder,
     recorded: Option<u64>,
     origin: &str,
 ) -> Choice {
-    match read.and_then(|read| {
+    let parsed = read.and_then(|read| {
         read.map(|generation| ParsedGeneration::parse(generation, decoder, origin))
             .transpose()
-    }) {
-        Ok(Some(generation)) => Choice::Published(generation),
-        Ok(None) => match recorded {
-            Some(held) => Choice::Refused(SourceError::Regressed {
-                origin: origin.to_owned(),
-                held,
-                found: "no publication record".to_owned(),
-            }),
-            None => Choice::Unrecorded,
-        },
-        Err(error) => Choice::Refused(error),
-    }
+    });
+    on_refresh(parsed, recorded, origin)
 }

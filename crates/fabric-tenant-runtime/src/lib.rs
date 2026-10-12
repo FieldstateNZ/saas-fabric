@@ -69,9 +69,9 @@ pub use data_source::{
 };
 pub use errors::{ConfigurationError, ResolveError, SourceError, UnusableFirstLoad};
 pub use publication::{
-    startup_catalogue, DiscardRequest, Discarded, GenerationOrigin, Inspection, LastKnownGoodRefusal,
-    LastKnownGoodState, LastKnownGoodStore, PublishedFiles, PublishedState, PublishedStateSource,
-    ReaderReport, ReaderStatus, Serving, Verdict, AUDIT_FILE_NAME, READER_CONTRACT,
+    check_separation, startup_catalogue, CatalogueCheck, DiscardRequest, Discarded, GenerationOrigin,
+    Inspection, LastKnownGoodRefusal, LastKnownGoodState, LastKnownGoodStore, PublishedFiles, PublishedState,
+    PublishedStateSource, ReaderReport, ReaderStatus, Serving, Verdict, AUDIT_FILE_NAME, READER_CONTRACT,
 };
 pub use registration::{build_published_runtime, build_runtime, PublishedRuntime, RuntimeHandles};
 pub use resolution::{ResolvedDataSource, RuntimeResolver};

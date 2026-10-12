@@ -11,40 +11,82 @@
 
 // `support` is Unix-only (`std::os::unix::fs::MetadataExt`).
 #![cfg(unix)]
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::indexing_slicing
+)]
 
 mod support;
 
+use std::fmt::Write as _;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use fabric_core::{BindingRevision, TenantId};
+use fabric_data_api::ResourceCatalog;
 use fabric_runtime_publication::RuntimePublication as _;
 use fabric_tenant_runtime::{
-    build_published_runtime, GenerationOrigin, LastKnownGoodState, LastKnownGoodStore, PublishedFiles,
-    PublishedRuntime, ResolveError, Serving, SourceError,
+    build_published_runtime, CatalogueCheck, GenerationOrigin, LastKnownGoodState, LastKnownGoodStore,
+    PublishedFiles, PublishedRuntime, ResolveError, Serving, SourceError,
 };
 
-fn last_known_good(dir: &support::TempDir) -> PathBuf {
-    dir.path().join("last-known-good")
+/// The replica's own writable directory: a separate temporary directory,
+/// never inside the published one, which the reader refuses.
+fn last_known_good(lkg: &support::TempDir) -> PathBuf {
+    lkg.path().join("copy")
 }
 
-fn reader(dir: &support::TempDir) -> PublishedFiles {
+/// The host's catalogue decoder, as `fabric-api` hands it to the reader.
+struct HostCatalogue;
+
+impl CatalogueCheck for HostCatalogue {
+    fn check(&self, catalogue: &[u8]) -> Result<(), String> {
+        serde_json::from_slice::<ResourceCatalog>(catalogue)
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    }
+}
+
+fn reader(dir: &support::TempDir, lkg: &support::TempDir) -> PublishedFiles {
     PublishedFiles::new(dir.tenants_path(), dir.data_sources_path())
         .with_catalogue(dir.catalog_path())
-        .with_last_known_good(LastKnownGoodStore::new(last_known_good(dir)))
+        .with_last_known_good(
+            LastKnownGoodStore::new(last_known_good(lkg)),
+            Arc::new(HostCatalogue),
+        )
 }
 
-async fn start(dir: &support::TempDir) -> Result<PublishedRuntime, String> {
-    build_published_runtime(&support::runtime_config(), Arc::new(reader(dir))).await
+async fn start(dir: &support::TempDir, lkg: &support::TempDir) -> Result<PublishedRuntime, String> {
+    build_published_runtime(&support::runtime_config(), Arc::new(reader(dir, lkg))).await
 }
 
-/// Starts a reader over generation `generation` as published, so it
-/// persists that generation, and stops it: the replica that later restarts.
-async fn run_once(dir: &support::TempDir) {
-    let runtime = start(dir).await.unwrap();
+/// Starts a reader over what is published, so it persists that generation,
+/// and stops it: the replica that later restarts.
+async fn run_once(dir: &support::TempDir, lkg: &support::TempDir) {
+    let runtime = start(dir, lkg).await.unwrap();
     runtime.handles.shutdown().await.unwrap();
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    ring::digest::digest(&ring::digest::SHA256, bytes)
+        .as_ref()
+        .iter()
+        .fold(String::new(), |mut hex, byte| {
+            let _ = write!(hex, "{byte:02x}");
+            hex
+        })
+}
+
+/// Replaces `document` with `bytes` and names them in the record, so every
+/// digest matches: what a faulty publisher, not a torn volume, would leave.
+fn publish_matching(dir: &support::TempDir, file: &str, key: &str, bytes: &[u8]) {
+    dir.write_raw(file, bytes);
+    let mut record: serde_json::Value = serde_json::from_slice(&dir.read_raw("publication.json")).unwrap();
+    record["documents"][key]["sha256"] = serde_json::Value::from(sha256_hex(bytes));
+    dir.write_raw("publication.json", &serde_json::to_vec_pretty(&record).unwrap());
 }
 
 async fn publish(dir: &support::TempDir, revision: u64) {
@@ -81,12 +123,13 @@ async fn refresh_until(
 #[tokio::test]
 async fn a_replica_restarting_on_a_torn_volume_serves_its_last_known_good_generation() {
     let dir = support::TempDir::new();
+    let lkg = support::TempDir::new();
     publish(&dir, 1).await;
-    run_once(&dir).await;
+    run_once(&dir, &lkg).await;
     let published_catalogue = dir.read_raw("catalog.json");
 
     dir.write_raw("data-sources.json", b"{ torn");
-    let restarted = start(&dir).await.unwrap();
+    let restarted = start(&dir, &lkg).await.unwrap();
 
     assert_eq!(acme_revision(&restarted).unwrap(), BindingRevision::new(1));
     assert_eq!(
@@ -113,23 +156,24 @@ async fn a_replica_restarting_on_a_torn_volume_serves_its_last_known_good_genera
 #[tokio::test]
 async fn a_restart_on_a_torn_volume_with_no_last_known_good_fails_closed() {
     let dir = support::TempDir::new();
+    let lkg = support::TempDir::new();
     publish(&dir, 1).await;
     dir.write_raw("data-sources.json", b"{ torn");
 
-    let refused = start(&dir).await;
+    let refused = start(&dir, &lkg).await;
 
     assert!(
         refused.is_err(),
         "nothing valid to prime from must fail the prime"
     );
-    assert!(!LastKnownGoodStore::new(last_known_good(&dir)).path().exists());
+    assert!(!LastKnownGoodStore::new(last_known_good(&lkg)).path().exists());
 
     let unprimed = build_published_runtime(
         &fabric_tenant_runtime::RuntimeConfig {
             fail_fast_on_prime: false,
             ..support::runtime_config()
         },
-        Arc::new(reader(&dir)),
+        Arc::new(reader(&dir, &lkg)),
     )
     .await
     .unwrap();
@@ -148,9 +192,10 @@ async fn a_restart_on_a_torn_volume_with_no_last_known_good_fails_closed() {
 #[tokio::test]
 async fn a_corrupted_last_known_good_is_refused_left_in_place_and_the_restart_fails_closed() {
     let dir = support::TempDir::new();
+    let lkg = support::TempDir::new();
     publish(&dir, 1).await;
-    run_once(&dir).await;
-    let copy = LastKnownGoodStore::new(last_known_good(&dir))
+    run_once(&dir, &lkg).await;
+    let copy = LastKnownGoodStore::new(last_known_good(&lkg))
         .path()
         .to_path_buf();
     let corrupted = String::from_utf8(std::fs::read(&copy).unwrap())
@@ -159,7 +204,7 @@ async fn a_corrupted_last_known_good_is_refused_left_in_place_and_the_restart_fa
     std::fs::write(&copy, &corrupted).unwrap();
 
     dir.write_raw("data-sources.json", b"{ torn");
-    let refused = start(&dir).await;
+    let refused = start(&dir, &lkg).await;
 
     assert!(refused.is_err());
     assert_eq!(
@@ -172,11 +217,12 @@ async fn a_corrupted_last_known_good_is_refused_left_in_place_and_the_restart_fa
 #[tokio::test]
 async fn a_stale_last_known_good_loses_to_a_newer_published_generation_and_is_replaced() {
     let dir = support::TempDir::new();
+    let lkg = support::TempDir::new();
     publish(&dir, 1).await;
-    run_once(&dir).await;
+    run_once(&dir, &lkg).await;
     publish(&dir, 2).await;
 
-    let restarted = start(&dir).await.unwrap();
+    let restarted = start(&dir, &lkg).await.unwrap();
 
     assert_eq!(acme_revision(&restarted).unwrap(), BindingRevision::new(2));
     assert_eq!(
@@ -196,14 +242,15 @@ async fn a_stale_last_known_good_loses_to_a_newer_published_generation_and_is_re
 #[tokio::test]
 async fn a_replica_holding_last_known_good_rolls_forward_the_moment_a_newer_generation_validates() {
     let dir = support::TempDir::new();
+    let lkg = support::TempDir::new();
     publish(&dir, 1).await;
-    run_once(&dir).await;
+    run_once(&dir, &lkg).await;
     let first = dir.capture(&["data-sources.json"]);
     publish(&dir, 2).await;
     let second = dir.capture(&["data-sources.json"]);
 
     dir.restore(&first);
-    let restarted = start(&dir).await.unwrap();
+    let restarted = start(&dir, &lkg).await.unwrap();
     assert_eq!(acme_revision(&restarted).unwrap(), BindingRevision::new(1));
     assert!(restarted.status.report().holding_last_known_good());
 
@@ -224,6 +271,7 @@ async fn a_replica_holding_last_known_good_rolls_forward_the_moment_a_newer_gene
 #[tokio::test]
 async fn a_running_replica_holds_against_a_complete_generation_below_the_one_it_holds() {
     let dir = support::TempDir::new();
+    let lkg = support::TempDir::new();
     publish(&dir, 1).await;
     let first = dir.capture(&[
         "tenants.json",
@@ -232,7 +280,7 @@ async fn a_running_replica_holds_against_a_complete_generation_below_the_one_it_
         "publication.json",
     ]);
     publish(&dir, 2).await;
-    let runtime = start(&dir).await.unwrap();
+    let runtime = start(&dir, &lkg).await.unwrap();
     let held_before = runtime.status.report().held_passes;
 
     dir.restore(&first);
@@ -256,6 +304,7 @@ async fn a_running_replica_holds_against_a_complete_generation_below_the_one_it_
 #[tokio::test]
 async fn without_a_last_known_good_directory_the_reader_writes_nothing_and_behaves_as_before() {
     let dir = support::TempDir::new();
+    let lkg = support::TempDir::new();
     publish(&dir, 1).await;
     let files =
         PublishedFiles::new(dir.tenants_path(), dir.data_sources_path()).with_catalogue(dir.catalog_path());
@@ -268,6 +317,63 @@ async fn without_a_last_known_good_directory_the_reader_writes_nothing_and_behav
         runtime.status.report().last_known_good,
         LastKnownGoodState::Disabled
     );
-    assert!(!last_known_good(&dir).exists());
+    assert!(!last_known_good(&lkg).exists());
+    runtime.handles.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn a_higher_generation_whose_tenants_match_their_digest_but_do_not_decode_never_displaces_the_copy() {
+    let dir = support::TempDir::new();
+    let lkg = support::TempDir::new();
+    publish(&dir, 1).await;
+    run_once(&dir, &lkg).await;
+    let copy = LastKnownGoodStore::new(last_known_good(&lkg))
+        .path()
+        .to_path_buf();
+    let before = std::fs::read(&copy).unwrap();
+    publish(&dir, 2).await;
+    publish_matching(&dir, "tenants.json", "tenants", b"[{ \"tenant\": ");
+
+    let restarted = start(&dir, &lkg).await.unwrap();
+    assert_eq!(acme_revision(&restarted).unwrap(), BindingRevision::new(1));
+    assert!(restarted.status.report().holding_last_known_good());
+    assert_eq!(
+        std::fs::read(&copy).unwrap(),
+        before,
+        "the copy survives the failure it exists for"
+    );
+    restarted.handles.shutdown().await.unwrap();
+
+    let again = start(&dir, &lkg).await.unwrap();
+    assert_eq!(
+        acme_revision(&again).unwrap(),
+        BindingRevision::new(1),
+        "and survives the next restart"
+    );
+    again.handles.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn a_running_replica_holds_against_a_higher_generation_whose_catalogue_the_host_cannot_decode() {
+    let dir = support::TempDir::new();
+    let lkg = support::TempDir::new();
+    publish(&dir, 1).await;
+    let runtime = start(&dir, &lkg).await.unwrap();
+    let copy = LastKnownGoodStore::new(last_known_good(&lkg))
+        .path()
+        .to_path_buf();
+    let before = std::fs::read(&copy).unwrap();
+    let held_before = runtime.status.report().held_passes;
+
+    publish(&dir, 2).await;
+    publish_matching(&dir, "catalog.json", "catalog", b"[\"not a catalogue\"]");
+    refresh_until(&runtime, "a held pass", |runtime| {
+        runtime.status.report().held_passes > held_before
+    })
+    .await;
+
+    assert_eq!(acme_revision(&runtime).unwrap(), BindingRevision::new(1));
+    assert!(runtime.status.report().last_hold.unwrap().contains("catalog"));
+    assert_eq!(std::fs::read(&copy).unwrap(), before);
     runtime.handles.shutdown().await.unwrap();
 }

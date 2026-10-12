@@ -86,17 +86,20 @@ physical/provider concerns.
   held_passes, last_hold, last_known_good: LastKnownGoodState }`,
   `holding_last_known_good()`.
 - `PublishedFiles::new(tenants, data_sources).with_catalogue(path)
-  .with_last_known_good(LastKnownGoodStore::new(dir))`.
+  .with_last_known_good(LastKnownGoodStore::new(dir), Arc<dyn CatalogueCheck>)`.
+  `CatalogueCheck::check(&[u8]) -> Result<(), String>` is the host's own
+  catalogue decoder (this crate cannot name `ResourceCatalog`).
+  `check_separation(dir, &[published paths])`.
   `PublishedState::Generation { generation, origin: GenerationOrigin, .. }`,
   `GenerationOrigin::{Published, LastKnownGood { held_because }}`.
-- `LastKnownGoodStore` — `new(dir)`, `path()`, `inspect() -> Inspection
+- `LastKnownGoodStore` — `new(dir)`, `path()`, `inspect(&dyn CatalogueCheck) -> Inspection
   { path, file_sha256, stated_generation, verdict: Verdict }`,
-  `discard(&DiscardRequest { operator, reason }, at_unix_seconds) ->
+  `discard(&DiscardRequest { operator, reason }, at_unix_seconds, &dyn CatalogueCheck) ->
   io::Result<Option<Discarded>>` (audits to `AUDIT_FILE_NAME` first, then
   moves the copy aside). Persisting and loading are crate-private: only the
   reader writes a copy, and only of a published generation it validated.
   `LastKnownGoodRefusal::{Unreadable, Malformed, UnsupportedFormat,
-  DigestMismatch, UnsupportedContract}`.
+  DigestMismatch, Unusable, UnsupportedContract}`.
 - `build_runtime(&config, tenant_source, data_source_source)
   -> Result<(Arc<RuntimeResolver>, RuntimeHandles), String>`.
   **Primes DataSources first**, then tenants, and every refresh pass keeps
@@ -110,6 +113,7 @@ physical/provider concerns.
 - `SourceError::{Unreadable{origin, cause}, Malformed{origin, detail},
   IncompleteGeneration{origin, generation, document},
   UnsupportedContract{origin, required, supported},
+  Unusable{origin, generation, document, reason},
   Regressed{origin, held, found}, NothingUsable{origin, count, reason}}` — field is `origin`, **not** `source`
   (thiserror reserves it). `NothingUsable` is `prime`'s wrapping of
   `UnusableFirstLoad`; it names a source, which the registry cannot.

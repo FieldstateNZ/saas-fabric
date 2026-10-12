@@ -6,6 +6,7 @@ use axum::Router;
 use fabric_identity::build_identity;
 use fabric_tenant_runtime::{build_published_runtime, LastKnownGoodStore, PublishedFiles, PublishedRuntime};
 
+use crate::catalogue::HostCatalogue;
 use crate::config::AppConfig;
 use crate::startup::background_tasks::{stop_refreshers, BackgroundTasks};
 use crate::startup::{serving, token_reader};
@@ -63,7 +64,9 @@ pub async fn build(config: &AppConfig) -> Result<Application, String> {
     let published = PublishedFiles::new(&config.tenants_path, &config.data_sources_path)
         .with_catalogue(&config.catalog_path);
     let published = match &config.tenant_runtime.last_known_good_dir {
-        Some(directory) => published.with_last_known_good(LastKnownGoodStore::new(directory)),
+        Some(directory) => {
+            published.with_last_known_good(LastKnownGoodStore::new(directory), Arc::new(HostCatalogue))
+        }
         None => published,
     };
     let PublishedRuntime {

@@ -32,7 +32,7 @@ pub(super) async fn load(
             )
         })?;
 
-    serde_json::from_slice(&contents).map_err(|error| {
+    crate::catalogue::decode(&contents).map_err(|error| {
         format!(
             "the resource catalogue at {} is malformed: {error}",
             path.display()

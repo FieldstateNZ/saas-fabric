@@ -2,18 +2,19 @@
 //!
 //! Pure, so every hold and fail-closed rule is a unit test away.
 
-use crate::publication::complete_generation::CompleteGeneration;
+use crate::publication::parsed_generation::ParsedGeneration;
 use crate::SourceError;
 
-/// What one read decided.
+/// What one read decided. Every generation in it has already passed
+/// `ParsedGeneration::validate`, or `parse` for a reader without a copy.
 #[derive(Debug)]
 pub(crate) enum Choice {
     /// Apply the published generation.
-    Published(CompleteGeneration),
+    Published(ParsedGeneration),
     /// Apply the persisted copy, because no published generation at or
     /// above it could be applied.
     LastKnownGood {
-        generation: CompleteGeneration,
+        generation: ParsedGeneration,
         held_because: String,
     },
     /// No record, and nothing recorded was ever held: read each document on
@@ -33,15 +34,16 @@ pub(crate) enum Choice {
 /// - No record, or a published read that fails, holds the copy.
 /// - With no valid copy, a failed published read is refused: fail closed.
 pub(crate) fn at_start(
-    published: Result<Option<CompleteGeneration>, SourceError>,
-    copy: Option<CompleteGeneration>,
+    published: Result<Option<ParsedGeneration>, SourceError>,
+    copy: Option<ParsedGeneration>,
 ) -> Choice {
     match (published, copy) {
-        (Ok(Some(published)), Some(copy)) if copy.generation > published.generation => {
+        (Ok(Some(published)), Some(copy)) if copy.generation() > published.generation() => {
             Choice::LastKnownGood {
                 held_because: format!(
                     "the published generation {} is below the last-known-good generation {}",
-                    published.generation, copy.generation
+                    published.generation(),
+                    copy.generation()
                 ),
                 generation: copy,
             }
@@ -63,7 +65,7 @@ pub(crate) fn at_start(
 /// The choice on a refresh, once this replica holds `floor`: the highest
 /// generation it has served or persisted, if any.
 pub(crate) fn on_refresh(
-    published: Result<Option<CompleteGeneration>, SourceError>,
+    published: Result<Option<ParsedGeneration>, SourceError>,
     floor: Option<u64>,
     origin: &str,
 ) -> Choice {
@@ -75,8 +77,8 @@ pub(crate) fn on_refresh(
         })
     };
     match (published, floor) {
-        (Ok(Some(published)), Some(held)) if published.generation < held => {
-            regressed(held, format!("generation {}", published.generation))
+        (Ok(Some(published)), Some(held)) if published.generation() < held => {
+            regressed(held, format!("generation {}", published.generation()))
         }
         (Ok(Some(published)), _) => Choice::Published(published),
         (Ok(None), Some(held)) => regressed(held, "no publication record".to_owned()),

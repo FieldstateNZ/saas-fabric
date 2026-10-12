@@ -62,6 +62,24 @@ pub enum SourceError {
         supported: u32,
     },
 
+    /// A complete generation whose bytes match its record, but which could
+    /// not be served whole: a document does not decode, a resource fails
+    /// its own validation or appears twice, a binding names a DataSource
+    /// the generation does not carry, or the catalogue does not decode.
+    /// Raised only by a reader with a last-known-good directory, which
+    /// never lets such a generation displace one it can serve.
+    #[error("generation {generation} in {origin} cannot be served: {document}: {reason}; holding the last complete generation")]
+    Unusable {
+        /// A description of the source, for logs.
+        origin: String,
+        /// The record's generation.
+        generation: u64,
+        /// `tenants`, `data-sources` or `catalog`.
+        document: &'static str,
+        /// What is wrong with it.
+        reason: String,
+    },
+
     /// The published files offer less than this replica already holds: a
     /// complete generation below the one it served or persisted, or no
     /// record at all after a recorded generation was served. Runtime

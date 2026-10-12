@@ -15,7 +15,7 @@ identifier).
 `config/validation/issuers.rs`'s module docs. Nothing in `fabric-data-api`
 calls the Fabric authorization front door yet.
 
-## Public surface (all `pub mod` from `lib.rs`: `config`, `contracts`, `health`, `recovery`, `secrets`,
+## Public surface (all `pub mod` from `lib.rs`: `catalogue`, `config`, `contracts`, `health`, `recovery`, `secrets`,
 `startup`, `telemetry`)
 
 - `config::AppConfig` — the whole process configuration
@@ -59,8 +59,13 @@ calls the Fabric authorization front door yet.
   (validate: no valid copy; discard: nothing to discard) / 2 (usage or a
   failed write). No action writes a copy.
 - `config::AppConfig::validate` also refuses a
-  `tenant_runtime.last_known_good_dir` that is empty or holds a published
-  file (`config/validation/last_known_good.rs`).
+  `tenant_runtime.last_known_good_dir` that is not physically apart from the
+  published files, symlinks and `..` resolved
+  (`config/validation/last_known_good.rs`, via
+  `fabric_tenant_runtime::check_separation`).
+- `catalogue::{decode, HostCatalogue}` — the one catalogue decoder: startup's
+  `catalog::load`, the reader's `CatalogueCheck` and the recovery command all
+  use it.
 - `secrets::EnvSecretResolver` — implements `fabric_connector::SecretResolver`
   by reading `FABRIC_SECRET_<SANITISED_REFERENCE>` from the process
   environment (every non-alphanumeric-ASCII character in the reference

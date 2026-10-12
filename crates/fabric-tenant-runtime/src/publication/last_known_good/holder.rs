@@ -1,13 +1,17 @@
 //! A reader's last-known-good copy, kept current as it reads generations.
 
-use std::io;
-use std::sync::{Mutex, PoisonError};
+mod accept;
 
-use super::atomic_replace::{clear_stale_staging, Step};
+use std::path::Path;
+use std::sync::{Arc, Mutex, PoisonError};
+
+use super::atomic_replace::clear_stale_staging;
 use super::choice::{self, Choice};
 use super::{LastKnownGoodState, LastKnownGoodStore};
 use crate::logging;
 use crate::publication::complete_generation::CompleteGeneration;
+use crate::publication::parsed_generation::ParsedGeneration;
+use crate::publication::CatalogueCheck;
 use crate::SourceError;
 
 /// The store, and what this process knows about it.
@@ -16,6 +20,7 @@ use crate::SourceError;
 /// writes of the copy happen outside it, and only the outcome is recorded.
 pub(crate) struct LastKnownGood {
     store: LastKnownGoodStore,
+    catalogue: Arc<dyn CatalogueCheck>,
     inner: Mutex<Inner>,
 }
 
@@ -29,9 +34,10 @@ struct Inner {
 }
 
 impl LastKnownGood {
-    pub(crate) fn new(store: LastKnownGoodStore) -> Self {
+    pub(crate) fn new(store: LastKnownGoodStore, catalogue: Arc<dyn CatalogueCheck>) -> Self {
         Self {
             store,
+            catalogue,
             inner: Mutex::new(Inner {
                 state: LastKnownGoodState::Absent,
                 floor: None,
@@ -45,13 +51,16 @@ impl LastKnownGood {
     }
 
     /// Chooses the generation to prime from, persisting it if published.
+    /// The published candidate is validated whole before it is compared
+    /// with the copy, so one that cannot be served never displaces it.
     pub(crate) async fn at_start(
         &self,
         published: Result<Option<CompleteGeneration>, SourceError>,
+        (origin, files): (&str, &[&Path]),
     ) -> Choice {
         let path = self.store.path().display().to_string();
         clear_stale_staging(self.store.path()).await;
-        let copy = match self.store.load().await {
+        let copy = match self.store.load(self.catalogue.as_ref()).await {
             Ok(copy) => copy,
             Err(refusal) => {
                 logging::last_known_good_refused(&path, &refusal);
@@ -64,24 +73,24 @@ impl LastKnownGood {
         if let Some(copy) = &copy {
             let mut inner = self.lock();
             inner.state = LastKnownGoodState::Stored {
-                generation: copy.generation,
+                generation: copy.generation(),
             };
-            inner.floor = Some(copy.generation);
-            inner.stored = Some(copy.record_sha256());
+            inner.floor = Some(copy.generation());
+            inner.stored = Some(copy.complete.record_sha256());
         }
-        let stored_generation = copy.as_ref().map(|copy| copy.generation);
-        let choice = choice::at_start(published, copy);
+        let stored_generation = copy.as_ref().map(ParsedGeneration::generation);
+        let choice = choice::at_start(self.validated(published, origin), copy);
         match &choice {
             Choice::Published(generation) => {
-                if let Some(stored) = stored_generation.filter(|stored| *stored < generation.generation) {
-                    logging::last_known_good_superseded(&path, stored, generation.generation);
+                if let Some(stored) = stored_generation.filter(|stored| *stored < generation.generation()) {
+                    logging::last_known_good_superseded(&path, stored, generation.generation());
                 }
-                self.accept(generation).await;
+                self.accept(generation, files).await;
             }
             Choice::LastKnownGood {
                 generation,
                 held_because,
-            } => logging::last_known_good_served(&path, generation.generation, held_because),
+            } => logging::last_known_good_served(&path, generation.generation(), held_because),
             Choice::Unrecorded | Choice::Refused(_) => {}
         }
         choice
@@ -91,50 +100,26 @@ impl LastKnownGood {
     pub(crate) async fn on_refresh(
         &self,
         published: Result<Option<CompleteGeneration>, SourceError>,
-        origin: &str,
+        (origin, files): (&str, &[&Path]),
     ) -> Choice {
         let floor = self.lock().floor;
-        let choice = choice::on_refresh(published, floor, origin);
+        let choice = choice::on_refresh(self.validated(published, origin), floor, origin);
         if let Choice::Published(generation) = &choice {
-            self.accept(generation).await;
+            self.accept(generation, files).await;
         }
         choice
     }
 
-    /// Raises the floor to `generation` and persists it, unless the copy on
-    /// disk already is it or its catalogue has not been read yet (a later
-    /// pass persists it once the catalogue volume converges).
-    async fn accept(&self, generation: &CompleteGeneration) {
-        let sha256 = generation.record_sha256();
-        {
-            let mut inner = self.lock();
-            inner.floor = inner.floor.max(Some(generation.generation));
-            if inner.stored.as_deref() == Some(sha256.as_str()) || generation.catalog.is_none() {
-                return;
-            }
-        }
-        let path = self.store.path().display().to_string();
-        let written = self
-            .store
-            .persist(generation, |_: Step| -> io::Result<()> { Ok(()) })
-            .await;
-        let mut inner = self.lock();
-        match written {
-            Ok(()) => {
-                logging::last_known_good_persisted(&path, generation.generation);
-                inner.state = LastKnownGoodState::Stored {
-                    generation: generation.generation,
-                };
-                inner.stored = Some(sha256);
-            }
-            Err(error) => {
-                logging::last_known_good_persist_failed(&path, generation.generation, &error);
-                inner.state = LastKnownGoodState::PersistFailed {
-                    generation: generation.generation,
-                    reason: error.to_string(),
-                };
-            }
-        }
+    /// A published read, validated whole: decoded, every resource valid,
+    /// every binding resolvable, and the catalogue the host's when read.
+    fn validated(
+        &self,
+        read: Result<Option<CompleteGeneration>, SourceError>,
+        origin: &str,
+    ) -> Result<Option<ParsedGeneration>, SourceError> {
+        read?
+            .map(|generation| ParsedGeneration::validate(generation, self.catalogue.as_ref(), origin))
+            .transpose()
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, Inner> {

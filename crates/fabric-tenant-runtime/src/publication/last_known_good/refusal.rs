@@ -38,6 +38,16 @@ pub enum LastKnownGoodRefusal {
         document: &'static str,
     },
 
+    /// The copy matches its digests but could not be served whole: see
+    /// [`SourceError::Unusable`](crate::SourceError).
+    #[error("last-known-good {document} cannot be served: {reason}")]
+    Unusable {
+        /// `tenants`, `data-sources` or `catalog`.
+        document: &'static str,
+        /// What is wrong with it.
+        reason: String,
+    },
+
     /// The copy's record requires a newer reader than this one. A binary
     /// rolled back below the copy may not serve it, exactly as it may not
     /// serve the published generation.

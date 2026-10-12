@@ -5,7 +5,8 @@ use std::io;
 
 use super::atomic_replace::Step;
 use super::envelope::Envelope;
-use super::fixtures::{complete, published_with_floor};
+use super::fixture_files::{unservable, write_copy};
+use super::fixtures::{complete, published_with_floor, Catalogue};
 use super::{DiscardRequest, LastKnownGoodRefusal, LastKnownGoodStore, Verdict, AUDIT_FILE_NAME};
 use crate::publication::digest::sha256_hex;
 use crate::publication::READER_CONTRACT;
@@ -44,20 +45,20 @@ async fn a_persisted_generation_reads_back_byte_for_byte_and_validates() {
     let dir = TempDir::new("lkg-store");
     let store = persisted(&dir, 3).await;
 
-    let loaded = store.load().await.unwrap().unwrap();
+    let loaded = store.load(&Catalogue).await.unwrap().unwrap();
     let original = complete(3, "pg-1");
 
-    assert_eq!(loaded.generation, 3);
-    assert_eq!(loaded.record, original.record);
-    assert_eq!(loaded.tenants, original.tenants);
-    assert_eq!(loaded.data_sources, original.data_sources);
-    assert_eq!(loaded.catalog, original.catalog);
+    assert_eq!(loaded.generation(), 3);
+    assert_eq!(loaded.complete.record, original.record);
+    assert_eq!(loaded.complete.tenants, original.tenants);
+    assert_eq!(loaded.complete.data_sources, original.data_sources);
+    assert_eq!(loaded.complete.catalog, original.catalog);
 }
 
 #[tokio::test]
 async fn no_copy_is_none_rather_than_a_refusal() {
     let dir = TempDir::new("lkg-store");
-    assert!(store(&dir).load().await.unwrap().is_none());
+    assert!(store(&dir).load(&Catalogue).await.unwrap().is_none());
 }
 
 #[tokio::test]
@@ -68,7 +69,7 @@ async fn a_copy_whose_document_no_longer_matches_its_digest_is_refused() {
         envelope.tenants = envelope.tenants.replace("pg-1", "pg-9");
     });
 
-    let refused = store.load().await.unwrap_err();
+    let refused = store.load(&Catalogue).await.unwrap_err();
 
     assert!(
         matches!(
@@ -87,7 +88,7 @@ async fn a_copy_whose_record_was_altered_is_refused_by_the_records_own_digest() 
         envelope.record = envelope.record.replace("\"generation\": 3", "\"generation\": 30");
     });
 
-    let refused = store.load().await.unwrap_err();
+    let refused = store.load(&Catalogue).await.unwrap_err();
 
     assert!(
         matches!(
@@ -108,7 +109,7 @@ async fn a_copy_whose_record_requires_a_newer_reader_is_refused() {
         envelope.record_sha256 = sha256_hex(envelope.record.as_bytes());
     });
 
-    let refused = store.load().await.unwrap_err();
+    let refused = store.load(&Catalogue).await.unwrap_err();
 
     assert!(
         matches!(
@@ -126,7 +127,7 @@ async fn a_copy_in_a_format_this_reader_does_not_know_is_refused() {
     let store = persisted(&dir, 3).await;
     tamper(&store, |envelope| envelope.format = 2);
 
-    let refused = store.load().await.unwrap_err();
+    let refused = store.load(&Catalogue).await.unwrap_err();
 
     assert!(
         matches!(refused, LastKnownGoodRefusal::UnsupportedFormat { found: 2 }),
@@ -141,7 +142,7 @@ async fn a_truncated_copy_is_refused_as_malformed() {
     let bytes = std::fs::read(store.path()).unwrap();
     std::fs::write(store.path(), &bytes[..bytes.len() / 2]).unwrap();
 
-    let refused = store.load().await.unwrap_err();
+    let refused = store.load(&Catalogue).await.unwrap_err();
 
     assert!(
         matches!(refused, LastKnownGoodRefusal::Malformed { .. }),
@@ -176,8 +177,8 @@ async fn an_interrupted_persist_leaves_the_previous_copy_valid() {
             .await;
 
         assert!(interrupted.is_err(), "{step:?}");
-        let loaded = store.load().await.unwrap().unwrap();
-        assert_eq!(loaded.generation, 3, "{step:?}");
+        let loaded = store.load(&Catalogue).await.unwrap().unwrap();
+        assert_eq!(loaded.generation(), 3, "{step:?}");
     }
 }
 
@@ -185,10 +186,10 @@ async fn an_interrupted_persist_leaves_the_previous_copy_valid() {
 async fn inspecting_reports_absent_valid_and_refused_copies_and_writes_nothing() {
     let dir = TempDir::new("lkg-store");
     let store = store(&dir);
-    assert_eq!(store.inspect().await.verdict, Verdict::Absent);
+    assert_eq!(store.inspect(&Catalogue).await.verdict, Verdict::Absent);
 
     store.persist(&complete(5, "pg-1"), |_| Ok(())).await.unwrap();
-    let valid = store.inspect().await;
+    let valid = store.inspect(&Catalogue).await;
     assert!(
         matches!(valid.verdict, Verdict::Valid { generation: 5, .. }),
         "{valid:?}"
@@ -197,7 +198,7 @@ async fn inspecting_reports_absent_valid_and_refused_copies_and_writes_nothing()
 
     tamper(&store, |envelope| envelope.catalog.push(' '));
     let before = std::fs::read(store.path()).unwrap();
-    let refused = store.inspect().await;
+    let refused = store.inspect(&Catalogue).await;
     assert!(matches!(refused.verdict, Verdict::Refused { .. }), "{refused:?}");
     assert_eq!(
         refused.stated_generation,
@@ -214,13 +215,13 @@ async fn discarding_audits_first_then_moves_the_copy_aside_and_writes_nothing_in
     let before = std::fs::read(store.path()).unwrap();
 
     let discarded = store
-        .discard(&discard_request(), 1_700_000_000)
+        .discard(&discard_request(), 1_700_000_000, &Catalogue)
         .await
         .unwrap()
         .unwrap();
 
     assert!(!store.path().exists(), "nothing is written in the copy's place");
-    assert!(store.load().await.unwrap().is_none());
+    assert!(store.load(&Catalogue).await.unwrap().is_none());
     assert_eq!(std::fs::read(&discarded.moved_to).unwrap(), before);
     assert!(matches!(
         discarded.inspection.verdict,
@@ -248,7 +249,11 @@ async fn a_refused_copy_can_be_discarded_too() {
     let store = persisted(&dir, 6).await;
     tamper(&store, |envelope| envelope.tenants.push(' '));
 
-    let discarded = store.discard(&discard_request(), 1).await.unwrap().unwrap();
+    let discarded = store
+        .discard(&discard_request(), 1, &Catalogue)
+        .await
+        .unwrap()
+        .unwrap();
 
     assert!(matches!(discarded.inspection.verdict, Verdict::Refused { .. }));
     assert!(!store.path().exists());
@@ -259,6 +264,31 @@ async fn discarding_nothing_changes_nothing_and_audits_nothing() {
     let dir = TempDir::new("lkg-store");
     let store = store(&dir);
 
-    assert!(store.discard(&discard_request(), 1).await.unwrap().is_none());
+    assert!(store
+        .discard(&discard_request(), 1, &Catalogue)
+        .await
+        .unwrap()
+        .is_none());
     assert!(!store.path().with_file_name(AUDIT_FILE_NAME).exists());
+}
+
+#[tokio::test]
+async fn a_copy_that_matches_its_digests_but_cannot_be_served_is_refused_and_reported_invalid() {
+    for (document, files) in unservable(3) {
+        let dir = TempDir::new("lkg-store");
+        let store = store(&dir);
+        write_copy(store.path(), &files);
+
+        let refused = store.load(&Catalogue).await.unwrap_err();
+        assert!(
+            matches!(&refused, LastKnownGoodRefusal::Unusable { document: named, .. } if *named == document),
+            "{document}: {refused}"
+        );
+        let inspection = store.inspect(&Catalogue).await;
+        assert!(
+            matches!(inspection.verdict, Verdict::Refused { .. }),
+            "{document}: {inspection:?}"
+        );
+        assert_eq!(inspection.stated_generation, Some(3));
+    }
 }

@@ -10,6 +10,7 @@
 //! file that has drifted from the code is worse than no example, because it is
 //! trusted.
 
+pub mod catalogue;
 pub mod config;
 pub mod contracts;
 pub mod health;

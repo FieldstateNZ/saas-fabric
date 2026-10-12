@@ -275,10 +275,19 @@ The rules (`publication/last_known_good.rs` has the full table):
 - **Running**, a published generation at or above the highest one served or
   persisted is applied the moment it validates. A lower one, or a missing
   record, is held against as `SourceError::Regressed`.
-- **The copy is refused**, never served, if the record or any document does
-  not match its digest, the record's reader floor is above this reader, the
-  format is unknown, or a document does not parse. A refused copy is left
-  where it is.
+- **Validated whole, first.** A published generation is checked before it
+  is chosen, raises the floor or is persisted, and the copy before it is
+  served: digests, reader floor, both documents through the real decoders,
+  every resource's own validation, no duplicate keys, every binding
+  resolvable within the generation, and the catalogue through the host's
+  `CatalogueCheck`. A failure is `SourceError::Unusable` and leaves the copy
+  and floor untouched (or fails the prime with no copy).
+- **The copy is refused**, never served, on any of those failures or an
+  unknown format. A refused copy is kept byte for byte, even beside a
+  valid publication, until an operator discards it.
+- **Separation.** `check_separation` resolves symlinks and `..` and refuses a
+  copy directory that is, holds, or sits inside a published file's
+  directory; it runs at configuration and before every write.
 - **Readiness**: a replica serving its copy is ready (it serves a generation
   it once validated) and degraded; `ReaderStatus::report()` says which
   generation, where from, why it is held, how many passes were held, and the

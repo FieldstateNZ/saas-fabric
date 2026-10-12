@@ -4,6 +4,7 @@ use fabric_tenant_runtime::{LastKnownGoodStore, Verdict};
 use serde_json::json;
 
 use super::Action;
+use crate::catalogue::HostCatalogue;
 
 /// What to print, and the exit status.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -19,11 +20,11 @@ pub struct Outcome {
 pub async fn run(action: Action, at_unix_seconds: u64) -> Outcome {
     match action {
         Action::Inspect { directory } => {
-            let inspection = LastKnownGoodStore::new(directory).inspect().await;
+            let inspection = LastKnownGoodStore::new(directory).inspect(&HostCatalogue).await;
             outcome(&json!({ "action": "inspect", "inspection": inspection }), 0)
         }
         Action::Validate { directory } => {
-            let inspection = LastKnownGoodStore::new(directory).inspect().await;
+            let inspection = LastKnownGoodStore::new(directory).inspect(&HostCatalogue).await;
             let invalid = !matches!(inspection.verdict, Verdict::Valid { .. });
             outcome(
                 &json!({ "action": "validate", "inspection": inspection }),
@@ -32,7 +33,7 @@ pub async fn run(action: Action, at_unix_seconds: u64) -> Outcome {
         }
         Action::Discard { directory, request } => {
             let store = LastKnownGoodStore::new(directory);
-            match store.discard(&request, at_unix_seconds).await {
+            match store.discard(&request, at_unix_seconds, &HostCatalogue).await {
                 Ok(Some(discarded)) => outcome(&json!({ "action": "discard", "discarded": discarded }), 0),
                 Ok(None) => outcome(
                     &json!({ "action": "discard", "discarded": null, "path": store.path().display().to_string() }),

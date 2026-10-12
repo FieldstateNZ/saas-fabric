@@ -9,6 +9,7 @@ use super::atomic_replace::sync_directory;
 use super::inspection::{Inspection, Verdict};
 use super::store::FILE_NAME;
 use super::LastKnownGoodStore;
+use crate::publication::CatalogueCheck;
 
 /// The audit log beside the copy: one JSON object per line, appended and
 /// synced before the action it records.
@@ -41,7 +42,9 @@ impl LastKnownGoodStore {
     /// in the copy's place: a replica that then restarts with no complete
     /// published generation fails closed rather than serving anything this
     /// command made up. `Ok(None)` when there was no copy; nothing is
-    /// audited then, because nothing changed.
+    /// audited then, because nothing changed. `catalogue` is the host's
+    /// catalogue check, so the audit records the verdict the host would
+    /// reach.
     ///
     /// # Errors
     ///
@@ -52,8 +55,9 @@ impl LastKnownGoodStore {
         &self,
         request: &DiscardRequest,
         at_unix_seconds: u64,
+        catalogue: &dyn CatalogueCheck,
     ) -> io::Result<Option<Discarded>> {
-        let inspection = self.inspect().await;
+        let inspection = self.inspect(catalogue).await;
         if inspection.verdict == Verdict::Absent {
             return Ok(None);
         }

@@ -1,7 +1,7 @@
 //! Every hold and fail-closed rule, one case each.
 
 use super::choice::{at_start, on_refresh, Choice};
-use super::fixtures::complete;
+use super::fixtures::parsed as complete;
 use crate::SourceError;
 
 fn torn() -> SourceError {
@@ -14,8 +14,8 @@ fn torn() -> SourceError {
 
 fn applied(choice: &Choice) -> String {
     match choice {
-        Choice::Published(generation) => format!("published {}", generation.generation),
-        Choice::LastKnownGood { generation, .. } => format!("last-known-good {}", generation.generation),
+        Choice::Published(generation) => format!("published {}", generation.generation()),
+        Choice::LastKnownGood { generation, .. } => format!("last-known-good {}", generation.generation()),
         Choice::Unrecorded => "unrecorded".to_owned(),
         Choice::Refused(error) => format!("refused: {error}"),
     }

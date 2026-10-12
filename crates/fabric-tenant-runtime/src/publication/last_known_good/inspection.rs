@@ -4,6 +4,7 @@ use super::envelope::Envelope;
 use super::store::verify;
 use super::LastKnownGoodStore;
 use crate::publication::digest::sha256_hex;
+use crate::publication::CatalogueCheck;
 
 /// The copy as found on disk, for `fabric-api last-known-good inspect`.
 ///
@@ -45,7 +46,10 @@ pub enum Verdict {
 
 impl LastKnownGoodStore {
     /// Reads the copy and reports what it is and whether it would be served.
-    pub async fn inspect(&self) -> Inspection {
+    ///
+    /// `catalogue` is the host's own catalogue check, so a copy is reported
+    /// valid only if the host could start from it.
+    pub async fn inspect(&self, catalogue: &dyn CatalogueCheck) -> Inspection {
         let path = self.path().display().to_string();
         let bytes = match tokio::fs::read(self.path()).await {
             Ok(bytes) => bytes,
@@ -65,10 +69,10 @@ impl LastKnownGoodStore {
                 };
             }
         };
-        let verdict = match verify(&bytes) {
+        let verdict = match verify(&bytes, catalogue) {
             Ok(generation) => Verdict::Valid {
-                generation: generation.generation,
-                record_sha256: generation.record_sha256(),
+                generation: generation.generation(),
+                record_sha256: generation.complete.record_sha256(),
             },
             Err(refusal) => Verdict::Refused {
                 reason: refusal.to_string(),

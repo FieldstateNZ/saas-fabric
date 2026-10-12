@@ -8,6 +8,8 @@ use super::envelope::{Envelope, FORMAT};
 use super::LastKnownGoodRefusal;
 use crate::publication::complete_generation::CompleteGeneration;
 use crate::publication::digest::sha256_hex;
+use crate::publication::parsed_generation::ParsedGeneration;
+use crate::publication::CatalogueCheck;
 use crate::publication::READER_CONTRACT;
 use crate::SourceError;
 
@@ -47,12 +49,16 @@ impl LastKnownGoodStore {
     ///
     /// `Ok(None)` when there is no copy. A copy is refused if any digest,
     /// the record's own included, does not match, if its record's reader
-    /// floor is above this reader, or if a document does not parse.
+    /// floor is above this reader, or if it could not be served whole
+    /// (`ParsedGeneration::validate`, with the host's `catalogue` check).
     ///
     /// # Errors
     ///
     /// [`LastKnownGoodRefusal`] saying why the copy may not be served.
-    pub(crate) async fn load(&self) -> Result<Option<CompleteGeneration>, LastKnownGoodRefusal> {
+    pub(crate) async fn load(
+        &self,
+        catalogue: &dyn CatalogueCheck,
+    ) -> Result<Option<ParsedGeneration>, LastKnownGoodRefusal> {
         let bytes = match tokio::fs::read(&self.path).await {
             Ok(bytes) => bytes,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
@@ -63,7 +69,7 @@ impl LastKnownGoodStore {
                 })
             }
         };
-        verify(&bytes).map(Some)
+        verify(&bytes, catalogue).map(Some)
     }
 
     /// Writes `generation` over the copy, atomically. Refused unless the
@@ -102,7 +108,10 @@ impl LastKnownGoodStore {
 
 /// Checks a copy's bytes by the same rule the published files are checked
 /// by, plus the record's own digest.
-pub(super) fn verify(bytes: &[u8]) -> Result<CompleteGeneration, LastKnownGoodRefusal> {
+pub(super) fn verify(
+    bytes: &[u8],
+    catalogue: &dyn CatalogueCheck,
+) -> Result<ParsedGeneration, LastKnownGoodRefusal> {
     let malformed = |detail: String| LastKnownGoodRefusal::Malformed { detail };
     let envelope: Envelope = serde_json::from_slice(bytes).map_err(|error| malformed(error.to_string()))?;
     if envelope.format != FORMAT {
@@ -131,8 +140,8 @@ pub(super) fn verify(bytes: &[u8]) -> Result<CompleteGeneration, LastKnownGoodRe
         },
         other => malformed(other.to_string()),
     })?;
-    generation
-        .parse_documents(origin)
-        .map_err(|error| malformed(error.to_string()))?;
-    Ok(generation)
+    ParsedGeneration::validate(generation, catalogue, origin).map_err(|error| match error {
+        SourceError::Unusable { document, reason, .. } => LastKnownGoodRefusal::Unusable { document, reason },
+        other => malformed(other.to_string()),
+    })
 }

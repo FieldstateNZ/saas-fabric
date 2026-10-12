@@ -13,6 +13,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use examples_support::example;
+use fabric_api::catalogue::HostCatalogue;
 use fabric_tenant_runtime::{
     build_published_runtime, LastKnownGoodState, LastKnownGoodStore, PublishedFiles, RuntimeConfig,
     AUDIT_FILE_NAME,
@@ -93,7 +94,10 @@ fn publish_examples(dir: &Dir) -> PublishedFiles {
 fn reader(dir: &Dir) -> PublishedFiles {
     PublishedFiles::new(dir.published("tenants.json"), dir.published("data-sources.json"))
         .with_catalogue(dir.published("catalog.json"))
-        .with_last_known_good(LastKnownGoodStore::new(dir.last_known_good()))
+        .with_last_known_good(
+            LastKnownGoodStore::new(dir.last_known_good()),
+            Arc::new(HostCatalogue),
+        )
 }
 
 /// Starts the real reader once, which persists generation 3, and stops it.
@@ -227,6 +231,32 @@ async fn discard_audits_moves_the_copy_aside_and_a_restart_on_a_torn_volume_then
     assert!(
         restarted.is_err(),
         "with the copy discarded, a torn volume fails the prime"
+    );
+}
+
+#[tokio::test]
+async fn validate_fails_on_a_self_consistent_copy_whose_catalogue_the_host_cannot_decode() {
+    let dir = Dir::new();
+    persist_through_the_reader(&dir).await;
+    let mut envelope: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(dir.copy()).unwrap()).unwrap();
+    let catalogue = "[\"not a catalogue\"]";
+    let mut record: serde_json::Value = serde_json::from_str(envelope["record"].as_str().unwrap()).unwrap();
+    record["documents"]["catalog"]["sha256"] = serde_json::Value::from(sha256_hex(catalogue.as_bytes()));
+    let record = record.to_string();
+    envelope["catalog"] = serde_json::Value::from(catalogue);
+    envelope["record_sha256"] = serde_json::Value::from(sha256_hex(record.as_bytes()));
+    envelope["record"] = serde_json::Value::from(record);
+    std::fs::write(dir.copy(), envelope.to_string()).unwrap();
+
+    let validated = command(&["last-known-good", "validate", "--dir", &directory(&dir)]);
+
+    assert_eq!(validated.status.code(), Some(1), "{validated:?}");
+    let inspection = &report(&validated)["inspection"];
+    assert_eq!(inspection["verdict"], "refused");
+    assert!(
+        inspection["reason"].as_str().unwrap().contains("catalog"),
+        "{inspection}"
     );
 }
 

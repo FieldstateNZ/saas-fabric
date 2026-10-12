@@ -8,7 +8,7 @@
 use super::digest::sha256_hex;
 use super::file_reads::parse;
 use super::record::{ReaderRecord, READER_CONTRACT};
-use crate::{DataSource, SourceError, TenantRuntimeBinding};
+use crate::SourceError;
 
 /// A record and the documents it names, byte for byte.
 #[derive(Debug, Clone)]
@@ -90,17 +90,5 @@ impl CompleteGeneration {
     /// are two different generations.
     pub(crate) fn record_sha256(&self) -> String {
         sha256_hex(&self.record)
-    }
-
-    /// The two documents, parsed.
-    ///
-    /// # Errors
-    ///
-    /// [`SourceError::Malformed`] if either does not parse.
-    pub(crate) fn parse_documents(
-        &self,
-        origin: &str,
-    ) -> Result<(Vec<DataSource>, Vec<TenantRuntimeBinding>), SourceError> {
-        Ok((parse(&self.data_sources, origin)?, parse(&self.tenants, origin)?))
     }
 }

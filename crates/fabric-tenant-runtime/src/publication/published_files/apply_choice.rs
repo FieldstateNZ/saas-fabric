@@ -4,6 +4,7 @@ use super::PublishedFiles;
 use crate::publication::complete_generation::CompleteGeneration;
 use crate::publication::file_reads::read;
 use crate::publication::last_known_good::Choice;
+use crate::publication::parsed_generation::ParsedGeneration;
 use crate::publication::{GenerationOrigin, PublishedState, PublishedStateSource as _};
 use crate::{JsonFileSource, ResourceSource as _, SourceError};
 
@@ -35,21 +36,24 @@ impl PublishedFiles {
                 return Ok((state, catalog));
             }
         };
-        let (data_sources, tenants) = generation.parse_documents(&origin)?;
         let state = PublishedState::Generation {
-            generation: generation.generation,
+            generation: generation.generation(),
             origin: origin_of,
-            data_sources,
-            tenants,
+            data_sources: generation.data_sources,
+            tenants: generation.tenants,
         };
-        Ok((state, generation.catalog))
+        Ok((state, generation.complete.catalog))
     }
 }
 
-/// Without a copy: a complete generation is applied, no record is read per
-/// document, and anything else is refused.
-pub(super) fn to_choice(read: Result<Option<CompleteGeneration>, SourceError>) -> Choice {
-    match read {
+/// Without a copy: a complete generation is decoded and applied, as before
+/// the copy existed (the registry judges each resource); no record is read
+/// per document; anything else is refused.
+pub(super) fn to_choice(read: Result<Option<CompleteGeneration>, SourceError>, origin: &str) -> Choice {
+    match read.and_then(|read| {
+        read.map(|generation| ParsedGeneration::parse(generation, origin))
+            .transpose()
+    }) {
         Ok(Some(generation)) => Choice::Published(generation),
         Ok(None) => Choice::Unrecorded,
         Err(error) => Choice::Refused(error),

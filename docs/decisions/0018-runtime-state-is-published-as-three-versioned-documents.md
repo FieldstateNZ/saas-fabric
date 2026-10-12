@@ -442,8 +442,12 @@ generation the same way (`SourceError::Regressed`): a lower generation is a
 lost or reverted volume, not a publication. At start it primes from its
 persisted copy only when no published generation at or above the copy
 validates, and the moment one does, that generation wins. The copy is
-checked against its own record and digests and refused, never served, if any
-differ or its reader floor is above the reader. It is discarded only by an
+checked against its own record and digests, and validated whole (both
+documents and the catalogue through the host's decoders, every resource
+valid, every binding resolvable), and refused, never served, if any check
+fails or its reader floor is above the reader. A published generation passes
+the same validation before it can displace the copy, raise the reader's
+floor or be persisted. A refused copy is kept until that audited discard. It is discarded only by an
 explicit, audited operator command, which never writes a generation in its
 place. See the `last_known_good` module of `fabric-tenant-runtime`.
 

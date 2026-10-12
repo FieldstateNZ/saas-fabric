@@ -8,7 +8,7 @@ mod realm_unavailable_reason;
 mod response;
 mod status_mapping;
 
-use fabric_client_model::{ClientId, DesiredStateError, RealmName};
+use fabric_client_model::{ClientId, DesiredStateError, OidcClientId, RealmName};
 use fabric_core::LogicalDataSourceName;
 
 pub use realm_unavailable_reason::RealmUnavailableReason;
@@ -175,6 +175,24 @@ pub enum ControlPlaneError {
     RealmImmutable {
         /// The realm the client is in.
         current: RealmName,
+    },
+
+    /// An identity edit would change, add or remove an application client
+    /// the product projects from an assignment (D01-19b).
+    ///
+    /// The projection is the product's: its callbacks come from the client's
+    /// hosts and the release's hostname template, and a product save writes
+    /// the entry whole. Letting an identity edit change it only for the next
+    /// product save to revert it is the silent fight D01-19b refuses, so the
+    /// edit is refused instead and names the product save as the way to
+    /// change it. A retired client is not refused: product saves are, so an
+    /// identity edit is its only remediation path.
+    #[error(
+        "{client} is projected from an assigned application and owned by the product;          change the client's hosts or assignment instead"
+    )]
+    ProjectedClientProductOwned {
+        /// The projected application client the edit would have changed.
+        client: OidcClientId,
     },
 
     /// A new client would take a realm that is reserved, or already used by

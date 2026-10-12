@@ -8,7 +8,9 @@ use fabric_client_model::{OidcClient, RealmName, RoleName};
 use crate::fixtures::{acme, role, web_client};
 use crate::status::ReconciliationStatus;
 use crate::testing::FakeIdentityProvider;
-use crate::{IdentityProvider, IdentityReconciler, ObservedRealm, ProviderError};
+use crate::{
+    HandEdit, HandEditedField, HeldEdits, IdentityProvider, IdentityReconciler, ObservedRealm, ProviderError,
+};
 
 /// A reconciler over a fake provider, with the provider kept for assertions.
 fn reconciler() -> (IdentityReconciler, Arc<FakeIdentityProvider>) {
@@ -262,6 +264,7 @@ async fn a_provider_that_names_no_audience_refuses_to_plan() {
             &self,
             _realm: &RealmName,
             _client: &OidcClient,
+            _held: &HeldEdits,
         ) -> Result<(), ProviderError> {
             unreachable!("plan() must refuse before anything is applied")
         }
@@ -284,4 +287,136 @@ async fn a_provider_that_names_no_audience_refuses_to_plan() {
 
     let outcome = reconciler.reconcile(&acme()).await;
     assert_eq!(outcome.status(), ReconciliationStatus::Failed);
+}
+
+/// A converged `acme` realm, then edited by hand the way `edit` says.
+async fn converged_then(
+    edit: impl FnOnce(&mut crate::ObservedOidcClient),
+) -> (IdentityReconciler, Arc<FakeIdentityProvider>) {
+    let (reconciler, provider) = reconciler();
+    reconciler.reconcile(&acme()).await;
+
+    let realm = acme().identity.realm;
+    let mut current = provider.realm(&realm).unwrap();
+    if let Some(client) = current.clients.get_mut(&web_client().id) {
+        edit(client);
+    }
+    provider.seed_realm(realm, current);
+    provider.clear_calls();
+
+    (reconciler, provider)
+}
+
+/// What `web` holds in the fake now.
+fn web_in(provider: &FakeIdentityProvider) -> crate::ObservedOidcClient {
+    provider
+        .realm(&acme().identity.realm)
+        .and_then(|realm| realm.clients.get(&web_client().id).cloned())
+        .unwrap()
+}
+
+/// D01-19b, product-owned drift: corrected on the next pass, as before.
+#[tokio::test]
+async fn product_owned_drift_is_corrected() {
+    let (reconciler, provider) = converged_then(|client| client.public = false).await;
+
+    let outcome = reconciler.reconcile(&acme()).await;
+
+    assert_eq!(outcome.status(), ReconciliationStatus::Applied);
+    assert_eq!(outcome.actions(), 1);
+    assert!(outcome.hand_edits().is_empty());
+    assert!(web_in(&provider).public);
+}
+
+/// D01-19b, an unsupported hand edit: detected, reported, and not overwritten.
+#[tokio::test]
+async fn an_unsupported_hand_edit_is_detected_and_not_overwritten() {
+    let (reconciler, provider) = converged_then(|client| client.enabled = false).await;
+
+    let outcome = reconciler.reconcile(&acme()).await;
+
+    assert_eq!(outcome.status(), ReconciliationStatus::Applied);
+    assert!(outcome.changed_nothing());
+    assert_eq!(
+        outcome.hand_edits(),
+        [HandEdit {
+            client: web_client().id,
+            field: HandEditedField::ClientDisabled,
+        }]
+    );
+    assert_eq!(
+        provider.calls(),
+        ["observe_realm:acme"],
+        "a held hand edit is never written"
+    );
+    assert!(!web_in(&provider).enabled);
+}
+
+/// D01-19b, no loop: repeated passes over a held hand edit read and never
+/// write, so the product and whoever made the edit do not take turns.
+#[tokio::test]
+async fn repeated_passes_over_a_hand_edit_never_write() {
+    let (reconciler, provider) = converged_then(|client| {
+        client.enabled = false;
+        client.standard_flow_enabled = false;
+    })
+    .await;
+
+    for _ in 0..3 {
+        let outcome = reconciler.reconcile(&acme()).await;
+        assert_eq!(outcome.hand_edits().len(), 2);
+    }
+
+    assert_eq!(provider.calls(), ["observe_realm:acme"; 3]);
+    assert!(!web_in(&provider).enabled);
+}
+
+/// A correction beside a held edit writes once, keeps the held edit, and the
+/// next pass writes nothing: correcting does not start a loop either.
+#[tokio::test]
+async fn correcting_beside_a_hand_edit_preserves_it_and_then_settles() {
+    let (reconciler, provider) = converged_then(|client| {
+        client.enabled = false;
+        client.other_protocol_mappers = 1;
+    })
+    .await;
+
+    let first = reconciler.reconcile(&acme()).await;
+    assert_eq!(first.actions(), 1);
+    assert!(
+        !web_in(&provider).enabled,
+        "the correction must not re-enable the client"
+    );
+    assert_eq!(web_in(&provider).other_protocol_mappers, 0);
+
+    provider.clear_calls();
+    let second = reconciler.reconcile(&acme()).await;
+    assert!(second.changed_nothing());
+    assert_eq!(second.hand_edits().len(), 1);
+    assert_eq!(provider.calls(), ["observe_realm:acme"]);
+}
+
+/// D01-19b, re-assert: overwrites the hand edit, says what it overwrote, and
+/// leaves a client the next ordinary pass finds converged.
+#[tokio::test]
+async fn reasserting_overwrites_the_hand_edit_and_names_it() {
+    let (reconciler, provider) = converged_then(|client| client.enabled = false).await;
+
+    let outcome = reconciler.reassert(&acme()).await;
+
+    assert_eq!(outcome.status(), ReconciliationStatus::Applied);
+    assert_eq!(outcome.actions(), 1);
+    assert!(outcome.hand_edits().is_empty());
+    assert_eq!(
+        outcome.overwritten(),
+        [HandEdit {
+            client: web_client().id,
+            field: HandEditedField::ClientDisabled,
+        }]
+    );
+    assert!(web_in(&provider).enabled);
+
+    provider.clear_calls();
+    assert!(reconciler.reconcile(&acme()).await.changed_nothing());
+    assert_eq!(provider.calls(), ["observe_realm:acme"]);
 }

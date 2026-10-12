@@ -42,6 +42,8 @@ async fn apply_one(
         }
         IdentityAction::CreateRealmRole(role) => provider.create_realm_role(realm, role).await,
         IdentityAction::CreateOidcClient(client) => provider.create_oidc_client(realm, client).await,
-        IdentityAction::UpdateOidcClient(client) => provider.update_oidc_client(realm, client).await,
+        IdentityAction::UpdateOidcClient { client, held } => {
+            provider.update_oidc_client(realm, client, held).await
+        }
     }
 }

@@ -2,8 +2,10 @@
 
 - **Status:** Proposed. Owed decisions 2 and 3 are disposed and built by
   the [2026-10-11 amendment](#amendment-2026-10-11-a-clients-lifecycle-d01-14-d01-19a);
+  owed decision 5 by the
+  [2026-10-12 amendment](#amendment-2026-10-12-a-projected-identity-client-is-the-products-d01-19b);
   acceptance follows ADR 0023 through its own reviewed change (D01-19d).
-- **Date:** 2026-09-16; amended 2026-10-11
+- **Date:** 2026-09-16; amended 2026-10-11, 2026-10-12
 - **Applies to:** `fabric-client-model`, `fabric-client-git`,
   `fabric-control-plane`, `fabric-control-plane-api`, `apps/control-plane-ui`,
   and the `saas-fabric-clients` repository that holds what they write
@@ -520,6 +522,9 @@ through `PUT /api/clients/{clientId}/identity` — which the console does not
 offer, because applications are read-only there — or by hand in Git lasts until
 the next product save for that client, and the realm is then converged back.
 Removing the projected client through the identity API is undone the same way.
+*Amended 2026-10-12 (D01-19b): an identity edit to a projected client is now
+refused unless the client is retired; a hand edit in Git still is not. See
+the [amendment](#amendment-2026-10-12-a-projected-identity-client-is-the-products-d01-19b).*
 
 **A client with a `.internal` or loopback host cannot be assigned any
 application.** Every host a client declares contributes a callback, whether or
@@ -636,7 +641,9 @@ repository is single-process by its lock, and is a development mode only.
 4. **Private-network clients.** Whether a projected client should follow the
    kind of the client's hosts — `privateNetwork` for `.internal` — which is what
    LucentRoot needs, or whether applications stay public-host only.
-5. **Who owns a projected identity client.** Whether a product save may keep
+5. **Who owns a projected identity client.** *Disposed 2026-10-12 (D01-19b):
+   the product owns the projection, and an unsupported hand edit is refused or
+   reported rather than silently fought; see the amendment below.* Whether a product save may keep
    overwriting hand edits, or a projected client should be marked as the
    product's and refused in identity edits.
 6. **Activity, and what the size limits leave.** *Disposed 2026-10-11
@@ -853,4 +860,136 @@ the user-only parts stay open.
   authorized.
 - **Removing one application from a client** (owed decision 3's first half)
   is still refused.
+
+## Amendment 2026-10-12: a projected identity client is the product's (D01-19b)
+
+Recorded from the D01-19b disposition in
+[#108](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6109518415):
+
+> **D01-19b:** Product-owned projection; refuse unsupported hand edits
+> instead of silently fighting them. Preserve current permission
+> boundaries.
+
+This amends owed decision 5. It does not accept this ADR. The field split
+below is an engineering reading of the disposition, asked back on
+[#108](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6116623432)
+with the defaults stated there.
+
+### Two places a projected client can be edited by hand
+
+A projected client exists twice: as an entry in the client document's
+`spec.identity.clients`, and as the Keycloak client reconciliation writes
+from it. Before this amendment each copy was fought silently. A product save
+reverted an identity edit to the entry. A reconciliation pass overwrote a
+Keycloak console edit to the client on every pass, and reported `drifted`
+once.
+
+**In desired state, an identity edit to a projected client is refused.**
+`PUT /api/clients/{clientId}/identity` answers `409
+projected_client_product_owned` when it would change, add or remove the
+entry of an assigned application. An edit that leaves every projected entry
+as it is, such as a role change or a hand-declared client, is unaffected. The
+product save is how a projected client changes: its callbacks come from the
+client's hosts and the release's hostname template. **A retired client is
+exempt.** Product saves are refused there (`409 client_retired`), so an
+identity edit is the only way left to remove a compromised callback, and it
+stays open as the 2026-10-11 amendment requires.
+
+**In the identity provider, a hand edit is either product-owned drift or
+held.** Each term reconciliation observes is classified
+(`crates/fabric-reconciliation/src/plan/classify.rs`):
+
+| Observed in Keycloak | Class | Why |
+|---|---|---|
+| switched to confidential | product-owned: corrected | changes what the client is |
+| a redirect URI the model cannot parse | product-owned: corrected | ADR 0019 §6; attacker-influenced |
+| a redirect URI nobody declared | product-owned: corrected | widens where codes go (D13b) |
+| PKCE method not the declared one | product-owned: corrected | a downgrade |
+| audience mapper missing, wrong or doubled | product-owned: corrected | the edge's `aud` check (ADR 0019 §G5) |
+| a client-level mapper nobody declared | product-owned: corrected | can inject claims |
+| post-logout set no longer "every registered URI" | product-owned: corrected | the adapter cannot tell a narrowing from a widening |
+| client disabled | **held** | narrows; may be incident containment |
+| standard flow disabled | **held** | narrows |
+| a declared redirect URI removed | **held** | narrows |
+| anything the adapter neither reads nor writes: description, web origins, consent, client scopes, token lifespans, themes | **tolerated** | no term observes it and no write carries it |
+
+The rule is that an edit that widens what a client can do is never left in
+place. An edit that only narrows it is somebody's decision, which the product
+does not support but no longer overwrites on every pass.
+
+### The drift state
+
+- A **held** hand edit is not written. Reconciliation records the client as
+  **`handEdited`**: a fifth `ReconciliationStatus`, beside `drifted`. The
+  report carries typed `handEdits`, each `{ client, field }` with `field`
+  one of `clientDisabled`, `standardFlowDisabled` or
+  `declaredRedirectUriRemoved`. Both appear in every identity response and
+  in the console's badge, filter and attention list.
+- Product-owned drift on the same client is still corrected. The write
+  carries each held edit as Keycloak holds it: written disabled, or without
+  the removed callback. A correction never re-enables a client someone
+  switched off.
+- **There is no loop.** A pass over a client that carries only held edits
+  makes one read and no writes, however many passes run. A pass that corrects
+  product-owned drift beside a held edit writes once and then settles.
+- `handEdited` is not identity readiness. A hand-edited client is
+  `incomplete`, with the identity condition unmet, because Keycloak does not
+  hold what was declared.
+
+### What an operator does
+
+The operator chooses one of two things:
+
+- **Remove the hand edit in Keycloak.** The next pass finds the client
+  converged and records `applied`.
+- **Re-assert the projection:** `POST
+  /api/clients/{clientId}/identity/reassertion`, with `If-Match` naming the
+  revision the operator reviewed. It runs one reconciliation of that client
+  that overwrites every held edit with the declaration and records the
+  outcome. It audits the request to the durable trail from
+  [ADR 0028](0028-the-activity-feed-is-a-bounded-view-and-the-audit-trail-is-a-separate-durable-source.md)
+  as `control_plane.audit.identity_projection_reasserted`, with fields
+  `revision`, `overwritten` (`client:field` pairs, never a URI) and `status`.
+  A stale revision gets `409 revision_conflict`, a missing `If-Match` gets
+  `428`, and a deployment that converges nothing gets `404
+  convergence_unavailable`. The request writes no desired state. The
+  console asks for confirmation first. Re-assertion is not gated by
+  lifecycle: identity remediation stays open on a retired client.
+
+### Permission boundaries are unchanged
+
+Nothing here adds a permission, a role or a credential, and nothing widens
+the Keycloak service account. A re-assertion runs with the requesting
+operator's own bearer, through the same provider factory and authority as
+`POST /api/reconciliation` (ADR 0012), and is behind the same `Operator`
+extractor. The identity-edit refusal narrows what an existing write accepts.
+
+### Verified against the code (at the base of this amendment)
+
+| Claim | Where |
+|---|---|
+| The classification, and that a held edit plans no write | `crates/fabric-reconciliation/src/plan/classify.rs`; `plan/diff_tests.rs::a_client_disabled_by_hand_is_held_not_overwritten`, `::a_declared_redirect_uri_removed_by_hand_is_held_not_overwritten`, `::product_owned_drift_beside_a_hand_edit_is_corrected_and_the_hand_edit_preserved`, `::an_application_client_with_a_changed_redirect_uri_is_updated` |
+| Product-owned drift is corrected; a hand edit is detected and not overwritten; repeated passes never write; re-assert overwrites and names what it overwrote | `crates/fabric-reconciliation/src/reconciler/reconciler_tests.rs::product_owned_drift_is_corrected`, `::an_unsupported_hand_edit_is_detected_and_not_overwritten`, `::repeated_passes_over_a_hand_edit_never_write`, `::correcting_beside_a_hand_edit_preserves_it_and_then_settles`, `::reasserting_overwrites_the_hand_edit_and_names_it` |
+| The same over the wire against the fake Keycloak: no `PUT` for a held edit, a correction writes `enabled:false`, re-assert writes `enabled:true`, a held removed callback is left out | `crates/fabric-keycloak/tests/keycloak_hand_edits.rs` |
+| `handEdited` and the transition rules | `crates/fabric-reconciliation/src/status/transition.rs`; `transition_tests.rs` |
+| Through the router: reported and left in place over repeated sweeps; re-assert audited; stale or unconditional re-assert refused and not audited; retired client re-assertable; identity edit to a projected client refused, but open on a retired one | `crates/fabric-control-plane/tests/projected_identity.rs` |
+| `handEdited` leaves identity readiness unmet | `crates/fabric-control-plane/src/lifecycle/evidence.rs`; `evidence_tests.rs` |
+| The console names the hand edits and asks for confirmation before re-asserting | `apps/control-plane-ui/src/components/ReconciliationBadge.tsx`, `ReassertProjection.tsx`; their tests |
+
+### Known limits
+
+- **A hand edit in Git is not detected.** A direct edit to a projected entry
+  in `spec.identity.clients` still lasts until the next product save, which
+  reverts it, as before. The Git commit records it. Detecting it on read is
+  asked on #108 and is not built.
+- **A substituted callback leaves a client with none.** If a declared
+  callback is replaced by hand, the undeclared one is product-owned and is
+  removed, and the removal of the declared one is held. The client is left
+  with no callbacks, failing closed and visibly `handEdited`, until someone
+  re-asserts.
+- **Status is per process.** `handEdited` lives in the in-memory status
+  store, like every reconciliation status. After a restart a client shows
+  `pending` until a pass runs.
+- **A client scope's mappers are not observed.** This is unchanged from
+  `other_protocol_mappers`' own limit.
 

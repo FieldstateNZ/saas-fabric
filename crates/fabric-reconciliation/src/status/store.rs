@@ -62,6 +62,7 @@ impl ReconciliationStatusStore {
                 actions: 0,
                 observed_at_unix: at_unix,
                 detail: None,
+                hand_edits: Vec::new(),
             },
         );
     }
@@ -90,6 +91,7 @@ impl ReconciliationStatusStore {
                 actions: outcome.actions(),
                 observed_at_unix: at_unix,
                 detail: outcome.detail().map(ToOwned::to_owned),
+                hand_edits: outcome.hand_edits().to_vec(),
             },
         );
 

@@ -1,11 +1,8 @@
 //! `PUT /api/clients/{clientId}/identity`
 
 use axum::extract::State;
-use axum::response::{IntoResponse, Response};
-use axum::Json;
 use fabric_client_model::IdentityConfiguration;
-use http::header::ETAG;
-use http::{HeaderMap, HeaderValue, StatusCode};
+use http::HeaderMap;
 
 use crate::extraction::{BoundedJson, ClientPath};
 use crate::models::{IdentityRequest, IdentityResponse};
@@ -39,7 +36,7 @@ pub(crate) async fn put_identity(
     operator: Operator,
     headers: HeaderMap,
     BoundedJson(request): BoundedJson<IdentityRequest>,
-) -> Result<Response, ControlPlaneError> {
+) -> Result<IdentityResponse, ControlPlaneError> {
     let expected = preconditions::required_revision(&headers)?;
     let identity = IdentityConfiguration::from(request);
 
@@ -54,13 +51,6 @@ pub(crate) async fn put_identity(
     crate::converge::in_background(&state, &operator);
 
     let reconciliation = state.service.reconciliation(&stored);
-    let body = IdentityResponse::new(&stored, reconciliation);
 
-    let mut response = (StatusCode::OK, Json(body)).into_response();
-
-    if let Ok(tag) = HeaderValue::from_str(&preconditions::entity_tag(&stored.revision)) {
-        response.headers_mut().insert(ETAG, tag);
-    }
-
-    Ok(response)
+    Ok(IdentityResponse::new(&stored, reconciliation))
 }

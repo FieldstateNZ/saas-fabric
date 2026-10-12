@@ -20,7 +20,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use async_trait::async_trait;
 use fabric_client_model::{OidcClient, RealmName, RoleName};
 
-use crate::provider::{IdentityProvider, ObservedOidcClient, ObservedRealm, ProviderError};
+use crate::provider::{HeldEdits, IdentityProvider, ObservedOidcClient, ObservedRealm, ProviderError};
 use crate::testing::fake_identity_provider::{lock, FakeIdentityProvider};
 
 /// The roles a real identity provider creates for itself with every realm.
@@ -85,14 +85,19 @@ impl IdentityProvider for FakeIdentityProvider {
 
     async fn create_oidc_client(&self, realm: &RealmName, client: &OidcClient) -> Result<(), ProviderError> {
         self.enter(format!("create_oidc_client:{realm}:{}", client.id))?;
-        self.write_client(realm, client);
+        self.write_client(realm, client, &HeldEdits::default());
 
         Ok(())
     }
 
-    async fn update_oidc_client(&self, realm: &RealmName, client: &OidcClient) -> Result<(), ProviderError> {
+    async fn update_oidc_client(
+        &self,
+        realm: &RealmName,
+        client: &OidcClient,
+        held: &HeldEdits,
+    ) -> Result<(), ProviderError> {
         self.enter(format!("update_oidc_client:{realm}:{}", client.id))?;
-        self.write_client(realm, client);
+        self.write_client(realm, client, held);
 
         Ok(())
     }
@@ -107,31 +112,36 @@ impl IdentityProvider for FakeIdentityProvider {
 }
 
 impl FakeIdentityProvider {
-    /// Stores an application client exactly as it was declared.
+    /// Stores an application client as it was declared, with `held` applied
+    /// the way a real adapter applies it: a held edit is written as the
+    /// provider already holds it, not as declared.
     ///
     /// `audience_mapper` carries this fake's own configured audience — the
     /// same value [`IdentityProvider::configured_audience`] reports —
     /// mirroring a real provider's write-then-read-back. Leaving it `None`
     /// here would make every client written through this fake permanently
-    /// drifted the moment `matches()` started comparing it. `enabled`,
+    /// drifted the moment the comparison started reading it. `enabled`,
     /// `standard_flow_enabled`, `other_protocol_mappers`, and the post-logout
     /// term are always written to the value a real declaration always
     /// asserts — `true`, `true`, `0`, `true` — for the same reason: a fake
     /// that did not echo them back would drift on fields no test here ever
-    /// touches.
-    fn write_client(&self, realm: &RealmName, client: &OidcClient) {
+    /// touches — unless `held` says otherwise.
+    fn write_client(&self, realm: &RealmName, client: &OidcClient, held: &HeldEdits) {
         if let Some(existing) = lock(&self.realms).get_mut(realm) {
             existing.clients.insert(
                 client.id.clone(),
                 ObservedOidcClient {
-                    redirect_uris: client.redirect.uris().iter().cloned().collect(),
+                    redirect_uris: held
+                        .redirect_uris_to_write(client.redirect.uris())
+                        .cloned()
+                        .collect(),
                     public: true,
                     challenge_method: Some(client.pkce),
                     audience_mapper: Some(self.audience.clone()),
                     other_protocol_mappers: 0,
                     unmodellable_redirect_uris: 0,
-                    enabled: true,
-                    standard_flow_enabled: true,
+                    enabled: !held.client_disabled,
+                    standard_flow_enabled: !held.standard_flow_disabled,
                     post_logout_redirect_uris_is_every_registered_uri: true,
                 },
             );

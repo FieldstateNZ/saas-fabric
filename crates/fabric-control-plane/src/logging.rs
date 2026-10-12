@@ -59,6 +59,13 @@ pub(crate) fn client_reconciled(client: &ClientId, status: ReconciliationStatus,
             actions,
             "a converged client had diverged and was corrected"
         ),
+        ReconciliationStatus::HandEdited => tracing::warn!(
+            event = "control_plane.client_hand_edited",
+            event_id = event_id(DOMAIN_ID, EventType::Warning, 8),
+            client_id = %client,
+            actions,
+            "a client carries hand edits the product does not support; they were left in place"
+        ),
         ReconciliationStatus::Failed => tracing::error!(
             event = "control_plane.client_reconciliation_failed",
             event_id = event_id(DOMAIN_ID, EventType::Error, 2),

@@ -183,17 +183,18 @@ async fn the_api_never_offers_a_way_to_reach_the_identity_provider() {
 
 #[tokio::test]
 async fn the_reconciliation_status_vocabulary_is_the_documented_one() {
-    // The UI branches on these four strings. A rename would change what an
+    // The UI branches on these five strings. A rename would change what an
     // operator is shown without changing anything that fails to compile.
     let names: Vec<&str> = [
         ReconciliationStatus::Pending,
         ReconciliationStatus::Applied,
         ReconciliationStatus::Failed,
         ReconciliationStatus::Drifted,
+        ReconciliationStatus::HandEdited,
     ]
     .iter()
     .map(|status| status.as_str())
     .collect();
 
-    assert_eq!(names, ["pending", "applied", "failed", "drifted"]);
+    assert_eq!(names, ["pending", "applied", "failed", "drifted", "handEdited"]);
 }

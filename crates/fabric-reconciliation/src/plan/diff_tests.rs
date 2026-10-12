@@ -5,17 +5,36 @@ use std::collections::{BTreeMap, BTreeSet};
 use fabric_client_model::{PkceMethod, RedirectUri};
 
 use crate::fixtures::{acme, role, web_client, ROLES};
-use crate::plan::{plan, IdentityAction};
+use crate::plan::{plan as plan_under, HandEditPolicy, IdentityAction};
+use crate::provider::{HandEdit, HandEditedField, HeldEdits};
 use crate::provider::{ObservedOidcClient, ObservedRealm};
+use crate::IdentityPlan;
 
 /// The audience a converged fixture client's mapper carries, and the value
 /// every test in this file passes as `plan`'s `configured_audience`.
 ///
-/// Read by `matches()`: this is the deployment's own audience string (ADR
+/// Read by `classify::compare`: this is the deployment's own audience string (ADR
 /// 0019 §1, §G5), threaded into the comparison rather than carried by either
 /// fixture, because it is adapter configuration and neither a document nor a
 /// realm holds it.
 const AUDIENCE: &str = "saas-fabric-data-api";
+
+/// Plans as every ordinary pass does: holding unsupported hand edits.
+fn plan(
+    client: &fabric_client_model::Client,
+    observed: Option<&ObservedRealm>,
+    audience: &str,
+) -> IdentityPlan {
+    plan_under(client, observed, audience, HandEditPolicy::Hold)
+}
+
+/// The action that rewrites `web` whole, holding nothing.
+fn rewrite_web() -> IdentityAction {
+    IdentityAction::UpdateOidcClient {
+        client: web_client(),
+        held: HeldEdits::default(),
+    }
+}
 
 /// A realm holding exactly what `acme()` declares, plus two roles the provider
 /// created for itself.
@@ -69,7 +88,7 @@ fn a_realm_that_already_matches_produces_no_actions() {
     assert!(plan.is_converged(), "{:?}", plan.actions());
 }
 
-/// The positive control for `matches()`'s nine terms: enumerates each one
+/// The positive control for `classify::compare`'s terms: enumerates each one
 /// against the fixture the tests below mutate, so a future change to any of
 /// them cannot silently start from a baseline that was already drifting.
 #[test]
@@ -151,6 +170,12 @@ fn an_undeclared_role_is_left_alone_rather_than_deleted() {
 /// changed value — parseable, so this already worked before ADR 0019.
 /// Distinguished from D13 (a URI the model cannot parse at all) and D13b (an
 /// extra, undeclared URI the provider also holds).
+///
+/// Since D01-19b the two halves of a substitution are classified apart. The
+/// undeclared URI is product-owned drift and is written out; the declared
+/// ones that are missing are a narrowing, held and reported rather than
+/// written back. The client is left with no callbacks — fail closed, and
+/// visible as `handEdited` until an operator re-asserts.
 #[test]
 fn an_application_client_with_a_changed_redirect_uri_is_updated() {
     let mut realm = converged_realm();
@@ -173,7 +198,20 @@ fn an_application_client_with_a_changed_redirect_uri_is_updated() {
 
     let plan = plan(&acme(), Some(&realm), AUDIENCE);
 
-    assert_eq!(plan.actions(), [IdentityAction::UpdateOidcClient(web_client())]);
+    assert_eq!(
+        plan.actions(),
+        [IdentityAction::UpdateOidcClient {
+            client: web_client(),
+            held: HeldEdits {
+                removed_redirect_uris: web_client().redirect.uris().iter().cloned().collect(),
+                ..HeldEdits::default()
+            },
+        }]
+    );
+    assert_eq!(
+        plan.hand_edits(),
+        [hand_edit(HandEditedField::DeclaredRedirectUriRemoved)]
+    );
 }
 
 /// D13b. Every declared URI is present and parseable, but the provider also
@@ -192,7 +230,7 @@ fn an_extra_redirect_uri_the_provider_holds_is_drift() {
 
     let plan = plan(&acme(), Some(&realm), AUDIENCE);
 
-    assert_eq!(plan.actions(), [IdentityAction::UpdateOidcClient(web_client())]);
+    assert_eq!(plan.actions(), [rewrite_web()]);
 }
 
 /// D13. An observed redirect URI this model cannot parse is drift, not
@@ -201,7 +239,7 @@ fn an_extra_redirect_uri_the_provider_holds_is_drift() {
 /// client to rewrite.
 ///
 /// **Mutation-proved.** With the `existing.unmodellable_redirect_uris == 0`
-/// term deleted from `plan::diff::matches`, this test failed:
+/// term deleted from `plan::diff::matches` (now `plan::classify::compare`), this test failed:
 /// `a_redirect_uri_this_model_cannot_parse_is_drift` reported
 /// `plan.actions() == []` where `[UpdateOidcClient(web_client())]` was
 /// expected, because every other term still matched. Restored, and recorded
@@ -215,7 +253,7 @@ fn a_redirect_uri_this_model_cannot_parse_is_drift() {
 
     let plan = plan(&acme(), Some(&realm), AUDIENCE);
 
-    assert_eq!(plan.actions(), [IdentityAction::UpdateOidcClient(web_client())]);
+    assert_eq!(plan.actions(), [rewrite_web()]);
 }
 
 /// C5 and C6. The provider may hold no PKCE attribute at all — never set, or
@@ -232,7 +270,7 @@ fn a_client_without_a_recognised_challenge_method_is_corrected() {
 
     let plan = plan(&acme(), Some(&realm), AUDIENCE);
 
-    assert_eq!(plan.actions(), [IdentityAction::UpdateOidcClient(web_client())]);
+    assert_eq!(plan.actions(), [rewrite_web()]);
 }
 
 /// E15. ADR 0019's deliberate break: a `v1` document migrates to `pkce: S256`
@@ -251,7 +289,7 @@ fn a_v1_client_is_still_reconciled_with_the_s256_challenge_method() {
 
     let plan = plan(&acme(), Some(&realm), AUDIENCE);
 
-    assert_eq!(plan.actions(), [IdentityAction::UpdateOidcClient(web_client())]);
+    assert_eq!(plan.actions(), [rewrite_web()]);
 }
 
 /// C6a. The audience mapper was removed by hand. ADR 0019 §6: "A client whose
@@ -267,7 +305,7 @@ fn a_client_whose_audience_mapper_was_removed_is_corrected() {
 
     let plan = plan(&acme(), Some(&realm), AUDIENCE);
 
-    assert_eq!(plan.actions(), [IdentityAction::UpdateOidcClient(web_client())]);
+    assert_eq!(plan.actions(), [rewrite_web()]);
 }
 
 /// A mapper that is present but names a different audience is exactly as
@@ -282,7 +320,7 @@ fn a_client_whose_audience_mapper_names_another_audience_is_corrected() {
 
     let plan = plan(&acme(), Some(&realm), AUDIENCE);
 
-    assert_eq!(plan.actions(), [IdentityAction::UpdateOidcClient(web_client())]);
+    assert_eq!(plan.actions(), [rewrite_web()]);
 }
 
 /// A client-level mapper nobody declared, added out of band, is the same
@@ -299,7 +337,7 @@ fn a_client_carrying_a_mapper_nobody_declared_is_corrected() {
 
     let plan = plan(&acme(), Some(&realm), AUDIENCE);
 
-    assert_eq!(plan.actions(), [IdentityAction::UpdateOidcClient(web_client())]);
+    assert_eq!(plan.actions(), [rewrite_web()]);
 }
 
 /// E2. A declared client is always public — see
@@ -315,15 +353,24 @@ fn a_declared_client_switched_to_confidential_is_corrected() {
 
     let plan = plan(&acme(), Some(&realm), AUDIENCE);
 
-    assert_eq!(plan.actions(), [IdentityAction::UpdateOidcClient(web_client())]);
+    assert_eq!(plan.actions(), [rewrite_web()]);
+}
+
+/// One unsupported hand edit on `web`.
+fn hand_edit(field: HandEditedField) -> HandEdit {
+    HandEdit {
+        client: web_client().id,
+        field,
+    }
 }
 
 /// A client disabled by hand — through the provider's own console, not this
-/// platform — is unreachable to every caller, silently: `enabled` was written
-/// once and never observed until this term existed, so every other field
-/// still read as converged while nobody could authenticate through it.
+/// platform — is a narrowing the product does not support (D01-19b). It used
+/// to be corrected on every pass, which re-enabled a client somebody may have
+/// switched off to contain an incident. Now it is held: no write, and a
+/// typed hand edit the status and the console report.
 #[test]
-fn a_client_disabled_by_hand_is_corrected() {
+fn a_client_disabled_by_hand_is_held_not_overwritten() {
     let mut realm = converged_realm();
     if let Some(existing) = realm.clients.get_mut(&web_client().id) {
         existing.enabled = false;
@@ -331,14 +378,13 @@ fn a_client_disabled_by_hand_is_corrected() {
 
     let plan = plan(&acme(), Some(&realm), AUDIENCE);
 
-    assert_eq!(plan.actions(), [IdentityAction::UpdateOidcClient(web_client())]);
+    assert!(plan.is_converged(), "{:?}", plan.actions());
+    assert_eq!(plan.hand_edits(), [hand_edit(HandEditedField::ClientDisabled)]);
 }
 
-/// A client whose standard (authorization-code) flow was switched off by
-/// hand has silently stopped being able to authenticate anyone through it —
-/// the same written-but-unobserved gap `enabled` had.
+/// The standard flow switched off by hand is the same kind of narrowing.
 #[test]
-fn a_client_whose_standard_flow_was_switched_off_is_corrected() {
+fn a_client_whose_standard_flow_was_switched_off_is_held_not_overwritten() {
     let mut realm = converged_realm();
     if let Some(existing) = realm.clients.get_mut(&web_client().id) {
         existing.standard_flow_enabled = false;
@@ -346,14 +392,37 @@ fn a_client_whose_standard_flow_was_switched_off_is_corrected() {
 
     let plan = plan(&acme(), Some(&realm), AUDIENCE);
 
-    assert_eq!(plan.actions(), [IdentityAction::UpdateOidcClient(web_client())]);
+    assert!(plan.is_converged(), "{:?}", plan.actions());
+    assert_eq!(
+        plan.hand_edits(),
+        [hand_edit(HandEditedField::StandardFlowDisabled)]
+    );
 }
 
-/// A post-logout redirect set narrowed by hand is an operator narrowing where
-/// a user can land after logging out — drift the same way a redirect URI
-/// itself would be, and just as unobserved before this term existed.
+/// A declared callback removed by hand narrows where codes may be sent. Held.
 #[test]
-fn a_client_whose_post_logout_set_was_narrowed_is_corrected() {
+fn a_declared_redirect_uri_removed_by_hand_is_held_not_overwritten() {
+    let mut realm = converged_realm();
+    let removed = RedirectUri::try_new("https://www.example.com/silent").unwrap();
+    if let Some(existing) = realm.clients.get_mut(&web_client().id) {
+        existing.redirect_uris.remove(&removed);
+    }
+
+    let plan = plan(&acme(), Some(&realm), AUDIENCE);
+
+    assert!(plan.is_converged(), "{:?}", plan.actions());
+    assert_eq!(
+        plan.hand_edits(),
+        [hand_edit(HandEditedField::DeclaredRedirectUriRemoved)]
+    );
+}
+
+/// The post-logout setting is product-owned: the adapter reports only
+/// whether it is still "every registered redirect URI", so a narrowing and a
+/// widening to somewhere nobody declared look the same, and a widening is
+/// never left in place.
+#[test]
+fn a_client_whose_post_logout_set_was_changed_is_corrected() {
     let mut realm = converged_realm();
     if let Some(existing) = realm.clients.get_mut(&web_client().id) {
         existing.post_logout_redirect_uris_is_every_registered_uri = false;
@@ -361,7 +430,70 @@ fn a_client_whose_post_logout_set_was_narrowed_is_corrected() {
 
     let plan = plan(&acme(), Some(&realm), AUDIENCE);
 
-    assert_eq!(plan.actions(), [IdentityAction::UpdateOidcClient(web_client())]);
+    assert_eq!(plan.actions(), [rewrite_web()]);
+    assert!(plan.hand_edits().is_empty());
+}
+
+/// Product-owned drift on a client that also carries a hand edit is still
+/// corrected, and the write carries the hand edit as the provider holds it —
+/// a correction is never an excuse to overwrite what is held.
+#[test]
+fn product_owned_drift_beside_a_hand_edit_is_corrected_and_the_hand_edit_preserved() {
+    let mut realm = converged_realm();
+    if let Some(existing) = realm.clients.get_mut(&web_client().id) {
+        existing.enabled = false;
+        existing.public = false;
+    }
+
+    let plan = plan(&acme(), Some(&realm), AUDIENCE);
+
+    assert_eq!(
+        plan.actions(),
+        [IdentityAction::UpdateOidcClient {
+            client: web_client(),
+            held: HeldEdits {
+                client_disabled: true,
+                ..HeldEdits::default()
+            },
+        }]
+    );
+    assert_eq!(plan.hand_edits(), [hand_edit(HandEditedField::ClientDisabled)]);
+}
+
+/// Re-asserting writes the whole declaration over every hand edit, and names
+/// what it overwrites.
+#[test]
+fn reasserting_rewrites_a_client_that_carries_only_hand_edits() {
+    let mut realm = converged_realm();
+    if let Some(existing) = realm.clients.get_mut(&web_client().id) {
+        existing.enabled = false;
+        existing.standard_flow_enabled = false;
+    }
+
+    let plan = plan_under(&acme(), Some(&realm), AUDIENCE, HandEditPolicy::Overwrite);
+
+    assert_eq!(plan.actions(), [rewrite_web()]);
+    assert_eq!(
+        plan.hand_edits(),
+        [
+            hand_edit(HandEditedField::ClientDisabled),
+            hand_edit(HandEditedField::StandardFlowDisabled),
+        ]
+    );
+}
+
+/// Re-asserting a client that carries nothing to overwrite changes nothing.
+#[test]
+fn reasserting_a_converged_client_changes_nothing() {
+    let plan = plan_under(
+        &acme(),
+        Some(&converged_realm()),
+        AUDIENCE,
+        HandEditPolicy::Overwrite,
+    );
+
+    assert!(plan.is_converged());
+    assert!(plan.hand_edits().is_empty());
 }
 
 #[test]

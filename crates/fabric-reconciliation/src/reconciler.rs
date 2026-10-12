@@ -1,4 +1,9 @@
 //! Deciding what to change, doing it, and saying what happened.
+//!
+//! In the 121–150 line band: one type whose three entry points — plan,
+//! reconcile, re-assert — share one observe-plan-apply path, which is the
+//! point. A re-assertion that ran a different path from an ordinary pass
+//! could diverge from it in what it observes or how it reports.
 
 mod apply;
 mod outcome;
@@ -10,7 +15,7 @@ use std::sync::Arc;
 use fabric_client_model::Client;
 
 use crate::logging;
-use crate::plan::{self, IdentityPlan};
+use crate::plan::{self, HandEditPolicy, IdentityPlan};
 use crate::provider::{IdentityProvider, ProviderError};
 
 pub use outcome::ReconciliationOutcome;
@@ -41,6 +46,8 @@ impl IdentityReconciler {
 
     /// Works out what would have to change, without changing anything.
     ///
+    /// Unsupported hand edits are held, as an ordinary pass holds them.
+    ///
     /// # Errors
     ///
     /// Returns [`ProviderError`] if the provider's current state could not be
@@ -50,6 +57,36 @@ impl IdentityReconciler {
     /// indistinguishable from "already converged", which is the most
     /// dangerous possible answer to give here.
     pub async fn plan(&self, client: &Client) -> Result<IdentityPlan, ProviderError> {
+        self.plan_under(client, HandEditPolicy::Hold).await
+    }
+
+    /// Brings the provider in line with the desired state, holding every
+    /// unsupported hand edit rather than fighting it (D01-19b).
+    ///
+    /// Idempotent: a second call over an unchanged desired state produces an
+    /// empty plan and makes no changing calls at all — including when a hand
+    /// edit is held, which is what stops a pass that overwrote it and a
+    /// person who re-made it from taking turns forever.
+    pub async fn reconcile(&self, client: &Client) -> ReconciliationOutcome {
+        self.run(client, HandEditPolicy::Hold).await
+    }
+
+    /// Re-asserts the projection: brings the provider in line with the
+    /// desired state, overwriting every unsupported hand edit.
+    ///
+    /// Only an operator's explicit request reaches this, and the caller
+    /// audits it with [`ReconciliationOutcome::overwritten`]. It acts with
+    /// the same provider, and so the same authority, as an ordinary pass.
+    pub async fn reassert(&self, client: &Client) -> ReconciliationOutcome {
+        self.run(client, HandEditPolicy::Overwrite).await
+    }
+
+    /// Observes and plans under `policy`.
+    async fn plan_under(
+        &self,
+        client: &Client,
+        policy: HandEditPolicy,
+    ) -> Result<IdentityPlan, ProviderError> {
         let observed = self.provider.observe_realm(&client.identity.realm).await?;
 
         let audience = self
@@ -57,15 +94,12 @@ impl IdentityReconciler {
             .configured_audience()
             .ok_or(ProviderError::NoAudienceConfigured)?;
 
-        Ok(plan::plan(client, observed.as_ref(), audience))
+        Ok(plan::plan(client, observed.as_ref(), audience, policy))
     }
 
-    /// Brings the provider in line with the desired state.
-    ///
-    /// Idempotent: a second call over an unchanged desired state produces an
-    /// empty plan and makes no changing calls at all.
-    pub async fn reconcile(&self, client: &Client) -> ReconciliationOutcome {
-        let plan = match self.plan(client).await {
+    /// Observes, plans under `policy`, applies, and says what happened.
+    async fn run(&self, client: &Client, policy: HandEditPolicy) -> ReconciliationOutcome {
+        let plan = match self.plan_under(client, policy).await {
             Ok(plan) => plan,
             Err(error @ ProviderError::NoAudienceConfigured) => {
                 logging::planning_refused(client, &error);
@@ -77,15 +111,27 @@ impl IdentityReconciler {
             }
         };
 
-        if plan.is_converged() {
-            logging::already_converged(client);
-            return ReconciliationOutcome::converged();
+        let found = plan.hand_edits().to_vec();
+        let (held, overwritten) = match policy {
+            HandEditPolicy::Hold => (found, Vec::new()),
+            HandEditPolicy::Overwrite => (Vec::new(), found),
+        };
+
+        if !held.is_empty() {
+            logging::hand_edits_held(client, &held);
         }
 
-        logging::applying(client, &plan);
+        if plan.is_converged() {
+            logging::already_converged(client);
+            return ReconciliationOutcome::converged().holding(held);
+        }
+
+        logging::applying(client, &plan, &overwritten);
 
         match apply::apply(self.provider.as_ref(), &plan).await {
-            Ok(()) => ReconciliationOutcome::applied(plan.actions().len()),
+            Ok(()) => ReconciliationOutcome::applied(plan.actions().len())
+                .holding(held)
+                .overwriting(overwritten),
             Err(error) => {
                 logging::apply_failed(client, &error);
                 ReconciliationOutcome::failed(&error)

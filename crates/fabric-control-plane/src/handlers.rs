@@ -31,6 +31,7 @@ mod placements;
 mod platform;
 mod put_identity;
 mod put_product;
+mod reassert_identity;
 mod registries;
 mod secrets;
 mod secrets_path;
@@ -61,6 +62,7 @@ pub(crate) use platform::{
 };
 pub(crate) use put_identity::put_identity;
 pub(crate) use put_product::put_product;
+pub(crate) use reassert_identity::reassert_identity;
 pub(crate) use registries::{
     add_registry_repository, list_registries, register_registry, registry_reads, registry_versions,
     remove_registry, remove_registry_credential, remove_registry_repository, set_registry_credential,

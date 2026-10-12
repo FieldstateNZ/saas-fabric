@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import type { Client } from '../api/types'
 import { useIdentity } from '../hooks/useIdentity'
 import { ApplicationClients } from './ApplicationClients'
+import { ReassertProjection } from './ReassertProjection'
 import { ReconciliationBadge } from './ReconciliationBadge'
 import { RoleEditor } from './RoleEditor'
 
@@ -44,13 +45,14 @@ export function IdentityPanel({ client }: { client: Client }) {
       {identity.error !== null && <p className="error">{identity.error}</p>}
 
       <ReconciliationBadge reconciliation={current.reconciliation} />
+      {current.reconciliation.status === 'handEdited' && (
+        <ReassertProjection busy={identity.saving} onReassert={identity.reassert} />
+      )}
 
       <h3>Realm</h3>
       <p className="identity__realm">
         {current.realm}
-        <span className="identity__note">
-          A client&apos;s realm cannot be changed once it exists.
-        </span>
+        <span className="identity__note">A client&apos;s realm cannot be changed once it exists.</span>
       </p>
 
       <h3>Realm roles</h3>

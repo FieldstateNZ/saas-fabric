@@ -86,6 +86,7 @@ reality.
 | Applied | This configuration is in effect. |
 | Failed | This configuration could not be applied. |
 | Drifted | Something changed this outside SaaS Fabric. It has been corrected. |
+| HandEdited | Someone edited this in the identity provider in a way SaaS Fabric does not support. It has been left in place, not overwritten. The badge lists each edit, and **Re-assert configuration** overwrites them after a confirmation (D01-19b). |
 
 A save answers `pending`, every time, because at that moment it is true.
 

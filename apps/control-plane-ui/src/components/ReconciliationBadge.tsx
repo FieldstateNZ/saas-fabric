@@ -1,4 +1,4 @@
-import type { Reconciliation } from '../api/types'
+import type { HandEdit, Reconciliation } from '../api/types'
 
 /** What each status means, in an operator's words rather than the platform's. */
 const EXPLANATION: Record<Reconciliation['status'], string> = {
@@ -6,6 +6,16 @@ const EXPLANATION: Record<Reconciliation['status'], string> = {
   applied: 'This configuration is in effect.',
   failed: 'This configuration could not be applied.',
   drifted: 'Something changed this outside SaaS Fabric. It has been corrected.',
+  handEdited:
+    'Someone edited this in the identity provider in a way SaaS Fabric does not support. ' +
+    'It has been left in place, not overwritten. Undo the edit there, or re-assert the configuration.',
+}
+
+/** Each hand edit, as an operator would describe it. */
+const HAND_EDIT: Record<HandEdit['field'], string> = {
+  clientDisabled: 'was switched off',
+  standardFlowDisabled: 'had sign-in (the authorization-code flow) switched off',
+  declaredRedirectUriRemoved: 'had a declared callback removed',
 }
 
 /**
@@ -28,6 +38,15 @@ export function ReconciliationBadge({ reconciliation }: { reconciliation: Reconc
       </div>
       <p className="badge__explanation">{EXPLANATION[status]}</p>
       {detail !== null && <p className="badge__detail">{detail}</p>}
+      {reconciliation.handEdits.length > 0 && (
+        <ul className="badge__hand-edits">
+          {reconciliation.handEdits.map((edit) => (
+            <li key={`${edit.client}:${edit.field}`}>
+              <code>{edit.client}</code> {HAND_EDIT[edit.field]}
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   )
 }

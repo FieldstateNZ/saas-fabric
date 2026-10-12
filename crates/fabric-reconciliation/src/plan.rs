@@ -1,10 +1,13 @@
 //! What has to change for a provider to match a client's desired state.
 
+mod classify;
 mod diff;
 #[cfg(test)]
 mod diff_tests;
 
 use fabric_client_model::{OidcClient, RealmName, RoleName};
+
+use crate::provider::{HandEdit, HeldEdits};
 
 pub use diff::plan;
 
@@ -35,9 +38,27 @@ pub enum IdentityAction {
     /// A declared application client is missing.
     CreateOidcClient(OidcClient),
 
-    /// A declared application client exists but does not match its
-    /// declaration.
-    UpdateOidcClient(OidcClient),
+    /// A declared application client exists but a product-owned field no
+    /// longer matches its declaration.
+    UpdateOidcClient {
+        /// The declaration to write.
+        client: OidcClient,
+
+        /// The unsupported hand edits the write must leave in place. Empty
+        /// when the plan re-asserts the projection.
+        held: HeldEdits,
+    },
+}
+
+/// What a plan does with an unsupported hand edit (D01-19b).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum HandEditPolicy {
+    /// Report it and leave it in place. Every ordinary pass.
+    Hold,
+
+    /// Overwrite it with the declaration. Only an operator's explicit,
+    /// audited re-assertion asks for this.
+    Overwrite,
 }
 
 /// Everything that has to change in one realm.
@@ -53,12 +74,24 @@ pub struct IdentityPlan {
 
     /// The changes, in the order they must be applied.
     actions: Vec<IdentityAction>,
+
+    /// The unsupported hand edits found. Held by an ordinary plan, and the
+    /// ones being overwritten by a re-assertion.
+    hand_edits: Vec<HandEdit>,
 }
 
 impl IdentityPlan {
     /// Builds a plan.
-    pub(crate) const fn new(realm: RealmName, actions: Vec<IdentityAction>) -> Self {
-        Self { realm, actions }
+    pub(crate) const fn new(
+        realm: RealmName,
+        actions: Vec<IdentityAction>,
+        hand_edits: Vec<HandEdit>,
+    ) -> Self {
+        Self {
+            realm,
+            actions,
+            hand_edits,
+        }
     }
 
     /// The realm this plan is about.
@@ -71,6 +104,15 @@ impl IdentityPlan {
     #[must_use]
     pub fn actions(&self) -> &[IdentityAction] {
         &self.actions
+    }
+
+    /// The unsupported hand edits the provider holds on declared clients.
+    ///
+    /// A plan can be converged and still carry these: nothing product-owned
+    /// needs writing, and the hand edits are deliberately not written over.
+    #[must_use]
+    pub fn hand_edits(&self) -> &[HandEdit] {
+        &self.hand_edits
     }
 
     /// Whether the provider already matches the desired state.

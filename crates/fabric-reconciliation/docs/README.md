@@ -43,7 +43,7 @@ records that it is deliberately not made here.
 desired state to Git; this crate makes a provider match it. Different events,
 failing independently — and the gap between them is visible rather than hidden.
 
-## The four statuses
+## The five statuses
 
 | Status | Means | Who fixes it |
 |---|---|---|
@@ -51,6 +51,7 @@ failing independently — and the gap between them is visible rather than hidden
 | `Applied` | The provider matches the desired state | — |
 | `Failed` | The last pass could not converge it | Depends on the detail |
 | `Drifted` | The provider had stopped matching a desired state already converged | Nobody, but somebody should know |
+| `HandEdited` | The provider holds a hand edit the product does not support, left in place (D01-19b) | An operator: undo it, or re-assert |
 
 `Drifted` is the one that is easy to leave out and expensive to lack. Without
 it, an out-of-band change to a realm that reconciliation quietly corrects looks
@@ -62,36 +63,51 @@ pass that changed something was ordinary convergence or drift depends on
 history, so `status::transition` decides it from the previous report — and it
 is written down once, there, rather than inside the store.
 
-## What "matches" compares
+## What the comparison sorts a difference into (D01-19b)
 
-An existing application client matches its declaration only when all of the
-following hold, and any one failing produces `UpdateOidcClient`:
+A declared client is the product's projection into the provider. Every
+difference between an existing client and its declaration is one of two
+kinds, decided in `plan::classify`:
 
-- it is still **public** — a declared client can never be confidential;
-- the provider holds **zero** redirect URIs this model could not parse
-  (`unmodellable_redirect_uris == 0`) — a value the model cannot read is
-  drift, not silence, because it is exactly the out-of-band edit reconciliation
-  exists to catch;
-- its redirect URIs equal the declared set exactly — a legitimate extra entry
-  the provider holds is drift too, the same as a missing one;
-- its PKCE challenge method equals the declared one — an attribute the
-  provider holds that this model cannot read reads as absent, and absent is
-  drift;
-- its audience mapper asserts the deployment's configured audience — removed,
-  naming a different audience, or duplicated (a client carrying more than one
-  mapper reads as having none of them — see `ObservedOidcClient::audience_mapper`),
-  all count as drift, because any of them leaves the edge's `aud` check
-  refusing every token the client issues;
-- it carries **no other protocol mappers** (`other_protocol_mappers == 0`) —
-  a client-level mapper nobody declared, added out of band, is corrected the
-  same way an absent audience mapper is: the next sweep rewrites the client's
-  whole mapper set down to this platform's own;
-- it is still **enabled**, and its **standard flow** is still enabled — a
-  client switched off, or with authorization-code disabled, by hand answers
-  nobody, silently;
-- its post-logout redirect attribute still names **every registered URI** —
-  narrowed by hand, it is an operator narrowing where a user can land after
-  logging out.
+**Product-owned drift — always corrected with `UpdateOidcClient`.** Each of
+these widens what the client can do, or breaks the edge's contract, so it is
+never left in place:
+
+- it is no longer **public** — a declared client can never be confidential;
+- the provider holds a redirect URI this model could not parse
+  (`unmodellable_redirect_uris != 0`) — attacker-influenced, never held;
+- it holds a redirect URI nobody declared (D13b);
+- its PKCE challenge method is not the declared one — an attribute the model
+  cannot read reads as absent, and absent is drift;
+- its audience mapper does not assert the deployment's configured audience —
+  removed, naming another audience, or duplicated (more than one reads as
+  none — see `ObservedOidcClient::audience_mapper`);
+- it carries **other protocol mappers** (`other_protocol_mappers != 0`) —
+  corrected by rewriting the client's whole mapper set;
+- its post-logout attribute no longer names **every registered URI** — the
+  adapter reports only whether it is still that literal, so a narrowing and a
+  widening look the same, and a widening is never held.
+
+**Unsupported hand edits — held, not overwritten.** Each of these only
+narrows the client, and overwriting it on every pass is the "silently
+fighting" D01-19b refuses:
+
+- the client is **disabled** (`clientDisabled`) — possibly incident
+  containment, which re-enabling automatically would undo;
+- its **standard flow** is off (`standardFlowDisabled`);
+- a **declared redirect URI is missing** (`declaredRedirectUriRemoved`).
+
+A held edit is listed in `IdentityPlan::hand_edits` and the pass is recorded
+as `HandEdited`. A client carrying *only* held edits plans no write, so
+repeated passes cost one read each and never loop. A client that also has
+product-owned drift is written with every held edit preserved
+(`UpdateOidcClient { held }`; the port's `update_oidc_client` takes the
+`HeldEdits`). Only `IdentityReconciler::reassert` — an operator's explicit,
+audited request — plans under `HandEditPolicy::Overwrite` and writes the
+declaration over them.
+
+Fields the adapter neither reads nor writes — description, web origins,
+consent, client scopes, token lifespans, themes — are **tolerated**.
 
 **The audience is provider configuration, not a document field.** A client
 desired-state document has no field to name its own audience — see ADR 0019

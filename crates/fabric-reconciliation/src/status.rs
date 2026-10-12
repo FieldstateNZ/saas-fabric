@@ -12,7 +12,7 @@ pub use store::ReconciliationStatusStore;
 /// Where a client's identity stands between what Git says and what the
 /// provider holds.
 ///
-/// # The four are not four flavours of the same thing
+/// # The five are not five flavours of the same thing
 ///
 /// | Status | Means | Who fixes it |
 /// |---|---|---|
@@ -20,11 +20,17 @@ pub use store::ReconciliationStatusStore;
 /// | `Applied` | The provider matches the desired state | — |
 /// | `Failed` | The last pass could not converge it | Depends on the detail |
 /// | `Drifted` | The provider had stopped matching a desired state already converged | Nobody, but somebody should know |
+/// | `HandEdited` | The provider holds a hand edit the product does not support, left in place | An operator: remove the edit, or re-assert the projection |
 ///
 /// `Drifted` is the one that is easy to leave out and expensive to lack.
 /// Without it, an out-of-band change to a realm that reconciliation quietly
 /// corrects looks exactly like an ordinary pass, so nobody ever learns that
 /// something outside SaaS Fabric is editing the realms it owns.
+///
+/// `HandEdited` is `Drifted`'s counterpart for an edit the product will not
+/// silently overwrite (D01-19b): a client switched off, its authorization-code
+/// flow switched off, or a declared callback removed. Every product-owned
+/// field is still converged; the report's `hand_edits` names what was held.
 ///
 /// # `Pending` is why a successful write is not a success
 ///
@@ -33,7 +39,7 @@ pub use store::ReconciliationStatusStore;
 /// `Pending` rather than `Applied` because at that moment the second event has
 /// provably not happened yet (ADR 0008).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "camelCase")]
 pub enum ReconciliationStatus {
     /// The desired state has not been reconciled since it last changed.
     Pending,
@@ -47,10 +53,15 @@ pub enum ReconciliationStatus {
     /// The provider had diverged from a desired state that was already
     /// converged.
     Drifted,
+
+    /// The provider holds an unsupported hand edit, which reconciliation
+    /// reports and leaves in place until an operator removes it or
+    /// re-asserts the projection.
+    HandEdited,
 }
 
 impl ReconciliationStatus {
-    /// A stable lowercase name, for log fields and API responses.
+    /// A stable name, for log fields and API responses.
     ///
     /// Kept beside the serde attribute rather than derived from it, because
     /// the two are read by different consumers and neither should be able to
@@ -62,6 +73,7 @@ impl ReconciliationStatus {
             Self::Applied => "applied",
             Self::Failed => "failed",
             Self::Drifted => "drifted",
+            Self::HandEdited => "handEdited",
         }
     }
 }

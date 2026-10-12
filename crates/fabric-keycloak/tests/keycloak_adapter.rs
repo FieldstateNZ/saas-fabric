@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex};
 use fabric_client_model::{ClientProtocol, OidcClient, OidcClientId, PkceMethod, RealmName, RoleName};
 use fabric_client_model::{RedirectStrategy, RedirectStrategyKind, RedirectUri};
 use fabric_keycloak::KeycloakIdentityProvider;
-use fabric_reconciliation::{IdentityProvider, ProviderError};
+use fabric_reconciliation::{HeldEdits, IdentityProvider, ProviderError};
 use support::{config_for_tests, FakeKeycloak, RecordedRequest};
 
 /// The audience this test suite's provider is configured with. The value
@@ -202,7 +202,7 @@ async fn updating_a_client_addresses_keycloaks_internal_id_not_the_client_id() {
     .await;
 
     provider(&keycloak)
-        .update_oidc_client(&realm(), &web_client())
+        .update_oidc_client(&realm(), &web_client(), &HeldEdits::default())
         .await
         .unwrap();
 
@@ -224,7 +224,7 @@ async fn a_client_that_vanished_between_observation_and_update_is_created() {
     .await;
 
     provider(&keycloak)
-        .update_oidc_client(&realm(), &web_client())
+        .update_oidc_client(&realm(), &web_client(), &HeldEdits::default())
         .await
         .unwrap();
 

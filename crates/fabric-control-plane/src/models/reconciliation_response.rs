@@ -1,6 +1,6 @@
 //! What is known about whether desired state has taken effect.
 
-use fabric_reconciliation::ReconciliationStatus;
+use fabric_reconciliation::{HandEdit, ReconciliationStatus};
 
 /// Reconciliation state for one client, as an operator sees it.
 ///
@@ -29,4 +29,11 @@ pub(crate) struct ReconciliationResponse {
     /// describes the revision being shown, so an operator is never given a
     /// stale explanation next to fresh state.
     pub(crate) detail: Option<String>,
+
+    /// The unsupported hand edits the provider holds and the last pass left
+    /// in place (D01-19b), each naming the application client and the field.
+    /// Non-empty exactly when `status` is `handEdited`. An operator either
+    /// removes them in the provider or re-asserts the projection
+    /// (`POST /api/clients/{clientId}/identity/reassertion`).
+    pub(crate) hand_edits: Vec<HandEdit>,
 }

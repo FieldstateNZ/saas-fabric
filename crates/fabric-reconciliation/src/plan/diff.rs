@@ -1,17 +1,16 @@
 //! Comparing desired state with observed state.
 //!
-//! In the 121–150 line band: one concept, `plan` and the `matches` predicate
-//! it calls, and `matches`'s nine terms each need a sentence saying which
-//! kind of drift they catch. Splitting the predicate from the function that
-//! calls it, or the terms from their explanation, would separate one
-//! comparison from the reasons it exists.
+//! Which client difference is product-owned drift and which is an
+//! unsupported hand edit is decided in `classify`; this file only turns the
+//! answer into actions, under a [`HandEditPolicy`].
 
 use std::collections::BTreeSet;
 
-use fabric_client_model::{Client, OidcClient, RedirectStrategy, RedirectUri};
+use fabric_client_model::Client;
 
-use crate::plan::{IdentityAction, IdentityPlan};
-use crate::provider::{ObservedOidcClient, ObservedRealm};
+use crate::plan::classify::compare;
+use crate::plan::{HandEditPolicy, IdentityAction, IdentityPlan};
+use crate::provider::{HandEdit, HeldEdits, ObservedRealm};
 
 /// Works out what has to change for `observed` to match `client`.
 ///
@@ -28,10 +27,22 @@ use crate::provider::{ObservedOidcClient, ObservedRealm};
 /// `client` or `observed` because it belongs to neither: it is not something
 /// a desired-state document says, and it is not a fact a realm holds about
 /// itself, but adapter configuration threaded into this comparison.
+///
+/// `policy` decides what happens to an unsupported hand edit. Under
+/// [`HandEditPolicy::Hold`] a client carrying only those is left alone, and
+/// one that also has product-owned drift is written with them preserved; both
+/// are listed in [`IdentityPlan::hand_edits`]. Under
+/// [`HandEditPolicy::Overwrite`] every client carrying one is written whole.
 #[must_use]
-pub fn plan(client: &Client, observed: Option<&ObservedRealm>, configured_audience: &str) -> IdentityPlan {
+pub fn plan(
+    client: &Client,
+    observed: Option<&ObservedRealm>,
+    configured_audience: &str,
+    policy: HandEditPolicy,
+) -> IdentityPlan {
     let identity = &client.identity;
     let mut actions = Vec::new();
+    let mut hand_edits = Vec::new();
 
     let empty = ObservedRealm {
         display_name: client.display_name.clone(),
@@ -63,73 +74,32 @@ pub fn plan(client: &Client, observed: Option<&ObservedRealm>, configured_audien
     }
 
     for declared in &identity.clients {
-        match current.clients.get(&declared.id) {
-            None => actions.push(IdentityAction::CreateOidcClient(declared.clone())),
-            Some(existing) if !matches(declared, existing, configured_audience) => {
-                actions.push(IdentityAction::UpdateOidcClient(declared.clone()));
-            }
-            Some(_) => {}
+        let Some(existing) = current.clients.get(&declared.id) else {
+            actions.push(IdentityAction::CreateOidcClient(declared.clone()));
+            continue;
+        };
+
+        let comparison = compare(declared, existing, configured_audience);
+        hand_edits.extend(comparison.held.fields().into_iter().map(|field| HandEdit {
+            client: declared.id.clone(),
+            field,
+        }));
+
+        let (write, held) = match policy {
+            HandEditPolicy::Hold => (comparison.drift, comparison.held),
+            HandEditPolicy::Overwrite => (
+                comparison.drift || !comparison.held.is_empty(),
+                HeldEdits::default(),
+            ),
+        };
+
+        if write {
+            actions.push(IdentityAction::UpdateOidcClient {
+                client: declared.clone(),
+                held,
+            });
         }
     }
 
-    IdentityPlan::new(identity.realm.clone(), actions)
-}
-
-/// Whether an existing application client already matches its declaration.
-///
-/// Nine terms, and every one of them is a way a client can have drifted:
-///
-/// - `existing.public` — a declared client is always public (see
-///   [`OidcClient`] for why a confidential one cannot be expressed), so one
-///   the provider now holds as confidential does not match.
-/// - `existing.unmodellable_redirect_uris == 0` — a redirect URI the provider
-///   holds that this model cannot parse is drift, not silence (ADR 0019 §6).
-///   A client whose declared set is fully present *and* carries one extra,
-///   unmodellable entry has still drifted from its declaration.
-/// - `existing.redirect_uris == declared_uris(&declared.redirect)` — compared
-///   as **sets**, so an extra entry the provider holds beyond what is
-///   declared is drift too, exactly as a missing one is (D13b).
-/// - `existing.challenge_method == Some(declared.pkce)` — `challenge_method`
-///   is `Option<PkceMethod>`, so an attribute the provider holds that this
-///   model cannot read and an attribute that is simply absent both read
-///   `None`, which is not `Some(S256)`. No `Plain` variant exists anywhere in
-///   this model, and none is needed for a downgrade to be seen as drift.
-/// - `existing.audience_mapper.as_deref() == Some(configured_audience)` — a
-///   mapper that was removed by hand, or that names a different audience,
-///   stops matching. `audience_mapper` also reads `None` when the provider
-///   holds more than one mapper (see its own rustdoc); either way, without
-///   this term the mapper would be written once and could silently
-///   disappear, taking the edge's `aud` check down with it.
-/// - `existing.other_protocol_mappers == 0` — a client-level mapper nobody
-///   declared, added out of band, is the same drift as the audience mapper
-///   going missing: `declaration()` writes a client's whole mapper set and
-///   the provider's `PUT` replaces it, so an extra mapper is corrected the
-///   same way. Without this term a mapper nobody wrote through this platform
-///   would sit unnoticed beside the one it did write.
-/// - `existing.enabled` — a declared client is always enabled, so one
-///   switched off by hand answers nobody while every other term still
-///   matches.
-/// - `existing.standard_flow_enabled` — a declared client exists to run the
-///   authorization-code flow, so one with it switched off has silently
-///   stopped being able to authenticate anyone through it.
-/// - `existing.post_logout_redirect_uris_is_every_registered_uri` — the
-///   provider always writes this as the shorthand for "every registered
-///   redirect URI"; an operator narrowing it by hand is narrowing where a
-///   user can land after logging out.
-fn matches(declared: &OidcClient, existing: &ObservedOidcClient, configured_audience: &str) -> bool {
-    existing.public
-        && existing.unmodellable_redirect_uris == 0
-        && existing.redirect_uris == declared_uris(&declared.redirect)
-        && existing.challenge_method == Some(declared.pkce)
-        && existing.audience_mapper.as_deref() == Some(configured_audience)
-        && existing.other_protocol_mappers == 0
-        && existing.enabled
-        && existing.standard_flow_enabled
-        && existing.post_logout_redirect_uris_is_every_registered_uri
-}
-
-/// The redirect URIs a declaration carries, as the set [`matches`] compares
-/// against what the provider reports.
-fn declared_uris(redirect: &RedirectStrategy) -> BTreeSet<RedirectUri> {
-    redirect.uris().iter().cloned().collect()
+    IdentityPlan::new(identity.realm.clone(), actions, hand_edits)
 }

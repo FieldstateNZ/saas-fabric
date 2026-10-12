@@ -183,6 +183,28 @@ body {
 .badge--drifted {
   border-left-color: var(--drifted);
 }
+/* A held hand edit needs a person, as a failure does, but nothing failed. */
+.badge--handEdited {
+  border-left-color: var(--pending);
+}
+
+.badge__hand-edits {
+  margin: 0.5rem 0 0;
+  padding-left: 1.25rem;
+}
+
+.reassert {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+.reassert__warning {
+  flex-basis: 100%;
+  margin: 0;
+}
 
 .badge__row {
   display: flex;

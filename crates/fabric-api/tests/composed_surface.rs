@@ -36,15 +36,12 @@ use std::time::{Duration, Instant};
 use axum::body::Body;
 use axum::Router;
 use examples_support::probe_connector::{Health, ProbeConnector};
+use examples_support::served::served_router;
 use examples_support::stub_connector::StubConnector;
-use examples_support::{catalog, config, data_sources, tenants};
-use fabric_api::health::{health_routes, HealthState};
-use fabric_api::startup::compose;
-use fabric_connector::{ConnectorRegistry, DataConnector};
+use examples_support::{config, tenants};
 use fabric_core::SystemClock;
-use fabric_data_api::{build_data_api, DataAuthorization, API_PREFIX};
+use fabric_data_api::API_PREFIX;
 use fabric_identity::{build_identity, TrustedIngressReader};
-use fabric_tenant_runtime::{DataSourceRegistry, RuntimeResolver, TenantRegistry};
 use http::{Request, StatusCode};
 use tower::ServiceExt;
 
@@ -64,60 +61,10 @@ fn router() -> Router {
             .as_str(),
     );
 
-    router_with(
+    served_router(
         Duration::from_secs(config().request_timeout_seconds),
         Arc::new(stub),
     )
-}
-
-/// The same assembly, with the Data API's timeout budget and the registered
-/// connector chosen by the caller.
-fn router_with(request_timeout: Duration, connector: Arc<dyn DataConnector>) -> Router {
-    let config = config();
-
-    let tenant_registry = Arc::new(TenantRegistry::new());
-    assert!(
-        tenant_registry.apply_all(tenants()).is_ok(),
-        "the fixture must install; a first load this test cannot use is a broken fixture"
-    );
-
-    let data_source_registry = Arc::new(DataSourceRegistry::new());
-    assert!(
-        data_source_registry.apply_all(data_sources()).is_ok(),
-        "the fixture must install; a first load this test cannot use is a broken fixture"
-    );
-
-    let identity = build_identity(
-        config.identity.clone(),
-        Arc::new(TrustedIngressReader::new(SystemClock::shared())),
-    )
-    .expect("the example identity configuration must build");
-
-    let runtime = Arc::new(RuntimeResolver::new(tenant_registry, data_source_registry));
-
-    // Registration requires at least one connector; nothing here reaches it
-    // for execution, and it refuses every operation if anything tries.
-    let connectors = ConnectorRegistry::new().with(connector);
-
-    let data = build_data_api(
-        &config.data_api,
-        catalog(),
-        DataAuthorization::default(),
-        Arc::clone(&runtime),
-        connectors.clone(),
-        Arc::clone(&identity),
-    )
-    .expect("the Data API must build from the example configuration");
-
-    let health = health_routes(HealthState {
-        runtime,
-        publication: Arc::default(),
-        connectors,
-        identity,
-        administrator_role: config.health_detail_role.clone(),
-    });
-
-    compose(data, health, request_timeout)
 }
 
 async fn status_of(path: &str) -> StatusCode {
@@ -274,7 +221,7 @@ async fn the_probes_sit_outside_the_data_api_timeout_scope() {
     // to `data`, this would be a 504 — which a kubelet records as a failed
     // probe and answers by pulling the replica, the precise outcome the
     // readiness policy exists to prevent.
-    let router = router_with(
+    let router = served_router(
         Duration::from_millis(1),
         Arc::new(ProbeConnector::new(
             "postgres-au-east",

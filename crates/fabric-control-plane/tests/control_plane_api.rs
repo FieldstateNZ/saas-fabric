@@ -529,6 +529,78 @@ async fn a_custom_scheme_strategy_is_refused_at_the_api_naming_the_deferral() {
     assert!(message.contains("Lane E phase 2"), "{message}");
 }
 
+/// A `v2` client document whose one application client declares
+/// `customScheme`. The API refuses to write one (the test above), so only a
+/// write that skipped the model, such as a hand edit to the repository, can
+/// leave it there.
+const STORED_CUSTOM_SCHEME: &str = r"apiVersion: fabric.fieldstate.nz/v2
+kind: Client
+metadata:
+  name: desktop
+spec:
+  displayName: Desktop
+  identity:
+    realm: desktop
+    roles:
+      - Client Realm Administrator
+      - Client Realm User
+    clients:
+      - id: desktop
+        type: oidc
+        pkce: s256
+        redirect:
+          strategy: customScheme
+          scheme: nz.fieldstate.slipway
+          uris:
+            - nz.fieldstate.slipway:/callback
+";
+
+/// What one stored client document reads as, through the identity route and
+/// the client's overview.
+async fn reading(text: &str) -> [(StatusCode, serde_json::Value); 2] {
+    let plane = control_plane();
+    plane
+        .repository
+        .insert_unvalidated(ClientId::try_new("desktop").unwrap(), text)
+        .unwrap();
+
+    let mut answers = Vec::new();
+    for path in ["/api/clients/desktop/identity", "/api/clients/desktop"] {
+        let response = send(
+            &plane.router,
+            as_operator("GET", path).body(Body::empty()).unwrap(),
+        )
+        .await;
+        answers.push((response.status(), json(response).await));
+    }
+
+    answers.try_into().unwrap()
+}
+
+#[tokio::test]
+async fn a_stored_custom_scheme_client_makes_the_document_unreadable() {
+    // ADR 0019 §4: on the read path a refusal is the platform's problem, not
+    // the caller's. The whole document becomes unreadable, `500
+    // desired_state_invalid`, rather than the client being served with the
+    // one application client dropped or coerced into another strategy.
+    for (status, body) in reading(STORED_CUSTOM_SCHEME).await {
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+        assert_eq!(body["error"]["code"], "desired_state_invalid");
+    }
+
+    // The control: the same document with a strategy this phase writes reads
+    // back. So the refusal above is the deferred strategy, and not some other
+    // fault in a hand-written fixture.
+    let carried = STORED_CUSTOM_SCHEME
+        .replace("strategy: customScheme", "strategy: development")
+        .replace("          scheme: nz.fieldstate.slipway\n", "")
+        .replace("nz.fieldstate.slipway:/callback", "http://127.0.0.1/callback");
+
+    for (status, body) in reading(&carried).await {
+        assert_eq!(status, StatusCode::OK, "{body}");
+    }
+}
+
 #[tokio::test]
 async fn a_client_carrying_a_callback_its_strategy_does_not_admit_is_refused_at_the_api() {
     // ADR 0019 §3: a `claimedHttps` strategy admits only public https

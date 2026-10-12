@@ -21,3 +21,6 @@ coverage/
 .fabric-state.next
 
 .local/
+
+__pycache__/
+*.pyc

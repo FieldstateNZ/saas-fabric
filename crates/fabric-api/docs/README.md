@@ -182,6 +182,12 @@ guarantee that example has not drifted from the code.
   the way a hand-assembled comparison router once did (missing
   `TimeoutLayer`, missing probe routes, missing `TraceLayer` — the gap that
   let an unbounded `/ready` through review).
+- `tests/edge_trust_contract.rs` — ADR 0019 §1's runtime half under D01-5's
+  single-route model, over the same served router. The runtime serves no path
+  into tenant data except `/v1/data`. Every route under it refuses a request
+  with no bearer before a connector is reached. The edge's skew ceiling
+  (§G7) is still the smallest downstream allowance; that test is why
+  `fabric-fga-auth` is a dev-dependency.
 - `tests/example_configuration.rs` / `tests/example_state.rs` — load and
   cross-validate the shipped `examples/` configuration and state files
   (every tenant binding's DataSource exists, every DataSource's connector is

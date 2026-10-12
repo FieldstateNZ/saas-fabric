@@ -6,6 +6,7 @@ mod errors;
 mod in_memory;
 mod in_memory_behaviour;
 mod in_memory_documents;
+mod in_memory_hand_edit;
 mod in_memory_records;
 mod stored_client;
 mod unconfigured;

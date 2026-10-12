@@ -3,6 +3,7 @@
 use fabric_core::Clock;
 use fabric_reconciliation::{IdentityReconciler, ReconciliationStatusStore};
 
+use crate::declaration_ledger::PassLedgers;
 use crate::integration::{IntegrationHealth, Observation};
 use crate::logging;
 use crate::repository::ClientRepository;
@@ -27,6 +28,7 @@ use crate::repository::ClientRepository;
 pub(crate) async fn run(
     repository: &dyn ClientRepository,
     reconciler: &IdentityReconciler,
+    ledgers: Option<&PassLedgers<'_>>,
     statuses: &ReconciliationStatusStore,
     health: &IntegrationHealth,
     clock: &dyn Clock,
@@ -56,7 +58,17 @@ pub(crate) async fn run(
         // D01-19b: a stored projected entry that is not the stored
         // document's own projection is not converged as though it were.
         let withheld = stored.document.projection_check().withheld();
-        let outcome = reconciler.reconcile(client, &withheld).await;
+        // D01-15: what this client's ledger, scoped to the revision being
+        // converged, says was last written.
+        let outcome = match ledgers {
+            Some(ledgers) => {
+                ledgers
+                    .scope(reconciler, &client.id, &stored.revision)
+                    .reconcile(client, &withheld)
+                    .await
+            }
+            None => reconciler.reconcile(client, &withheld).await,
+        };
         let status = statuses.record(
             &client.id,
             stored.revision.clone(),

@@ -94,6 +94,7 @@ pub use audit_trail::{
 };
 pub use client_secrets::{ClientSecrets, SecretMetadata, SecretPath, SecretValues, SecretsError};
 pub use config::{ControlPlaneConfig, OperatorConfig, ReconciliationConfig};
+pub use declaration_ledger::DeclarationLedgers;
 pub use errors::{ControlPlaneError, RealmUnavailableReason};
 pub use fabric_client_model::SecretNamespace;
 pub use fabric_component::Repository;

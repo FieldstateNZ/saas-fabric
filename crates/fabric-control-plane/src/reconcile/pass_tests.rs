@@ -27,6 +27,7 @@ async fn a_sweep_reconciles_every_client_and_records_the_result() {
     let swept = pass::run(
         repository.as_ref(),
         &reconciler,
+        None,
         &statuses,
         &IntegrationHealth::new(),
         &FixedClock,
@@ -52,6 +53,7 @@ async fn a_second_sweep_changes_nothing() {
     pass::run(
         repository.as_ref(),
         &reconciler,
+        None,
         &statuses,
         &IntegrationHealth::new(),
         &FixedClock,
@@ -61,6 +63,7 @@ async fn a_second_sweep_changes_nothing() {
     pass::run(
         repository.as_ref(),
         &reconciler,
+        None,
         &statuses,
         &IntegrationHealth::new(),
         &FixedClock,
@@ -87,6 +90,7 @@ async fn a_provider_failure_is_recorded_and_desired_state_is_untouched() {
     pass::run(
         repository.as_ref(),
         &reconciler,
+        None,
         &statuses,
         &IntegrationHealth::new(),
         &FixedClock,
@@ -112,6 +116,7 @@ async fn an_unreadable_repository_leaves_recorded_status_alone() {
     pass::run(
         repository.as_ref(),
         &reconciler,
+        None,
         &statuses,
         &IntegrationHealth::new(),
         &FixedClock,
@@ -123,6 +128,7 @@ async fn an_unreadable_repository_leaves_recorded_status_alone() {
     let swept = pass::run(
         repository.as_ref(),
         &reconciler,
+        None,
         &statuses,
         &IntegrationHealth::new(),
         &FixedClock,

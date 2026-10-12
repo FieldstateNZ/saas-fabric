@@ -36,6 +36,7 @@ pub(crate) async fn sweep(
     let clients = reconcile::run(
         state.desired_state.current().as_ref(),
         &reconciler,
+        crate::declaration_ledger::for_operator(state, operator).as_ref(),
         state.service.statuses(),
         state.health.as_ref(),
         state.service.clock(),
@@ -83,6 +84,10 @@ pub(crate) async fn reassert(
         return Err(ControlPlaneError::RevisionConflict);
     }
     crate::projection::require(&stored.document, client)?;
+    let reconciler = match crate::declaration_ledger::for_operator(state, operator) {
+        Some(ledgers) => ledgers.scope(&reconciler, client, &stored.revision),
+        None => reconciler,
+    };
 
     let outcome = reconciler.reassert(stored.document.client()).await;
     let status = state.service.statuses().record(

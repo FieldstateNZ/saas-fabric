@@ -9,6 +9,11 @@ this one's ports; only the composition root sees them.
 
 ## Public surface
 
+- `DeclarationLedgers` (D01-15, partial) — `for_pass(&ClientId, &ClientRevision, operator) ->
+  Arc<dyn DeclarationLedger>`: each pass's ledger, scoped to the revision it converges.
+  `ControlPlaneDeps.declaration_ledgers` is `None` in every deployment until a protected
+  continuity store exists, so host moves are held until re-asserted; tests hand in the
+  in-memory ledger.
 - `build_control_plane(&ControlPlaneConfig, ControlPlaneDeps) -> Result<ControlPlaneServices, String>`;
   `ControlPlaneServices { router, statuses, health, platform_sweeps, publisher,
   publication }`. Starting the reconciliation loop, the platform sweep, and the

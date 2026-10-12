@@ -13,12 +13,20 @@
 //!
 //! # What may answer
 //!
-//! Only a durable record Fabric appended itself, bound to the client, its
-//! realm and the digest of each declared callback: not desired-state bytes,
-//! which anyone with write access edits; not provider metadata, which a hand
-//! edit can change; and not a process cache, which a restart empties. A
-//! deployment with no ledger knows no baseline, and every ambiguous
+//! Only trusted provenance of the last successful projection, recorded by
+//! Fabric before its write and bound to the client's identity instance, the
+//! revision the pass converged and the digest of each declared callback: not
+//! desired-state bytes, which anyone with write access edits and a revert can
+//! replay; not provider metadata, which a hand edit can change; not a process
+//! cache, which a restart empties; and not an after-the-fact audit trail. An
+//! implementation answers only with provenance it can vouch is current for
+//! the client's identity instance: stale, missing or unenrolled provenance is
+//! absent. A deployment with no ledger knows no baseline, and every ambiguous
 //! transition is held until an operator re-asserts.
+//!
+//! **Partial.** The protected continuity store that would implement this
+//! durably does not exist yet; until it does, the control plane is built with
+//! no ledger. `testing::InMemoryDeclarationLedger` is test-only.
 //!
 //! # Two stages, so a failure is never a false baseline
 //!

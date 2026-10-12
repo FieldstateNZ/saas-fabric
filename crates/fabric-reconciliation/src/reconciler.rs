@@ -46,6 +46,7 @@ pub use outcome::ReconciliationOutcome;
 ///
 /// [`plan`](Self::plan) does return a `Result`, because a caller asking only
 /// what *would* change has nothing to record and genuinely wants the failure.
+#[derive(Clone)]
 pub struct IdentityReconciler {
     /// The provider being converged.
     provider: Arc<dyn IdentityProvider>,

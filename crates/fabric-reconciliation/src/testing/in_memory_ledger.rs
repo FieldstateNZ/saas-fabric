@@ -4,16 +4,22 @@
 //! Process-only, which is exactly what the `ledger` module says production
 //! must not trust; it stands in for a durable one so a test can drive
 //! classification and recording, and refuse on cue.
+//!
+//! In the 121–150 line band: one fake, its failure switches and its port
+//! implementation, which a test drives together.
 
 use std::collections::BTreeSet;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use fabric_client_model::{Client, ClientId, OidcClient, OidcClientId, RealmName};
+use fabric_client_model::{Client, ClientId, ClientRevision, OidcClient, OidcClientId, RealmName};
 
 use crate::ledger::{
     callback_digests, AppliedBaseline, CallbackDigest, DeclarationLedger, LedgerError, WriteStage,
 };
+
+use super::fake_identity_provider::lock;
+use super::ledger_at_revision::AtRevision;
 
 /// One stored record.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -28,6 +34,8 @@ pub struct LedgerRecord {
     pub callbacks: BTreeSet<CallbackDigest>,
     /// Which side of the write.
     pub stage: WriteStage,
+    /// The revision the recording pass converged, when it was scoped to one.
+    pub revision: Option<ClientRevision>,
 }
 
 /// See this module's rustdoc.
@@ -48,45 +56,39 @@ impl InMemoryDeclarationLedger {
     /// Every record, in stored order.
     #[must_use]
     pub fn records(&self) -> Vec<LedgerRecord> {
-        self.records
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone()
+        lock(&self.records).clone()
     }
 
     /// Refuses every later record at `stage`, or none.
     pub fn refuse(&self, stage: Option<WriteStage>) {
-        *self
-            .refusing
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = stage;
+        *lock(&self.refusing) = stage;
     }
 
     /// Makes every later read fail, or succeed again.
     pub fn set_unreadable(&self, unreadable: bool) {
-        *self
-            .unreadable
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = unreadable;
+        *lock(&self.unreadable) = unreadable;
+    }
+
+    /// This ledger, stamping every record with `revision`: what a pass
+    /// converging that revision is handed.
+    #[must_use]
+    pub fn at(self: &Arc<Self>, revision: ClientRevision) -> Arc<dyn DeclarationLedger> {
+        Arc::new(AtRevision {
+            ledger: Arc::clone(self),
+            revision,
+        })
     }
 
     /// Forgets everything, as a deployment with a fresh store would.
     pub fn clear(&self) {
-        self.records
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clear();
+        lock(&self.records).clear();
     }
 }
 
 #[async_trait]
 impl DeclarationLedger for InMemoryDeclarationLedger {
     async fn read(&self, client: &Client) -> Result<AppliedBaseline, LedgerError> {
-        if *self
-            .unreadable
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-        {
+        if *lock(&self.unreadable) {
             return Err(LedgerError::Unreadable {
                 detail: "refused by the test".to_owned(),
             });
@@ -107,27 +109,32 @@ impl DeclarationLedger for InMemoryDeclarationLedger {
         declared: &OidcClient,
         stage: WriteStage,
     ) -> Result<(), LedgerError> {
-        if *self
-            .refusing
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            == Some(stage)
-        {
+        self.append(client, declared, stage, None)
+    }
+}
+
+impl InMemoryDeclarationLedger {
+    pub(super) fn append(
+        &self,
+        client: &Client,
+        declared: &OidcClient,
+        stage: WriteStage,
+        revision: Option<ClientRevision>,
+    ) -> Result<(), LedgerError> {
+        if *lock(&self.refusing) == Some(stage) {
             return Err(LedgerError::Unrecorded {
                 detail: "refused by the test".to_owned(),
             });
         }
 
-        self.records
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .push(LedgerRecord {
-                client: client.id.clone(),
-                realm: client.identity.realm.clone(),
-                declared: declared.id.clone(),
-                callbacks: callback_digests(declared),
-                stage,
-            });
+        lock(&self.records).push(LedgerRecord {
+            client: client.id.clone(),
+            realm: client.identity.realm.clone(),
+            declared: declared.id.clone(),
+            callbacks: callback_digests(declared),
+            stage,
+            revision,
+        });
         Ok(())
     }
 }

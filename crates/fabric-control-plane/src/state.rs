@@ -61,6 +61,10 @@ pub(crate) struct ControlPlaneState {
     /// `None` for the development provider, which converges nothing.
     pub(crate) identity_provider: Option<Arc<dyn crate::IdentityProviderFactory>>,
 
+    /// Each client's declaration ledger (D01-15). `None` until a protected
+    /// continuity store exists: no baseline, so host moves are held.
+    pub(crate) declaration_ledgers: Option<Arc<dyn crate::DeclarationLedgers>>,
+
     /// Where this control plane is reachable from a browser.
     pub(crate) public_base_url: String,
 

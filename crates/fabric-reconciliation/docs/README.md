@@ -112,9 +112,13 @@ it existed), cannot be placed: the client is not written at all under an
 ordinary pass, so nothing it holds is removed, and it is reported as
 `redirectUrisUnconfirmed` until an operator re-asserts. A `Writing` record that
 cannot be appended stops the write before the provider is called. The ledger
-must be durable and Fabric's own — never desired-state bytes, provider
-metadata or a process cache; `fabric-control-plane` keeps it in the audit
-trail.
+must be durable and Fabric's own, bound to the client's identity instance
+and the revision each pass converged — never desired-state bytes, provider
+metadata, a process cache or the after-the-fact audit trail. No such store
+exists yet (the protected continuity state of #108 comment 6119161317), so
+`fabric-control-plane` is built with no ledger and every such move is held:
+this is a partial, guarded slice. `testing::InMemoryDeclarationLedger` proves
+the classification in tests only.
 
 A held edit is listed in `IdentityPlan::hand_edits` and the pass is recorded
 as `HandEdited`. A client carrying *only* held edits plans no write, so

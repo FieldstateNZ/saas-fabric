@@ -36,17 +36,6 @@ impl AuditRecorder {
         }
     }
 
-    /// The trail, when this deployment keeps one: the store the declaration
-    /// ledger reads and appends to (D01-15).
-    pub(crate) fn trail(&self) -> Option<Arc<dyn AuditTrail>> {
-        self.trail.clone()
-    }
-
-    /// The clock records are stamped with.
-    pub(crate) fn clock(&self) -> Arc<dyn Clock> {
-        Arc::clone(&self.clock)
-    }
-
     /// Appends `record` to the trail, if there is one.
     ///
     /// # Why a failure does not fail the operation

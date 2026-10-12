@@ -1,55 +1,50 @@
-//! The declaration ledger over the durable audit trail (D01-15).
+//! Where a pass finds the declaration ledger for one client (D01-15).
 //!
-//! # Why the audit trail
+//! # Partial: no durable adapter exists
 //!
-//! Reconciliation needs a record of what Fabric wrote that nobody else can
-//! write: not desired-state bytes, not provider metadata, not a process
-//! cache (see `fabric_reconciliation`'s `ledger` module). The audit trail is
-//! the one durable store the control plane already has with that property:
-//! append-only, hash-chained per client stream, verified on read. Recording
-//! the baseline there rather than in a second store keeps one history of
-//! what happened to a client, which is also what O5's revert work reads, and
-//! means a Git revert to earlier bytes — which can bring an earlier revision
-//! back (#159) — cannot bring an earlier baseline back with it: the baseline
-//! is bound to the realm and each callback's digest, not to a revision.
+//! The ledger has to be trusted provenance of the last successful
+//! projection, bound to the client's identity instance and revision:
+//! never desired-state Git bytes, which anyone with write access edits and a
+//! revert can replay; never the provider's current fields, which a hand edit
+//! changes; never a process cache, which a restart empties; and not the audit
+//! trail, which is written after a mutation and does not fail it (#108
+//! comment 6119161317). The store that qualifies is the protected
+//! continuity state that disposition calls for — durable, with revision,
+//! check-and-set and reservation semantics — and it does not exist yet.
 //!
-//! A deployment with no trail has no ledger. Reconciliation then knows no
-//! baseline, and every ambiguous transition is held until re-asserted.
-//!
-//! # Reading
-//!
-//! The client's stream is read whole and verified against its recorded head;
-//! a stream that does not verify is unreadable, never partly trusted. Records
-//! for another realm are not this identity instance's and are skipped.
-//!
-//! In the 121–150 line band: one adapter, its two port methods, and the
-//! constructor that attaches it to every reconciler; splitting the
-//! constructor away would separate "a pass keeps a ledger" from the ledger.
+//! So a deployment is built with no [`DeclarationLedgers`]. Reconciliation
+//! then knows no baseline: a converged client stays converged, and any move
+//! that leaves a declared callback missing is held whole — before any old
+//! callback is removed — until an operator's audited re-assertion writes it.
+//! Tests hand in an in-memory implementation to prove the classification;
+//! it is process-only and certifies nothing about restarts.
 
-use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use async_trait::async_trait;
-use fabric_client_model::{Client, OidcClient, OidcClientId};
-use fabric_core::Clock;
-use fabric_reconciliation::{
-    AppliedBaseline, CallbackDigest, DeclarationLedger, IdentityReconciler, LedgerError, WriteStage,
-};
+use fabric_client_model::{ClientId, ClientRevision};
+use fabric_reconciliation::{DeclarationLedger, IdentityReconciler};
 
-use crate::audit::{identity_declaration, DeclarationStage};
 use crate::state::ControlPlaneState;
-use crate::{AuditStream, AuditTrail, ControlPlaneError, Operator};
+use crate::{ControlPlaneError, Operator};
 
-/// See this module's rustdoc.
-pub(crate) struct AuditDeclarationLedger {
-    trail: Arc<dyn AuditTrail>,
-    clock: Arc<dyn Clock>,
-    /// The operator whose authority the pass runs under (ADR 0012).
-    operator: String,
+/// Hands each pass the ledger for one client, scoped to the revision the
+/// pass converges and the operator whose authority it runs under.
+///
+/// An implementation must answer only with provenance it can vouch is the
+/// last successful projection of this client's current identity instance:
+/// stale, missing, unavailable or unenrolled provenance is absent, never a
+/// guess.
+pub trait DeclarationLedgers: Send + Sync {
+    /// The ledger one pass over `client` at `revision` reads and records in.
+    fn for_pass(
+        &self,
+        client: &ClientId,
+        revision: &ClientRevision,
+        operator: &str,
+    ) -> Arc<dyn DeclarationLedger>;
 }
 
-/// A reconciler acting as this operator, keeping its ledger in the audit
-/// trail when this deployment has one, or the reason there is none.
+/// A reconciler acting as this operator, or the reason there is none.
 ///
 /// Every path into the identity provider starts here (ADR 0012): the
 /// platform holds no credential of its own, so a pass without an operator
@@ -62,82 +57,39 @@ pub(crate) fn reconciler(
         .identity_provider
         .as_ref()
         .ok_or(ControlPlaneError::ConvergenceUnavailable)?;
-    let reconciler = IdentityReconciler::new(factory.acting_as(operator.token()));
-    let audit = state.service.audit();
 
-    Ok(match audit.trail() {
-        Some(trail) => reconciler.with_ledger(Arc::new(AuditDeclarationLedger {
-            trail,
-            clock: audit.clock(),
-            operator: operator.subject().to_owned(),
-        })),
-        None => reconciler,
-    })
+    Ok(IdentityReconciler::new(factory.acting_as(operator.token())))
 }
 
-#[async_trait]
-impl DeclarationLedger for AuditDeclarationLedger {
-    async fn read(&self, client: &Client) -> Result<AppliedBaseline, LedgerError> {
-        let unreadable = |detail: String| LedgerError::Unreadable { detail };
-        let stored = self
-            .trail
-            .read(&AuditStream::Client(client.id.clone()))
-            .await
-            .map_err(|error| unreadable(error.to_string()))?;
-        stored.verify().map_err(|error| unreadable(error.to_string()))?;
+/// The ledgers a sweep scopes per client, with the operator it runs as.
+pub(crate) struct PassLedgers<'a> {
+    /// Where each client's ledger comes from.
+    pub(crate) ledgers: &'a dyn DeclarationLedgers,
+    /// The operator subject the records name.
+    pub(crate) operator: &'a str,
+}
 
-        let mut baseline = AppliedBaseline::unknown();
-        for entry in &stored.entries {
-            let record = entry.record();
-            let stage = match record.event() {
-                event if event == DeclarationStage::Writing.event() => WriteStage::Writing,
-                event if event == DeclarationStage::Written.event() => WriteStage::Written,
-                _ => continue,
-            };
-            if record.field("realm") != Some(client.identity.realm.as_str()) {
-                continue;
-            }
-            let declared = record
-                .field("identity_client")
-                .ok_or_else(|| unreadable("a declaration record names no identity client".to_owned()))
-                .and_then(|id| OidcClientId::try_new(id).map_err(|error| unreadable(error.to_string())))?;
-            let callbacks = record
-                .field("callbacks")
-                .unwrap_or_default()
-                .split(',')
-                .filter(|digest| !digest.is_empty())
-                .map(CallbackDigest::parse)
-                .collect::<Result<BTreeSet<_>, _>>()
-                .map_err(unreadable)?;
-            baseline.replay(declared, callbacks, stage);
-        }
-        Ok(baseline)
-    }
-
-    async fn record(
+impl PassLedgers<'_> {
+    /// `reconciler`, keeping `client`'s ledger at `revision`.
+    pub(crate) fn scope(
         &self,
-        client: &Client,
-        declared: &OidcClient,
-        stage: WriteStage,
-    ) -> Result<(), LedgerError> {
-        let stage = match stage {
-            WriteStage::Writing => DeclarationStage::Writing,
-            WriteStage::Written => DeclarationStage::Written,
-        };
-        let record = identity_declaration(
-            &self.operator,
-            &client.id,
-            &client.identity.realm,
-            declared,
-            stage,
-        );
-
-        self.trail
-            .append(record, self.clock.now_unix_seconds())
-            .await
-            .map(|_| ())
-            .map_err(|error| LedgerError::Unrecorded {
-                detail: error.to_string(),
-            })
+        reconciler: &IdentityReconciler,
+        client: &ClientId,
+        revision: &ClientRevision,
+    ) -> IdentityReconciler {
+        reconciler
+            .clone()
+            .with_ledger(self.ledgers.for_pass(client, revision, self.operator))
     }
+}
+
+/// The ledgers `state` holds for a pass as `operator`, if any.
+pub(crate) fn for_operator<'a>(
+    state: &'a ControlPlaneState,
+    operator: &'a Operator,
+) -> Option<PassLedgers<'a>> {
+    state.declaration_ledgers.as_deref().map(|ledgers| PassLedgers {
+        ledgers,
+        operator: operator.subject(),
+    })
 }

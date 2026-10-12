@@ -1175,7 +1175,8 @@ is verified live.
 
   The filesystem adapter brackets with two reads of `publication.json`. The
   Kubernetes adapter reads the tenants `ConfigMap` before and after the
-  other two, and treats a moved `resourceVersion` as unstable.
+  other two. It treats a moved `resourceVersion` as unstable, and an
+  object with a missing or blank one as unobserved.
 - **When it is inspected.** Every publication pass ends with one
   inspection, whatever the pass decided. That includes an `Unwritable`
   that outlived its re-offers, and a pass that offered nothing.
@@ -1190,8 +1191,17 @@ is verified live.
   `complete` does.
 - **Readiness.** The documents gate is met only when the accepted
   evidence names all three documents **and** the last inspection is
-  `complete`. Every other state makes it unmet, with a sanitised reason.
-  It also makes `updateComplete` false.
+  `complete` at exactly the accepted record, generation and digest.
+  Every other state makes it unmet, with a sanitised reason, and makes
+  `updateComplete` false.
+- **Another coherent generation is held, not adopted.** A target observed
+  complete at another record still reads `complete` on the completeness
+  row. The documents gate stays unmet, with a reason naming both records,
+  until a pass accepts matching evidence. That holds back the accepted
+  pass's identity, connector and G7 reader evidence from certifying a
+  generation they do not describe (review 5488114355, P2). The evidence
+  and the observation are read under both locks together, so they come
+  from one moment.
 - **The panel.** The publication row gains `completeness`: `state`,
   `observedAtUnixSeconds`, the record inspected against, and `reason`. The
   console shows it as its own **Completeness** row, under **Last pass**.
@@ -1205,10 +1215,11 @@ is verified live.
 | A missing payload or manifest despite fallback revisions | `completeness/observation.rs` | `publication_completeness.rs::a_lost_payload_is_incomplete_though_its_manifest_still_reports_the_revision`, `::a_lost_manifest_is_incomplete_though_current_falls_back_to_the_records_revision`; `completeness_tests.rs::a_manifest_for_another_document_or_that_does_not_parse_is_unreadable` |
 | Equal revisions with a wrong digest | `completeness/observation.rs::payload_gap` | `publication_completeness.rs::equal_revisions_with_other_bytes_are_incomplete`; Kubernetes `inspect_tests.rs::an_object_left_by_an_interrupted_publication_is_incomplete` |
 | Issuer registry mismatch | the registry is checked when the record names one | `publication_completeness.rs::an_issuer_registry_the_record_names_is_held_to_its_digest` |
-| Unavailable or unstable inspection is `unobserved` | `filesystem/inspect.rs`; Kubernetes `inspect.rs` | `publication_completeness.rs::a_part_that_cannot_be_read_leaves_the_target_unobserved`, `::a_record_this_publisher_cannot_read_leaves_the_target_unobserved`; `completeness_tests.rs::a_record_that_moved_while_the_target_was_read_is_unstable_whatever_the_parts_say`; Kubernetes `inspect_tests.rs::a_tenants_object_that_moved_during_the_inspection_is_unstable`, `::an_object_the_cluster_cannot_supply_leaves_it_unobserved`, `::no_objects_are_unpublished` |
+| Unavailable or unstable inspection is `unobserved` | `filesystem/inspect.rs`; Kubernetes `inspect.rs` | `publication_completeness.rs::a_part_that_cannot_be_read_leaves_the_target_unobserved`, `::a_record_this_publisher_cannot_read_leaves_the_target_unobserved`; `completeness_tests.rs::a_record_that_moved_while_the_target_was_read_is_unstable_whatever_the_parts_say`; Kubernetes `inspect_tests.rs::a_tenants_object_that_moved_during_the_inspection_is_unstable`, `::an_object_the_cluster_cannot_supply_leaves_it_unobserved`, `::a_tenants_object_with_no_resource_version_to_bracket_by_is_unobserved`, `::no_objects_are_unpublished` |
 | A restart followed by an observation | `PublicationState` starts with no inspection | `publisher_tests.rs::a_restart_knows_nothing_until_a_pass_inspects_and_does_not_clear_an_incomplete_target`; `platform_publication.rs::a_restarted_control_plane_shows_completeness_unobserved_until_a_pass_inspects_the_target` |
 | Retry recovery | #132's `publish_with_retry`, unchanged | `publisher_tests.rs::an_interruption_the_immediate_reoffer_completes_leaves_the_target_complete`; existing `protocol_tests.rs` G3 tests |
 | Only verified coherence clears the condition | `state.rs::record` replaces the observation only with another inspection | `publisher_tests.rs::only_an_inspection_that_finds_the_target_whole_clears_an_incomplete_target`; `readiness_tests.rs::the_documents_gate_needs_the_target_observed_whole_and_says_why_it_is_not`, `::a_complete_target_does_not_stand_in_for_an_accepted_pass` |
+| A target complete at another record is held: a newer generation, or the same generation with another digest; the same accepted record after a zero-write failure is still met; old accepted or G7-reader evidence cannot certify a new target | `documents_gate.rs::record_mismatch`; `state.rs::readiness` reads the evidence and the observation under both locks | `readiness_tests.rs::a_target_complete_at_another_record_holds_the_documents_gate_and_says_which`; `assess_tests.rs::readers_applied_to_the_accepted_record_cannot_certify_a_target_complete_at_another`; `publisher_tests.rs::a_refusal_that_wrote_nothing_leaves_a_complete_target_complete_while_the_pass_reads_failed` |
 | `GET` performs no extra target reads | `body/publication/completeness_row.rs` renders `PublicationState` | `platform_publication.rs::a_pass_that_leaves_the_target_part_written_shows_it_incomplete_and_holds_the_documents_gate` (counts every port call across the `GET`), `::a_restarted_control_plane_shows_completeness_unobserved_until_a_pass_inspects_the_target` |
 | The readers' last complete generation stays installed | #136's record-gated reader, unchanged | `publication_atomicity.rs::an_incomplete_target_is_reported_while_readers_stay_on_the_last_complete_generation` |
 | No payload or sensitive detail in responses | gaps are typed; read errors are dropped | `completeness_tests.rs::what_an_operator_reads_names_the_part_and_never_its_bytes`; the first `platform_publication.rs` test above checks the body names neither the changed label nor the staging path |

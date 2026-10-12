@@ -431,8 +431,11 @@ covers every placed tenant. A gate that reports all three is listed under
 >   target against its held record: each document's payload and manifest,
 >   and the issuer registry when the record names it, at the record's
 >   revision and digest.
-> - **When the gate is met.** Only when the result is `complete`, beside the
->   accepted pass's evidence that all three documents are published.
+> - **When the gate is met.** Only when the result is `complete` at exactly
+>   the record the accepted pass stamped, generation and digest, beside
+>   that pass's evidence that all three documents are published. A target
+>   complete at another record keeps the gate unmet until a pass accepts
+>   it.
 >   `incomplete`, `unpublished`, `unobserved`, or no inspection since the
 >   control plane started, each make it unmet with a reason. Each also
 >   makes `updateComplete` false.

@@ -50,7 +50,7 @@ pub struct ReadinessReport {
 impl ReadinessReport {
     /// The report over `evidence` and the last completeness observation, or
     /// all three gates unmet without evidence. The documents gate also needs
-    /// the target observed complete.
+    /// the target observed complete at exactly the evidence's record.
     #[must_use]
     pub fn of(evidence: Option<&ReadinessEvidence>, observed: Option<&CompletenessObservation>) -> Self {
         let Some(evidence) = evidence else {
@@ -64,7 +64,7 @@ impl ReadinessReport {
             };
         };
         Self {
-            documents: documents(Some(&evidence.revisions), observed),
+            documents: documents(Some((&evidence.revisions, evidence.record)), observed),
             identity: identity(evidence.registry.as_ref()),
             connectors: connectors(&evidence.connectors),
             excluded: evidence

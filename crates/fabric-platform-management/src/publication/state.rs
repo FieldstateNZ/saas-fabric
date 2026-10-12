@@ -94,8 +94,12 @@ impl PublicationState {
     /// last inspection. All three are unmet until a pass has been accepted.
     #[must_use]
     pub fn readiness(&self) -> ReadinessReport {
-        let evidence = self.evidence.lock().ok().and_then(|evidence| evidence.clone());
-        ReadinessReport::of(evidence.as_ref(), self.completeness().as_ref())
+        // Both locks at once, in `record`'s order, so the evidence and the
+        // observation compared are from the same moment.
+        let (Ok(evidence), Ok(observed)) = (self.evidence.lock(), self.completeness.lock()) else {
+            return ReadinessReport::of(None, None);
+        };
+        ReadinessReport::of(evidence.as_ref(), observed.as_ref())
     }
 
     /// The publication record the last pass that published or found nothing
@@ -116,6 +120,9 @@ impl PublicationState {
         accepted: Option<Accepted>,
         completeness: fabric_runtime_publication::PublicationCompleteness,
     ) {
+        let (Ok(mut evidence), Ok(mut observed)) = (self.evidence.lock(), self.completeness.lock()) else {
+            return;
+        };
         if let Some(accepted) = accepted {
             if let Ok(mut held) = self.published.lock() {
                 *held = Some(PublishedTenants {
@@ -123,16 +130,13 @@ impl PublicationState {
                     tenants: accepted.tenants,
                 });
             }
-            if let Ok(mut evidence) = self.evidence.lock() {
-                *evidence = Some(accepted.evidence);
-            }
+            *evidence = Some(accepted.evidence);
         }
-        if let Ok(mut observed) = self.completeness.lock() {
-            *observed = Some(CompletenessObservation {
-                at_unix_seconds,
-                completeness,
-            });
-        }
+        *observed = Some(CompletenessObservation {
+            at_unix_seconds,
+            completeness,
+        });
+        drop((evidence, observed));
         if let Ok(mut last) = self.last.lock() {
             *last = Some(LastPass {
                 at_unix_seconds,

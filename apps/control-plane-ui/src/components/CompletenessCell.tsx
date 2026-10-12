@@ -5,7 +5,7 @@ import { Status } from '../console/Status'
  * Whether the target held one whole recorded generation at the last
  * inspection, and when that was. Its own row beside `Last pass`, never
  * folded into it: a failed pass can leave the target complete, and only
- * `Complete` lets the documents gate be met.
+ * `Complete` at the accepted record lets the documents gate be met.
  */
 export function CompletenessCell({ completeness }: { completeness: Completeness }) {
   const { pill, label } = STATE[completeness.state]

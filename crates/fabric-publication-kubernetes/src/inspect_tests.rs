@@ -173,3 +173,35 @@ async fn no_objects_are_unpublished() {
     assert_eq!(adapter.inspect().await, PublicationCompleteness::Unpublished);
     task.join().unwrap();
 }
+
+#[tokio::test]
+async fn a_tenants_object_with_no_resource_version_to_bracket_by_is_unobserved() {
+    let plan = plan();
+    for version in ["", "   "] {
+        let (client, _token, task) = fake(vec![(200, tenants(&plan, version))]);
+        let adapter = KubernetesRuntimePublication::with_client(client, NS);
+
+        assert_eq!(
+            adapter.inspect().await,
+            PublicationCompleteness::Unobserved {
+                reason: UnobservedReason::Unavailable
+            }
+        );
+        task.join().unwrap();
+    }
+
+    let mut object: serde_json::Value = serde_json::from_str(&tenants(&plan, "9")).unwrap();
+    object["metadata"]
+        .as_object_mut()
+        .unwrap()
+        .remove("resourceVersion");
+    let (client, _token, task) = fake(vec![(200, object.to_string())]);
+    let adapter = KubernetesRuntimePublication::with_client(client, NS);
+    assert_eq!(
+        adapter.inspect().await,
+        PublicationCompleteness::Unobserved {
+            reason: UnobservedReason::Unavailable
+        }
+    );
+    task.join().unwrap();
+}

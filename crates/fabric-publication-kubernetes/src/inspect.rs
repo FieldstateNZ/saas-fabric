@@ -39,12 +39,18 @@ pub(crate) async fn inspect(client: &Client, namespace: &str) -> PublicationComp
     observation.assess(key(again.as_ref(), PUBLICATION_RECORD_FILE).as_deref())
 }
 
-/// One object, absent as `Some(None)`; any failure, or an answer naming
-/// another object, as `None`.
+/// One object, absent as `Some(None)`; any failure, an answer naming
+/// another object, or one with no `resourceVersion` to bracket by, as
+/// `None`.
 async fn read(client: &Client, namespace: &str, document: DocumentKind) -> Option<Option<ConfigMap>> {
     match client.get(&path_of(namespace, document), document).await.ok()? {
         Found::Absent => Some(None),
-        Found::Object(object) if object.metadata.name == name_of(document) => Some(Some(object)),
+        Found::Object(object)
+            if object.metadata.name == name_of(document)
+                && version(Some(&object)).is_some_and(|version| !version.trim().is_empty()) =>
+        {
+            Some(Some(object))
+        }
         Found::Object(_) => None,
     }
 }

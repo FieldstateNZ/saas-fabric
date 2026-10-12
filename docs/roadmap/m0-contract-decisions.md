@@ -1199,8 +1199,11 @@ rather than inferred from revisions. Built in source; not verified live.
   The answer is `complete`, `incomplete`, `unpublished` or `unobserved`,
   from one inspection that reads the record before and after every part it
   names.
-- **The documents gate.** Only `complete` can meet it. Every other state
-  makes the gate unmet and `updateComplete` false, with a sanitised reason.
+- **The documents gate.** Only `complete` at exactly the accepted record
+  (generation and digest) can meet it, per review 5488114355 on #163. A
+  target complete at another record keeps the row `complete` and the gate
+  unmet. Every other state makes the gate unmet and `updateComplete`
+  false, with a sanitised reason.
 - **When it is inspected, and when it clears.** It is inspected in every
   pass, including the exhausted-retry exit, and never on `GET`. A restart
   starts with nothing observed. Only a verified `complete` clears

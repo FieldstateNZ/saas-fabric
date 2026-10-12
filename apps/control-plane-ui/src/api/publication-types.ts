@@ -155,7 +155,8 @@ export interface LastPass {
  * inspected it (G3): every document, and the issuer registry the record
  * names, at the record's revision and digest. Kept apart from `LastPass`: a
  * pass can fail having written nothing and leave the target complete. Only
- * `complete` can meet the documents gate. It is about the target, not the
+ * `complete` at the record the last accepted pass stamped can meet the
+ * documents gate; complete at another record holds the gate with a reason. It is about the target, not the
  * readers, which keep their last complete generation either way.
  * `unobserved` with `observedAtUnixSeconds === null` means no pass has
  * inspected the target since the control plane started.

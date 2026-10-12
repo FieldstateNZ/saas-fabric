@@ -1288,7 +1288,8 @@ ADR 0023's list and `docs/roadmap/m0-contract-decisions.md`.
     the G3 disposition on #108, every pass ends by inspecting the target
     against its held record (`RuntimePublication::inspect`), and the panel
     shows `complete`, `incomplete`, `unpublished` or `unobserved` beside
-    the last pass. Only `complete` lets the documents gate be met. Source
+    the last pass. Only `complete` at the accepted record lets the documents
+    gate be met. Source
     only; not verified live;
   - G4: since #132 the window for overlapping writers is narrowed but not
     closed. The filesystem adapter holds an exclusive advisory lock beside

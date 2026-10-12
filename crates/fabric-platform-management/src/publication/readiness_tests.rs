@@ -197,3 +197,44 @@ fn a_complete_target_does_not_stand_in_for_an_accepted_pass() {
         vec!["no publication pass has been accepted since the control plane started".to_owned()]
     );
 }
+
+#[test]
+fn a_target_complete_at_another_record_holds_the_documents_gate_and_says_which() {
+    let evidence = evidence(Some(registering(&["alpha"])));
+    let newer = RecordStamp {
+        generation: 4,
+        sha256: fabric_core::RecordDigest::from_bytes([4; 32]),
+    };
+    let same_generation_other_bytes = RecordStamp {
+        generation: 3,
+        sha256: fabric_core::RecordDigest::from_bytes([0x99; 32]),
+    };
+    let cases = [
+        (
+            newer,
+            "the target holds generation 4 (040404040404) whole, not generation 3 (030303030303) that the \
+             last accepted pass published",
+        ),
+        (
+            same_generation_other_bytes,
+            "the target holds generation 3 (999999999999) whole, not generation 3 (030303030303) that the \
+             last accepted pass published",
+        ),
+    ];
+
+    for (record, reason) in cases {
+        let report = ReadinessReport::of(
+            Some(&evidence),
+            Some(&observed(PublicationCompleteness::Complete { record })),
+        );
+        assert_eq!(reasons(&report.documents), vec![reason.to_owned()]);
+        assert_eq!(
+            report.identity,
+            GateStatus::Met,
+            "the accepted pass's other gates are its own"
+        );
+    }
+
+    let matching = ReadinessReport::of(Some(&evidence), Some(&observed(complete())));
+    assert_eq!(matching.documents, GateStatus::Met);
+}

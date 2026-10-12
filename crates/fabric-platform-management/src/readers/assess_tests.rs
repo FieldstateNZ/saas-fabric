@@ -266,3 +266,42 @@ fn an_update_is_complete_only_with_the_documents_published_and_the_readers_appli
         assert!(!update_complete(&met, &unfinished), "{:?}", unfinished.state);
     }
 }
+
+#[test]
+fn readers_applied_to_the_accepted_record_cannot_certify_a_target_complete_at_another() {
+    let accepted = crate::ReadinessEvidence {
+        revisions: fabric_runtime_publication::PublishedRevisions {
+            tenants: Some(fabric_runtime_publication::DocumentRevision::new(1)),
+            data_sources: Some(fabric_runtime_publication::DocumentRevision::new(1)),
+            catalog: Some(fabric_runtime_publication::DocumentRevision::new(1)),
+            registry: None,
+        },
+        registry: None,
+        connectors: std::collections::BTreeSet::new(),
+        record: stamp(),
+    };
+    let observed = |record| crate::CompletenessObservation {
+        at_unix_seconds: 1_000,
+        completeness: fabric_runtime_publication::PublicationCompleteness::Complete { record },
+    };
+    let applied = state_of(1, vec![member("a", "rs", serving())]);
+    assert_eq!(applied.state, ReaderState::Applied);
+
+    let same = ReadinessReport::of(Some(&accepted), Some(&observed(stamp())));
+    assert!(update_complete(&same, &applied));
+
+    for other in [
+        RecordStamp {
+            generation: 6,
+            sha256: digest(6),
+        },
+        RecordStamp {
+            generation: 5,
+            sha256: digest(9),
+        },
+    ] {
+        let report = ReadinessReport::of(Some(&accepted), Some(&observed(other)));
+        assert!(matches!(report.documents, GateStatus::Unmet { .. }), "{other:?}");
+        assert!(!update_complete(&report, &applied), "{other:?}");
+    }
+}

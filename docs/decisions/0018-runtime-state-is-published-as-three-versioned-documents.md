@@ -1307,12 +1307,15 @@ ADR 0023's list and `docs/roadmap/m0-contract-decisions.md`.
     `tenant_runtime.last_known_good_dir` set persists each complete
     generation it reads and, at start, primes from that copy when no
     published generation at or above it can be applied; with no valid copy
-    it fails closed as before. Off by default. Still open: no
-    pre-publication hold at the publisher; no recovery command for a held
-    document the publisher cannot parse (the reader's
-    `fabric-api last-known-good` covers only the reader's own copy); the
-    writable reader volume is not mounted by the platform; not verified
-    live;
+    it fails closed as before. Off by default. A held tenants or
+    data-sources document the publisher cannot parse can be restored with
+    `fabric-control-plane-api held-publication restore`, which puts back
+    only the bytes the held record names, at the revision it names, under
+    the publication lock or the object's `resourceVersion`, audited first
+    (source only; its write semantics await confirmation on #108). Still
+    open: no pre-publication hold at the publisher; no discard of a held
+    document the record cannot vouch for; the writable reader volume is not
+    mounted by the platform; not verified live;
   - G6: since #136 the record's `minimum_reader_contract` is the version
     handshake, with reader tests at contract N and N+1 in both directions
     (`reader_compatibility.rs`). Still open: §9's dual-key path is not built,

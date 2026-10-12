@@ -18,7 +18,10 @@
   rules and its recovery command (G5, reader side) follow under
   [Persisted last-known-good](#persisted-last-known-good-g5). G3's panel
   state, the target's observed completeness, follows under
-  [Publication completeness (G3)](#publication-completeness-g3). Test names in the gap sections are as first
+  [Publication completeness (G3)](#publication-completeness-g3). The
+  publisher's recovery command for a held document it cannot parse (G5,
+  publisher side) follows under
+  [Publisher-side recovery (G5)](#publisher-side-recovery-g5). Test names in the gap sections are as first
   written; see [Engineering fixes](#engineering-fixes),
   [Reader generations](#reader-generations) and the section after it for
   what changed and what each test is now called.
@@ -80,7 +83,7 @@ Against #112's acceptance criteria:
 | Published tenant, data-source and catalogue revisions form a consistent contract | **Not met** across documents. Met within one document only while there is a single writer (G4a) | G1, G2, G4, G4a, G7, G8 |
 | Compatible readers precede schema activation | **Not met.** No mechanism and no version handshake | G6 |
 | Interrupted publication cannot expose mixed revisions | **Not met.** It can, and so can uninterrupted publication | G1, G3 |
-| Last-known-good and failure behaviour are explicit | **Partly met.** The reader side is explicit in code, including across a restart when a last-known-good directory is configured (off by default; no platform mount yet). Publisher hold and publisher-side recovery are not | G5 |
+| Last-known-good and failure behaviour are explicit | **Partly met.** The reader side is explicit in code, including across a restart when a last-known-good directory is configured (off by default; no platform mount yet). A held document the publisher cannot parse can be restored from the bytes the record names (source only). The publisher hold, and any discard, are not | G5 |
 | Catalogue selection is not claimed to deploy a product | **Met in the README** (`README.md:468-470`). Console copy was not audited | — |
 
 ## What is atomic today
@@ -1242,6 +1245,110 @@ Limits:
 
 Still deferred after this change: G7's live wiring, G5's publisher hold and
 publisher-side recovery, the platform reader mount, G4 `Lease`, G6's
+remaining items, G2's publisher wait, withdrawal, the O5 continuity and
+issuance guards, and the platform contract follow-ups.
+
+## Publisher-side recovery (G5)
+
+G5's publisher side, without the pre-publication hold. A held tenants or
+data-sources document that the publisher cannot parse blocks every
+publication, at any revision:
+- `plan/parse.rs` refuses a payload that does not parse with `Unreadable`,
+  and a manifest held without its payload with `HeldPayloadLost`;
+- each adapter's held read refuses an unreadable manifest the same way.
+
+Until now, the only way out was to edit the files or objects by hand. This
+change adds a supported command. It is source only and untested against a
+live cluster. Its write semantics are the defaults asked in
+[#108 comment 6121748619](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6121748619)
+and are **not yet confirmed**.
+
+- **The command.** It runs before configuration and telemetry, mirroring
+  `fabric-api last-known-good`:
+
+  ```text
+  fabric-control-plane-api held-publication inspect|validate <target>
+  fabric-control-plane-api held-publication restore <target> --document tenants|data-sources --from <file> --audit <file> --operator <who> --reason <why>
+  ```
+
+  `<target>` is either `--tenants`, `--data-sources` and `--catalog` (the
+  filesystem adapter's paths), or `--namespace` (the Kubernetes adapter, in
+  the pod).
+  - `inspect` and `validate` write nothing. They report every reason the
+    held state blocks publication (`diagnose`), not only the first one the
+    plan would hit.
+  - `validate` exits 1 while anything blocks.
+  - Exit 2 is a usage error, a target that cannot be read, or a failed
+    audit or write.
+- **Restore, and only restore.** `plan_restore` puts back exactly the bytes
+  whose SHA-256 the held publication record names for that document. The
+  revision is the one the record names, and that is the revision the held
+  state already reports, so **no revision moves**. Every guard of the next
+  publication then reads the content the record attests. A restore is
+  refused, with nothing written and nothing audited, when:
+  - the document is not blocking publication, or it is the catalogue,
+    which is only byte-compared;
+  - no record is held, or the record does not parse or is above this
+    publisher's rollback floor;
+  - the bytes are not the ones the record names;
+  - a readable manifest states a revision other than the record's, as an
+    interrupted publication would leave it.
+
+  An unreadable or missing manifest is rewritten at the record's revision.
+  The bytes can come from any copy whose digest matches. A reader's
+  `last-known-good.json` holds them, under its `tenants` and
+  `data_sources` keys.
+- **Exclusion and atomicity are unchanged.** The filesystem restore holds
+  the G4 publication lock from its read to its last write, and clears a
+  crashed writer's staging file first. It writes through `atomic_write`:
+  payload, then manifest, as `write_if_needed` does.
+
+  The Kubernetes restore replaces one object at the `resourceVersion` it
+  read. That object keeps every other key, including the record and the
+  registry on the tenants object. A data-sources restore re-reads the
+  tenants object, which holds the record, before it writes, as
+  `confirm.rs` does. It uses `get` and `update` only, which the publisher
+  already holds.
+- **Audit first.** One JSON line is appended to `--audit` and synced
+  before the first write. It records who, why, when, the target, the
+  source file, and the plan: the revision, generation, digests and what
+  is written. A write that fails after it appends a `restore_failed`
+  line. An audit log in a published document's directory is refused.
+- **No discard.** Nothing removes, quarantines or replaces a held document
+  the record cannot vouch for. Such a document still needs an operator, as
+  before. The reason: the next publication would plan against an empty
+  document, and `TenantRemoved`, the emptying guard and
+  `RetiredDataSourceStillBound` could not see what was discarded. Whether
+  to support a discard, and with which guard, is open on #108.
+
+| Item | Guard | Tests |
+|---|---|---|
+| Only the bytes the record names, at its revision; nothing else is written | `held_recovery/restore_plan.rs::plan_restore` | `restore_plan_tests.rs` (13 tests: torn payload, lost payload, unreadable and mis-kinded manifests, digest mismatch, not blocking, catalogue, no record, unreadable record, record above the floor, manifest ahead of and behind the record, recorded bytes that do not parse, a report without bytes) |
+| Publication resumes, no revision moves, and every guard reads the restored content | the shared plan, unchanged | `held_recovery.rs::a_torn_tenants_document_is_restored_from_the_recorded_bytes_and_publication_resumes`, `::a_lost_tenants_payload_is_restored_under_its_manifest`, `::a_torn_data_sources_document_is_restored_the_same_way`, `::after_a_restore_every_guard_still_reads_the_restored_content` (`TenantRemoved`, `StaleRevision`), `::bytes_the_record_does_not_name_are_refused_and_nothing_is_written_or_audited`, `::an_interrupted_publication_ahead_of_its_record_is_not_restored` |
+| A reader's last-known-good copy supplies the bytes | digest match against the held record | `held_recovery.rs::a_readers_last_known_good_copy_holds_the_bytes_a_restore_needs` (real reader persists, publisher restores, revision 2 publishes) |
+| Filesystem: G4 lock, staging cleanup, atomic writes, audit before write | `filesystem/recovery.rs` | `recovery_tests.rs::a_restore_is_refused_while_a_publication_holds_the_lock_and_writes_nothing`, `::the_audit_is_made_before_the_first_write`, `::an_audit_that_cannot_be_made_durable_stops_the_restore_with_nothing_written`, `::a_staging_file_left_by_a_crashed_writer_does_not_block_the_restore`, `::a_failed_write_after_the_audit_is_audited_as_failed` |
+| Kubernetes: replace at the read version, carried keys kept, record re-read | `fabric-publication-kubernetes` `recovery.rs`, `recovery/held_object.rs` | `recovery_tests.rs::a_torn_tenants_object_is_replaced_at_its_version_keeping_the_record_and_registry`, `::a_data_sources_restore_rereads_the_record_before_replacing_its_object`, `::a_data_sources_restore_whose_record_moved_writes_and_audits_nothing`, `::bytes_the_record_does_not_name_are_refused_with_only_reads_sent`, `::a_replace_the_cluster_refuses_as_a_conflict_is_audited_as_failed`, `::observing_reads_each_object_once_and_writes_nothing` |
+| The command, through the built binary | `fabric-control-plane-api` `recovery/` | `held_publication_command.rs::inspect_and_validate_report_the_blocking_document_and_write_nothing`, `::restore_puts_back_the_recorded_bytes_after_auditing_and_publication_resumes`, `::restore_of_bytes_the_record_does_not_name_is_refused_and_writes_and_audits_nothing`, `::restore_refuses_an_audit_log_beside_the_published_files`, `::usage_errors_and_actions_that_would_discard_or_reset_exit_two_and_touch_nothing`; `recovery/arguments_tests.rs` |
+
+Limits:
+
+- **Recoverable only from attested bytes.** With no record, a record that
+  names other bytes, or no copy of the bytes, a blocking document still
+  needs a hand repair. That covers an interrupted publication whose
+  manifest is ahead of its record (#108, question 2).
+- **The record's window on Kubernetes is narrowed, not closed.** A
+  data-sources restore re-reads the record before it writes. A writer that
+  replaces the record between that read and the write is not excluded,
+  as with `confirm.rs`.
+- **A manifest-only write is still two writes on the filesystem.** If the
+  payload write succeeds and the manifest write fails, the payload is
+  restored and the manifest is not, and the audit log says so. A second
+  restore completes it.
+- **Not run live.** No environment has run the command, and no runbook
+  step has been added for it.
+
+Still deferred after this change: G5's publisher hold and any discard
+(#108), G7's live wiring, the platform reader mount, G4 `Lease`, G6's
 remaining items, G2's publisher wait, withdrawal, the O5 continuity and
 issuance guards, and the platform contract follow-ups.
 

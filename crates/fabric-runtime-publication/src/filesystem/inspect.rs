@@ -10,26 +10,34 @@ use crate::{ObservedDocument, PublicationCompleteness, TargetObservation, Unobse
 /// again, and judges them. A missing file is absent; any other read failure
 /// is [`UnobservedReason::Unavailable`], with its detail dropped.
 pub(super) fn inspect(
-    [tenants, data_sources, catalog]: [&DocumentPaths; 3],
+    documents: [&DocumentPaths; 3],
     record: &Path,
     registry: &Path,
 ) -> PublicationCompleteness {
-    let observed = (|| -> io::Result<(TargetObservation, Option<Vec<u8>>)> {
-        let observation = TargetObservation {
-            record: read(record)?,
-            tenants: document(tenants)?,
-            data_sources: document(data_sources)?,
-            catalog: document(catalog)?,
-            registry: read(registry)?,
-        };
-        Ok((observation, read(record)?))
-    })();
+    let observed =
+        observe(documents, record, registry).and_then(|observation| Ok((observation, read(record)?)));
     match observed {
         Ok((observation, after)) => observation.assess(after.as_deref()),
         Err(_) => PublicationCompleteness::Unobserved {
             reason: UnobservedReason::Unavailable,
         },
     }
+}
+
+/// Reads the record, then every document and the registry, raw. A missing
+/// file is absent.
+pub(super) fn observe(
+    [tenants, data_sources, catalog]: [&DocumentPaths; 3],
+    record: &Path,
+    registry: &Path,
+) -> io::Result<TargetObservation> {
+    Ok(TargetObservation {
+        record: read(record)?,
+        tenants: document(tenants)?,
+        data_sources: document(data_sources)?,
+        catalog: document(catalog)?,
+        registry: read(registry)?,
+    })
 }
 
 fn document(paths: &DocumentPaths) -> io::Result<ObservedDocument> {

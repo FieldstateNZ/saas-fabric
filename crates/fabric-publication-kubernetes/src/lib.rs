@@ -30,6 +30,7 @@ mod held;
 mod inspect;
 mod object;
 mod publish;
+mod recovery;
 mod tenants_object;
 mod wire;
 

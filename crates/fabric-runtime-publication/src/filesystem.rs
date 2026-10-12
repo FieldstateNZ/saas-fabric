@@ -20,9 +20,12 @@ mod held;
 mod inspect;
 mod lock;
 mod paths;
+mod recovery;
 mod write;
 
 #[cfg(test)]
 mod concurrency_tests;
+#[cfg(test)]
+mod recovery_tests;
 
 pub use adapter::FilesystemRuntimePublication;

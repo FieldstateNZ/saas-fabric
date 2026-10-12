@@ -1,6 +1,6 @@
 //! What a client looks like on the wire.
 
-use fabric_client_model::{ClientId, ClientRevision, Host, RealmName};
+use fabric_client_model::{ClientId, ClientRevision, Host, PrivateNetworkScheme, RealmName};
 
 use crate::models::{LifecycleResponse, ProjectionResponse};
 use crate::StoredClient;
@@ -23,6 +23,11 @@ pub(crate) struct ClientResponse {
 
     /// The hostnames its applications are reached on.
     pub(crate) hosts: Vec<Host>,
+
+    /// The scheme its `.internal` callbacks use, when it declares one
+    /// (D01-15). `null` otherwise, including on a document written before
+    /// the field existed.
+    pub(crate) private_network_scheme: Option<PrivateNetworkScheme>,
 
     /// The realm its identity lives in.
     pub(crate) realm: RealmName,
@@ -48,6 +53,7 @@ impl ClientResponse {
             id: client.id.clone(),
             display_name: client.display_name.clone(),
             hosts: client.hosts.clone(),
+            private_network_scheme: client.private_network_scheme,
             realm: client.identity.realm.clone(),
             revision: stored.revision.clone(),
             lifecycle,

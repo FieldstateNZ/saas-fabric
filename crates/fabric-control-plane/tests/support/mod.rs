@@ -18,20 +18,21 @@ use axum::Router;
 use fabric_client_model::{ClientDocument, ClientRevision};
 use fabric_control_plane::testing::AcceptingOperator;
 use fabric_control_plane::{
-    build_control_plane, AuditRecorder, ControlPlaneConfig, ControlPlaneDeps, DesiredStateBinding,
-    IdentityProviderFactory, InMemoryAuditTrail, InMemoryClientRepository, InMemoryRegistryStore,
-    InMemorySecretStore, OperatorToken, PlatformBinding, PublicationSink, RegistryClient, RegistryConnection,
-    RegistryConnector, RegistryHost, RegistryService, RegistryServiceParts, ResolutionParts,
-    SuppliedOperators,
+    build_control_plane, AuditRecorder, ControlPlaneConfig, ControlPlaneDeps, DeclarationLedgers,
+    DesiredStateBinding, IdentityProviderFactory, InMemoryAuditTrail, InMemoryClientRepository,
+    InMemoryRegistryStore, InMemorySecretStore, OperatorToken, PlatformBinding, PublicationSink,
+    RegistryClient, RegistryConnection, RegistryConnector, RegistryHost, RegistryService,
+    RegistryServiceParts, ResolutionParts, SuppliedOperators,
 };
 use fabric_core::Clock;
 use fabric_platform_management::{Attached, Registry, RegistryError, Resolved};
-use fabric_reconciliation::testing::FakeIdentityProvider;
+use fabric_reconciliation::testing::{FakeIdentityProvider, InMemoryDeclarationLedger};
 use fabric_reconciliation::{IdentityProvider, ReconciliationStatusStore};
 use http::{header, Request, Response};
 use tower::ServiceExt as _;
 
 pub mod described_registry;
+pub mod newco;
 pub mod platform_fixture;
 pub mod projected;
 pub mod selection;
@@ -129,6 +130,11 @@ pub struct TestControlPlane {
     /// operator does, and what no restart-based test would exercise.
     pub binding: Arc<DesiredStateBinding>,
 
+    /// The declaration ledger every pass reads and records in (D01-15), when
+    /// the plane has one. In memory, so it stands for a durable store only
+    /// within one test; a second plane over the same provider is a restart.
+    pub ledger: Option<Arc<InMemoryDeclarationLedger>>,
+
     /// The durable audit trail every operation records to, so a test can read
     /// back what was audited and verify its chain.
     pub audit: Arc<InMemoryAuditTrail>,
@@ -207,6 +213,7 @@ pub const SECRET_VALUE: &str = "a-value-that-must-not-leak";
 /// Builds a control plane holding one client.
 pub fn control_plane() -> TestControlPlane {
     build(
+        Some(Arc::new(InMemoryDeclarationLedger::new())),
         None,
         None,
         None,
@@ -220,6 +227,7 @@ pub fn control_plane() -> TestControlPlane {
 /// registry routes.
 pub fn control_plane_with_registries(registries: Arc<RegistryService>) -> TestControlPlane {
     build(
+        Some(Arc::new(InMemoryDeclarationLedger::new())),
         None,
         None,
         None,
@@ -238,6 +246,7 @@ pub fn control_plane_with_resolution(
     platform: Option<PlatformBinding>,
 ) -> TestControlPlane {
     build(
+        Some(Arc::new(InMemoryDeclarationLedger::new())),
         None,
         platform,
         None,
@@ -319,6 +328,7 @@ impl RegistryConnector for NoConnector {
 /// caller of this function.
 pub fn control_plane_with_identity_provider(provider: Arc<FakeIdentityProvider>) -> TestControlPlane {
     build(
+        Some(Arc::new(InMemoryDeclarationLedger::new())),
         Some(Arc::new(FakeIdentityProviderFactory(provider))),
         None,
         None,
@@ -332,6 +342,7 @@ pub fn control_plane_with_identity_provider(provider: Arc<FakeIdentityProvider>)
 /// `/api/platform/*` against something other than "nothing is managed".
 pub fn control_plane_with_platform(platform: PlatformBinding) -> TestControlPlane {
     build(
+        Some(Arc::new(InMemoryDeclarationLedger::new())),
         None,
         Some(platform),
         None,
@@ -347,6 +358,7 @@ pub fn control_plane_with_platform(platform: PlatformBinding) -> TestControlPlan
 /// something other than "nothing is configured".
 pub fn control_plane_with_publication(platform: PlatformBinding, sink: PublicationSink) -> TestControlPlane {
     build(
+        Some(Arc::new(InMemoryDeclarationLedger::new())),
         None,
         Some(platform),
         Some(sink),
@@ -365,6 +377,7 @@ pub fn control_plane_with_publication_and_identity_provider(
     provider: Arc<FakeIdentityProvider>,
 ) -> TestControlPlane {
     build(
+        Some(Arc::new(InMemoryDeclarationLedger::new())),
         Some(Arc::new(FakeIdentityProviderFactory(provider))),
         Some(platform),
         Some(sink),
@@ -392,7 +405,15 @@ pub fn accepting_operators() -> SuppliedOperators {
 /// bearer an accepted operator carries and the role the authenticator
 /// presents.
 pub fn control_plane_with_operators(operators: SuppliedOperators) -> TestControlPlane {
-    build(None, None, None, no_registries(), no_resolution(), operators)
+    build(
+        Some(Arc::new(InMemoryDeclarationLedger::new())),
+        None,
+        None,
+        None,
+        no_registries(),
+        no_resolution(),
+        operators,
+    )
 }
 
 /// Shared by every constructor above; only what lends the identity
@@ -400,6 +421,7 @@ pub fn control_plane_with_operators(operators: SuppliedOperators) -> TestControl
 /// which registries it has and who it accepts as an operator differ between
 /// them.
 fn build(
+    ledger: Option<Arc<InMemoryDeclarationLedger>>,
     identity_provider: Option<Arc<dyn IdentityProviderFactory>>,
     platform: Option<PlatformBinding>,
     publication: Option<PublicationSink>,
@@ -443,6 +465,9 @@ fn build(
             audit: AuditRecorder::durable(audit.clone(), Arc::new(FixedClock)),
             keys: fabric_control_plane::KeyHolder::empty(),
             identity_provider,
+            declaration_ledgers: ledger
+                .clone()
+                .map(|ledger| Arc::new(InMemoryLedgers(ledger)) as Arc<dyn DeclarationLedgers>),
             git_integration: None,
 
             // The posture is verified by its own tests. These drive everything
@@ -464,8 +489,40 @@ fn build(
         revision,
         statuses: services.statuses,
         binding,
+        ledger,
         audit,
     }
+}
+
+/// Hands every pass the one in-memory ledger, scoped to the revision it
+/// converges.
+struct InMemoryLedgers(Arc<InMemoryDeclarationLedger>);
+
+impl DeclarationLedgers for InMemoryLedgers {
+    fn for_pass(
+        &self,
+        _client: &fabric_client_model::ClientId,
+        revision: &ClientRevision,
+        _operator: &str,
+    ) -> Arc<dyn fabric_reconciliation::DeclarationLedger> {
+        self.0.at(revision.clone())
+    }
+}
+
+/// As [`control_plane_with_identity_provider`], with no declaration ledger:
+/// what every deployment is today, so no baseline is ever known (D01-15).
+pub fn control_plane_with_identity_provider_and_no_ledger(
+    provider: Arc<FakeIdentityProvider>,
+) -> TestControlPlane {
+    build(
+        None,
+        Some(Arc::new(FakeIdentityProviderFactory(provider))),
+        None,
+        None,
+        no_registries(),
+        no_resolution(),
+        accepting_operators(),
+    )
 }
 
 /// Lends the same fake identity provider to every operator.

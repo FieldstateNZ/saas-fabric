@@ -7,8 +7,9 @@ const EXPLANATION: Record<Reconciliation['status'], string> = {
   failed: 'This configuration could not be applied.',
   drifted: 'Something changed this outside SaaS Fabric. It has been corrected.',
   handEdited:
-    'Someone edited this in the identity provider in a way SaaS Fabric does not support. ' +
-    'It has been left in place, not overwritten. Undo the edit there, or re-assert the configuration.',
+    'The identity provider holds something SaaS Fabric will not overwrite on its own: an edit made there ' +
+    'that it does not support, or a change it cannot confirm it made. It has been left in place, not overwritten. ' +
+    'Undo the edit there, or re-assert the configuration.',
   withheld:
     "A projected application's stored configuration no longer matches what SaaS Fabric projects for it, " +
     'so it was not applied, and the identity provider was left as it was for it. Everything else is in effect.',
@@ -19,6 +20,8 @@ const HAND_EDIT: Record<HandEdit['field'], string> = {
   clientDisabled: 'was switched off',
   standardFlowDisabled: 'had sign-in (the authorization-code flow) switched off',
   declaredRedirectUriRemoved: 'had a declared callback removed',
+  redirectUrisUnconfirmed:
+    'is missing a declared callback SaaS Fabric has no record of writing, so nothing was changed for it',
 }
 
 /**

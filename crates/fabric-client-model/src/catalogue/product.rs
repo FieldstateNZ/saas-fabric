@@ -1,6 +1,6 @@
 //! Per-client product configuration and recorded changes.
 use super::{ApplicationRelease, ConfigurationValues};
-use crate::{ClientId, Host};
+use crate::{ClientId, Host, PrivateNetworkScheme};
 use serde::{Deserialize, Serialize};
 
 /// The product section of a client document.
@@ -56,6 +56,11 @@ pub struct ClientProductRequest {
     pub display_name: String,
     /// Declared hostnames.
     pub hosts: Vec<Host>,
+    /// The scheme of the client's `.internal` callbacks (D01-15): required
+    /// for a client on `.internal` hosts with an application, refused for
+    /// any other client.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub private_network_scheme: Option<PrivateNetworkScheme>,
     /// Commercial legal name.
     pub legal_name: String,
     /// Residency region.

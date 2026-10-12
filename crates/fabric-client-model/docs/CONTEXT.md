@@ -6,11 +6,18 @@ The control plane's desired-state model. Depends on `fabric-core`,
 
 ## Public surface
 
-- `Client { id: ClientId, display_name: String, hosts: Vec<Host>, identity: IdentityConfiguration,
+- `Client { id: ClientId, display_name: String, hosts: Vec<Host>,
+  private_network_scheme: Option<PrivateNetworkScheme>, identity: IdentityConfiguration,
   authorization: AuthorizationConfiguration, secrets: Option<SecretsConfiguration>,
   data: BTreeMap<LogicalDataSourceName, DataIntent> }`
   — the *modelled view*. Complete enough to render a screen and reconcile
   identity from; **not** complete enough to serialise as desired state.
+- `PrivateNetworkScheme { Http, Https }` (`spec.privateNetworkScheme`, D01-15) — how a
+  client on `.internal` hosts is reached. Required before such a client is assigned an
+  application, refused on any other client, never inferred; a document without it
+  projects nothing and reads as `unverifiable`.
+  `ClientDocument::undeclared_scheme_is_otherwise_consistent()` is the one check a
+  product save uses to migrate such a document.
 - `DataIntent { class: PlacementClassDocument, provider: Option<String>, region: Option<String> }`
   — one logical data source's declared intent (ADR 0023 part 2),
   `spec.data.<logical>`. `class` reuses `fabric_runtime_publication::PlacementClassDocument`

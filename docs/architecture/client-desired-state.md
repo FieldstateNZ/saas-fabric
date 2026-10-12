@@ -160,6 +160,7 @@ everything else is the same in both.
 | `metadata.name` | yes | DNS label, ≤63 bytes — the client id, and the directory name |
 | `spec.displayName` | yes | free text, ≤128 bytes, no control characters |
 | `spec.hosts` | no | DNS hostnames: no scheme, no port, no path, no trailing dot |
+| `spec.privateNetworkScheme` | no | `http` or `https`: how `.internal` hosts are reached (D01-15). Required before a client whose hosts are all `.internal` is assigned an application; refused on any other client; never inferred |
 | `spec.identity.realm` | yes | DNS label |
 | `spec.identity.roles` | yes | unique; must include both required roles |
 | `spec.identity.clients` | no | unique `id`s; each needs at least one redirect URI |
@@ -395,7 +396,8 @@ in `spec.identity.clients`, replacing any entry with the same id:
 | `id` is the application id | an application cannot be assigned if a client declared by hand already holds that id; an entry the product projected earlier is replaced |
 | the template callback exists only when the release has a hostname template | an assignment with no template and no client host is refused |
 | a release's template holds exactly one `{client}`, checked at publication against a worst-case client id sized to the label the placeholder shares — 63 characters for `{client}.example.com`, 56 for `{client}-portal.example.com` | a template under `.internal` or `.example.test` is refused when it is published, never at assignment; a client id too long for its template's label is refused at assignment |
-| every client host adds a callback, template or not | a client with any `.internal` or loopback host cannot be assigned an application at all, because `claimedHttps` admits public hosts only |
+| every client host adds a callback, template or not | a client on public hosts, or none, is projected as `claimedHttps` |
+| the strategy follows the kind of the client's hosts (D01-15) | a client on `.internal` hosts only is projected as `privateNetwork`, with `<privateNetworkScheme>://<host>/<application id>/callback` per host and no template callback, because the template is a public name; without a declared scheme the assignment is refused, and a stored document without one reads as `unverifiable` until a product save declares one; a client mixing `.internal` and public hosts is refused; a loopback host is still refused |
 | the entry is replaced whole on every product save | the product owns it (D01-19b): an identity edit that would change, add or remove it is refused, `409 projected_client_product_owned`, unless the client is retired or the edit restores the projection; a product save over a stored entry that no longer matches the stored document's own projection, after a hand edit in Git for example, is refused, `409 projected_client_diverged`, and writes nothing; every client read reports such a divergence as `projection`, a sweep withholds the entry (`withheld`), and a re-assertion onto it is refused |
 
 An identity edit does not project. On a retired client, where product saves

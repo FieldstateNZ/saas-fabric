@@ -29,6 +29,13 @@ pub enum HandEditedField {
 
     /// At least one declared redirect URI is no longer registered.
     DeclaredRedirectUriRemoved,
+
+    /// The provider lacks a declared redirect URI and nothing durable says
+    /// whether Fabric ever wrote it (D01-15): a removal by hand and a
+    /// transition not yet written look the same. Not a hand edit as such,
+    /// and held the same way, but whole: the client is not written at all,
+    /// so no callback it holds is removed, until an operator re-asserts.
+    RedirectUrisUnconfirmed,
 }
 
 impl HandEditedField {
@@ -40,6 +47,7 @@ impl HandEditedField {
             Self::ClientDisabled => "clientDisabled",
             Self::StandardFlowDisabled => "standardFlowDisabled",
             Self::DeclaredRedirectUriRemoved => "declaredRedirectUriRemoved",
+            Self::RedirectUrisUnconfirmed => "redirectUrisUnconfirmed",
         }
     }
 }

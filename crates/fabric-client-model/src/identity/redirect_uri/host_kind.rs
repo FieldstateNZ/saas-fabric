@@ -6,7 +6,8 @@
 //! its own rather than at the end of a scheme table. [`ip_literal`] carries
 //! the numeric parsing the loopback rule is stated against,
 //! [`special_use`] carries which top-level domains the public DNS has
-//! reserved, and [`registered_domain`] carries the production rule, so the
+//! reserved, [`private_network`] carries the one it reserved for private use,
+//! and [`registered_domain`] carries the production rule, so the
 //! decision tree here stays readable as a decision tree.
 //!
 //! Over the 120-line advisory threshold. The reason is that this is one
@@ -17,6 +18,7 @@
 //! above.
 
 mod ip_literal;
+mod private_network;
 mod registered_domain;
 mod special_use;
 
@@ -24,21 +26,13 @@ use fabric_core::IdentifierError;
 
 use super::kind::RedirectUriKind;
 
+pub(crate) use private_network::is_private_network;
+
 /// The label used in error messages when parsing fails.
 const KIND: &str = "redirect uri";
 
 /// Hosts that are the machine the browser is already on. These three exactly.
 const LOOPBACK: [&str; 3] = ["localhost", "127.0.0.1", "::1"];
-
-/// The top-level domain ICANN reserved for private-use applications.
-///
-/// Its board resolved in July 2024 to withhold `.internal` from delegation
-/// permanently, for exactly this purpose: names that resolve only inside an
-/// organisation. Because it will never exist in the public DNS root it cannot
-/// resolve on the internet and no public certificate authority will issue for
-/// it — which is what makes the plain-HTTP exception a rule rather than a
-/// favour to one deployment.
-const PRIVATE_TLD: &str = "internal";
 
 /// What an author is told when a host reaches loopback without being one of
 /// the three spellings above.
@@ -101,7 +95,7 @@ pub(super) fn classify(host: &str, secure: bool) -> Result<RedirectUriKind, Iden
         });
     }
 
-    if host == PRIVATE_TLD || host.ends_with(&format!(".{PRIVATE_TLD}")) {
+    if is_private_network(host) {
         return Ok(RedirectUriKind::PrivateNetwork);
     }
 

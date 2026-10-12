@@ -41,7 +41,7 @@ impl ClientService {
         // D01-19b: before the request touches anything, the stored projected
         // entries must still be what the stored document projects. A save
         // would replace them whole, silently undoing a divergence nobody saw.
-        crate::projection::require(&current.document, id)?;
+        crate::projection::require_for_save(&current.document, id, &request)?;
         // `current` came from the repository, not from this request, so a
         // product section that will not parse is a stored document the
         // platform cannot read — the same failure `GET /api/clients` reports

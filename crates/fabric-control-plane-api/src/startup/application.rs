@@ -111,6 +111,8 @@ pub async fn build(config: &ControlPlaneAppConfig) -> Result<Application, String
             audit,
             keys,
             identity_provider,
+            // D01-15: no protected continuity store exists yet, so no ledger.
+            declaration_ledgers: None,
             git_integration: integrations.clients,
             client_secrets: integrations.client_secrets,
 

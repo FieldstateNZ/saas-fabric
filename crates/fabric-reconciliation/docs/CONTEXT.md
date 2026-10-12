@@ -45,11 +45,18 @@ Converges an identity provider onto a client's desired state. Depends on
   Ordered: realm first, then roles, then clients.
 - `HandEdit { client: OidcClientId, field: HandEditedField }` (`Display` as
   `client:field`), `HandEditedField` — `ClientDisabled | StandardFlowDisabled |
-  DeclaredRedirectUriRemoved` (serialised camelCase), `HeldEdits { client_disabled,
+  DeclaredRedirectUriRemoved | RedirectUrisUnconfirmed` (serialised camelCase; the last
+  is held whole, not a hand edit as such, D01-15), `HeldEdits { client_disabled,
   standard_flow_disabled, removed_redirect_uris }` with `is_empty()`, `fields()`,
   `redirect_uris_to_write(&[RedirectUri])`. D01-19b; see the README's
   "What the comparison sorts a difference into".
-- `IdentityReconciler::new(Arc<dyn IdentityProvider>)` —
+- `DeclarationLedger` (port, D01-15) — `read(&Client) -> Result<AppliedBaseline, LedgerError>`,
+  `record(&Client, &OidcClient, WriteStage)`. `WriteStage::{Writing, Written}`,
+  `LedgerError::{Unreadable, Unrecorded}`, `AppliedBaseline` (`unknown()`, `replay(..)`,
+  `callbacks(&OidcClientId) -> Option<&WrittenCallbacks>`, `must_record(&OidcClient)`),
+  `WrittenCallbacks { confirmed, unconfirmed }`, `CallbackDigest` (SHA-256 hex, `of`, `parse`),
+  `callback_digests(&OidcClient)`. `testing::InMemoryDeclarationLedger` for tests only.
+- `IdentityReconciler::new(Arc<dyn IdentityProvider>)`, `.with_ledger(Arc<dyn DeclarationLedger>)` —
   `plan(&Client) -> Result<IdentityPlan, ProviderError>` (observe only, holding),
   `reconcile(&Client, &[OidcClientId]) -> ReconciliationOutcome` (observe, plan,
   apply; holds unsupported hand edits; leaves the named declared clients out), `reassert(&Client) -> ReconciliationOutcome` (the same,

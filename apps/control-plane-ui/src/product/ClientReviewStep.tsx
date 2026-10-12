@@ -26,6 +26,12 @@ export function ClientReviewStep({ id, value }: { id: string; value: ClientProdu
         <dd>{value.timezone}</dd>
         <dt>Hostnames</dt>
         <dd>{value.hosts.join(', ') || 'None'}</dd>
+        {value.privateNetworkScheme !== null && (
+          <>
+            <dt>Callback scheme for .internal hosts</dt>
+            <dd>{value.privateNetworkScheme}</dd>
+          </>
+        )}
       </dl>
       <h3>Application assignments</h3>
       {value.applications.length === 0 ? (

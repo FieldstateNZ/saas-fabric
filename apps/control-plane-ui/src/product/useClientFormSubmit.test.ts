@@ -51,6 +51,7 @@ describe('useClientFormSubmit: a second call to submit while one is in flight is
         value: {
           displayName: 'Acme',
           hosts: [],
+          privateNetworkScheme: null,
           legalName: 'Acme Ltd',
           region: 'New Zealand',
           timezone: 'Pacific/Auckland',

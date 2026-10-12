@@ -463,6 +463,7 @@ async fn activity_merges_catalogue_and_client_events_newest_first() {
     let request = ClientProductRequest {
         display_name: "Acme".into(),
         hosts: vec![Host::try_new("www.example.com").unwrap()],
+        private_network_scheme: None,
         legal_name: "Acme Ltd".into(),
         region: "NZ".into(),
         timezone: "Pacific/Auckland".into(),
@@ -726,11 +727,12 @@ async fn a_deployment_reserved_application_id_is_refused() {
 }
 
 #[tokio::test]
-async fn an_assignment_is_refused_for_a_client_with_an_internal_host() {
-    // A client's own declared host feeds the per-host callback
-    // `with_application_identity` builds; `.internal` classifies as a
-    // private-network host, which the `claimedHttps` strategy every
-    // application client uses does not admit.
+async fn an_assignment_is_refused_for_a_client_mixing_internal_and_public_hosts() {
+    // A projected client follows the kind of the client's hosts (D01-15):
+    // `.internal` hosts project `privateNetwork`, public ones `claimedHttps`.
+    // One identity client holds one strategy, so a client declaring both is
+    // refused rather than having either kind's callbacks dropped. An
+    // all-`.internal` client is admitted: see `internal_host_projection.rs`.
     let app = control_plane();
     let first = command(
         &app.router,
@@ -752,7 +754,7 @@ async fn an_assignment_is_refused_for_a_client_with_an_internal_host() {
     .await;
 
     let mut internal_client = client();
-    internal_client["hosts"] = json!(["newco.internal"]);
+    internal_client["hosts"] = json!(["newco.example.com", "newco.internal"]);
 
     let response = send(
         &app.router,
@@ -767,6 +769,9 @@ async fn an_assignment_is_refused_for_a_client_with_an_internal_host() {
     let status = response.status();
     let body = support::json(response).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["error"]["code"], "invalid_request", "{body}");
+    let message = body["error"]["message"].as_str().unwrap();
+    assert!(message.contains("mix .internal and public"), "{message}");
 }
 
 #[tokio::test]

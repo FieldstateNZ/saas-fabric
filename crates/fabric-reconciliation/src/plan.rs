@@ -1,5 +1,7 @@
 //! What has to change for a provider to match a client's desired state.
 
+#[cfg(test)]
+mod baseline_tests;
 mod classify;
 mod diff;
 #[cfg(test)]

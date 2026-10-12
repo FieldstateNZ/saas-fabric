@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use fabric_client_model::{PkceMethod, RedirectUri};
 
 use crate::fixtures::{acme, role, web_client, ROLES};
+use crate::ledger::{callback_digests, AppliedBaseline, WriteStage};
 use crate::plan::{plan as plan_under, HandEditPolicy, IdentityAction};
 use crate::provider::{HandEdit, HandEditedField, HeldEdits};
 use crate::provider::{ObservedOidcClient, ObservedRealm};
@@ -17,7 +18,7 @@ use crate::IdentityPlan;
 /// 0019 §1, §G5), threaded into the comparison rather than carried by either
 /// fixture, because it is adapter configuration and neither a document nor a
 /// realm holds it.
-const AUDIENCE: &str = "saas-fabric-data-api";
+pub(super) const AUDIENCE: &str = "saas-fabric-data-api";
 
 /// Plans as every ordinary pass does: holding unsupported hand edits.
 fn plan(
@@ -25,7 +26,19 @@ fn plan(
     observed: Option<&ObservedRealm>,
     audience: &str,
 ) -> IdentityPlan {
-    plan_under(client, observed, audience, HandEditPolicy::Hold)
+    plan_under(client, observed, audience, HandEditPolicy::Hold, &applied())
+}
+
+/// What the ledger holds once `web` was written as declared: every test here
+/// that is not about the baseline classifies against this.
+pub(super) fn applied() -> AppliedBaseline {
+    let mut baseline = AppliedBaseline::unknown();
+    baseline.replay(
+        web_client().id,
+        callback_digests(&web_client()),
+        WriteStage::Written,
+    );
+    baseline
 }
 
 /// The action that rewrites `web` whole, holding nothing.
@@ -38,7 +51,7 @@ fn rewrite_web() -> IdentityAction {
 
 /// A realm holding exactly what `acme()` declares, plus two roles the provider
 /// created for itself.
-fn converged_realm() -> ObservedRealm {
+pub(super) fn converged_realm() -> ObservedRealm {
     let mut roles: BTreeSet<_> = ROLES.into_iter().map(role).collect();
     roles.insert(role("offline_access"));
     roles.insert(role("uma_authorization"));
@@ -357,7 +370,7 @@ fn a_declared_client_switched_to_confidential_is_corrected() {
 }
 
 /// One unsupported hand edit on `web`.
-fn hand_edit(field: HandEditedField) -> HandEdit {
+pub(super) fn hand_edit(field: HandEditedField) -> HandEdit {
     HandEdit {
         client: web_client().id,
         field,
@@ -470,7 +483,13 @@ fn reasserting_rewrites_a_client_that_carries_only_hand_edits() {
         existing.standard_flow_enabled = false;
     }
 
-    let plan = plan_under(&acme(), Some(&realm), AUDIENCE, HandEditPolicy::Overwrite);
+    let plan = plan_under(
+        &acme(),
+        Some(&realm),
+        AUDIENCE,
+        HandEditPolicy::Overwrite,
+        &applied(),
+    );
 
     assert_eq!(plan.actions(), [rewrite_web()]);
     assert_eq!(
@@ -490,6 +509,7 @@ fn reasserting_a_converged_client_changes_nothing() {
         Some(&converged_realm()),
         AUDIENCE,
         HandEditPolicy::Overwrite,
+        &applied(),
     );
 
     assert!(plan.is_converged());

@@ -44,6 +44,12 @@ pub async fn catalogue_commands(router: &Router, mut revision: Value, commands: 
 /// Publishes `analytics` and creates `newco` assigned to it, so `newco`'s
 /// identity holds one projected client.
 pub async fn newco_with_a_projected_client(router: &Router) -> String {
+    newco_on_hosts(router, &["newco.example.com"], None).await
+}
+
+/// As [`newco_with_a_projected_client`], with `newco` declaring `hosts`
+/// and, when given, the scheme its `.internal` callbacks use.
+pub async fn newco_on_hosts(router: &Router, hosts: &[&str], scheme: Option<&str>) -> String {
     catalogue_commands(
         router,
         Value::Null,
@@ -62,7 +68,7 @@ pub async fn newco_with_a_projected_client(router: &Router) -> String {
             .body(Body::from(
                 json!({"id":"newco","configuration":{
                     "displayName":"Newco","legalName":"Newco Ltd","region":"NZ","timezone":"Pacific/Auckland",
-                    "hosts":["newco.example.com"],"configuration":{},
+                    "hosts":hosts,"privateNetworkScheme":scheme,"configuration":{},
                     "applications":[{"applicationId":"analytics","version":1,"planId":"standard","configuration":{}}]}})
                 .to_string(),
             ))

@@ -439,7 +439,10 @@ slice.
 
 **Client secrets** are managed through OpenBao: the console's Secrets tab
 reads, writes and deletes a client's partition, and reveals a value only on an
-explicit action.
+explicit action. A secret rolls back by writing its earlier values forward as
+a new version, under the same check-and-set as any write. There is no
+historical reveal, undelete or destroy, and Fabric sets no retention (ADR 0017,
+amended for D01-25).
 
 **The authorization front door** — `fabric-fga-auth` and `fabric-fga-auth-api`
 — is built: it verifies a tenant's bearer and answers `POST /v1/check` against

@@ -175,3 +175,90 @@ async fn a_secret_route_cannot_be_reached_without_an_operator() {
 
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }
+
+#[tokio::test]
+async fn reveal_reads_the_current_version_and_cannot_be_asked_for_another() {
+    // D01-25: no historical reveal. A version an operator replaced stays out of
+    // reach of the one response that carries values.
+    for body in [
+        r#"{"path":"database/primary","version":3}"#,
+        r#"{"path":"database/primary","versions":[3]}"#,
+    ] {
+        let (status, _, revealed) = as_operator("POST", "/api/clients/acme/secrets/reveal", Some(body)).await;
+
+        assert!(
+            status.is_client_error(),
+            "a reveal naming a version must be refused, got {status} for {body}"
+        );
+        assert!(
+            !revealed.contains(SECRET_VALUE),
+            "a refused reveal must carry no value: {revealed}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_write_names_the_version_it_replaces_and_nothing_else() {
+    // Rolling back is a write of the earlier values under the same
+    // check-and-set as any other. No field selects a version to restore or
+    // switches the check off.
+    for body in [
+        r#"{"values":{"password":"earlier"},"expectedVersion":7,"restoreVersion":3}"#,
+        r#"{"values":{"password":"earlier"},"expectedVersion":7,"cas":0}"#,
+        r#"{"values":{"password":"earlier"},"version":3}"#,
+    ] {
+        let (status, _, _) = as_operator(
+            "PUT",
+            "/api/clients/acme/secrets/entry/database/primary",
+            Some(body),
+        )
+        .await;
+
+        assert!(
+            status.is_client_error() && status != StatusCode::CONFLICT,
+            "{body} must be refused as malformed, got {status}"
+        );
+    }
+
+    let (status, _, written) = as_operator(
+        "PUT",
+        "/api/clients/acme/secrets/entry/database/primary",
+        Some(r#"{"values":{"password":"earlier"},"expectedVersion":7}"#),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "a roll forward is an ordinary write");
+    assert!(
+        written.contains(r#""version":8"#),
+        "the earlier values become the next version: {written}"
+    );
+}
+
+#[tokio::test]
+async fn nothing_undeletes_destroys_or_restores_a_version() {
+    // `entry/{*path}` takes any tail as a secret path, so an operation
+    // spelled as a suffix (`…/primary/undelete`) would be a secret of that
+    // name, not an operation. What must not exist is a method or a sibling
+    // route that acts on history.
+    for (method, path) in [
+        ("POST", "/api/clients/acme/secrets/entry/database/primary"),
+        ("PATCH", "/api/clients/acme/secrets/entry/database/primary"),
+        ("POST", "/api/clients/acme/secrets/undelete"),
+        ("POST", "/api/clients/acme/secrets/destroy"),
+        ("POST", "/api/clients/acme/secrets/restore"),
+        ("GET", "/api/clients/acme/secrets/versions"),
+    ] {
+        let (status, _, body) = as_operator(
+            method,
+            path,
+            Some(r#"{"path":"database/primary","versions":[3]}"#),
+        )
+        .await;
+
+        assert!(
+            status == StatusCode::NOT_FOUND || status == StatusCode::METHOD_NOT_ALLOWED,
+            "{method} {path} must not be an operation, got {status}"
+        );
+        assert!(!body.contains(SECRET_VALUE), "{method} {path} carried a value");
+    }
+}

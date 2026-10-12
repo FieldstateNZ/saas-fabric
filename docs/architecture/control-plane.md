@@ -148,7 +148,7 @@ GET    /api/clients/{clientId}/placements              every logical data source
 POST   /api/clients/{clientId}/placements/{logical}    place it                       (If-Match required)
 GET    /api/clients/{clientId}/secrets   list its secret paths
 GET    /api/clients/{clientId}/secrets/entry/{path}   metadata, never values
-PUT    /api/clients/{clientId}/secrets/entry/{path}   write a version   (optional If-Match)
+PUT    /api/clients/{clientId}/secrets/entry/{path}   write a version   (expectedVersion in the body; absent means new)
 DELETE /api/clients/{clientId}/secrets/entry/{path}   delete every version
 POST   /api/clients/{clientId}/secrets/reveal         reveal values     (path in the body)
 ```
@@ -455,6 +455,32 @@ routes — and is the only crate that knows OpenBao exists. It authenticates wit
 still no credential for a human to create or transport — which is the whole
 point, since secrets projected *into* a pod are a one-way path and the platform
 now generates credential material of its own.
+
+### A client's secrets: versions, rollback and retention
+
+Recorded in ADR 0017's
+[amendment of 2026-10-12](../decisions/0017-fabric-decides-which-client-secret-boundary-an-operation-reaches.md#amendment-2026-10-12-d01-25-versions-rollback-and-retention)
+(D01-25). In outline:
+
+- **A write names the version it replaces**, as `expectedVersion` in the body.
+  Absent means "this does not exist yet", so it never replaces an existing
+  secret. A mismatch is `409 secret_stale_version`. The adapter always sends
+  the store a check-and-set.
+- **Rolling back is rolling forward.** Write the earlier values, naming the
+  current version. They become the next version. Nothing resets a version
+  number, and the earlier values come from outside Fabric, because reveal reads
+  only the current version. A write replaces every key, so a secret with several
+  keys is rolled back through the API: the console's form takes one key.
+- **Not offered:** reading an older version, undelete, and deleting or
+  destroying one version. `DELETE` removes the secret and every version, and a
+  secret written again afterwards starts at version 1.
+- **Retention is the store's default, and Fabric sets none.** On a mount
+  created with no options, OpenBao keeps the newest 10 versions, with no age
+  limit (measured on 2026-10-12, OpenBao 2.7.1). Earlier values therefore stay
+  in the store after a roll forward. Fabric cannot read them, but the platform
+  credential's policy can. A leaked credential is revoked at its issuer, not by
+  writing over it. The live mount's options are **not verified**, and limits are
+  proposed separately on #108 before anything changes.
 
 ### Image registries
 

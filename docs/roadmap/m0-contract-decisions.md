@@ -770,10 +770,30 @@ Options:
     value. Against: destroy is irreversible, and a low cap shortens the
     rollback window in B.
 
-  *Recommendation:* **A** now, with C's retention setting made explicit in the
-  platform and no destroy endpoint yet. Take **B** when an operator needs to
-  read an older version. Owner: **Brett**. This is Claude's proposal, not
-  something a PR or ADR settles.
+  *Recommendation (superseded by the disposition below):* **A** now, with C's
+  retention setting made explicit in the platform and no destroy endpoint yet.
+  Take **B** when an operator needs to read an older version.
+
+  **Disposition (2026-10-11, D01-25, [#108 comment](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6109518415)): A.**
+  Roll forward under the existing check-and-set only; no historical reveal,
+  undelete or destroy endpoint. Retention is documented explicitly, and its
+  actual limits are proposed separately before a live mount changes or retained
+  history is shortened. Recorded in ADR 0017's amendment of 2026-10-12, which
+  also corrects the facts above as of `main` `4048c6a`:
+  - PR105 and PR106 merged (`04f9276`, `bb864f4`).
+  - The `If-Match` drift is fixed: `control-plane.md` now says `expectedVersion`
+    in the body.
+  - The audit record's `version` is filled by a write only. A reveal records
+    none, so ADR 0017's "recording the version on reveal" was not true of the
+    code; the ADR now says so.
+  - Retention is measured on the fixture, not verified live: a mount created
+    with no options keeps the newest 10 versions with no age limit, and the
+    `+/secret/*` policy reaches older versions, undelete, destroy and the
+    mount's `config`. Fabric's adapter reaches none of them, and
+    `scripts/check_architecture.py` holds it there.
+  - Still **not verified**: where a live client mount is created and with what
+    options. LucentRoot's control-plane policy at platform `main` `4152687`
+    grants no client namespace at all.
 - **D01-27: rollback of the desired-state repositories.** This covers
   `saas-fabric-clients` (the catalogue and client documents) and the platform's
   `data-sources.yaml` and `placements.yaml`. Is a Git revert a supported
@@ -926,6 +946,7 @@ this document's ADR amendments act on. The comment holds the others.
 | D01-10, D01-10a | Layered authorization. Scopes and roles only for the isolated synthetic trial; OpenFGA Check on relation-declaring resources from M3 and for every tenant beyond the trial. Designed and tested now; no deployment or standing access | ADR 0027 (Proposed) §1–§4, §6; "Owed" |
 | D01-12 | No data-path administrator bypass; scopes cannot be disabled outside tests; coarse platform-operator controls retained within their current boundary | ADR 0027 §5 |
 | D01-19c | Activity is a bounded view, not the audit trail. A durable audit source with integrity and size tests; authoritative history is never silently pruned. Retention, storage activation and customer-data commitments stay separate | ADR 0028 (Proposed) §1–§5; "Deferred, and not decided here" |
+| D01-25 | Roll forward under the existing check-and-set only; no historical reveal, undelete or destroy endpoint. Retention documented explicitly; its actual limits proposed separately before a live mount changes or retained history is shortened | ADR 0017 amendment 2026-10-12, sections 1–4 |
 
 **D01-14 and D01-19a: what stays open.** Built: the state machine, its
 refusals, the API and console state, and `lifecycle.withdrawal`, which reports
@@ -999,7 +1020,7 @@ IDs are not reused.
 | D01-20 | Rollback | Order updates as well as creation (`RollingSync`, platform #44) | Creation-only for the trial; `RollingSync` before the pilot |
 | D01-21 | Rollback | Rollback floor for Fabric's own component across format changes. #136 records and enforces a floor for the published state (`minimum_publisher_contract`) | Minimum rollable version in the release manifest. **Disposed 2026-10-11:** A. Built: `compatibility.yaml` floor `0.3.0-preview.16`, enforced for in-product rollback; publication contract 3 (2 for #139, 3 for the issuer registry, #140). Break-glass not refused; not verified live |
 | D01-23 | Rollback | Owner of tenant data backup, restore and migration | Platform, gated to M5 |
-| D01-25 | Secrets | Lifecycle and rollback of client secret versions (ADR 0017; PR105/106). Options: A roll forward only, B version read and restore, C retention and destroy | A now, with explicit retention; B when an older version must be read |
+| D01-25 | Secrets | Lifecycle and rollback of client secret versions (ADR 0017; PR105/106). Options: A roll forward only, B version read and restore, C retention and destroy | **Disposed 2026-10-11:** A. Roll forward under check-and-set; no historical reveal, undelete or destroy. Retention documented (store default, 10 versions, measured on the fixture); limits proposed separately on #108, nothing applied. See [Dispositions recorded](#dispositions-recorded) |
 | D01-26 | Identity | Who configures tenant end-user sessions for client instances. ADR 0024 already sets the policy (the gateway holds the session); this is engineering ownership, and Brett confirms only if it changes D01-3(b) (#114) | A, platform per-client composition, with D01-3(b) |
 | D01-27 | Rollback | Rollback of the desired-state repositories (`saas-fabric-clients`, platform environment files). Options: A Git revert supported, B revert through the console only, C no revert of placements | C: placements roll forward only; data sources only by a revision-bumping edit; catalogue and client documents keep the Git edit as break-glass until a console restore exists. Decide with D01-1, D01-2, D01-19d. **Disposed 2026-10-11:** placements roll forward only; no blind placement revert; Git effects tested before being claimed. See [Dispositions recorded](#dispositions-recorded) |
 

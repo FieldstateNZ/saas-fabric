@@ -16,13 +16,7 @@
 //!
 //! Nothing here is reachable from a *deployment*: `build_control_plane` takes
 //! the authenticator as an `Option`, and the configured posture is what
-//! builds it for every image this repository ships.
-//!
-//! The one exception is `fabric-control-plane-api/examples/console_workbench`,
-//! which also populates it. That binary is not a counterexample to "nothing
-//! here reaches production" — see its own module doc for why — but it does
-//! mean the honest claim is narrower than "only tests": it is "only tests,
-//! and one loopback-only example nothing ever builds into an image".
+//! builds it for every image this repository ships. Only tests populate it.
 
 use std::sync::Arc;
 

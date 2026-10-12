@@ -26,6 +26,11 @@ Three items, deliberately:
 - `AdminCredential::new(impl Into<String>)`. No `Display`; `Debug` prints
   `AdminCredential(redacted)`. `expose()` is `pub(crate)` and named to be
   conspicuous.
+- `OperatorRealmKeys::new(reachable_at, timeout)` + `signing_keys()` — reads
+  the platform realm's JWKS document for the control plane's operator posture.
+  Nothing else of operator sign-in lives here: the gateway runs the
+  authorization-code flow and forwards the bearer (ADR 0024 §2), so there is
+  no code redemption and no authorization endpoint.
 
 Everything else — `wire::*`, `admin::*` — is `pub(crate)`.
 

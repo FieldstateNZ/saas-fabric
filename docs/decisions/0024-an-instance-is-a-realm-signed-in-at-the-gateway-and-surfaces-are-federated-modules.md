@@ -1,7 +1,7 @@
 # ADR 0024 — An instance is a realm, signed in at the gateway, and product surfaces are federated modules
 
 - **Status:** Accepted (2026-09-22, product owner)
-- **Date:** 2026-09-22
+- **Date:** 2026-09-22; amended 2026-10-12 (D01-9)
 - **Applies to:** `apps/app-shell`, `apps/control-plane-ui`,
   `fabric-control-plane` (the operator posture, `/api/session`,
   `/api/operator`), `fabric-control-plane-api`, `hosting/`, the runtime plane
@@ -134,6 +134,10 @@ serves the shell, so the origin is the same and the shell's
 `default-src 'self'` policy does not widen. Its API client calls with cookies
 and holds nothing. Standalone, it still runs for the console workbench.
 
+> **Amendment (2026-10-12, D01-9).** The console workbench is retired; the
+> standalone console now runs only behind the gateway. See
+> [Implementation status](#implementation-status-2026-10-12).
+
 ### 6. Placement is configuration
 
 The control-plane instance's `config.yaml` places the `control-plane` module
@@ -161,6 +165,30 @@ In this order, each mergeable on its own:
    `control-plane` entry in the instance's config.
 5. **Client instances.** `/v1/identity` on the runtime; shell config derived
    from the catalogue.
+
+### Implementation status (2026-10-12)
+
+Slice 2 is built in part, by the D01-9 disposition on
+[#108](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6109518415):
+
+- **Built:** `GET`/`POST /api/session` are gone, and so are the
+  `SignInSurface` port, its Keycloak adapter's code redemption and the
+  operator posture's `redirect_uri`, which a configuration may no longer
+  state. The console is session-free as §2 says: no PKCE pair, no
+  `sessionStorage` verifier, no in-memory token, no silent renewal, and no
+  `Authorization` header — it probes `/api/operator` and navigates to the
+  gateway's sign-in. The loopback workbench is retired with it.
+- **Not built:** `GET /api/user/current` (`/api/operator` keeps answering, and
+  is still the probe). Slice 1's local half — the `hosting/` Envoy's OAuth2
+  filter — is not built either, so with no gateway in front the console stops
+  at its sign-in screen.
+- **Platform consequence:** LucentRoot's control-plane configuration states
+  `redirect_uri`, and now refuses to load with it. The overlay drops it in the
+  same change that takes the release carrying this, which is also when the
+  console's sign-in depends on the gateway alone.
+- **The disposable dogfood profile** (#101, #111) drives the retired flow. It
+  is parked at its pinned source commit, which still serves `/api/session`;
+  see `examples/disposable-dogfood/README.md`, "Parked (D01-9)".
 
 ## Consequences
 

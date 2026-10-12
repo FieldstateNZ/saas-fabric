@@ -26,9 +26,9 @@ pub enum OperatorConfig {
     Oidc {
         /// The issuer every accepted token must name, matched exactly.
         ///
-        /// This is the realm's issuer URL, and it is also where the endpoints
-        /// the console is sent to are derived from — so a deployment states it
-        /// once rather than stating a set of URLs that could disagree.
+        /// This is the realm's issuer URL — the realm the gateway signs
+        /// operators in to (ADR 0024 §1). It is also where the signing keys are
+        /// read from unless `reachable_at` says otherwise.
         issuer: String,
 
         /// Where **this process** reaches the same realm.
@@ -36,9 +36,8 @@ pub enum OperatorConfig {
         /// Defaults to the issuer, which is right whenever one URL serves
         /// both. On a cluster it often does not: the issuer is a public
         /// hostname that only resolves outside, and the pod has a service
-        /// address that only resolves inside. The signing keys and the token
-        /// endpoint are fetched from here; the browser is still sent to the
-        /// issuer.
+        /// address that only resolves inside. The signing keys are fetched
+        /// from here; a token still has to name the issuer.
         ///
         /// Getting this wrong fails in a way that reads as something else —
         /// every operator refused, and a log saying either that no key set
@@ -46,21 +45,17 @@ pub enum OperatorConfig {
         #[serde(default)]
         reachable_at: String,
 
-        /// The client the console signs in as, and which an accepted token
-        /// must have been issued to.
+        /// The client an accepted token must have been issued to.
+        ///
+        /// Behind the gateway (ADR 0024) that is the gateway's own client,
+        /// because the gateway runs the sign-in and forwards the token it was
+        /// issued; the console signs in as nothing.
         #[serde(default = "default_client_id")]
         client_id: String,
 
         /// The realm role that confers operator authority.
         #[serde(default = "default_required_role")]
         required_role: String,
-
-        /// Where the provider sends the browser back to after authenticating.
-        ///
-        /// The console's own origin. It is stated rather than derived from the
-        /// request, because a redirect target taken from a `Host` header is a
-        /// redirect target an attacker can choose.
-        redirect_uri: String,
 
         /// Clock skew tolerated on `exp` and `nbf`, in seconds.
         #[serde(default = "default_leeway")]
@@ -78,7 +73,8 @@ pub enum OperatorConfig {
     },
 }
 
-/// The client id the console signs in as.
+/// The client id an accepted token must have been issued to, when a
+/// deployment states none.
 fn default_client_id() -> String {
     "saas-fabric-console".to_owned()
 }
@@ -109,10 +105,7 @@ impl OperatorConfig {
     /// issuer, client or role.
     ///
     /// `keys` is the key set the OIDC posture verifies against, which the
-    /// composition root owns because it also owns refreshing it. The
-    /// trusted-header posture has no use for it and ignores it; that is
-    /// preferable to two build functions, because it keeps every posture
-    /// reachable from one match a reader can enumerate.
+    /// composition root owns because it also owns refreshing it.
     pub fn build(&self, keys: Arc<KeyHolder>) -> Result<Box<dyn OperatorAuthenticator>, String> {
         match self {
             Self::Oidc {

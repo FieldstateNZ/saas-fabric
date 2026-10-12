@@ -23,7 +23,7 @@ testable.
   `AuditTrail`: `<stream>.jsonl` opened for append (`sync_data` per entry),
   `<stream>.head` replaced atomically, `.audit.lock` OS lock. Open verifies
   every stream and refuses a broken one; an entry one past its head is caught
-  up. The console workbench records to `<workbench data>/audit`.
+  up.
 - `config::CONFIG_PATH_VAR = "FABRIC_CP_CONFIG"`.
 - `config::PlatformManagementConfig { environment, registry, observation,
   reconciliation_interval_seconds, operation_timeout_seconds, publication:
@@ -73,8 +73,7 @@ testable.
   did not answer spawns `restore_until_complete`. The same router is
   Platform Management's `Registry`, and — through
   `ComposedRegistries::resolution()` with the budget — the catalogue's
-  selection's (`ControlPlaneDeps.resolution`). The console workbench composes it over
-  in-memory stores.
+  selection's (`ControlPlaneDeps.resolution`).
 - `telemetry::init`.
 
 ## Hard invariants — do not break
@@ -115,11 +114,11 @@ testable.
   now `operator_keys::refresh::spawn` all route their tick through it, so no
   loop in this crate can be killed for the life of the process by one bad
   response from an adapter it was not written to trust.
-- `startup::operator_keys` is now three files: `operator_keys.rs` builds the
+- `startup::operator_keys` is three files: `operator_keys.rs` builds the
   posture (`establish`); `operator_keys/refresh.rs` keeps its key set
   current; `operator_keys/refresh/source.rs` holds the seam the refresh loop
-  reads keys through. `RealmSignIn::signing_keys` is a concrete method with
-  no trait behind it -- `RealmSignIn::new` is `pub`, so a stub HTTP server
+  reads keys through. `OperatorRealmKeys::signing_keys` is a concrete method with
+  no trait behind it -- `OperatorRealmKeys::new` is `pub`, so a stub HTTP server
   could already stand in for the realm in a test, but nothing could make the
   adapter *panic* on command, which is the property the refresh loop's test
   needs. `SigningKeySource` (named `read_signing_keys` to keep it from
@@ -127,6 +126,6 @@ testable.
   fail this file to compile, not recurse at runtime) exists for that; it is
   `pub(in crate::startup::operator_keys)`, not `pub(super)`, because
   `establish` in `operator_keys.rs` needs to name it two levels down. It is
-  implemented for `RealmSignIn` in production and for fakes under
+  implemented for `OperatorRealmKeys` in production and for fakes under
   `#[cfg(test)]` only; no public API was added to `fabric-control-plane` to
   support it.

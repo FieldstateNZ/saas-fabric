@@ -654,9 +654,9 @@ ADR 0026.** Owner: **Brett**.
   - **B.** Projected clients are marked as the product's and refused in
     identity edits.
   - *Recommendation:* **B**.
-  - *Disposed 2026-10-11; first slice built 2026-10-12; the owed follow-up
-    built 2026-10-12, under review:* **B**, extended to the identity
-    provider.
+  - *Disposed 2026-10-11; first slice built 2026-10-12 (#147); the owed
+    follow-up built 2026-10-12 (#151, wording corrected by #153); complete:*
+    **B**, extended to the identity provider.
     - An identity edit to a projected client is refused, except on a retired
       client.
     - A product save refuses a stored projected entry that diverges from the
@@ -1002,10 +1002,12 @@ this document's ADR amendments act on. The comment holds the others.
 | D01-19c | Activity is a bounded view, not the audit trail. A durable audit source with integrity and size tests; authoritative history is never silently pruned. Retention, storage activation and customer-data commitments stay separate | ADR 0028 (Proposed) §1–§5; "Deferred, and not decided here" |
 | D01-19b | Product-owned projection; unsupported hand edits are refused instead of silently fought; current permission boundaries are preserved | ADR 0021 amendment 2026-10-12, D01-19b ("Two places…", "The drift state", "What an operator does", "Known limits") |
 | D01-25 | Roll forward under the existing check-and-set only; no historical reveal, undelete or destroy endpoint. Retention documented explicitly; its actual limits proposed separately before a live mount changes or retained history is shortened | ADR 0017 amendment 2026-10-12, sections 1–4 |
-| G7 ([comment 6118073758](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6118073758)) | Option A: the control plane pulls a minimal per-pod report through the existing read-only observer. It uses no runtime write RBAC, no `TokenReview`, no human or platform-admin bearer and no push credential. Source preparation only: the separate unauthenticated port is not approved for live use. Every replica set's ready readers count, and terminating pods block applied. Membership changes during the sample make it unobserved. Replicas at 0 mean no readers, which is never withdrawal evidence. The documents gate stays publisher evidence, and reader evidence is added beside it | ADR 0023 §5 amendment 2026-10-12 (G7); ADR 0018 O6 (G7); [`m2-publication-gap-report.md`](m2-publication-gap-report.md) "Reader generation reporting (G7)" |
 
-**D01-19b: what is built and what stays open.** This is a first slice, not
-a complete D01-19b. Built:
+**D01-19b: what is built and what stays open.** D01-19b is complete: the
+first slice merged in [#147](https://github.com/FieldstateNZ/saas-fabric/pull/147),
+the owed follow-up in [#151](https://github.com/FieldstateNZ/saas-fabric/pull/151),
+and [#153](https://github.com/FieldstateNZ/saas-fabric/pull/153) corrected
+the missing-entry limit's wording. First slice:
 - for the fields the adapter observes, product-owned drift corrected and
   narrowing hand edits held. This split is accepted in the
   [engineering disposition](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6116879549).
@@ -1021,7 +1023,8 @@ a complete D01-19b. Built:
 
 No permission, credential or service-account scope changed.
 
-The owed follow-up is built and under review. Its defaults were asked on
+The owed follow-up, ADR 0021's "Owed before D01-19b is complete", is
+built and merged. Its defaults were asked on
 [#108](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6117200254)
 and accepted in the
 [engineering disposition](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6117388945),
@@ -1041,7 +1044,13 @@ for source design only:
 - refusing re-assertion: a re-assertion onto a diverged entry answers `409
   projected_client_diverged` before any provider call, and is not audited.
 
-D01-19b is complete once that review accepts it.
+What stays open is what ADR 0021's D01-19b amendment records under
+"Known limits": a withheld client is not corrected while its entry diverges;
+a missing projected entry is reported and held from readiness, not withheld,
+and that is not a frozen generation or proof of revocation; a substituted
+callback leaves a client with none until someone re-asserts; status is per
+process; and unmanaged fields are not evaluated. Neither owed item added a
+forced repair or an automatic credential or access change.
 
 **D01-14 and D01-19a: what stays open.** Built: the state machine, its
 refusals, the API and console state, and `lifecycle.withdrawal`, which reports
@@ -1066,6 +1075,71 @@ Still user-only: the retention duration and export obligations, the scope and
 execution of eventual deletion, and any live identity or session change. ADR
 0021's amendment lists each under "Deferred, and how each is bounded".
 
+**G7: reader-generation evidence.** Asked on
+[#108 comment 6117881889](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6117881889);
+disposed for source design and preparation only in
+[#108 comment 6118073758](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6118073758).
+Built in source in [#157](https://github.com/FieldstateNZ/saas-fabric/pull/157);
+not wired, not approved for live use and not verified live (see the last
+bullet).
+- **Option A is chosen:** "the control plane pulls a minimal per-pod report
+  through the existing read-only Deployment/ReplicaSet/Pod observer
+  boundary." No runtime write RBAC, `TokenReview`, standing human or
+  platform-admin bearer, or push credential. The probe uses a separate HTTP
+  client with no Kubernetes credentials, no redirects, and a bounded timeout
+  and body. Its targets come only from configured Deployments and their
+  API-observed owned pods, never from a URL in client desired state.
+- **Source-only preparation is authorised now:** a versioned metadata DTO, a
+  served-snapshot accessor, a disabled-by-default separate-listener and
+  router factory, the observer and probe abstraction, aggregation, UI and
+  fake-pod tests. The report carries only the served generation,
+  `record_sha256` and origin from one installed, serving snapshot. The
+  admin-gated `/ready` detail and the minimal body's confidentiality are
+  unchanged; no metadata route goes on the main data listener; omitted
+  configuration binds nothing.
+- **Live use of the separate port is not approved:** "The unauthenticated
+  separate-port trust model is NOT approved for live use here." Before it is
+  enabled, the caller and target selectors, port, observer target and
+  NetworkPolicies go for explicit security and deployment approval.
+  NetworkPolicy is traffic isolation, not server attestation. No policy,
+  target, listener activation, credential or grant is authorised, and
+  unsupported or unconfigured probes report `unobserved`. This does not
+  permit changing the current preview.15 configuration.
+- **Applied:** readers owned by every ReplicaSet of the configured
+  Deployment count, not only the current one. Every possible serving reader
+  in one sample must report the exact expected generation and record digest
+  with `published` origin. Any terminating owned pod prevents applied until
+  it is gone or an existing approved mechanism proves it drained. With
+  desired replicas above 0, a current Deployment observation and a nonempty
+  reader set are required; missing or not-ready expected replicas never make
+  a vacuous match applied. Older or `last_known_good` is `pending`; ahead,
+  wrong digest, a malformed, missing or failed report, or membership or UID
+  changing during the sample is `unobserved`; desired replicas 0 is
+  `no_readers`, never applied and not withdrawal proof. It is
+  serving-snapshot evidence, not a guarantee about later requests or token
+  revocation.
+- **The ADR 0023 `documents` gate stays publisher evidence.** Reader
+  evidence sits beside it. Once readers are deliberately running,
+  readiness-gated activation, update completion and any withdrawal-applied
+  claim require applied-reader evidence. No automatic scaling, forced repair
+  or new rollback authority.
+- **Built in source (#157).** `fabric-core`'s four-key
+  `ReaderGenerationReport`, taken from the installed resolution view
+  (`RuntimeResolver::served_generation`) and served by `fabric-api`'s
+  off-by-default `reader_generation_listen` on `GET /reader-generation`
+  only. Every `PublicationReport` stamps the record it leaves held. The
+  read-only `KubernetesReaderObserver`, configured by an optional
+  `[platform_management.publication.readers]` target, samples every
+  replica set's pods with an anonymous, bounded, non-redirecting probe.
+  `readers::assess` answers `applied`, `pending`, `unobserved` or
+  `noReaders`, and the readiness row and console show it beside the
+  documents gate with `updateComplete`. No environment configures a target,
+  so every environment reports `unobserved`. Still owed for live use: the
+  selectors, port, read grants and NetworkPolicies above, for review. No
+  withdrawal-applied claim exists, because withdrawal is not built. See
+  [`m2-publication-gap-report.md`](m2-publication-gap-report.md) "Reader
+  generation reporting (G7)".
+
 **Owed after acceptance.** These are not built at the base of the amendment.
 Each is tracked against [#112](https://github.com/FieldstateNZ/saas-fabric/issues/112).
 [#136](https://github.com/FieldstateNZ/saas-fabric/pull/136) implements O1 and
@@ -1079,7 +1153,7 @@ live.
 | O3 | **Implemented, not verified live.** The publication record carries `resources`, the highest revision each tenant binding and DataSource was ever published at. The publisher refuses a resource absent from the held document that is offered at or below that revision (`ResourceRevisionNotAdvanced`). A declaration is written above the published revision. History starts with the first record that carries it. The platform contract must accept the new key before activation | `fabric-runtime-publication/src/resource_history.rs`, `resource_revisions.rs`; `fabric-platform-management/src/data_sources/plan.rs`; `plan_tests.rs::a_data_source_retired_and_declared_again_at_or_below_its_last_revision_is_refused`; `data_sources/plan_tests.rs::an_id_removed_and_declared_again_starts_above_the_revision_it_was_last_published_at` |
 | O4 | **Implemented, not verified live.** `compose` refuses a published tenant or logical binding with no record left (`PlacementRemoved`), and records that no longer reach the published revision or that reach it with a changed binding (`PlacementLowered`). The publisher refuses a dropped tenant (`TenantRemoved`) unless the whole document is emptied with intent. Not detected: one record lowered while another of the same tenant is raised in the same write | `publication/placement_history.rs`; `snapshot_tests.rs`; `plan_tests.rs::a_held_tenant_dropped_from_the_offer_is_refused` |
 | O5 | **Partly characterized.** Reverts of `placements.yaml` and `data-sources.yaml` are refused and leave every published file unchanged. Still owed: a revert of the catalogue or of client documents | `fabric-control-plane/tests/platform_publication_revert.rs` |
-| O6 | #112 gaps. #136 makes each process resolve a request against one generation's tenants and data sources (G1b, with a deterministic isolation test), keeps readers off a retirement until its unbinding (G2) and off an interrupted publication (G3), and gives G6 a reader-floor handshake with N/N+1 tests. G8 is partly addressed after #136: an entry that no tenant binds is refused, the controller keeps the last published catalogue, and a runtime takes its catalogue from the same read and record as the generation it primes. G1b across replicas is reported in source since G7: a replica's served generation, sampled by the control plane and held to the publisher's record stamp. Live use is not approved (see G7 under "Dispositions recorded"). Still owed: G2's publisher waiting for readers; G3's "incomplete" on the panel; G4 (`Lease`); G5's publisher hold and publisher-side recovery (the reader's persisted last-known-good, its hold and fail-closed rules and its recovery command are built, off by default, and wait on a platform reader mount); G6 (dual-key path, per-row tests, CI check on shape changes); G7's live wiring; the rest of G8 (an entry that some tenant does not bind, catalogue refresh in a running replica, the Data tab) | [`m2-publication-gap-report.md`](m2-publication-gap-report.md) "Still deferred" |
+| O6 | #112 gaps. #136 makes each process resolve a request against one generation's tenants and data sources (G1b, with a deterministic isolation test), keeps readers off a retirement until its unbinding (G2) and off an interrupted publication (G3), and gives G6 a reader-floor handshake with N/N+1 tests. G8 is partly addressed after #136: an entry that no tenant binds is refused, the controller keeps the last published catalogue, and a runtime takes its catalogue from the same read and record as the generation it primes. G1b across replicas is reported in source since G7 (#157): a replica's served generation, sampled by the control plane and held to the publisher's record stamp. Still owed: G2's publisher waiting for readers; G3's "incomplete" on the panel; G4 (`Lease`); G5's publisher hold and publisher-side recovery (the reader's persisted last-known-good, its hold and fail-closed rules and its recovery command are built, off by default, and wait on a platform reader mount); G6 (dual-key path, per-row tests, CI check on shape changes); G7's live wiring (built in source in #157, not approved for live use; see "G7: reader-generation evidence" above); the rest of G8 (an entry that some tenant does not bind, catalogue refresh in a running replica, the Data tab) | [`m2-publication-gap-report.md`](m2-publication-gap-report.md) "Still deferred" |
 | O7 | The controller does not attempt placement on each pass. Placement happens only on an explicit `POST` | `fabric-control-plane/src/handlers/placements/post.rs` is the only production caller of `Placements::place` |
 | O8 | **Publisher half implemented, not verified live (D01-4, D01-18).** The readiness report names three gates: documents, identity and connectors. The issuer registry is published with the tenants document, generation-stamped and named by the publication record. Still owed: the platform contract accepts the carrier, edge and runtime apply one generation with applied evidence. Pending identity evidence excludes a client, fail closed (#108 option (a)) | `fabric-runtime-publication/src/registry.rs`; `fabric-platform-management/src/publication/readiness.rs`; `fabric-control-plane/src/service/issuer_registry_source.rs`; ADR 0018 "The issuer registry" |
 
@@ -1096,27 +1170,27 @@ IDs are not reused.
 |---|---|---|---|
 | D01-1 | Publication | Accept or amend ADR 0018 (built, Proposed), including runtime-document rollback (U5.3, formerly D01-22) | **Disposed 2026-10-11:** amend and accept; roll forward only, resource revisions monotonic. See [Dispositions recorded](#dispositions-recorded) |
 | D01-2 | Publication | Accept or amend ADR 0023: resolve the non-shared placement contradiction (`:222-228`/`:370-372` vs `:230-235`, implemented by `select.rs:44-47`); §5 against D01-18; fix the stale `README.md:451-454` | **Disposed 2026-10-11:** amend, then accept. See [Dispositions recorded](#dispositions-recorded) |
-| D01-3 | Provisioning | Per-client platform composition, three sub-choices: (a) databases, schemas and connector processes; (b) client instance resources (formerly D01-8); (c) application component deployment (formerly D01-17) | Platform composition per client for all three |
-| D01-4 | Identity | Generator for the issuer-to-tenant registry (ADR 0019 §G4a) | Fabric publisher, one generator; gateway sub-choice open |
+| D01-3 | Provisioning | Per-client platform composition, three sub-choices: (a) databases, schemas and connector processes; (b) client instance resources (formerly D01-8); (c) application component deployment (formerly D01-17) | Platform composition per client for all three. **Disposed 2026-10-11** ([#108 comment 6109518415](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6109518415)): "Platform composition per client/instance; Fabric owns desired state and reconciliation under ADR 0012/0024/0025. No new standing provider-admin credential in the product. Author the composition contract and synthetic fixtures without creating credentials, activating registrations or touching other environments." |
+| D01-4 | Identity | Generator for the issuer-to-tenant registry (ADR 0019 §G4a) | Fabric publisher, one generator; gateway sub-choice open. **Disposed 2026-10-11** ([#108 comment 6109518415](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6109518415)): "One canonical generated tenant/issuer generation; Fabric produces the runtime registry, platform composition owns edge application. Do not widen Fabric's live RBAC to write gateway policy. Propose a version-bound handoff that refuses mismatched registry/edge generations and prove the G4a consistency requirement before activation; this is an engineering design obligation, not permission to weaken it." |
 | D01-5 | Identity | Accept ADR 0019; the platform owns the §G edge; clarify the client-route comment | **Disposed 2026-10-11:** accept as written; the platform owns G1–G17; client UI routes add no `/v1/data` path. Accepted as amended, runtime half tested. Browser data path owed to ADR 0024 slice 5. See [Dispositions recorded](#dispositions-recorded) |
 | D01-6 | Identity | How operator master-realm accounts come to exist (broker / create / `admin` only / `[]`); sub-choice 6b, revocation (formerly D01-7); accepting PR93's interim | `admin` interim, brokering as target; Brett names the upstream |
 | D01-9 | Session | Keep or remove the loopback workbench as `/api/session` retires (ADR 0021 owed 1); sequence with PR101 | **Disposed 2026-10-11, built 2026-10-12:** the dogfood profile is parked at its pinned commit with its offline tests in CI; then the workbench and `/api/session` are removed. See [Dispositions recorded](#dispositions-recorded) |
 | D01-10 | Authorization | Data-path enforcement: scopes only / OpenFGA check / layered; sub-choice 10a, deploying OpenFGA (formerly D01-11) | **Disposed 2026-10-11:** layered; scopes only for the isolated trial; Check on relation-declaring resources from M3 and for every tenant beyond the trial. Designed and tested, not wired (ADR 0027). Collections: a distinct tenant-bound check per resource, refused until the model contract exists (§2a). Transport: verified TLS, plaintext only on a test loopback path (§2b) |
 | D01-12 | Authorization | The administrator-role bypass and `require_scopes = false`; operator granularity | **Disposed 2026-10-11:** bypass and toggle removed; health detail role retained as the coarse operator control (ADR 0027 §5) |
-| D01-13 | Authorization | Where entitlements are enforced | Applications enforce; Fabric previews |
+| D01-13 | Authorization | Where entitlements are enforced | Applications enforce; Fabric previews. **Disposed 2026-10-11** ([#108 comment 6109518415](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6109518415)): "Applications enforce entitlements server-side; Fabric previews them, without presenting a preview as enforcement. Keep the settled WorkSpec policy." |
 | D01-14 | Lifecycle | What deprovisioning undoes (ADR 0021 owed 3; ADR 0008 Deletion) | **Disposed 2026-10-11:** tombstone first, retained state, confirmed deletion as a separate write; no destructive action or retention period. Built; retention and customer-data choices deferred. See [Dispositions recorded](#dispositions-recorded) |
-| D01-15 | Lifecycle | `.internal` private-network clients (ADR 0021 owed 4) | Follow the host kind |
-| D01-16 | Lifecycle | Client upgrades, and `automatic` for application components (ADR 0021 owed 7) | Operator save per client for the pilot |
-| D01-18 | Lifecycle | How the runtime is raised from `replicas: 0` (amends ADR 0023 §5) | Fabric reports a gate; a person flips it |
+| D01-15 | Lifecycle | `.internal` private-network clients (ADR 0021 owed 4) | Follow the host kind. **Disposed 2026-10-11** ([#108 comment 6109518415](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6109518415)): "Follow the declared host kind, preserving private-network reachability. Do not expose an internal client publicly or change networking to implement this." |
+| D01-16 | Lifecycle | Client upgrades, and `automatic` for application components (ADR 0021 owed 7) | Operator save per client for the pilot. **Disposed 2026-10-11** ([#108 comment 6109518415](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6109518415)): "Explicit operator save per client for the pilot; no automatic application-component upgrade policy introduced." |
+| D01-18 | Lifecycle | How the runtime is raised from `replicas: 0` (amends ADR 0023 §5) | Fabric reports a gate; a person flips it. **Disposed 2026-10-11** ([#108 comment 6109518415](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6109518415)): "Fabric reports the readiness gate; a deliberate operator action changes replicas only once inputs and evidence are ready. Current replicas=0 is intentional, not a crash; scaling alone cannot fix absent documents/identity/connectors. Existing disposable LucentRoot authority does not excuse unmet readiness conditions." |
 | D01-19a | Lifecycle | What "client created" means (ADR 0021 owed 2) | **Disposed 2026-10-11:** explicit incomplete state until provisioning, identity and publication are met. Built. See [Dispositions recorded](#dispositions-recorded) |
-| D01-19b | Lifecycle | Who owns a projected identity client (ADR 0021 owed 5) | **Disposed 2026-10-11; first slice built; owed follow-up built, under review:** product-owned projection; unsupported hand edits refused, not silently fought. Built: identity edits to a projected client refused except when retired; product saves refuse a stored projection divergence; held Keycloak hand edits on managed fields reported as `handEdited`, overwritten only by an audited re-assertion. Follow-up: every client read reports a stored divergence (`projection`); sweeps withhold a diverged entry (`withheld`); re-assertion onto one is refused. See [Dispositions recorded](#dispositions-recorded) |
+| D01-19b | Lifecycle | Who owns a projected identity client (ADR 0021 owed 5) | **Disposed 2026-10-11; complete 2026-10-12** (#147, #151 merged; #153 corrected the wording): product-owned projection; unsupported hand edits refused, not silently fought. Built: identity edits to a projected client refused except when retired; product saves refuse a stored projection divergence; held Keycloak hand edits on managed fields reported as `handEdited`, overwritten only by an audited re-assertion; every client read reports a stored divergence (`projection`); sweeps withhold a diverged entry (`withheld`); re-assertion onto one is refused. ADR 0021's known limits still apply. See [Dispositions recorded](#dispositions-recorded) |
 | D01-19c | Lifecycle | Activity and the size limit (ADR 0021 owed 6) | **Disposed 2026-10-11:** bounded view; durable audit source. Designed and tested, not activated (ADR 0028). Retention, storage activation and customer-data commitments deferred |
 | D01-19d | Lifecycle | Accept ADR 0021 and ADR 0026 (0026 has six owed decisions; it comes after D01-2) | **Disposed 2026-10-11:** in order 0023, 0021, 0026; owed items stay owed |
-| D01-20 | Rollback | Order updates as well as creation (`RollingSync`, platform #44) | Creation-only for the trial; `RollingSync` before the pilot |
+| D01-20 | Rollback | Order updates as well as creation (`RollingSync`, platform #44) | Creation-only for the trial; `RollingSync` before the pilot. **Disposed 2026-10-11** ([#108 comment 6109518415](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6109518415)): "Creation-only ordering may remain for the isolated disposable trial with explicit degraded-state gates; prove an ordered-update mechanism (RollingSync candidate) before the durable pilot. #44 may proceed as a bounded design/test PR. Establish controller/sync effects before any approval that would change the running environment." |
 | D01-21 | Rollback | Rollback floor for Fabric's own component across format changes. #136 records and enforces a floor for the published state (`minimum_publisher_contract`) | Minimum rollable version in the release manifest. **Disposed 2026-10-11:** A. Built: `compatibility.yaml` floor `0.3.0-preview.16`, enforced for in-product rollback; publication contract 3 (2 for #139, 3 for the issuer registry, #140). Break-glass not refused; not verified live |
-| D01-23 | Rollback | Owner of tenant data backup, restore and migration | Platform, gated to M5 |
+| D01-23 | Rollback | Owner of tenant data backup, restore and migration | Platform, gated to M5. **Disposed 2026-10-11** ([#108 comment 6109518415](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6109518415)): "Platform owns these, gated before M5/durable pilot. WorkSpec builds compatible migration artifacts; Fabric #120 owns deployment-time execution. No backup destination, credential, retention duration or real-data restore is implicitly approved." |
 | D01-25 | Secrets | Lifecycle and rollback of client secret versions (ADR 0017; PR105/106). Options: A roll forward only, B version read and restore, C retention and destroy | **Disposed 2026-10-11:** A. Roll forward under check-and-set; no historical reveal, undelete or destroy. Retention documented (store default, 10 versions, measured on the fixture); limits proposed separately ([#108 comment](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6116824201)), nothing applied. See [Dispositions recorded](#dispositions-recorded) |
-| D01-26 | Identity | Who configures tenant end-user sessions for client instances. ADR 0024 already sets the policy (the gateway holds the session); this is engineering ownership, and Brett confirms only if it changes D01-3(b) (#114) | A, platform per-client composition, with D01-3(b) |
+| D01-26 | Identity | Who configures tenant end-user sessions for client instances. ADR 0024 already sets the policy (the gateway holds the session); this is engineering ownership, and Brett confirms only if it changes D01-3(b) (#114) | A, platform per-client composition, with D01-3(b). **Disposed 2026-10-11** ([#108 comment 6109518415](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6109518415)): "Already answered: option A, platform per-client composition under Accepted ADR 0024/0025. See comment 6008710586 and the approved direction in #70 comment 6083463065. Reopen only for an actual boundary change." |
 | D01-27 | Rollback | Rollback of the desired-state repositories (`saas-fabric-clients`, platform environment files). Options: A Git revert supported, B revert through the console only, C no revert of placements | C: placements roll forward only; data sources only by a revision-bumping edit; catalogue and client documents keep the Git edit as break-glass until a console restore exists. Decide with D01-1, D01-2, D01-19d. **Disposed 2026-10-11:** placements roll forward only; no blind placement revert; Git effects tested before being claimed. See [Dispositions recorded](#dispositions-recorded) |
 
 **Retired IDs:**

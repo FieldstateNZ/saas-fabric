@@ -262,6 +262,26 @@ jobs:
         with:
           python-version: '3.12'
       - run: python3 -m unittest discover -s scripts/tests -v
+      # G6: a published document shape that changed without the reader
+      # floor rising. published_shapes.rs holds the lock to what the
+      # publisher writes; this compares the lock with the base's. A pull
+      # request compares with its base, a push to main with the commit it
+      # replaced, and any other push with where it left main.
+      - name: published shapes raise the reader floor
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          if [ "$EVENT" = pull_request ]; then
+            base="$PR_BASE"
+          elif [ "$REF" = refs/heads/main ]; then
+            base="$BEFORE"
+          else
+            base="$(git merge-base HEAD origin/main)"
+          fi
+          python3 scripts/check_reader_floor.py --base "$base"
 
   architecture:
     name: architectural invariants

@@ -1315,9 +1315,16 @@ ADR 0023's list and `docs/roadmap/m0-contract-decisions.md`.
     live;
   - G6: since #136 the record's `minimum_reader_contract` is the version
     handshake, with reader tests at contract N and N+1 in both directions
-    (`reader_compatibility.rs`). Still open: §9's dual-key path is not built,
-    no check fails CI when a document shape changes without raising the
-    floor, and there are no per-row matrix tests;
+    (`reader_compatibility.rs`). Since the G6 question on #108, every row of
+    the reader-compatibility matrix has a test against the production
+    reader (`reader_compatibility_matrix.rs`). CI also fails when the shape
+    this publisher writes changes without `MINIMUM_READER_CONTRACT` rising.
+    The shape is locked in `published-shapes.json`, held to the publisher by
+    `published_shapes.rs`, and compared with the base by
+    `scripts/check_reader_floor.py`, which refuses any base it cannot read.
+    The defaults are accepted in #108 comment 6122127775. Still open: §9's dual-key path is not built, and
+    nothing at the publisher waits for readers at a raised floor to be rolled
+    out;
   - G7: since the G7 disposition on #108, the runtime's served generation
     (number, record SHA-256, origin), which comes from the snapshot
     resolution reads, can be served on an off-by-default, separate

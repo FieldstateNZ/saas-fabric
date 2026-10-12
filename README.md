@@ -544,3 +544,8 @@ Three of those gates are policy rather than tooling defaults:
   driver or Git library anywhere in the graph, `X-Tenant-Id` being read, a
   dependency the documented graph does not allow, or the operator console naming
   another platform service's API.
+- [`scripts/check_reader_floor.py`](scripts/check_reader_floor.py) fails a
+  change to a published document's shape that does not raise the minimum
+  reader contract, comparing
+  [`published-shapes.json`](crates/fabric-runtime-publication/published-shapes.json)
+  with the base commit's (gap report G6).

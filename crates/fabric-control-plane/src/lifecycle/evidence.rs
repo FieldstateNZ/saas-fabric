@@ -50,12 +50,20 @@ pub(crate) fn provisioning(client: &Client, facts: &PlatformFacts) -> Evidence {
 /// `withheld`: a projected client whose stored entry is not its projection
 /// was not converged at all.
 ///
-/// A stored projection that cannot be computed is never in effect, whatever
-/// the status: nothing shows that what was converged is the projection,
-/// even when no declared client was there to withhold.
+/// Nor is identity in effect while the stored projection is not consistent,
+/// whatever the status says about the entries that are declared: a missing
+/// projected entry withholds nothing and can leave the rest `applied`, and a
+/// projection that cannot be computed shows nothing at all. Neither is the
+/// projection in effect, even with nothing withheld.
 pub(crate) fn identity(status: ReconciliationStatus, projection: &ProjectionCheck) -> Evidence {
-    if matches!(projection, ProjectionCheck::Unverifiable { .. }) {
-        return unmet("the stored projected identity clients cannot be checked against their projection");
+    match projection {
+        ProjectionCheck::Consistent => {}
+        ProjectionCheck::Diverged(_) => {
+            return unmet("a stored projected identity client does not match its projection");
+        }
+        ProjectionCheck::Unverifiable { .. } => {
+            return unmet("the stored projected identity clients cannot be checked against their projection");
+        }
     }
     match status {
         ReconciliationStatus::Applied | ReconciliationStatus::Drifted => Evidence::Met,

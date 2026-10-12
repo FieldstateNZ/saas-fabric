@@ -509,3 +509,181 @@ async fn a_withheld_or_unverifiable_projection_is_not_registered_and_its_binding
         "a tenant binding is not withdrawn by this"
     );
 }
+
+/// Waits for the convergence a write starts in the background to record
+/// its outcome for `revision`, so it cannot land after a later step.
+async fn settled(plane: &TestControlPlane, client: &str, revision: &str) {
+    let client = ClientId::try_new(client).unwrap();
+    let revision = ClientRevision::try_new(revision).unwrap();
+    for _ in 0..500 {
+        if plane.statuses.report(&client).is_some_and(|report| {
+            report.revision == revision
+                && report.status != fabric_reconciliation::ReconciliationStatus::Pending
+        }) {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    panic!("the background convergence never recorded an outcome");
+}
+
+async fn sweep(router: &Router) {
+    let response = send(
+        router,
+        as_operator("POST", "/api/reconciliation")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+async fn write(router: &Router, method: &str, path: &str, revision: &str, body: &Value) -> String {
+    let response = send(
+        router,
+        as_operator(method, path)
+            .header("content-type", "application/json")
+            .header("if-match", format!("\"{revision}\""))
+            .body(Body::from(body.to_string()))
+            .unwrap(),
+    )
+    .await;
+    let status = response.status();
+    let tag = support::entity_tag(&response);
+    assert_eq!(status, StatusCode::OK, "{}", body_of(response).await);
+    tag
+}
+
+/// D01-19b review 5486578470: a projected entry removed in Git withholds
+/// nothing, so a completed sweep at the same revision reports the rest
+/// `applied`. Identity readiness must still be unmet, so the real publisher
+/// leaves the issuer out while the tenant binding stays published, and no
+/// provider call names the missing client. Restoring the projection is the
+/// positive control.
+#[tokio::test]
+async fn a_projected_entry_missing_in_git_is_not_ready_and_not_registered_after_a_completed_sweep() {
+    let dir = TempDir::new("issuer-registry-missing-projection");
+    let (platform, fake) = platform_binding().await;
+    let provider = Arc::new(fabric_reconciliation::testing::FakeIdentityProvider::new());
+    let plane =
+        support::control_plane_with_publication_and_identity_provider(platform, sink(&dir), provider.clone());
+    let inserted = plane.repository.insert(&client_document("initech")).unwrap();
+    fake.seed(DesiredRevision::new("ds-1"), vec![declared_data_source()]);
+    fake.seed_placements(DesiredRevision::new("pl-1"), vec![placement("initech")]);
+    publish_one_application_with_a_resource(&plane.router).await;
+    let assigned = write(
+        &plane.router,
+        "PUT",
+        "/api/clients/initech/product",
+        inserted.as_str(),
+        &json!({"displayName":"initech","legalName":"Initech Ltd","region":"NZ","timezone":"Pacific/Auckland",
+            "hosts":[],"configuration":{},
+            "applications":[{"applicationId":"workspec","version":1,"planId":"standard","configuration":{}}]}),
+    )
+    .await;
+    settled(&plane, "initech", &assigned).await;
+    sweep(&plane.router).await;
+    let identity = body_of(
+        send(
+            &plane.router,
+            as_operator("GET", "/api/clients/initech/identity")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(identity["clients"][0]["id"], "workspec", "{identity}");
+    publish(&plane.router).await;
+    assert_eq!(registered(&dir), [(issuer("initech"), "initech".to_owned())]);
+
+    // The projected entry is removed in Git, then a sweep completes at that
+    // same revision.
+    let initech = ClientId::try_new("initech").unwrap();
+    let stored = fabric_control_plane::ClientRepository::get(plane.repository.as_ref(), &initech)
+        .await
+        .unwrap();
+    let mut without = stored.document.client().identity.clone();
+    without.clients.clear();
+    let edited = fabric_control_plane::ClientRepository::update(
+        plane.repository.as_ref(),
+        &initech,
+        &stored.document.with_identity(without).unwrap(),
+        &stored.revision,
+        &fabric_control_plane::ChangeContext {
+            requested_by: "someone-in-git".into(),
+            summary: "hand edit".into(),
+        },
+    )
+    .await
+    .unwrap();
+    provider.clear_calls();
+    sweep(&plane.router).await;
+
+    let calls = provider.calls();
+    assert!(
+        calls.iter().all(|call| !call.contains("workspec")),
+        "no provider call names the missing client: {calls:?}"
+    );
+    let report = plane.statuses.report(&initech).unwrap();
+    assert_eq!(report.revision, edited);
+    assert_eq!(
+        report.status,
+        fabric_reconciliation::ReconciliationStatus::Applied
+    );
+    assert!(report.withheld.is_empty());
+    let client = body_of(
+        send(
+            &plane.router,
+            as_operator("GET", "/api/clients/initech")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(
+        client["projection"],
+        json!({"state": "diverged", "divergences": [{"client": "workspec", "field": "missing"}]})
+    );
+    assert!(
+        client["lifecycle"]["unmet"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|unmet| unmet["condition"] == "identity"
+                && unmet["detail"]
+                    .as_str()
+                    .unwrap()
+                    .contains("does not match its projection")),
+        "{client}"
+    );
+
+    let pass = publish(&plane.router).await;
+    assert!(registered(&dir).is_empty(), "the issuer is left out: {pass}");
+    assert_eq!(
+        pass["readiness"]["excludedFromRegistry"][0]["tenant"], "initech",
+        "{pass}"
+    );
+    assert_eq!(
+        tenants_published(&dir),
+        ["initech"],
+        "the tenant binding stays published"
+    );
+
+    // Restoring exactly the projection makes it ready again.
+    let restored =
+        json!({"realm": identity["realm"], "roles": identity["roles"], "clients": identity["clients"]});
+    let revision = write(
+        &plane.router,
+        "PUT",
+        "/api/clients/initech/identity",
+        edited.as_str(),
+        &restored,
+    )
+    .await;
+    settled(&plane, "initech", &revision).await;
+    sweep(&plane.router).await;
+    publish(&plane.router).await;
+    assert_eq!(registered(&dir), [(issuer("initech"), "initech".to_owned())]);
+}

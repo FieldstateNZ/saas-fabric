@@ -143,13 +143,19 @@ fn identity_is_met_only_when_in_effect_at_this_revision() {
 }
 
 #[test]
-fn an_unverifiable_projection_is_never_in_effect_even_with_nothing_withheld() {
+fn a_projection_that_is_not_consistent_is_never_in_effect_whatever_the_status() {
+    let missing = ProjectionCheck::Diverged(vec![fabric_client_model::ProjectedClientDivergence {
+        client: fabric_client_model::OidcClientId::try_new("analytics").unwrap(),
+        field: fabric_client_model::ProjectedClientField::Missing,
+    }]);
     let unverifiable = ProjectionCheck::Unverifiable {
         unverified: Vec::new(),
     };
 
-    assert!(is_unmet(&identity(ReconciliationStatus::Applied, &unverifiable)));
-    assert!(is_unmet(&identity(ReconciliationStatus::Drifted, &unverifiable)));
+    for projection in [&missing, &unverifiable] {
+        assert!(is_unmet(&identity(ReconciliationStatus::Applied, projection)));
+        assert!(is_unmet(&identity(ReconciliationStatus::Drifted, projection)));
+    }
 }
 
 #[test]

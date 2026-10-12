@@ -319,6 +319,23 @@ pub fn control_plane_with_publication(platform: PlatformBinding, sink: Publicati
     build(None, Some(platform), Some(sink), no_registries(), no_resolution())
 }
 
+/// Builds a control plane that publishes *and* converges against
+/// `provider`, for a test that needs a real reconciliation pass to decide
+/// what the publisher registers (D01-19b).
+pub fn control_plane_with_publication_and_identity_provider(
+    platform: PlatformBinding,
+    sink: PublicationSink,
+    provider: Arc<FakeIdentityProvider>,
+) -> TestControlPlane {
+    build(
+        Some(Arc::new(FakeIdentityProviderFactory(provider))),
+        Some(platform),
+        Some(sink),
+        no_registries(),
+        no_resolution(),
+    )
+}
+
 /// Shared by every constructor above; only what lends the identity
 /// provider's authority, which platform is bound, where it publishes and
 /// which registries it has differ between them.

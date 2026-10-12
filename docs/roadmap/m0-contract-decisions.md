@@ -1032,9 +1032,10 @@ for source design only:
   edited Git.
 - refusing projection-based convergence: a sweep withholds each diverged or
   unverifiable projected entry. The entry is neither written nor corrected,
-  and the client is reported as the new `withheld` status. `withheld`, and
-  an `unverifiable` projection even with nothing withheld, leave identity
-  readiness unmet. Nothing already published, no session and no provider
+  and the client is reported as the new `withheld` status. Identity
+  readiness needs a consistent stored projection: `withheld`, and any
+  `diverged` or `unverifiable` projection even with nothing withheld (a
+  missing entry, say), leave it unmet. Nothing already published, no session and no provider
   access is revoked.
 - refusing re-assertion: a re-assertion onto a diverged entry answers `409
   projected_client_diverged` before any provider call, and is not audited.

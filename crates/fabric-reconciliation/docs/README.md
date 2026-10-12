@@ -96,7 +96,35 @@ fighting" D01-19b refuses:
 - the client is **disabled** (`clientDisabled`) — possibly incident
   containment, which re-enabling automatically would undo;
 - its **standard flow** is off (`standardFlowDisabled`);
-- a **declared redirect URI is missing** (`declaredRedirectUriRemoved`).
+- a **declared redirect URI is missing** that the declaration ledger says
+  Fabric wrote (`declaredRedirectUriRemoved`).
+
+**A missing declared callback is placed by the declaration ledger (D01-15).**
+The provider cannot tell a callback removed by hand from one Fabric has not
+written yet — a host the operator just added — so each write is recorded in a
+`DeclarationLedger` before the provider is called (`Writing`) and once it
+confirms (`Written`), by client, realm and each callback's SHA-256. A missing
+callback the ledger confirms is a hand removal, held. One it never recorded is
+a transition, written; the old callbacks, now undeclared, are removed as
+before. One recorded only as being written, or any missing callback when no
+baseline is known (no ledger, an unreadable one, or a client converged before
+it existed), cannot be placed: the client is not written at all under an
+ordinary pass, so nothing it holds is removed, and it is reported as
+`redirectUrisUnconfirmed` until an operator re-asserts. A `Writing` record that
+cannot be appended stops the write before the provider is called. All of this
+holds for one operation at a time: a `Written` confirms the client as a whole,
+so a late `Written` from a concurrent operation clears another's pending write
+(review 5487789024). Operation pairing, baseline check-and-set and fencing,
+per-identity write coordination, stale-completion rejection, crash-safe pending
+writes and protected identity-instance and declaration freshness are
+prerequisites before any adapter is enabled. The ledger
+must be durable and Fabric's own, bound to the client's identity instance
+and the revision each pass converged — never desired-state bytes, provider
+metadata, a process cache or the after-the-fact audit trail. No such store
+exists yet (the protected continuity state of #108 comment 6119161317), so
+`fabric-control-plane` is built with no ledger and every such move is held:
+this is a partial, guarded slice. `testing::InMemoryDeclarationLedger` proves
+the classification in tests only.
 
 A held edit is listed in `IdentityPlan::hand_edits` and the pass is recorded
 as `HandEdited`. A client carrying *only* held edits plans no write, so

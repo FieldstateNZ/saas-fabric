@@ -38,6 +38,7 @@ impl ClientDocument {
             .map(|role| RoleName::try_new(*role))
             .collect::<Result<Vec<_>, _>>()
             .map_err(|error| identifier(&error))?;
+        super::application_identity::check_scheme(&request.hosts, request.private_network_scheme)?;
         let identity = IdentityConfiguration {
             realm: RealmName::try_new(id.as_str()).map_err(|error| identifier(&error))?,
             roles,
@@ -50,6 +51,7 @@ impl ClientDocument {
             spec: Spec {
                 display_name: &request.display_name,
                 hosts: &request.hosts,
+                private_network_scheme: request.private_network_scheme,
                 identity,
                 product,
             },
@@ -85,6 +87,7 @@ impl ClientDocument {
                 });
             }
         }
+        super::application_identity::check_scheme(&request.hosts, request.private_network_scheme)?;
         let migrated = self.with_identity(self.client().identity.clone())?;
         let mut raw = migrated.raw().clone();
         let spec = raw
@@ -99,6 +102,11 @@ impl ClientDocument {
             Value::String("hosts".into()),
             serde_norway::to_value(&request.hosts).map_err(|error| malformed(&error))?,
         );
+        let scheme_key = Value::String("privateNetworkScheme".into());
+        match request.private_network_scheme {
+            Some(scheme) => spec.insert(scheme_key, Value::String(scheme.as_str().into())),
+            None => spec.remove(&scheme_key),
+        };
         spec.insert(
             Value::String("product".into()),
             serde_norway::to_value(product).map_err(|error| malformed(&error))?,
@@ -123,6 +131,8 @@ struct Metadata<'a> {
 struct Spec<'a> {
     display_name: &'a str,
     hosts: &'a [crate::Host],
+    #[serde(skip_serializing_if = "Option::is_none")]
+    private_network_scheme: Option<crate::PrivateNetworkScheme>,
     identity: IdentityConfiguration,
     product: &'a ClientProduct,
 }

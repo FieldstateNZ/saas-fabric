@@ -99,8 +99,10 @@ document reaches 900 KiB, writes that grow it are refused until it is trimmed in
 Git — an identity edit keeps working up to 960 KiB, so a compromised callback
 can still be removed.
 
-A client with a `.internal` or loopback host cannot yet be assigned an
-application, because projected identity clients are `claimedHttps` only. An
+A projected identity client follows the kind of the client's hosts (D01-15):
+a client on `.internal` hosts only takes an application as a `privateNetwork`
+client, with no public template callback; a client mixing `.internal` and
+public hosts, or with a loopback host, cannot be assigned one. An
 application's hostname template is checked when it is published, so a template
 under `.internal` or `.example.test` never publishes. A product
 save rewrites the projected identity clients, so a hand edit to their callbacks

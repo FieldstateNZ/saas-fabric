@@ -40,6 +40,7 @@ fn its_frozen_release_is_read_and_written_back_byte_identically() {
     let request = ClientProductRequest {
         display_name: client.display_name.clone(),
         hosts: client.hosts.clone(),
+        private_network_scheme: None,
         legal_name: product.legal_name.clone(),
         region: product.region.clone(),
         timezone: product.timezone.clone(),

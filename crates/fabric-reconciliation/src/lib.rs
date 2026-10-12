@@ -43,6 +43,7 @@
 
 #[cfg(test)]
 mod fixtures;
+mod ledger;
 mod logging;
 mod plan;
 mod provider;
@@ -51,6 +52,10 @@ mod status;
 
 pub mod testing;
 
+pub use ledger::{
+    callback_digests, AppliedBaseline, CallbackDigest, DeclarationLedger, LedgerError, WriteStage,
+    WrittenCallbacks,
+};
 pub use plan::{IdentityAction, IdentityPlan};
 pub use provider::{
     HandEdit, HandEditedField, HeldEdits, IdentityProvider, ObservedOidcClient, ObservedRealm, ProviderError,

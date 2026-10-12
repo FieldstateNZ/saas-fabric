@@ -81,6 +81,11 @@ pub(super) struct SpecShape {
     #[serde(default)]
     pub(super) hosts: Vec<crate::Host>,
 
+    /// The scheme of this client's `.internal` callbacks (D01-15).
+    /// Defaulted: no document written before it existed declares one.
+    #[serde(default)]
+    pub(super) private_network_scheme: Option<crate::PrivateNetworkScheme>,
+
     /// The client's identity configuration.
     pub(super) identity: crate::IdentityConfiguration,
 

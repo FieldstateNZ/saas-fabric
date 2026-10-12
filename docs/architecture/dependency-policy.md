@@ -127,7 +127,9 @@ YAML crates answer it.
 `ring` was already in the resolved graph, through the TLS stack and
 `jsonwebtoken`; ADR 0026 made it a direct dependency of `fabric-registry`,
 which hashes every manifest and blob it reads so that every digest Fabric
-records is one it computed. Checked again at the version in `Cargo.lock`
+records is one it computed. `fabric-reconciliation` uses it for the same
+thing: the declaration ledger port names each callback by its SHA-256 (ADR 0021,
+D01-15). Checked again at the version in `Cargo.lock`
 rather than taken on the strength of being there already. Only `ring::digest`
 is used, with no default features, and the direct edge adds no package: what
 it avoids is a second SHA-256 implementation beside the one the TLS stack

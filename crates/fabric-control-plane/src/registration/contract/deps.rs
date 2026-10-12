@@ -35,6 +35,10 @@ pub struct ControlPlaneDeps {
     /// Lends each operator's authority to the identity provider.
     pub identity_provider: Option<Arc<dyn crate::IdentityProviderFactory>>,
 
+    /// Each client's declaration ledger (D01-15). `None` in every deployment
+    /// until a protected continuity store exists; see `DeclarationLedgers`.
+    pub declaration_ledgers: Option<Arc<dyn crate::DeclarationLedgers>>,
+
     /// The Git connection flow, when this deployment manages its own.
     pub git_integration: Option<Arc<crate::GitIntegrationService>>,
 

@@ -257,6 +257,12 @@ export interface ClientProduct {
 export interface ClientProductRequest {
   readonly displayName: string
   readonly hosts: readonly string[]
+  /**
+   * The scheme callbacks on `.internal` hosts use (D01-15). Required when
+   * every host is `.internal` and an application is assigned; refused
+   * otherwise. Never inferred from the hostnames.
+   */
+  readonly privateNetworkScheme: 'http' | 'https' | null
   readonly legalName: string
   readonly region: string
   readonly timezone: string

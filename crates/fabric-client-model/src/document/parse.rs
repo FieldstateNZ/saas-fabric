@@ -51,6 +51,7 @@ pub(super) fn parse(text: &str) -> Result<ClientDocument, DesiredStateError> {
         id: shape.metadata.name,
         display_name,
         hosts: shape.spec.hosts,
+        private_network_scheme: shape.spec.private_network_scheme,
         identity: shape.spec.identity,
         authorization: shape.spec.authorization,
         secrets: shape.spec.secrets,

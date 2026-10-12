@@ -47,6 +47,7 @@ pub(crate) fn acme() -> Client {
         id: ClientId::try_new("acme").unwrap(),
         display_name: "Acme".to_owned(),
         hosts: Vec::new(),
+        private_network_scheme: None,
         identity: IdentityConfiguration {
             realm: RealmName::try_new("acme").unwrap(),
             roles: ROLES.into_iter().map(role).collect(),

@@ -19,6 +19,7 @@ export function initialClientProductRequest(
       displayName: '',
       legalName: '',
       hosts: [],
+      privateNetworkScheme: null,
       region: catalogue.settings.defaultRegion,
       timezone: catalogue.settings.timezone,
       configuration: {},
@@ -29,6 +30,7 @@ export function initialClientProductRequest(
   return {
     displayName: existing.client.displayName,
     hosts: [...existing.client.hosts],
+    privateNetworkScheme: existing.client.privateNetworkScheme ?? null,
     legalName: existing.product.legalName,
     region: existing.product.region || catalogue.settings.defaultRegion,
     timezone: existing.product.timezone || catalogue.settings.timezone,

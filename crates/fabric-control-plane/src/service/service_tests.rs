@@ -360,6 +360,7 @@ fn new_client_request() -> CreateClientRequest {
         configuration: ClientProductRequest {
             display_name: "New Co".into(),
             hosts: vec![],
+            private_network_scheme: None,
             legal_name: "New Co Ltd".into(),
             region: "NZ".into(),
             timezone: "Pacific/Auckland".into(),

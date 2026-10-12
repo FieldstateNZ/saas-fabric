@@ -64,5 +64,5 @@ pub use object::ObjectRef;
 pub use openfga::OpenFgaDecisions;
 pub use registry::{IssuerRegistration, Registry};
 pub use runtime::RuntimeSurface;
-pub use verifier::Verifier;
+pub use verifier::{Verifier, CLOCK_SKEW_TOLERANCE_SECONDS};
 pub use windows::{REFRESH_MIN_INTERVAL_SECONDS, UNKNOWN_KID_FRESHNESS_SECONDS};

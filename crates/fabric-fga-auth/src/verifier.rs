@@ -22,7 +22,11 @@ use crate::{KeyCache, RefusalReason, Registry, VerificationError, VerifiedIdenti
 ///
 /// If a deployment ever needs a different one, it belongs in the registration
 /// beside the algorithms, for the same reason those are there.
-const CLOCK_SKEW_TOLERANCE_SECONDS: u64 = 30;
+///
+/// Public because ADR 0019 §G7 bounds the edge's leeway by the smallest
+/// downstream allowance, and this is one of the two. `fabric-api`'s
+/// `edge_trust_contract.rs` holds the inequality against it.
+pub const CLOCK_SKEW_TOLERANCE_SECONDS: u64 = 30;
 
 /// Verifies tenant users' tokens against a trusted issuer registry.
 pub struct Verifier {

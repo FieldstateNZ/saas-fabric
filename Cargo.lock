@@ -235,6 +235,7 @@ dependencies = [
  "fabric-connector-ndc",
  "fabric-core",
  "fabric-data-api",
+ "fabric-fga-auth",
  "fabric-identity",
  "fabric-tenant-runtime",
  "figment",

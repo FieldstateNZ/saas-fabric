@@ -34,6 +34,10 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 
 [dev-dependencies]
+# Dev only, for one assertion: ADR 0019 §G7's skew inequality compares the
+# front door's tolerance with this host's leeway. The front door is a separate
+# host, and nothing in this binary links it.
+fabric-fga-auth.workspace = true
 ring.workspace = true
 tower = { workspace = true, features = ["util"] }
 

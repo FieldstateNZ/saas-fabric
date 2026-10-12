@@ -36,12 +36,18 @@ fabric-fga-auth-api    → fabric-core
 fabric-fga-check       → fabric-data-api   (implements AuthorizationCheck;
                                             fabric-core as a dev edge only)
 
-fabric-api             → all of the above (composition root)
+fabric-api             → all of the above (composition root),
+                         except fabric-fga-auth, fabric-fga-auth-api and
+                         fabric-fga-check; fabric-fga-auth as a dev edge only
 ```
 
 **`fabric-fga-auth` depends on `fabric-core` and nothing else in the platform.**
 It answers one question — given a token, who is this and which store answers
-for them — and it is deliberately reachable from nothing above it yet. It has
+for them — and it is deliberately reachable from nothing above it yet. The one
+edge in is a dev edge from `fabric-api`, for one test: ADR 0019 §G7 bounds the
+edge's skew by the smallest downstream allowance, and this crate's
+`CLOCK_SKEW_TOLERANCE_SECONDS` is one of the two (`fabric-api`'s
+`tests/edge_trust_contract.rs`). It has
 no edge to `fabric-identity` even though both read bearer tokens: that one
 derives a *tenant* for the Data API from a token the ingress already
 established, while this one is the trust boundary itself, verifying signatures

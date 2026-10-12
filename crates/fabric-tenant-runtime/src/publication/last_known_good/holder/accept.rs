@@ -10,17 +10,16 @@ use crate::publication::last_known_good::{check_separation, LastKnownGoodState, 
 use crate::publication::parsed_generation::ParsedGeneration;
 
 impl LastKnownGood {
-    /// Raises the floor to a validated `generation` and persists it, unless
-    /// the copy on disk already is it, its catalogue has not been read yet
-    /// (a later pass persists it once the catalogue volume converges), or a
-    /// refused copy is still on disk: that copy is kept, bytes and refusal,
-    /// until an operator discards it.
-    pub(super) async fn accept(&self, generation: &ParsedGeneration, files: &[&Path]) {
+    /// Raises the floor to an installed `generation` and persists it, unless
+    /// the copy on disk already is it, or a refused copy is still on disk:
+    /// that copy is kept, bytes and refusal, until an operator discards it.
+    /// Called only once the refresher has installed the generation whole.
+    pub(crate) async fn accept(&self, generation: &ParsedGeneration, files: &[&Path]) {
         let sha256 = generation.complete.record_sha256();
         let refused = {
             let mut inner = self.lock();
             inner.floor = inner.floor.max(Some(generation.generation()));
-            if inner.stored.as_deref() == Some(sha256.as_str()) || generation.complete.catalog.is_none() {
+            if inner.stored.as_deref() == Some(sha256.as_str()) {
                 return;
             }
             matches!(inner.state, LastKnownGoodState::Refused { .. })

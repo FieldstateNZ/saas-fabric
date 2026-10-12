@@ -9,7 +9,7 @@ use super::LastKnownGoodRefusal;
 use crate::publication::complete_generation::CompleteGeneration;
 use crate::publication::digest::sha256_hex;
 use crate::publication::parsed_generation::ParsedGeneration;
-use crate::publication::CatalogueCheck;
+use crate::publication::CatalogueDecoder;
 use crate::publication::READER_CONTRACT;
 use crate::SourceError;
 
@@ -57,7 +57,7 @@ impl LastKnownGoodStore {
     /// [`LastKnownGoodRefusal`] saying why the copy may not be served.
     pub(crate) async fn load(
         &self,
-        catalogue: &dyn CatalogueCheck,
+        catalogue: &dyn CatalogueDecoder,
     ) -> Result<Option<ParsedGeneration>, LastKnownGoodRefusal> {
         let bytes = match tokio::fs::read(&self.path).await {
             Ok(bytes) => bytes,
@@ -72,9 +72,7 @@ impl LastKnownGoodStore {
         verify(&bytes, catalogue).map(Some)
     }
 
-    /// Writes `generation` over the copy, atomically. Refused unless the
-    /// catalogue was read with it, since a copy without its catalogue could
-    /// not start a replica.
+    /// Writes `generation`, catalogue included, over the copy, atomically.
     ///
     /// # Errors
     ///
@@ -84,11 +82,6 @@ impl LastKnownGoodStore {
         generation: &CompleteGeneration,
         checkpoint: impl Fn(Step) -> io::Result<()>,
     ) -> io::Result<()> {
-        let Some(catalog) = &generation.catalog else {
-            return Err(io::Error::other(
-                "the catalogue was not read with this generation",
-            ));
-        };
         let text = |bytes: &[u8]| String::from_utf8(bytes.to_vec()).map_err(io::Error::other);
         let envelope = Envelope {
             format: FORMAT,
@@ -96,7 +89,7 @@ impl LastKnownGoodStore {
             record: text(&generation.record)?,
             data_sources: text(&generation.data_sources)?,
             tenants: text(&generation.tenants)?,
-            catalog: text(catalog)?,
+            catalog: text(&generation.catalog)?,
         };
         let bytes = serde_json::to_vec(&envelope).map_err(io::Error::other)?;
         if let Some(directory) = self.path.parent() {
@@ -110,7 +103,7 @@ impl LastKnownGoodStore {
 /// by, plus the record's own digest.
 pub(super) fn verify(
     bytes: &[u8],
-    catalogue: &dyn CatalogueCheck,
+    catalogue: &dyn CatalogueDecoder,
 ) -> Result<ParsedGeneration, LastKnownGoodRefusal> {
     let malformed = |detail: String| LastKnownGoodRefusal::Malformed { detail };
     let envelope: Envelope = serde_json::from_slice(bytes).map_err(|error| malformed(error.to_string()))?;
@@ -127,7 +120,7 @@ pub(super) fn verify(
         envelope.record.into_bytes(),
         envelope.data_sources.into_bytes(),
         envelope.tenants.into_bytes(),
-        Some(envelope.catalog.into_bytes()),
+        envelope.catalog.into_bytes(),
         origin,
     )
     .map_err(|error| match error {

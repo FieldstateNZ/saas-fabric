@@ -19,9 +19,7 @@ pub(crate) struct CompleteGeneration {
     pub(crate) generation: u64,
     pub(crate) data_sources: Vec<u8>,
     pub(crate) tenants: Vec<u8>,
-    /// Present only when read and matching the record's digest.
-    pub(crate) catalog: Option<Vec<u8>>,
-    catalog_sha256: String,
+    pub(crate) catalog: Vec<u8>,
 }
 
 impl CompleteGeneration {
@@ -32,14 +30,13 @@ impl CompleteGeneration {
     /// [`SourceError::Malformed`] for a record that does not parse,
     /// [`SourceError::UnsupportedContract`] for a floor above this reader,
     /// and [`SourceError::IncompleteGeneration`] naming the first document
-    /// whose bytes differ from the record's digest. A `catalog` given here
-    /// must match; see [`Self::attach_catalogue_if_matching`] for one that
-    /// may not.
+    /// whose bytes differ from the record's digest. All three must match:
+    /// a catalogue that lags its record holds the whole generation (G8).
     pub(crate) fn verify(
         record: Vec<u8>,
         data_sources: Vec<u8>,
         tenants: Vec<u8>,
-        catalog: Option<Vec<u8>>,
+        catalog: Vec<u8>,
         origin: &str,
     ) -> Result<Self, SourceError> {
         let parsed: ReaderRecord = parse(&record, origin)?;
@@ -52,16 +49,16 @@ impl CompleteGeneration {
         }
         let documents = &parsed.documents;
         let named = [
-            ("catalog", catalog.as_deref(), &documents.catalog.sha256),
+            ("catalog", catalog.as_slice(), &documents.catalog.sha256),
             (
                 "data-sources",
-                Some(data_sources.as_slice()),
+                data_sources.as_slice(),
                 &documents.data_sources.sha256,
             ),
-            ("tenants", Some(tenants.as_slice()), &documents.tenants.sha256),
+            ("tenants", tenants.as_slice(), &documents.tenants.sha256),
         ];
         for (document, bytes, sha256) in named {
-            if bytes.is_some_and(|bytes| sha256_hex(bytes) != *sha256) {
+            if sha256_hex(bytes) != *sha256 {
                 return Err(SourceError::IncompleteGeneration {
                     origin: origin.to_owned(),
                     generation: parsed.generation,
@@ -71,20 +68,11 @@ impl CompleteGeneration {
         }
         Ok(Self {
             generation: parsed.generation,
-            catalog_sha256: parsed.documents.catalog.sha256,
             record,
             data_sources,
             tenants,
             catalog,
         })
-    }
-
-    /// Keeps `catalog` only if it is the one the record names. A catalogue
-    /// that lags the record is not an error here: the caller wanted it
-    /// opportunistically, to persist the generation whole.
-    pub(crate) fn attach_catalogue_if_matching(self, catalog: Option<Vec<u8>>) -> Self {
-        let catalog = catalog.filter(|bytes| sha256_hex(bytes) == self.catalog_sha256);
-        Self { catalog, ..self }
     }
 
     /// The SHA-256 of the record's own bytes, which identifies the

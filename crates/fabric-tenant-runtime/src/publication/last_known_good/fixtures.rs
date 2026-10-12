@@ -3,8 +3,8 @@
 use crate::publication::complete_generation::CompleteGeneration;
 use crate::publication::digest::sha256_hex;
 use crate::publication::parsed_generation::ParsedGeneration;
-use crate::publication::CatalogueCheck;
 use crate::publication::READER_CONTRACT;
+use crate::publication::{CatalogueDecoder, DecodedCatalogue};
 use crate::testing::{data_source, tenant_binding};
 
 /// The four files of one publication.
@@ -64,7 +64,7 @@ pub(super) fn complete(generation: u64, data_source_id: &str) -> CompleteGenerat
         files.record,
         files.data_sources,
         files.tenants,
-        Some(files.catalog),
+        files.catalog,
         "fixture",
     )
     .unwrap()
@@ -80,14 +80,14 @@ pub(super) fn parsed(generation: u64, data_source_id: &str) -> ParsedGeneration 
 /// catalogue the tests break is not.
 pub(super) struct Catalogue;
 
-impl CatalogueCheck for Catalogue {
-    fn check(&self, catalogue: &[u8]) -> Result<(), String> {
+impl CatalogueDecoder for Catalogue {
+    fn decode(&self, catalogue: &[u8]) -> Result<DecodedCatalogue, String> {
         let value: serde_json::Value =
             serde_json::from_slice(catalogue).map_err(|error| error.to_string())?;
         value
             .get("generation")
             .and_then(serde_json::Value::as_u64)
-            .map(|_| ())
+            .map(DecodedCatalogue::new)
             .ok_or_else(|| "not a catalogue".to_owned())
     }
 }

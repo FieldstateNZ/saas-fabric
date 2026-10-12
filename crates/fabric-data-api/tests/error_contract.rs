@@ -225,10 +225,13 @@ async fn a_missing_data_source_and_an_unprimed_runtime_are_both_500_and_503_resp
 
     let unprimed_runtime = {
         let connector = support::RecordingConnector::new(vec![]);
-        let runtime = std::sync::Arc::new(fabric_tenant_runtime::RuntimeResolver::new(
-            std::sync::Arc::new(fabric_tenant_runtime::TenantRegistry::new()),
-            std::sync::Arc::new(fabric_tenant_runtime::DataSourceRegistry::new()),
-        ));
+        let runtime = std::sync::Arc::new(
+            fabric_tenant_runtime::RuntimeResolver::new(
+                std::sync::Arc::new(fabric_tenant_runtime::TenantRegistry::new()),
+                std::sync::Arc::new(fabric_tenant_runtime::DataSourceRegistry::new()),
+            )
+            .with_catalogue(support::served_catalogue()),
+        );
         let app = support::app_with(runtime, connector, support::scopes_only());
         app.oneshot(request("GET", "/customers", json!({"tenant_id": "acme"})))
             .await

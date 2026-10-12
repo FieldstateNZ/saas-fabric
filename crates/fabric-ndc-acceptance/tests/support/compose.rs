@@ -20,7 +20,8 @@ use fabric_runtime_publication::{
     CatalogDocument, FilesystemRuntimePublication, PublicationError, RuntimePublication as _, RuntimeSnapshot,
 };
 use fabric_tenant_runtime::{
-    build_runtime, DataSource as RuntimeDataSource, JsonFileSource, RuntimeConfig, TenantRuntimeBinding,
+    build_runtime, DataSource as RuntimeDataSource, DecodedCatalogue, JsonFileSource, RuntimeConfig,
+    TenantRuntimeBinding,
 };
 
 use crate::support::requests;
@@ -130,8 +131,11 @@ async fn compose_over(
     .await
     .unwrap();
 
+    // The reader before the record: one catalogue, read once at start, and
+    // served from every view of this resolver.
     let catalog_bytes = std::fs::read(tempdir.catalog_path()).unwrap();
     let catalog: ResourceCatalog = serde_json::from_slice(&catalog_bytes).unwrap();
+    let resolver = Arc::new(resolver.with_catalogue(DecodedCatalogue::new(catalog)));
 
     // A runtime that trusts no issuer refuses to start (ADR 0019 §1), so the
     // composed one registers an issuer for each of the two tenants whose rows
@@ -144,7 +148,6 @@ async fn compose_over(
 
     let app = build_data_api(
         &DataApiConfig::default(),
-        catalog,
         DataAuthorization::default(),
         resolver,
         ConnectorRegistry::new().with(connector as Arc<dyn DataConnector>),

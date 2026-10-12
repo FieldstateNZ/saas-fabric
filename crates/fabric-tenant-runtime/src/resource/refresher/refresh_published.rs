@@ -1,5 +1,4 @@
-//! Keeping both registries current from the published documents, one whole
-//! generation at a time.
+//! Keeping the published runtime current, one whole view at a time.
 //!
 //! The prime, which applies the same rule once at start, is
 //! `prime_published`.
@@ -8,25 +7,26 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use super::prime_published::served;
-use super::refresh_once::apply_loaded;
+use super::install::{install, Registries};
+use super::prime_published::settle;
 use super::{refresh_loop, RefreshHandle, ResourceRefresher};
-use crate::publication::{PublishedState, PublishedStateSource, ReaderStatus, Serving};
+use crate::publication::{PublishedStateSource, ReaderStatus};
 use crate::resolution::PublishedGeneration;
 use crate::resource::ResourceRegistry;
 use crate::{logging, DataSource, RuntimeConfig, SourceError, TenantRuntimeBinding};
 
 impl ResourceRefresher {
     /// Starts one background loop that, on every pass, reads the published
-    /// documents and applies a complete generation, or nothing.
+    /// documents and installs a complete view, or nothing.
     ///
-    /// An incomplete generation, a refused floor, an unreadable record, or a
-    /// read that outlasts the interval each leave both registries serving the
-    /// last complete generation. A complete one is written to both
-    /// registries, then published to `generation` in one swap. Resolution
-    /// reads only `generation`, so no request ever pairs one generation's
-    /// tenant bindings with another's data sources -- including while the
-    /// registries themselves hold one of each, between the two writes.
+    /// An incomplete generation (the catalogue included), a catalogue the
+    /// host cannot decode, a refused floor, an unreadable record, a lost
+    /// record after a recorded one, a set a registry would not take whole,
+    /// or a read that outlasts the interval each leave the whole installed
+    /// view serving: catalogue, tenants, data sources and stamp. A complete
+    /// one is written to both registries, then installed with its catalogue
+    /// in one swap. Requests read only that view, so none pairs one
+    /// generation's catalogue or bindings with another's (G1b, G8).
     #[must_use]
     pub(crate) fn spawn_published(
         generation: Arc<PublishedGeneration>,
@@ -65,14 +65,8 @@ impl ResourceRefresher {
     }
 }
 
-type Registries<'a> = (
-    &'a PublishedGeneration,
-    &'a ResourceRegistry<DataSource>,
-    &'a ResourceRegistry<TenantRuntimeBinding>,
-);
-
 async fn refresh_published(
-    (generation, data_sources, tenants): Registries<'_>,
+    registries: Registries<'_>,
     (source, status): (&dyn PublishedStateSource, &ReaderStatus),
     applied: &AtomicU64,
     timeout: Duration,
@@ -87,43 +81,20 @@ async fn refresh_published(
         return;
     };
 
-    match loaded {
+    match loaded.and_then(|state| install(state, registries, &origin)) {
         Err(error) => {
             logging::generation_held(&origin, &error);
             status.held(&error);
         }
-        Ok(PublishedState::Generation {
-            generation: number,
-            record_sha256,
-            origin: read_from,
-            data_sources: published_data_sources,
-            tenants: published_tenants,
-        }) => {
-            let applied_data_sources = apply_loaded(data_sources, &origin, Ok(published_data_sources));
-            let applied_tenants = apply_loaded(tenants, &origin, Ok(published_tenants));
-            let served = served(
-                number,
-                record_sha256,
-                &read_from,
-                [applied_data_sources, applied_tenants],
-            );
-            generation.publish(tenants, data_sources, served);
-            if applied.swap(number, Ordering::Relaxed) != number {
-                logging::generation_applied(&origin, number);
+        Ok(installed) => {
+            if let Some((generation, record_sha256)) = installed.recorded {
+                if applied.swap(generation, Ordering::Relaxed) == generation {
+                    source.installed(generation, &record_sha256).await;
+                    status.applied(installed.serving);
+                    return;
+                }
             }
-            status.applied(Serving::Generation {
-                generation: number,
-                origin: read_from,
-            });
-        }
-        Ok(PublishedState::Unrecorded {
-            data_sources: published_data_sources,
-            tenants: published_tenants,
-        }) => {
-            let _ = apply_loaded(data_sources, &origin, published_data_sources);
-            let _ = apply_loaded(tenants, &origin, published_tenants);
-            generation.publish(tenants, data_sources, None);
-            status.applied(Serving::Unrecorded);
+            settle(installed, source, status).await;
         }
     }
 }

@@ -279,10 +279,14 @@ async fn a_publisher_below_the_held_records_rollback_floor_refuses_and_writes_no
 /// back below contract N+1 writes documents without updating the record it
 /// does not know about. Readers then find every later generation
 /// incomplete: a running reader holds the last recorded generation (stale,
-/// never mixed) and a new reader does not prime, until an operator removes
-/// the record. The release floor in `compatibility.yaml` (D01-21) now
-/// refuses that rollback in-product, in Platform Management. What remains is
-/// this behaviour after a break-glass edit that bypasses it.
+/// never mixed) and a new reader does not prime. Removing the record does
+/// not release a running reader: once it has installed a recorded
+/// generation, losing the record holds that generation rather than reading
+/// documents nothing proves belong together (G8). Only a reader that starts
+/// with no record reads them on their own. The release floor in
+/// `compatibility.yaml` (D01-21) now refuses that rollback in-product, in
+/// Platform Management. What remains is this behaviour after a break-glass
+/// edit that bypasses it.
 #[tokio::test]
 async fn current_behaviour_a_publisher_rolled_back_below_the_record_leaves_readers_on_the_last_recorded_generation(
 ) {
@@ -305,11 +309,18 @@ async fn current_behaviour_a_publisher_rolled_back_below_the_record_leaves_reade
     assert!(message.contains("not the one generation"), "{message}");
 
     stack.dir.remove_raw(PUBLICATION_RECORD_FILE);
-    stack.handles.refresh_now();
-    poll_until("the unrecorded generation 2", || {
-        resolves_to(&stack.resolver, "acme").as_deref() == Ok(SECOND_DATA_SOURCE)
-    })
-    .await;
+    refresh(&stack).await;
+    assert_eq!(
+        resolves_to(&stack.resolver, "acme").unwrap(),
+        support::DATA_SOURCE_ID,
+        "a running reader holds its recorded generation when the record is lost"
+    );
+    let (restarted, handles, _) = support::build_reader(&stack.dir, Reader::Generation)
+        .await
+        .unwrap();
+    assert_eq!(resolves_to(&restarted, "acme").unwrap(), SECOND_DATA_SOURCE);
+    handles.shutdown().await.unwrap();
+    stack.handles.shutdown().await.unwrap();
 }
 
 /// The record the publisher writes is the one the reader checks: its

@@ -540,7 +540,8 @@ running replica are still owed. See
 [Revision history, placements and the catalogue](#revision-history-placements-and-the-catalogue).
 The Data tab item is since built; see
 [Unbound pairs on the Data tab (G8)](#unbound-pairs-on-the-data-tab-g8).
-Catalogue refresh is not.
+So is catalogue refresh; see
+[Catalogue refresh in a running replica (G8)](#catalogue-refresh-in-a-running-replica-g8).
 
 ## What this branch adds
 
@@ -645,6 +646,8 @@ Still open after this change:
   tenants and data sources. Different replicas can still serve different
   complete generations until each has refreshed; nothing reports which one
   each serves (G7). The catalogue is outside the generation (below).
+  **Since then** it is inside it: see
+  [Catalogue refresh in a running replica (G8)](#catalogue-refresh-in-a-running-replica-g8).
   `build_runtime`, the per-document builder over two independent sources,
   still resolves across its registries as they stand, so it can pair one
   source's new data with the other's old data. Only in-memory and test
@@ -738,7 +741,7 @@ adds the following. None of it is verified live.
 | O5 | the guards above, driven through the router, the pass and a real filesystem target | `fabric-control-plane/tests/platform_publication_revert.rs`: `reverting_placements_yaml_to_drop_a_published_placement_is_refused_and_writes_nothing`, `reverting_a_placement_record_is_refused_even_when_the_revert_adds_another`, `reverting_a_data_source_correction_is_refused_until_a_correction_moves_past_it`, `a_data_source_removed_and_declared_again_comes_back_above_its_last_published_revision`, `a_release_no_tenant_is_placed_on_waits_while_the_last_catalogue_stays_published`. Each refusal asserts all four published files unchanged |
 | G8, publisher | `catalogue_bindings.rs` | `plan_tests.rs::a_catalogue_entry_on_a_logical_data_source_no_tenant_binds_is_refused` |
 | G8, controller | `publication/catalogue_hold.rs` | `platform_publication_revert.rs::a_release_no_tenant_is_placed_on_waits_while_the_last_catalogue_stays_published` |
-| G8, reader | `fabric-tenant-runtime` `publication/published_files.rs::load_at_start`, `registration/build_published.rs`, `publication/catalogue.rs`; `fabric-api` `startup/application.rs`, `startup/catalog.rs` | `catalogue_generation.rs::a_publication_between_priming_and_the_catalogue_read_does_not_reach_the_catalogue` (a deterministic interleaving: generation 2 renames `articles` to `private_articles` and lands between the prime and the catalogue read), `::a_catalogue_from_another_generation_than_the_documents_fails_the_prime`, `::a_catalogue_from_another_generation_is_refused_at_start`, `::a_catalogue_ahead_of_the_record_is_refused_at_start`, `::the_catalogue_the_record_names_is_read`, `::with_no_record_the_catalogue_is_read_as_it_stands` |
+| G8, reader | `fabric-tenant-runtime` `publication/published_files.rs::load_at_start`, `registration/build_published.rs`, `publication/catalogue.rs`; `fabric-api` `startup/application.rs`, `startup/catalog.rs` | `catalogue_generation.rs::a_publication_between_priming_and_the_catalogue_read_does_not_reach_the_catalogue` (a deterministic interleaving: generation 2 renames `articles` to `private_articles` and lands between the prime and the catalogue read), `::a_catalogue_from_another_generation_than_the_documents_fails_the_prime`, `::a_catalogue_from_another_generation_is_refused_at_start`, `::a_catalogue_ahead_of_the_record_is_refused_at_start`, `::the_catalogue_the_record_names_is_read`, `::with_no_record_the_catalogue_is_read_as_it_stands`. **Since then** replaced, with `startup_catalogue`, by the tests under [Catalogue refresh in a running replica (G8)](#catalogue-refresh-in-a-running-replica-g8) |
 
 Limits of this change:
 
@@ -768,6 +771,9 @@ Limits of this change:
 - **G8.**
   - An entry that some tenant does not bind still gets `UnboundDataSource`
     (500) for that tenant (part 4).
+  - **Since then:** a running replica refreshes its catalogue with its
+    generation; see
+    [Catalogue refresh in a running replica (G8)](#catalogue-refresh-in-a-running-replica-g8).
   - The catalogue is not refreshed in a running replica, which is out of
     scope here. A replica keeps the catalogue of the generation it started
     on, while its tenants and data sources refresh to newer generations. A
@@ -973,7 +979,7 @@ live, and it is **off by default**.
 | A corrupted copy is refused | `last_known_good/store.rs::verify` | `last_known_good_restart.rs::a_corrupted_last_known_good_is_refused_left_in_place_and_the_restart_fails_closed`; `store_tests.rs::a_copy_whose_document_no_longer_matches_its_digest_is_refused`, `::a_copy_whose_record_was_altered_is_refused_by_the_records_own_digest`, `::a_copy_whose_record_requires_a_newer_reader_is_refused`, `::a_copy_in_a_format_this_reader_does_not_know_is_refused`, `::a_truncated_copy_is_refused_as_malformed` |
 | A stale copy loses to a newer published generation | `choice.rs::at_start`, `::on_refresh` | `last_known_good_restart.rs::a_stale_last_known_good_loses_to_a_newer_published_generation_and_is_replaced`, `::a_replica_holding_last_known_good_rolls_forward_the_moment_a_newer_generation_validates`; `choice_tests.rs::at_start_a_newer_published_generation_beats_the_copy`, `::at_start_a_published_generation_below_the_copy_does_not_roll_the_replica_back` |
 | Roll forward only while running | `choice.rs::on_refresh` | `last_known_good_restart.rs::a_running_replica_holds_against_a_complete_generation_below_the_one_it_holds`; `choice_tests.rs::on_refresh_a_lower_generation_or_a_lost_record_is_held_against` |
-| Atomic write under interruption | `last_known_good/atomic_replace.rs` | `atomic_replace_tests.rs::a_write_stopped_before_the_rename_leaves_the_previous_copy_whole_and_cleans_up` (stopped after the write and after the `fsync`), `::a_write_stopped_after_the_rename_has_published_the_whole_new_copy`, `::a_staging_file_left_by_a_crash_never_reaches_the_copy_and_is_cleared_at_start`; `store_tests.rs::an_interrupted_persist_leaves_the_previous_copy_valid`, `::a_generation_read_without_its_catalogue_is_not_persisted` |
+| Atomic write under interruption | `last_known_good/atomic_replace.rs` | `atomic_replace_tests.rs::a_write_stopped_before_the_rename_leaves_the_previous_copy_whole_and_cleans_up` (stopped after the write and after the `fsync`), `::a_write_stopped_after_the_rename_has_published_the_whole_new_copy`, `::a_staging_file_left_by_a_crash_never_reaches_the_copy_and_is_cleared_at_start`; `store_tests.rs::an_interrupted_persist_leaves_the_previous_copy_valid`, `::a_generation_read_without_its_catalogue_is_not_persisted` (since removed: every complete generation now carries its catalogue, so the case cannot be constructed) |
 | Recovery command | `fabric-api` `recovery/`, `LastKnownGoodStore::inspect`, `::discard` | `last_known_good_command.rs` (the built binary): `inspect_and_validate_report_a_copy_the_reader_persisted_and_write_nothing`, `validate_fails_on_a_corrupted_copy_and_on_no_copy`, `discard_needs_an_operator_and_a_reason_and_touches_nothing_without_them`, `discard_audits_moves_the_copy_aside_and_a_restart_on_a_torn_volume_then_fails_closed`, `an_unknown_action_is_a_usage_error_and_no_action_can_write_a_copy`; `store_tests.rs::discarding_audits_first_then_moves_the_copy_aside_and_writes_nothing_in_its_place`, `::a_refused_copy_can_be_discarded_too`, `::discarding_nothing_changes_nothing_and_audits_nothing`, `::inspecting_reports_absent_valid_and_refused_copies_and_writes_nothing`; `recovery/arguments_tests.rs` |
 | Off by default | `RuntimeConfig::last_known_good_dir` (`None`) | `config.rs::the_last_known_good_copy_is_off_unless_a_directory_is_configured`; `last_known_good_restart.rs::without_a_last_known_good_directory_the_reader_writes_nothing_and_behaves_as_before`; `publication_atomicity.rs::current_behaviour_last_known_good_does_not_survive_a_reader_restart` (unchanged: no directory) |
 | Readiness | `fabric-api` `health/readiness_state.rs::is_degraded`, `readiness_body.rs` | `readiness_state_tests.rs::a_replica_serving_its_last_known_good_copy_is_degraded_even_with_every_connector_healthy`; `readiness_body_tests.rs::the_detailed_body_says_which_generation_is_served_from_where_and_why_it_is_held`, `::the_minimal_body_says_nothing_about_the_publication`; `readiness_probe.rs::an_administrator_sees_what_diagnosis_needs` |
@@ -1288,8 +1294,8 @@ pin a remaining D01-1 item.
 | Field added to tenants or data sources, at the top level or nested, floor unchanged | Refuses the whole generation, both documents, and keeps the last complete one | `fail_fast_on_prime = true`: fails to start, naming the field. `false`: unprimed, `RuntimeUnavailable` | `current_behaviour_a_field_added_to_tenants_or_data_sources_refuses_the_whole_generation` (four fields); also `reader_compatibility.rs::current_behaviour_a_shape_change_published_without_raising_the_floor_is_refused_only_by_unknown_fields` |
 | Required field removed, floor unchanged | As above, naming the missing field | As above | `current_behaviour_a_required_field_removed_refuses_the_whole_generation` (tenant `revision`, DataSource `connector`, residency `region`) |
 | New enum variant (isolation kind, placement class, connection kind), floor unchanged | As above, naming the variant | As above | `current_behaviour_a_new_enum_variant_refuses_the_whole_generation` |
-| One resource invalid at a known shape (a tenant with an empty `data` map) | That resource keeps its held copy, and the rest applies | Drops it and serves the rest. With nothing left, does not prime | `one_invalid_resource_keeps_its_held_copy_and_the_rest_of_the_generation_applies` |
-| Catalogue shape change | Keeps the catalogue it started with, and its tenants still refresh | Fails to start: the host cannot decode the catalogue | `current_behaviour_a_catalogue_shape_change_leaves_running_replicas_on_their_catalogue_and_stops_new_ones` |
+| One resource invalid at a known shape (a tenant with an empty `data` map) | Since the G8 refresh: holds its whole view, since a recorded generation is installed whole or not at all. Before: that resource kept its held copy and the rest applied | Does not prime (`fail_fast_on_prime = true`); unprimed otherwise. Before: dropped it and served the rest | `one_invalid_resource_holds_the_whole_generation_for_running_and_starting_readers` |
+| Catalogue shape change | Since the G8 refresh: holds its whole view (catalogue, tenants, data sources, stamp). Before: kept its start catalogue while its tenants refreshed | Fails to start: the host cannot decode the catalogue. Unprimed with `fail_fast_on_prime = false`, serving no catalogue | `a_catalogue_shape_change_holds_running_replicas_on_their_whole_view_and_stops_new_ones`; a catalogue change the host can decode is installed: `catalogue_generation.rs` |
 | `contract_version` bumped in every manifest, shape unchanged | Ignored | Ignored | `current_behaviour_a_bumped_manifest_contract_version_is_ignored_by_every_reader` |
 | v2 file names beside v1 (ADR 0018 §9) | Unaffected | Unaffected | `v2_documents_beside_v1_reach_no_reader` |
 | Key added to the publication record, floor unchanged | Ignored: the reader's record type does not deny unknown fields | Ignored | `a_key_added_to_the_record_under_an_unchanged_floor_is_ignored_by_every_reader` |
@@ -1554,6 +1560,103 @@ Limits:
   environment it manages.
 - **Not a guard.** Nothing refuses an assignment or a publication because
   of an unbound pair (ADR 0018 part 4).
+
+## Catalogue refresh in a running replica (G8)
+
+The second engineering part of G8. The semantics were asked on #108
+(comment 6124222864) and set by the disposition in
+[#108 comment 6125847841](https://github.com/FieldstateNZ/saas-fabric/issues/108#issuecomment-6125847841):
+the conservative atomic-view defaults. This is source only, and none of it is
+verified live. No publisher, published shape, record, manifest or reader
+floor changes: `check_reader_floor.py` reports the shape unchanged at reader
+floor 1.
+
+- **One view per request.** The catalogue, tenants, data sources and served
+  stamp are installed as one `ResolutionView`. A Data API request pins that
+  view before it looks its resource up, and keeps it across the
+  authorization await, field and capability checks, target resolution and
+  execution (`RuntimeResolver::pin`, `DataApiService::pinned`). The Data
+  API holds no catalogue of its own. The crate boundary is kept by a
+  decoder port: `fabric-tenant-runtime` holds the host's decoded catalogue
+  as an opaque `DecodedCatalogue`, produced by `CatalogueDecoder`, which
+  `fabric-data-api` implements as `ResourceCatalogDecoder`. No request reads
+  a file.
+- **Recorded candidates, whole or not at all.** A refresh installs a
+  recorded generation only when all three documents match one record's
+  digests, the host decodes the catalogue, and both registries would take
+  every resource as offered (`ResourceRegistry::refuses_whole`, asked before
+  either is written). Otherwise the whole previous view stays served:
+  catalogue, tenants, data sources and stamp, with or without a
+  last-known-good copy. The hold is reported as before (`held_passes`,
+  `last_hold`, `runtime.generation_*` events), naming `catalog` or the
+  document a registry would not take. The candidate is never the served
+  generation.
+- **Floor and copy only after install.** A source raises its floor and
+  persists its copy only when the refresher says the generation was
+  installed (`PublishedStateSource::installed`). A refused candidate leaves
+  both, and the copy's bytes, as they were.
+- **Last-known-good.** A copy boots its complete triple, never its runtime
+  documents beside a newer mounted catalogue.
+- **No view.** With no accepted view, `fail_fast_on_prime = true` fails the
+  prime. With `false` the replica is unprimed: it reports no G7 generation
+  and serves no catalogue, and every authorised request answers 503 until
+  the first complete triple installs. A separate start-up catalogue no
+  longer exists (`startup_catalogue` and `fabric-api`'s `startup/catalog.rs`
+  are removed). Authorization still runs first, so an unscoped caller is
+  refused as before.
+- **No record.** A reader that has never installed a recorded generation
+  reads all three documents on every pass and installs them as one view,
+  reported `Unrecorded` with no G7 generation. A document it cannot read or
+  decode holds the whole previous view. Once a recorded generation is
+  installed, a lost record holds it (`SourceError::Regressed`, "no
+  publication record"), with or without a copy. The existing regression
+  rule is unchanged: with a copy, a lower generation is held; without one,
+  it is applied.
+- **Empty catalogue.** The decoder refuses an empty catalogue, which
+  `build_data_api` used to refuse at start.
+
+**Behaviour that changes.** Each was the residue of a per-document reader,
+and the disposition rules it out:
+
+- A recorded generation one of whose resources a registry would not take
+  as offered (invalid, duplicated, stale or changed at the same revision)
+  was applied in part, with no stamp. It is now held whole. A reader
+  starting on one does not prime.
+- A running reader whose catalogue volume lagged its record applied the new
+  tenants and kept its old catalogue. It now holds the whole generation
+  until the volumes converge.
+- A running reader whose record was removed read the documents on their
+  own. It now holds its recorded generation, and only a reader that starts
+  with no record reads them alone. The break-glass remedy in
+  `reader_compatibility.rs::current_behaviour_a_publisher_rolled_back_below_the_record_leaves_readers_on_the_last_recorded_generation`
+  therefore needs a restart after removing the record.
+
+| Acceptance point | Code | Tests |
+|---|---|---|
+| A supported catalogue, resource and target change is installed through the real Data API | `resource/refresher/install.rs`, `resolution/published_generation.rs`, `fabric-data-api` `execution/pinned_resource.rs` | `catalogue_generation.rs::a_running_replica_installs_a_new_catalogue_with_its_tenants_data_sources_and_stamp` (with and without a copy) |
+| A request paused after pinning view 1, while view 2 installs, reads resource, binding, DataSource and target 1 throughout; the next request reads 2 | `RuntimeResolver::pin`, `ResolutionView::resolve_data_source`, `DataApiService::pinned` | `catalogue_generation.rs::a_read_pinned_before_a_new_generation_installs_finishes_on_its_own_generation` (list with `select`, the field path), `::a_write_pinned_before_a_new_generation_installs_finishes_on_its_own_generation` (create); the pause is a real relation Check held open. Both fail if the target is resolved from a fresh pin after the await |
+| Catalogue lag, undecodable matching bytes and absence hold the old triple, stamp, floor and copy, with and without a copy; a valid generation later installs | `complete_generation.rs::verify`, `parsed_generation.rs`, `published_files.rs::installed` | `catalogue_generation.rs::a_candidate_whose_catalogue_lags_does_not_decode_or_is_missing_holds_the_whole_view_until_a_valid_one`; `published_files_tests.rs::a_catalogue_that_lags_its_record_is_an_incomplete_generation`, `::a_catalogue_that_matches_its_digest_but_does_not_decode_is_unusable`, `::a_missing_catalogue_is_unreadable`; `holder_tests.rs::a_generation_loaded_but_never_installed_is_neither_persisted_nor_raises_the_floor` |
+| A recorded candidate a registry would not take whole is held whole | `resource/registry/takes_whole.rs` | `takes_whole_tests.rs` (six); `served_generation_tests.rs::the_report_follows_every_kind_of_read_through_the_production_builder` (step 2); `reader_compatibility_matrix.rs::one_invalid_resource_holds_the_whole_generation_for_running_and_starting_readers` |
+| Torn-target restart boots the copy's triple | `last_known_good/holder.rs::at_start` | `last_known_good_restart.rs::a_replica_restarting_on_a_torn_volume_serves_its_last_known_good_generation`, `::a_restart_serving_its_copy_serves_the_copys_catalogue_not_a_newer_mounted_one` |
+| Fail-fast, and unprimed until the first valid triple | `registration/build_published.rs`, `DataApiService::unavailable` | `catalogue_generation.rs::a_replica_that_cannot_install_a_first_view_fails_fast_or_serves_nothing_until_one_installs`; `fabric-data-api` `failure_modes.rs::with_no_catalogue_installed_a_request_is_authorised_first_and_then_unavailable` |
+| Legacy refresh and refusal; recorded record loss and regression | `published_files/apply_choice.rs` | `catalogue_generation.rs::with_no_record_a_pass_installs_all_three_together_and_holds_the_whole_view_on_a_bad_catalogue`, `::losing_the_record_after_a_recorded_view_holds_that_view_rather_than_reading_the_documents_alone`; `published_files_tests.rs::without_a_record_all_three_documents_are_read_and_decoded_together`, `::without_a_record_any_document_that_cannot_be_read_or_decoded_holds_the_whole_view`, `::once_a_recorded_generation_is_installed_losing_the_record_holds_it`; regression: `last_known_good_restart.rs::a_running_replica_holds_against_a_complete_generation_below_the_one_it_holds` (unchanged) |
+| A supported refresh is separate from the unknown `page_size` case, which holds the running view whole and stops a fresh reader | as above | `reader_compatibility_matrix.rs::a_catalogue_shape_change_holds_running_replicas_on_their_whole_view_and_stops_new_ones` (fail-fast refusal and unprimed start) |
+| The served stamp names the installed view, catalogue included | `PublishedGeneration::publish` | `served_generation_tests.rs::the_report_moves_in_the_same_store_as_the_view_resolution_reads`; `generation_isolation_tests.rs::a_tenant_resolves_to_one_complete_generations_target_at_every_point_of_a_refresh` (catalogue moves only with the store) |
+| One decoder for the host, the reader, the copy and the recovery command | `fabric-data-api` `catalog/decoder.rs` | `decoder.rs::the_shipped_example_catalogue_decodes_as_a_resource_catalog_and_other_json_does_not`, `::an_empty_catalogue_is_refused`; `last_known_good_command.rs` (unchanged) |
+
+Limits:
+
+- **Not verified live.** No replica has run it. Older G7 reports do not
+  establish that a future reader cohort refreshes its catalogue. Rollout,
+  trust, the listener and RBAC stay held, as for G7.
+- **Replicas still differ.** Each replica installs a generation when its
+  own volumes converge. G7 reports which one each serves.
+- **The per-document reader is unchanged.** `build_runtime` over
+  independent sources is given a fixed catalogue
+  (`RuntimeResolver::with_catalogue`) and still resolves across its
+  registries. Only in-memory and test compositions use it.
+- **An entry some tenant does not bind** still answers `UnboundDataSource`
+  for that tenant (ADR 0018 part 4). The Data tab reports it.
 
 ## Not covered here
 

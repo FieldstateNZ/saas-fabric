@@ -26,10 +26,10 @@ fn app_over(
     source_registry: &Arc<DataSourceRegistry>,
 ) -> (axum::Router, Arc<RecordingConnector>) {
     let connector = RecordingConnector::new(vec![]);
-    let runtime = Arc::new(RuntimeResolver::new(
-        Arc::clone(tenant_registry),
-        Arc::clone(source_registry),
-    ));
+    let runtime = Arc::new(
+        RuntimeResolver::new(Arc::clone(tenant_registry), Arc::clone(source_registry))
+            .with_catalogue(support::served_catalogue()),
+    );
 
     (
         app_with(runtime, Arc::clone(&connector), scopes_only()),

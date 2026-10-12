@@ -29,8 +29,8 @@ use fabric_core::{BindingRevision, TenantId};
 use fabric_data_api::ResourceCatalog;
 use fabric_runtime_publication::RuntimePublication as _;
 use fabric_tenant_runtime::{
-    build_published_runtime, CatalogueCheck, GenerationOrigin, LastKnownGoodState, LastKnownGoodStore,
-    PublishedFiles, PublishedRuntime, ResolveError, Serving, SourceError,
+    build_published_runtime, GenerationOrigin, LastKnownGoodState, LastKnownGoodStore, PublishedFiles,
+    PublishedRuntime, ResolveError, Serving, SourceError,
 };
 
 /// The replica's own writable directory: a separate temporary directory,
@@ -39,24 +39,8 @@ fn last_known_good(lkg: &support::TempDir) -> PathBuf {
     lkg.path().join("copy")
 }
 
-/// The host's catalogue decoder, as `fabric-api` hands it to the reader.
-struct HostCatalogue;
-
-impl CatalogueCheck for HostCatalogue {
-    fn check(&self, catalogue: &[u8]) -> Result<(), String> {
-        serde_json::from_slice::<ResourceCatalog>(catalogue)
-            .map(|_| ())
-            .map_err(|error| error.to_string())
-    }
-}
-
 fn reader(dir: &support::TempDir, lkg: &support::TempDir) -> PublishedFiles {
-    PublishedFiles::new(dir.tenants_path(), dir.data_sources_path())
-        .with_catalogue(dir.catalog_path())
-        .with_last_known_good(
-            LastKnownGoodStore::new(last_known_good(lkg)),
-            Arc::new(HostCatalogue),
-        )
+    support::published_files(dir).with_last_known_good(LastKnownGoodStore::new(last_known_good(lkg)))
 }
 
 async fn start(dir: &support::TempDir, lkg: &support::TempDir) -> Result<PublishedRuntime, String> {
@@ -103,6 +87,17 @@ fn acme_revision(runtime: &PublishedRuntime) -> Result<BindingRevision, ResolveE
         .map(|binding| binding.revision)
 }
 
+/// The resource names of the catalogue in the view `runtime` serves.
+fn catalogue_names(runtime: &PublishedRuntime) -> Vec<String> {
+    runtime
+        .resolver
+        .pin()
+        .catalogue()
+        .and_then(|catalogue| catalogue.get::<ResourceCatalog>())
+        .map(|catalogue| catalogue.names().map(ToString::to_string).collect())
+        .unwrap_or_default()
+}
+
 fn serving(runtime: &PublishedRuntime) -> Serving {
     runtime.status.report().serving
 }
@@ -120,21 +115,60 @@ async fn refresh_until(
     }
 }
 
+/// The copy is a complete triple (G8): a restart that serves it serves its
+/// catalogue, never a newer one mounted beside a torn tenants file.
+#[tokio::test]
+async fn a_restart_serving_its_copy_serves_the_copys_catalogue_not_a_newer_mounted_one() {
+    let dir = support::TempDir::new();
+    let lkg = support::TempDir::new();
+    publish(&dir, 1).await;
+    run_once(&dir, &lkg).await;
+    let mut second = support::base_snapshot(2);
+    let mut resources: std::collections::BTreeMap<_, _> = support::articles_catalog()
+        .resources()
+        .map(|(name, definition)| (name.clone(), definition.clone()))
+        .collect();
+    let articles = resources.values().next().unwrap().clone();
+    resources.insert(
+        fabric_core::LogicalResourceName::try_new("posts").unwrap(),
+        articles,
+    );
+    second.catalog = fabric_runtime_publication::DocumentInput::new(
+        fabric_runtime_publication::DocumentRevision::new(2),
+        fabric_runtime_publication::CatalogDocument::new(resources),
+    );
+    dir.publisher().publish(&second).await.unwrap();
+
+    dir.write_raw("tenants.json", b"{ torn");
+    let restarted = start(&dir, &lkg).await.unwrap();
+
+    assert_eq!(acme_revision(&restarted).unwrap(), BindingRevision::new(1));
+    assert_eq!(catalogue_names(&restarted), ["articles"]);
+    assert_eq!(
+        restarted
+            .resolver
+            .served_generation()
+            .map(|report| report.generation),
+        Some(1)
+    );
+    restarted.handles.shutdown().await.unwrap();
+}
+
 #[tokio::test]
 async fn a_replica_restarting_on_a_torn_volume_serves_its_last_known_good_generation() {
     let dir = support::TempDir::new();
     let lkg = support::TempDir::new();
     publish(&dir, 1).await;
     run_once(&dir, &lkg).await;
-    let published_catalogue = dir.read_raw("catalog.json");
 
     dir.write_raw("data-sources.json", b"{ torn");
     let restarted = start(&dir, &lkg).await.unwrap();
 
     assert_eq!(acme_revision(&restarted).unwrap(), BindingRevision::new(1));
     assert_eq!(
-        restarted.catalogue.as_deref(),
-        Some(published_catalogue.as_slice())
+        catalogue_names(&restarted),
+        ["articles"],
+        "the copy's own catalogue"
     );
     let report = restarted.status.report();
     assert!(report.holding_last_known_good(), "{report:?}");
@@ -306,8 +340,7 @@ async fn without_a_last_known_good_directory_the_reader_writes_nothing_and_behav
     let dir = support::TempDir::new();
     let lkg = support::TempDir::new();
     publish(&dir, 1).await;
-    let files =
-        PublishedFiles::new(dir.tenants_path(), dir.data_sources_path()).with_catalogue(dir.catalog_path());
+    let files = support::published_files(&dir);
 
     let runtime = build_published_runtime(&support::runtime_config(), Arc::new(files))
         .await

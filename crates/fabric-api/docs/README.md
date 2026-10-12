@@ -95,10 +95,10 @@ this crate. The whole application graph is one function,
 ```text
 main.rs                     load config, validate, startup::build, serve, shut down
 startup::build                1. build_identity            (fabric-identity)
-                               2. build_runtime              (fabric-tenant-runtime)
+                               2. build_published_runtime    (fabric-tenant-runtime; the catalogue
+                                                              is installed with each generation, G8)
                                3. startup::serving::build:
                                     - connectors::build       (fabric-connector-ndc, §35)
-                                    - catalog::load
                                     - build_data_api          (fabric-data-api)
                                     - health_routes
                                     - startup::compose         merge, not nest (see below)

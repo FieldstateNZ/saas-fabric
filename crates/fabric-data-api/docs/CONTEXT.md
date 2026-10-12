@@ -9,8 +9,14 @@ in this crate's public contract.
 
 ## Public surface
 
-- `build_data_api(&DataApiConfig, ResourceCatalog, DataAuthorization,
-  Arc<RuntimeResolver>, ConnectorRegistry, Arc<IdentityResolver>) -> Result<Router, String>`.
+- `build_data_api(&DataApiConfig, DataAuthorization, Arc<RuntimeResolver>,
+  ConnectorRegistry, Arc<IdentityResolver>) -> Result<Router, String>`. The
+  catalogue is not an argument: every request pins one `ResolutionView` and
+  reads its catalogue, binding, DataSource and target from it (G8). With no
+  view installed it authorises the request and answers 503.
+- `decode_catalogue(&[u8]) -> Result<ResourceCatalog, String>` (refuses an
+  empty catalogue) and `ResourceCatalogDecoder`, the runtime plane's
+  `CatalogueDecoder` over it.
 - `data_routes(DataApiState) -> Router` — returns a router already rooted at
   `API_PREFIX`; the host must mount it as-is, not nest it under a further
   prefix.

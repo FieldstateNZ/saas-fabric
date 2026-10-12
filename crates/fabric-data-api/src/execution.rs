@@ -26,6 +26,7 @@
 mod authorize;
 mod data_api_service;
 mod dispatch_write;
+mod pinned_resource;
 mod prepare;
 mod prepared;
 mod read_operations;

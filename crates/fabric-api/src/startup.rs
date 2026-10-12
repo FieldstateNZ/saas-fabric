@@ -1,8 +1,8 @@
 //! Assembling the application.
 //!
 //! The composition root, split so that each thing the process trusts can be
-//! read on its own: the identity posture, the connectors, the catalogue, and
-//! the wiring that joins them.
+//! read on its own: the identity posture, the connectors, the published
+//! runtime (catalogue included), and the wiring that joins them.
 //!
 //! There is no dependency-injection container, no assembly scanning, and no
 //! registry macros anywhere in here. In a system whose whole job is keeping
@@ -12,7 +12,6 @@
 
 mod application;
 mod background_tasks;
-mod catalog;
 mod compose;
 mod connectors;
 mod serve;

@@ -269,9 +269,10 @@ discriminator column, and a one-resource `articles` catalogue — through the
 real `FilesystemRuntimePublication`, then builds the real
 `fabric_tenant_runtime::build_runtime` over the real `JsonFileSource` (behind a
 counting decorator that only delegates, so a refresh can be observed) and the
-real `fabric_data_api::build_data_api` over the real `ResourceCatalog`
-(deserialised straight from the published `catalog.json`, since
-`fabric-api`'s own `startup::catalog::load` is `pub(super)`), and drives the
+real `fabric_data_api::build_data_api` (over the catalogue the production
+reader installs with each generation, decoded by
+`fabric_data_api::ResourceCatalogDecoder`, or, for the per-document reader,
+the published `catalog.json` read once at start), and drives the
 assembled router with bearer tokens for both tenants. `tests/support/`
 carries the fixture, a recording connector that applies the captured
 predicate to a small shared corpus instead of dispatching on tenant identity

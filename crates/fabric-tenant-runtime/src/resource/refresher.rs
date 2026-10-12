@@ -1,9 +1,9 @@
 //! Keeping a registry current, in the background.
 //!
-//! In the 121-150 line band (docs/architecture/file-size-policy.md): one
-//! type whose three entry points share one contract about what a failed load
-//! leaves serving; the shared loop and reload live in submodules.
+//! In the 121-150 line band (docs/architecture/file-size-policy.md): one type whose
+//! entry points share one contract about what a failed load leaves serving.
 
+mod install;
 mod prime_published;
 mod refresh_handle;
 mod refresh_loop;

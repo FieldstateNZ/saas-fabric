@@ -17,7 +17,9 @@ mod runtime_resolver;
 #[cfg(test)]
 mod runtime_resolver_tests;
 mod served_generation;
+mod view_resolution;
 
 pub(crate) use published_generation::PublishedGeneration;
+pub use resolution_view::ResolutionView;
 pub use resolved_data_source::ResolvedDataSource;
 pub use runtime_resolver::RuntimeResolver;

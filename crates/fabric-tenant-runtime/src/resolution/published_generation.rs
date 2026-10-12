@@ -4,10 +4,11 @@ use arc_swap::ArcSwapOption;
 use fabric_core::ReaderGenerationReport;
 
 use super::resolution_view::ResolutionView;
+use crate::publication::DecodedCatalogue;
 use crate::{DataSourceRegistry, TenantRegistry};
 
-/// The tenant and DataSource snapshots of the last complete generation,
-/// swapped in together.
+/// The catalogue, tenant and DataSource snapshots of the last complete
+/// generation, swapped in together.
 ///
 /// The two registries are written one after the other: data sources, then
 /// tenants. Resolving across them directly would, between those two writes,
@@ -27,21 +28,24 @@ pub(crate) struct PublishedGeneration {
 }
 
 impl PublishedGeneration {
-    /// Installs what both registries now hold as the view every resolution
-    /// reads, stamped with `served`: the generation they hold exactly, if
-    /// they do. The stamp is installed in the same store as the snapshots,
-    /// so what a replica reports serving is always what it resolves against.
+    /// Installs `catalogue` and what both registries now hold as the view
+    /// every request reads, stamped with `served`: the generation all three
+    /// are exactly, if they are. The stamp is installed in the same store as
+    /// the snapshots, so what a replica reports serving is always what its
+    /// requests read, catalogue included (G7, G8).
     ///
     /// Called only once both registries have been written for a generation,
-    /// and only by the refresher that wrote them -- so the two snapshots it
-    /// pairs are always the same generation's.
+    /// and only by the refresher that wrote them and decoded `catalogue` --
+    /// so all three it pairs are always the same generation's.
     pub(crate) fn publish(
         &self,
+        catalogue: DecodedCatalogue,
         tenants: &TenantRegistry,
         data_sources: &DataSourceRegistry,
         served: Option<ReaderGenerationReport>,
     ) {
         self.current.store(Some(std::sync::Arc::new(ResolutionView::of(
+            Some(catalogue),
             tenants,
             data_sources,
             served,

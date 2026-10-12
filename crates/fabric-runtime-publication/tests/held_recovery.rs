@@ -17,13 +17,12 @@ mod support;
 
 use std::sync::{Arc, Mutex};
 
-use fabric_data_api::ResourceCatalog;
 use fabric_runtime_publication::{
     diagnose, DocumentKind, DocumentRevision, HeldRecovery as _, PublicationError, RecoveryAudit,
     RecoveryError, RestorePlan, RestoreRefusal, RuntimePublication as _, DATA_SOURCES_FILE, TENANTS_FILE,
     TENANTS_MANIFEST_FILE,
 };
-use fabric_tenant_runtime::{build_published_runtime, CatalogueCheck, LastKnownGoodStore, PublishedFiles};
+use fabric_tenant_runtime::{build_published_runtime, LastKnownGoodStore};
 use support::TempDir;
 
 const TORN: &[u8] = b"[{\"tenant\":\"acme\",";
@@ -223,25 +222,13 @@ async fn an_interrupted_publication_ahead_of_its_record_is_not_restored() {
     assert_eq!(dir.read_raw(TENANTS_MANIFEST_FILE), manifest);
 }
 
-struct HostCatalogue;
-
-impl CatalogueCheck for HostCatalogue {
-    fn check(&self, catalogue: &[u8]) -> Result<(), String> {
-        serde_json::from_slice::<ResourceCatalog>(catalogue)
-            .map(|_| ())
-            .map_err(|error| error.to_string())
-    }
-}
-
 #[tokio::test]
 async fn a_readers_last_known_good_copy_holds_the_bytes_a_restore_needs() {
     let dir = TempDir::new();
     let copies = TempDir::new();
     dir.publisher().publish(&support::base_snapshot(1)).await.unwrap();
     let store = LastKnownGoodStore::new(copies.path().join("copy"));
-    let reader = PublishedFiles::new(dir.tenants_path(), dir.data_sources_path())
-        .with_catalogue(dir.catalog_path())
-        .with_last_known_good(store.clone(), Arc::new(HostCatalogue));
+    let reader = support::published_files(&dir).with_last_known_good(store.clone());
     let runtime = build_published_runtime(&support::runtime_config(), Arc::new(reader))
         .await
         .unwrap();

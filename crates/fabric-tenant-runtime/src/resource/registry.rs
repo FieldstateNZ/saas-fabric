@@ -21,6 +21,7 @@ mod merge;
 mod merged_snapshot;
 #[cfg(test)]
 mod stale_revision_tests;
+mod takes_whole;
 #[cfg(test)]
 mod test_resource;
 #[cfg(test)]

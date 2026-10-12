@@ -1,50 +1,65 @@
-//! One view of both registries, from which a whole resolution is answered.
+//! One view of the catalogue and both registries, from which a whole
+//! request is answered.
 
 use std::sync::Arc;
 
 use fabric_core::{DataSourceId, LogicalDataSourceName, ReaderGenerationReport, TenantId};
 
+use crate::publication::DecodedCatalogue;
 use crate::resource::{LookupError, RegistryResource, ResourceSnapshot};
 use crate::{
     CoTenancy, DataSource, DataSourceRegistry, DestinationReuse, ResolveError, TenantRegistry,
     TenantRuntimeBinding,
 };
 
-/// A tenant snapshot and a DataSource snapshot, held together for the length
-/// of one resolution.
+/// A catalogue, a tenant snapshot and a DataSource snapshot, held together
+/// for the length of one request.
 ///
-/// Every step of the chain -- the binding, the DataSource it names, and the
-/// exclusivity facts of both sets -- is read off this one value. Nothing is
-/// re-loaded mid-request, so a registry swap that lands while a request is
-/// resolving cannot answer one step from one set and the next from another.
-/// Which two snapshots it pairs is the resolver's choice: see
-/// [`PublishedGeneration`](super::published_generation::PublishedGeneration).
+/// Every step -- the resource definition, the binding, the DataSource it
+/// names, and the exclusivity facts of both sets -- is read off this one
+/// value. Nothing is re-loaded mid-request, so a swap that lands while a
+/// request is in flight, across an authorization await included, cannot
+/// answer one step from one generation and the next from another (G8). Which
+/// snapshots it pairs is the resolver's choice: see
+/// `PublishedGeneration`.
+/// [`RuntimeResolver::pin`](crate::RuntimeResolver::pin) hands one out.
 #[derive(Debug, Clone, Default)]
-pub(crate) struct ResolutionView {
+pub struct ResolutionView {
+    catalogue: Option<DecodedCatalogue>,
     tenants: Option<Arc<ResourceSnapshot<TenantRuntimeBinding>>>,
     data_sources: Option<Arc<ResourceSnapshot<DataSource>>>,
     served: Option<ReaderGenerationReport>,
 }
 
 impl ResolutionView {
-    /// What each registry holds now, each loaded once, and the generation
-    /// they hold exactly, when they do.
+    /// `catalogue`, what each registry holds now, each loaded once, and the
+    /// generation all three are exactly, when they are.
     pub(crate) fn of(
+        catalogue: Option<DecodedCatalogue>,
         tenants: &TenantRegistry,
         data_sources: &DataSourceRegistry,
         served: Option<ReaderGenerationReport>,
     ) -> Self {
         Self {
+            catalogue,
             tenants: tenants.current(),
             data_sources: data_sources.current(),
             served,
         }
     }
 
-    /// The generation this view holds whole, installed with it: `None`
-    /// when it holds documents with no record, or a generation one of
-    /// whose resources a registry did not take as offered.
-    pub(crate) const fn served(&self) -> Option<ReaderGenerationReport> {
+    /// The catalogue installed with this view. `None` while nothing is
+    /// installed, which a host answers as the runtime being unavailable:
+    /// there is no other catalogue to fall back on.
+    #[must_use]
+    pub const fn catalogue(&self) -> Option<&DecodedCatalogue> {
+        self.catalogue.as_ref()
+    }
+
+    /// The generation this view holds whole, catalogue included, installed
+    /// with it: `None` when it holds documents with no record.
+    #[must_use]
+    pub const fn served(&self) -> Option<ReaderGenerationReport> {
         self.served
     }
 

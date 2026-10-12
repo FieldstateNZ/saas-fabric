@@ -63,9 +63,10 @@ calls the Fabric authorization front door yet.
   published files, symlinks and `..` resolved
   (`config/validation/last_known_good.rs`, via
   `fabric_tenant_runtime::check_separation`).
-- `catalogue::{decode, HostCatalogue}` — the one catalogue decoder: startup's
-  `catalog::load`, the reader's `CatalogueCheck` and the recovery command all
-  use it.
+- The catalogue decoder is `fabric_data_api::ResourceCatalogDecoder`: the
+  reader installs what it decodes with each generation, and the recovery
+  command judges copies with it. There is no separate catalogue read at
+  startup (G8).
 - `secrets::EnvSecretResolver` — implements `fabric_connector::SecretResolver`
   by reading `FABRIC_SECRET_<SANITISED_REFERENCE>` from the process
   environment (every non-alphanumeric-ASCII character in the reference
@@ -152,10 +153,7 @@ calls the Fabric authorization front door yet.
 - `startup/` — `application.rs` (`build`, `Application`),
   `background_tasks.rs` (`BackgroundTasks`, `pub(super) async fn
   stop_refreshers`, `pub(super) async fn stop_connector_retry` — both log a
-  `warn` on a panicked task rather than propagating), `catalog.rs`
-  (`pub(super) fn load(path: &Path) -> Result<ResourceCatalog, String>`, a
-  plain synchronous file read — the catalogue is platform-level and
-  identical for every tenant, not reconciled state), `compose.rs`
+  `warn` on a panicked task rather than propagating), `compose.rs`
   (`compose`), `connectors.rs` + `connectors/{logging,negotiate,
   negotiation_failure,pending_connector,pending_connector_delegation,retry}.rs`
   (§35's whole implementation — see Hard invariants), `serving.rs`

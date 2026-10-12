@@ -9,7 +9,7 @@ use super::atomic_replace::sync_directory;
 use super::inspection::{Inspection, Verdict};
 use super::store::FILE_NAME;
 use super::LastKnownGoodStore;
-use crate::publication::CatalogueCheck;
+use crate::publication::CatalogueDecoder;
 
 /// The audit log beside the copy: one JSON object per line, appended and
 /// synced before the action it records.
@@ -55,7 +55,7 @@ impl LastKnownGoodStore {
         &self,
         request: &DiscardRequest,
         at_unix_seconds: u64,
-        catalogue: &dyn CatalogueCheck,
+        catalogue: &dyn CatalogueDecoder,
     ) -> io::Result<Option<Discarded>> {
         let inspection = self.inspect(catalogue).await;
         if inspection.verdict == Verdict::Absent {

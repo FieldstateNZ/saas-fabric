@@ -16,9 +16,10 @@ use crate::{DataApiError, OperationKind, ResourceDefinition};
 /// write path has to ask what the *platform* permits on this DataSource, which
 /// is a different question from what the connector can express, and both are
 /// checked.
-pub(super) struct Prepared<'a> {
-    /// The catalogue entry being operated on.
-    pub(super) resource: &'a ResourceDefinition,
+pub(super) struct Prepared {
+    /// The catalogue entry being operated on, from the view the request
+    /// pinned, the same view `resolved` came from (G8).
+    pub(super) resource: ResourceDefinition,
 
     /// Where the operation runs, and what the DataSource permits.
     pub(super) resolved: ResolvedDataSource,
@@ -36,7 +37,7 @@ pub(super) struct Prepared<'a> {
     pub(super) operation: OperationKind,
 }
 
-impl Prepared<'_> {
+impl Prepared {
     /// What a response for this operation may disclose.
     ///
     /// Both inputs come from here rather than being passed around separately,
@@ -46,7 +47,7 @@ impl Prepared<'_> {
     /// `Prepared` means the only way to obtain them is to have resolved and
     /// authorised the operation first.
     pub(super) fn visible_fields(&self) -> VisibleFields<'_> {
-        VisibleFields::new(self.resource, self.resolved.target.isolation())
+        VisibleFields::new(&self.resource, self.resolved.target.isolation())
     }
 
     /// What this operation may write.
@@ -57,7 +58,7 @@ impl Prepared<'_> {
     /// either rule requires a `Prepared`, which requires having resolved and
     /// authorised the operation first.
     pub(super) fn writable_fields(&self) -> WritableFields<'_> {
-        WritableFields::new(self.resource, self.resolved.target.isolation())
+        WritableFields::new(&self.resource, self.resolved.target.isolation())
     }
 
     /// Attributes a connector failure to the operation that raised it.

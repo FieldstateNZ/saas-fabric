@@ -68,7 +68,7 @@ pub use authorization::{
     CheckQuestion, CheckTarget, CollectionObject, DataAuthorization, NoCheckConfigured, OperationKind,
     TenantAuthorization, TenantPolicies, TenantPosture,
 };
-pub use catalog::{ResourceCatalog, ResourceDefinition};
+pub use catalog::{decode_catalogue, ResourceCatalog, ResourceCatalogDecoder, ResourceDefinition};
 pub use config::DataApiConfig;
 pub use errors::DataApiError;
 // Not `pub`. `build_data_api` is the only supported way in, because it is

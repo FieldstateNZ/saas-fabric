@@ -30,7 +30,9 @@ pub use fixtures::{
     articles_catalog, base_snapshot, data_source_id, shared_data_source, tenant_binding,
     ACME_DISCRIMINATOR_VALUE, CONNECTOR_ID, DATA_SOURCE_ID, DISCRIMINATOR_COLUMN, GLOBEX_DISCRIMINATOR_VALUE,
 };
-pub use requests::{body_json, claims_for, issuer_for, request, request_with_tenant_header, trusted_issuers};
+pub use requests::{
+    body_json, claims_for, issuer_for, json_request, request, request_with_tenant_header, trusted_issuers,
+};
 
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
@@ -41,12 +43,12 @@ use std::time::{Duration, Instant};
 use axum::body::Body;
 use axum::response::Response;
 use axum::Router;
-use fabric_data_api::{build_data_api, DataApiConfig, DataAuthorization, ResourceCatalog};
+use fabric_data_api::{build_data_api, decode_catalogue, DataApiConfig, DataAuthorization};
 use fabric_identity::{build_identity, IdentityConfig, TrustedIngressReader};
 use fabric_runtime_publication::{FilesystemRuntimePublication, RuntimePublication as _, RuntimeSnapshot};
 use fabric_tenant_runtime::{
-    build_published_runtime, build_runtime, DataSource as RuntimeDataSource, RuntimeConfig, RuntimeHandles,
-    RuntimeResolver, TenantRuntimeBinding,
+    build_published_runtime, build_runtime, DataSource as RuntimeDataSource, DecodedCatalogue, RuntimeConfig,
+    RuntimeHandles, RuntimeResolver, TenantRuntimeBinding,
 };
 use http::Request;
 use tower::ServiceExt as _;
@@ -253,12 +255,9 @@ pub enum Reader {
 /// files that publication wrote -- the composed stack every test in this
 /// suite drives.
 ///
-/// The catalogue leg cannot reuse `fabric-api`'s own `startup::catalog::load`
-/// (it is `pub(super)`, per ADR 0018's Consequences), so this reads
-/// `catalog.json` back and deserialises it as the real, public
-/// `fabric_data_api::ResourceCatalog` -- the same type `load` builds --
-/// which is what pins the catalogue leg the way the compiler already pins
-/// the tenants and data-sources legs through `JsonFileSource`.
+/// The production reader installs the catalogue with each generation,
+/// decoded by the Data API's own `ResourceCatalogDecoder`, so the router
+/// serves whatever view the runtime installed (G8).
 pub async fn build_stack(snapshot: &RuntimeSnapshot) -> Stack {
     build_stack_with(snapshot, Reader::Generation).await
 }
@@ -279,9 +278,6 @@ pub async fn assemble(
 ) -> Stack {
     let (resolver, handles, loads) = build_reader(&dir, reader).await.unwrap();
 
-    let catalog_bytes = std::fs::read(dir.catalog_path()).unwrap();
-    let catalog: ResourceCatalog = serde_json::from_slice(&catalog_bytes).unwrap();
-
     let connector = RecordingConnector::new();
 
     // The issuer registry is required configuration (ADR 0019 §2), and this
@@ -297,7 +293,6 @@ pub async fn assemble(
 
     let app = build_data_api(
         &DataApiConfig::default(),
-        catalog,
         DataAuthorization::default(),
         Arc::clone(&resolver),
         fabric_connector::ConnectorRegistry::new()
@@ -314,6 +309,18 @@ pub async fn assemble(
         dir,
         loads,
     }
+}
+
+/// The production reader over the files in `dir`: [`PublishedFiles`] with
+/// the Data API's own catalogue decoder, as `fabric-api` builds it.
+#[must_use]
+pub fn published_files(dir: &TempDir) -> fabric_tenant_runtime::PublishedFiles {
+    fabric_tenant_runtime::PublishedFiles::new(
+        dir.tenants_path(),
+        dir.data_sources_path(),
+        dir.catalog_path(),
+        Arc::new(fabric_data_api::ResourceCatalogDecoder),
+    )
 }
 
 /// Builds `reader` over the files in `dir`, under [`runtime_config`], with
@@ -342,7 +349,8 @@ pub async fn build_reader_with(
 ) -> Result<(Arc<RuntimeResolver>, RuntimeHandles, Arc<AtomicUsize>), String> {
     match reader {
         Reader::Generation => {
-            let (source, loads) = CountingPublished::new(dir.tenants_path(), dir.data_sources_path());
+            let (source, loads) =
+                CountingPublished::new(dir.tenants_path(), dir.data_sources_path(), dir.catalog_path());
             let published = build_published_runtime(config, Arc::new(source)).await?;
             Ok((published.resolver, published.handles, loads))
         }
@@ -351,7 +359,14 @@ pub async fn build_reader_with(
             let (data_sources, _) = CountingSource::<RuntimeDataSource>::new(dir.data_sources_path());
             let (resolver, handles) =
                 build_runtime(config, Arc::new(tenants), Arc::new(data_sources)).await?;
-            Ok((resolver, handles, loads))
+            // The reader before the record: one catalogue, read once at start.
+            let catalogue =
+                decode_catalogue(&std::fs::read(dir.catalog_path()).map_err(|error| error.to_string())?)?;
+            Ok((
+                Arc::new(resolver.with_catalogue(DecodedCatalogue::new(catalogue))),
+                handles,
+                loads,
+            ))
         }
     }
 }

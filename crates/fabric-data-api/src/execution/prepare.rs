@@ -111,11 +111,12 @@ impl DataApiService {
         resource_name: &LogicalResourceName,
         operation: OperationKind,
         key: Option<&str>,
-    ) -> Result<Prepared<'_>, DataApiError> {
-        let resource = self.catalog.resolve(resource_name)?;
+    ) -> Result<Prepared, DataApiError> {
+        let (view, resource) = self.pinned(resource_name)?;
 
         self.authorize(caller, operation, resource_name, key).await?;
         let identity = caller.identity();
+        let resource = resource.ok_or_else(Self::unavailable)?;
 
         if !resource.allows(operation) {
             return Err(DataApiError::OperationNotAllowed {
@@ -125,9 +126,7 @@ impl DataApiService {
         }
 
         // The tenant comes from the identity and nowhere else (§10, §11).
-        let resolved = self
-            .runtime
-            .resolve_data_source(identity.tenant(), &resource.data_source)?;
+        let resolved = view.resolve_data_source(identity.tenant(), &resource.data_source)?;
 
         if operation.is_write() && !resolved.is_writable() {
             logging::write_refused_by_data_source(resource_name, &resolved.telemetry_label());

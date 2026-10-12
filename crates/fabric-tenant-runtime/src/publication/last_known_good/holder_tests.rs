@@ -48,9 +48,48 @@ impl Replica {
 }
 
 fn reader_over(published: &Path, tenants: &str, copy: &Path) -> PublishedFiles {
-    PublishedFiles::new(published.join(tenants), published.join("data-sources.json"))
-        .with_catalogue(published.join("catalog.json"))
-        .with_last_known_good(LastKnownGoodStore::new(copy), Arc::new(Catalogue))
+    PublishedFiles::new(
+        published.join(tenants),
+        published.join("data-sources.json"),
+        published.join("catalog.json"),
+        Arc::new(Catalogue),
+    )
+    .with_last_known_good(LastKnownGoodStore::new(copy))
+}
+
+/// What the refresher does at start: load, and once a complete generation
+/// is installed, say so, which is when the copy is persisted.
+async fn start(reader: &PublishedFiles) -> Result<PublishedState, SourceError> {
+    let state = reader.load_at_start().await?;
+    install(reader, &state).await;
+    Ok(state)
+}
+
+/// [`start`], on a refresh.
+async fn refresh(reader: &PublishedFiles) -> Result<PublishedState, SourceError> {
+    let state = reader.load().await?;
+    install(reader, &state).await;
+    Ok(state)
+}
+
+async fn install(reader: &PublishedFiles, state: &PublishedState) {
+    if let PublishedState::Generation {
+        generation,
+        record_sha256,
+        ..
+    } = state
+    {
+        reader.installed(*generation, record_sha256).await;
+    }
+}
+
+/// The fixture catalogue's own generation number, as the fixture decoder
+/// decodes it.
+fn catalogue_of(state: &PublishedState) -> u64 {
+    let PublishedState::Generation { catalogue, .. } = state else {
+        panic!("expected a complete generation, got {state:?}");
+    };
+    *catalogue.get::<u64>().unwrap()
 }
 
 fn generation_of(state: &PublishedState) -> (u64, GenerationOrigin) {
@@ -70,7 +109,7 @@ fn is_held(origin: &GenerationOrigin) -> bool {
 async fn with_copy_of_generation_one() -> Replica {
     let replica = Replica::new();
     publish_into(&replica.published, &published(1, "pg-1"));
-    replica.reader().load_at_start().await.unwrap();
+    start(&replica.reader()).await.unwrap();
     assert_eq!(replica.reader().last_known_good(), LastKnownGoodState::Absent);
     assert!(replica.store().path().exists());
     replica
@@ -84,12 +123,12 @@ async fn at_start_an_unservable_higher_generation_holds_the_copy_and_leaves_its_
         publish_into(&replica.published, &broken);
 
         let reader = replica.reader();
-        let (state, catalogue) = reader.load_at_start().await.unwrap();
+        let state = start(&reader).await.unwrap();
 
         let (generation, origin) = generation_of(&state);
         assert_eq!(generation, 1, "{document}");
         assert!(is_held(&origin), "{document}: {origin:?}");
-        assert_eq!(catalogue, Some(published(1, "pg-1").catalog), "{document}");
+        assert_eq!(catalogue_of(&state), 1, "{document}: the copy's own catalogue");
         assert_eq!(replica.copy_bytes(), before, "{document}: the copy must survive");
         assert_eq!(
             reader.last_known_good(),
@@ -104,7 +143,7 @@ async fn at_start_an_unservable_generation_with_no_copy_fails_closed_and_writes_
         let replica = Replica::new();
         publish_into(&replica.published, &broken);
 
-        let refused = replica.reader().load_at_start().await.unwrap_err();
+        let refused = start(&replica.reader()).await.unwrap_err();
 
         assert!(
             matches!(&refused, SourceError::Unusable { document: named, .. } if *named == document),
@@ -120,16 +159,16 @@ async fn on_refresh_an_unservable_generation_is_held_without_raising_the_floor_o
         let replica = Replica::new();
         publish_into(&replica.published, &published(1, "pg-1"));
         let reader = replica.reader();
-        reader.load_at_start().await.unwrap();
+        start(&reader).await.unwrap();
         let before = replica.copy_bytes();
 
         publish_into(&replica.published, &broken);
-        let held = reader.load().await.unwrap_err();
+        let held = refresh(&reader).await.unwrap_err();
         assert!(matches!(held, SourceError::Unusable { .. }), "{document}: {held}");
         assert_eq!(replica.copy_bytes(), before, "{document}");
 
         publish_into(&replica.published, &published(1, "pg-1"));
-        let state = reader.load().await.unwrap();
+        let state = refresh(&reader).await.unwrap();
         assert_eq!(generation_of(&state).0, 1, "{document}: the floor stayed at 1");
     }
 }
@@ -139,20 +178,49 @@ async fn after_a_held_refresh_a_restart_still_starts_from_the_copy_and_a_later_v
     let replica = with_copy_of_generation_one().await;
     let (_, broken) = unservable(2).into_iter().next().unwrap();
     publish_into(&replica.published, &broken);
-    assert!(replica.reader().load().await.is_err());
+    assert!(refresh(&replica.reader()).await.is_err());
 
-    let (state, _) = replica.reader().load_at_start().await.unwrap();
+    let state = start(&replica.reader()).await.unwrap();
     let (generation, origin) = generation_of(&state);
     assert_eq!(generation, 1);
     assert!(is_held(&origin));
 
     publish_into(&replica.published, &published(3, "pg-1"));
     let reader = replica.reader();
-    let (state, _) = reader.load_at_start().await.unwrap();
+    let state = start(&reader).await.unwrap();
     assert_eq!(generation_of(&state), (3, GenerationOrigin::Published));
     assert_eq!(
         reader.last_known_good(),
         LastKnownGoodState::Stored { generation: 3 }
+    );
+}
+
+#[tokio::test]
+async fn a_generation_loaded_but_never_installed_is_neither_persisted_nor_raises_the_floor() {
+    let replica = with_copy_of_generation_one().await;
+    let before = replica.copy_bytes();
+    let reader = replica.reader();
+    start(&reader).await.unwrap();
+
+    publish_into(&replica.published, &published(2, "pg-1"));
+    let loaded = reader.load().await.unwrap();
+    assert_eq!(generation_of(&loaded).0, 2);
+    assert_eq!(
+        replica.copy_bytes(),
+        before,
+        "the refresher refused it: nothing persisted"
+    );
+
+    publish_into(&replica.published, &published(1, "pg-1"));
+    let state = refresh(&reader).await.unwrap();
+    assert_eq!(
+        generation_of(&state),
+        (1, GenerationOrigin::Published),
+        "the floor stayed at 1"
+    );
+    assert_eq!(
+        reader.last_known_good(),
+        LastKnownGoodState::Stored { generation: 1 }
     );
 }
 
@@ -165,7 +233,7 @@ async fn a_refused_copy_is_kept_byte_for_byte_beside_a_valid_publication_until_i
     publish_into(&replica.published, &published(2, "pg-1"));
 
     let reader = replica.reader();
-    let (state, _) = reader.load_at_start().await.unwrap();
+    let state = start(&reader).await.unwrap();
     assert_eq!(generation_of(&state), (2, GenerationOrigin::Published));
     assert!(matches!(
         reader.last_known_good(),
@@ -174,7 +242,7 @@ async fn a_refused_copy_is_kept_byte_for_byte_beside_a_valid_publication_until_i
     assert_eq!(replica.copy_bytes(), refused_bytes);
 
     publish_into(&replica.published, &published(3, "pg-1"));
-    reader.load().await.unwrap();
+    refresh(&reader).await.unwrap();
     assert_eq!(
         replica.copy_bytes(),
         refused_bytes,
@@ -196,7 +264,7 @@ async fn a_refused_copy_is_kept_byte_for_byte_beside_a_valid_publication_until_i
         .unwrap()
         .unwrap();
     publish_into(&replica.published, &published(4, "pg-1"));
-    reader.load().await.unwrap();
+    refresh(&reader).await.unwrap();
     assert_eq!(
         reader.last_known_good(),
         LastKnownGoodState::Stored { generation: 4 }
@@ -211,7 +279,7 @@ async fn a_copy_directory_aliased_onto_the_published_directory_is_never_written_
     symlink(&replica.published, &alias).unwrap();
 
     let reader = reader_over(&replica.published, "tenants.json", &alias);
-    let (state, _) = reader.load_at_start().await.unwrap();
+    let state = start(&reader).await.unwrap();
 
     assert_eq!(generation_of(&state), (1, GenerationOrigin::Published));
     assert!(!replica.published.join("last-known-good.json").exists());
@@ -236,14 +304,14 @@ async fn a_published_file_named_like_the_copy_under_an_aliased_directory_is_left
     symlink(&replica.published, &alias).unwrap();
 
     let reader = reader_over(&replica.published, "last-known-good.json", &alias);
-    let _ = reader.load_at_start().await;
+    let _ = start(&reader).await;
     publish_into(&replica.published, &published(2, "pg-1"));
     std::fs::copy(
         replica.published.join("tenants.json"),
         replica.published.join("last-known-good.json"),
     )
     .unwrap();
-    let _ = reader.load().await;
+    let _ = refresh(&reader).await;
 
     assert_eq!(
         std::fs::read(replica.published.join("last-known-good.json")).unwrap(),

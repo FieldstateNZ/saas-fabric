@@ -151,16 +151,6 @@ async fn a_truncated_copy_is_refused_as_malformed() {
 }
 
 #[tokio::test]
-async fn a_generation_read_without_its_catalogue_is_not_persisted() {
-    let dir = TempDir::new("lkg-store");
-    let store = store(&dir);
-    let without = complete(3, "pg-1").attach_catalogue_if_matching(None);
-
-    assert!(store.persist(&without, |_| Ok(())).await.is_err());
-    assert!(!store.path().exists());
-}
-
-#[tokio::test]
 async fn an_interrupted_persist_leaves_the_previous_copy_valid() {
     for step in [Step::Written, Step::Synced] {
         let dir = TempDir::new("lkg-store");

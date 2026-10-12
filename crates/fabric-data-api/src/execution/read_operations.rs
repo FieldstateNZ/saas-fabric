@@ -41,7 +41,7 @@ impl DataApiService {
         // Shape, then complexity. Neither is authorization, so both wait until
         // the caller is known to be allowed here at all — and both finish
         // before anything is asked of a connector.
-        let query = ListQuery::parse(raw_query, prepared.resource)?;
+        let query = ListQuery::parse(raw_query, &prepared.resource)?;
         limits::enforce_query(&query, &self.config)?;
 
         let limit = self.config.effective_limit(query.limit);
@@ -94,7 +94,7 @@ impl DataApiService {
         // key could not restrict its columns even in principle.
         let spec = QuerySpec::new(prepared.resource.collection.clone())
             .with_fields(prepared.resource.projection(&[]))
-            .with_filter(key_filter(prepared.resource, key))
+            .with_filter(key_filter(&prepared.resource, key))
             .with_paging(Some(1), None);
 
         let outcome = self
@@ -111,7 +111,7 @@ impl DataApiService {
     /// Applies tenant scoping and dispatches a read.
     pub(super) async fn execute_query(
         &self,
-        prepared: &Prepared<'_>,
+        prepared: &Prepared,
         spec: &QuerySpec,
         resource_name: &LogicalResourceName,
         operation: &str,

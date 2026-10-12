@@ -92,6 +92,17 @@ pub fn request_with_tenant_header(uri: &str, claims: &Value, header_tenant: &str
         .unwrap()
 }
 
+/// A request carrying a bearer token and a JSON body.
+pub fn json_request(method: &str, uri: &str, claims: &Value, body: &Value) -> Request<Body> {
+    Request::builder()
+        .method(method)
+        .uri(versioned(uri))
+        .header("authorization", format!("Bearer {}", token_for(claims)))
+        .header("content-type", "application/json")
+        .body(Body::from(body.to_string()))
+        .unwrap()
+}
+
 /// Reads a response body as JSON, or `Null` if it is not JSON.
 pub async fn body_json(response: axum::response::Response) -> Value {
     let bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024)

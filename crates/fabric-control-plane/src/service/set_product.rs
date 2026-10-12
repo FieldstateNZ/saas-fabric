@@ -94,7 +94,9 @@ impl ClientService {
         self.reconciliation
             .mark_pending(id, revision.clone(), self.clock.now_unix_seconds());
 
-        audit::product_updated(operator, id, &revision);
+        self.audit
+            .record(audit::product_updated(operator, id, &revision))
+            .await;
 
         Ok(StoredClient { document, revision })
     }

@@ -38,6 +38,7 @@ pub fn build_control_plane(
     let ControlPlaneDeps {
         desired_state: repository,
         clock,
+        audit,
         keys,
         identity_provider,
         sign_in,
@@ -71,6 +72,7 @@ pub fn build_control_plane(
         Arc::clone(repository),
         Arc::clone(&statuses),
         Arc::clone(&clock),
+        audit,
         Arc::new(reserved_realms),
         Arc::new(reserved_client_ids),
     ));

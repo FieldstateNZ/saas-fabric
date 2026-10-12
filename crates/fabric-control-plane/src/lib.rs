@@ -53,6 +53,7 @@
 //! declaration, and the reasoning for each re-export stays beside it.
 
 mod audit;
+mod audit_trail;
 mod client_secrets;
 mod config;
 mod converge;
@@ -85,6 +86,10 @@ pub mod testing;
 // Re-exported so an adapter implementing `ClientSecrets` or a registry port needs this crate and not
 // also a model crate. Each type is its model's, and so is its meaning; this is the port's vocabulary
 // made reachable from one place.
+pub use audit_trail::{
+    verify as verify_audit_chain, AuditEntry, AuditError, AuditRecord, AuditRecorder, AuditStream,
+    AuditTrail, ChainBreak, ChainHash, ChainHead, InMemoryAuditTrail, StoredStream, MAX_AUDIT_ENTRY_BYTES,
+};
 pub use client_secrets::{ClientSecrets, SecretMetadata, SecretPath, SecretValues, SecretsError};
 pub use config::{ControlPlaneConfig, OperatorConfig, ReconciliationConfig};
 pub use errors::{ControlPlaneError, RealmUnavailableReason};

@@ -7,8 +7,16 @@ use crate::models::ActivityResponse;
 use crate::state::ControlPlaneState;
 use crate::{ControlPlaneError, Operator};
 
-/// Every recorded operator action, from the catalogue and from every client,
-/// newest first.
+/// The most recent recorded operator actions, from the catalogue and from
+/// every client, newest first and bounded.
+///
+/// # A view, not the audit trail
+///
+/// The response carries at most `ACTIVITY_VIEW_LIMIT` actions (see
+/// [`ActivityResponse`]) and says how many older ones it left out. The authoritative record is the
+/// durable audit trail (ADR 0028); nothing here reads or prunes it, and
+/// nothing here removes an entry from desired state either — the bound is on
+/// what is shown.
 ///
 /// Merged here rather than read from one document, because an operator asking
 /// "what changed recently" is asking across the whole platform, not one
@@ -43,7 +51,5 @@ pub(crate) async fn list_activity(
         activity.extend(product.activity);
     }
 
-    activity.sort_by_key(|action| std::cmp::Reverse(action.at));
-
-    Ok(Json(ActivityResponse { activity }))
+    Ok(Json(ActivityResponse::newest(activity)))
 }

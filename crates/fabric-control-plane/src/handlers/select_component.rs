@@ -60,16 +60,17 @@ pub(super) async fn select_component(
         repository: selection.repository.as_str(),
         version: selection.version.as_str(),
     };
-    match &outcome {
+    let record = match &outcome {
         Ok((_, primary_digest, descriptor_digest)) => {
             let selected = SelectionOutcome::Selected {
                 primary_digest: primary_digest.as_str(),
                 descriptor_digest: descriptor_digest.as_str(),
             };
-            component_selected(operator, &selecting, &selected);
+            component_selected(operator, &selecting, &selected)
         }
         Err(error) => component_selected(operator, &selecting, &SelectionOutcome::Refused(error)),
-    }
+    };
+    state.service.audit().record(record).await;
     outcome.map(|(stored, _, _)| stored)
 }
 

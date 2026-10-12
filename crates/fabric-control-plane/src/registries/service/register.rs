@@ -30,7 +30,7 @@ impl RegistryService {
         let operation = RegistryOperation::Register;
         let resolved = match resolve(registration) {
             Ok(resolved) => resolved,
-            Err(failure) => return Self::refused(operator, None, operation, failure),
+            Err(failure) => return self.refused(operator, None, operation, failure).await,
         };
         let subject = operator.subject().to_owned();
         let host = resolved.host.clone();

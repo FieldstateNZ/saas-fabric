@@ -35,7 +35,7 @@ impl RegistryService {
         let operation = RegistryOperation::SetCredential;
         let credential = match credential(username, token) {
             Ok(credential) => credential,
-            Err(failure) => return Self::refused(operator, Some(&host), operation, failure),
+            Err(failure) => return self.refused(operator, Some(&host), operation, failure).await,
         };
         let subject = operator.subject().to_owned();
 

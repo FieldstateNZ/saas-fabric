@@ -65,7 +65,8 @@ impl RegistryService {
                 let _turn = inner.order.lock().await;
                 done.await
             };
-            registry_changed(&subject, host.as_ref(), operation, outcome(&result));
+            let record = registry_changed(&subject, host.as_ref(), operation, outcome(&result));
+            inner.audit.record(record).await;
             result
         });
 
@@ -78,13 +79,15 @@ impl RegistryService {
 
     /// Audits a refusal made before a change took its turn: a request the
     /// rules refused outright.
-    pub(super) fn refused<T>(
+    pub(super) async fn refused<T>(
+        &self,
         operator: &Operator,
         host: Option<&RegistryHost>,
         operation: RegistryOperation,
         failure: RegistryFailure,
     ) -> Result<T, RegistryFailure> {
-        registry_changed(operator.subject(), host, operation, failure.code());
+        let record = registry_changed(operator.subject(), host, operation, failure.code());
+        self.inner.audit.record(record).await;
         Err(failure)
     }
 }

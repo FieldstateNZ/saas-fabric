@@ -14,6 +14,7 @@
 //! written: the refusal's stable code is the outcome.
 
 use crate::audit::{registry_changed, RegistryOperation};
+use crate::state::ControlPlaneState;
 use crate::{ControlPlaneError, Operator, RegistryHost};
 
 /// `extracted`, or its refusal audited as `operation` against `host`.
@@ -21,13 +22,16 @@ use crate::{ControlPlaneError, Operator, RegistryHost};
 /// # Errors
 ///
 /// The extractor's refusal, unchanged.
-pub(super) fn admitted<T>(
+pub(super) async fn admitted<T>(
+    state: &ControlPlaneState,
     operator: &Operator,
     operation: RegistryOperation,
     host: Option<&RegistryHost>,
     extracted: Result<T, ControlPlaneError>,
 ) -> Result<T, ControlPlaneError> {
-    extracted.inspect_err(|refusal| {
-        registry_changed(operator.subject(), host, operation, refusal.code());
-    })
+    if let Err(refusal) = &extracted {
+        let record = registry_changed(operator.subject(), host, operation, refusal.code());
+        state.service.audit().record(record).await;
+    }
+    extracted
 }

@@ -1,8 +1,5 @@
 //! The record of what an operator changed.
 //!
-//! Past 120 lines for one reason: the reasoning for every event stays beside
-//! it, and each later group of events lives in its own file below.
-//!
 //! # Why this is not just another log module
 //!
 //! `logging` records what the process did. This records **what a human
@@ -14,9 +11,10 @@
 //! # What every record carries
 //!
 //! Who requested it, which client, which domain operation, when, and the
-//! revision that resulted. The timestamp comes from the log pipeline rather
-//! than a field here, because a record that carried its own idea of the time
-//! could disagree with the line above it.
+//! revision that resulted. A log line's timestamp comes from the log pipeline
+//! rather than a field here, because a line that carried its own idea of the
+//! time could disagree with the pipeline's; a durable entry is stamped once,
+//! by the recorder, when it is sealed into its chain.
 //!
 //! # What no record may ever carry
 //!
@@ -32,104 +30,50 @@
 //! authored by the platform's machine identity, a future repository may not be
 //! Git at all, and a refused write leaves no commit but is still worth
 //! knowing about.
+//!
+//! # Every record has two copies, and neither is the activity feed
+//!
+//! Each function here writes its log line and returns the same values as an
+//! [`AuditRecord`](crate::AuditRecord), which the caller hands to the
+//! [`AuditRecorder`](crate::AuditRecorder) — the durable, hash-chained trail
+//! when a deployment has one (ADR 0028). The activity feed an operator sees
+//! in the console is a bounded view kept in desired state; it is not either
+//! copy, and nothing here reads from it except the catalogue's own entry name.
 
+mod identity;
 mod lifecycle;
 mod product;
+mod publication;
 mod registry;
+mod secret;
 mod selection;
 
+pub(crate) use identity::identity_updated;
 pub(crate) use lifecycle::{client_deletion_confirmed, client_tombstoned};
 pub(crate) use product::{catalogue_changed, client_created, product_updated};
+pub(crate) use publication::publication_triggered;
 pub(crate) use registry::{registry_changed, RegistryOperation};
+pub(crate) use secret::client_secret;
 pub(crate) use selection::{component_selected, Selecting, SelectionOutcome};
 
 use fabric_client_model::{ClientId, ClientRevision};
-use fabric_core::{event_id, EventType};
 
-use crate::{Operator, DOMAIN_ID};
+use crate::{AuditRecord, AuditStream, Operator};
 
-/// A client's identity configuration was changed.
-///
-/// Info, not debug: this is the record, and a level that a deployment might
-/// filter out would make the audit trail a configuration accident.
-pub(crate) fn identity_updated(operator: &Operator, client: &ClientId, revision: &ClientRevision) {
-    tracing::info!(
-        event = "control_plane.audit.identity_updated",
-        event_id = event_id(DOMAIN_ID, EventType::Success, 2),
-        operation = "update_client_identity",
-        requested_by = operator.subject(),
-        client_id = %client,
-        revision = %revision,
-        "operator changed a client's identity configuration"
-    );
-}
-
-/// An operator did something to one client's secret.
-///
-/// # What is recorded, and what is not
-///
-/// The actor, the client, the path, the operation, and how it turned out —
-/// including the version, because "which version did they replace" is the
-/// question an incident asks first.
-///
-/// **Never a value, and never a key name.** A path is a name an operator
-/// chose; a value is the secret itself, and a key name can be almost as
-/// telling. Nothing that could contain either reaches this function: it is
-/// handed a validated path and an outcome, and there is no parameter through
-/// which a value could arrive even by mistake.
-///
-/// Reveal is recorded like any other operation. Reading a secret is an act,
-/// not a side effect of looking at a page, and it is the act an investigation
-/// most wants to see.
-pub(crate) fn client_secret(
+/// The record shared by every event that names an operator, a client and the
+/// revision its write produced.
+fn client_revision(
+    event: &str,
+    operation: &str,
     operator: &Operator,
     client: &ClientId,
-    path: &crate::SecretPath,
-    operation: &'static str,
-    outcome: &str,
-    version: Option<u64>,
-) {
-    tracing::info!(
-        event = "control_plane.audit.client_secret",
-        event_id = event_id(DOMAIN_ID, EventType::Success, 3),
+    revision: &ClientRevision,
+) -> AuditRecord {
+    AuditRecord::new(
+        AuditStream::Client(client.clone()),
+        event,
         operation,
-        outcome,
-        requested_by = operator.subject(),
-        client_id = %client,
-        secret_path = %path,
-        version,
-        "operator acted on a client's secret"
-    );
-}
-
-/// An operator triggered a runtime-publication pass (ADR 0023 part 4), and
-/// what it did.
-///
-/// # Why this names `resource = "runtime-publication"` rather than a client
-///
-/// Publication is environment-wide, not any one client's document -- the
-/// same reason [`crate::audit::catalogue_changed`] names `resource =
-/// "catalogue"` instead of a `client_id`.
-///
-/// # Why no revision travels with the record
-///
-/// A pass may advance any of three documents by a different amount, or
-/// none at all, and `outcome` already says which case this was. `GET
-/// /api/platform` carries the actual revisions for whoever wants them; this
-/// record is the trail that an operator asked for a pass and what it found,
-/// not a second copy of the numbers.
-///
-/// Only the operator trigger calls this. The scheduled pass carries no
-/// operator to attribute, and an unattended pass is not the human decision
-/// this trail exists to record (see this module's own rustdoc).
-pub(crate) fn publication_triggered(operator: &Operator, outcome: &str) {
-    tracing::info!(
-        event = "control_plane.audit.publication_triggered",
-        event_id = event_id(DOMAIN_ID, EventType::Success, 13),
-        operation = "publish_runtime_state",
-        requested_by = operator.subject(),
-        resource = "runtime-publication",
-        outcome,
-        "operator triggered a runtime-publication pass"
-    );
+        operator.subject(),
+    )
+    .with("revision", revision)
 }

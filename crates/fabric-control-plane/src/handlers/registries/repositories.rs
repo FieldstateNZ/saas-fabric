@@ -24,8 +24,8 @@ pub(crate) async fn add_registry_repository(
     repository: Result<RepositoryTail, ControlPlaneError>,
 ) -> Result<Json<RegistryView>, ControlPlaneError> {
     let operation = RegistryOperation::AddRepository;
-    let RegistryHostPath(host) = admitted(&operator, operation, None, host)?;
-    let RepositoryTail(repository) = admitted(&operator, operation, Some(&host), repository)?;
+    let RegistryHostPath(host) = admitted(&state, &operator, operation, None, host).await?;
+    let RepositoryTail(repository) = admitted(&state, &operator, operation, Some(&host), repository).await?;
     let listed = state
         .registries
         .add_repository(&operator, host, repository)
@@ -45,8 +45,8 @@ pub(crate) async fn remove_registry_repository(
     repository: Result<RepositoryTail, ControlPlaneError>,
 ) -> Result<Json<RegistryView>, ControlPlaneError> {
     let operation = RegistryOperation::RemoveRepository;
-    let RegistryHostPath(host) = admitted(&operator, operation, None, host)?;
-    let RepositoryTail(repository) = admitted(&operator, operation, Some(&host), repository)?;
+    let RegistryHostPath(host) = admitted(&state, &operator, operation, None, host).await?;
+    let RepositoryTail(repository) = admitted(&state, &operator, operation, Some(&host), repository).await?;
     let listed = state
         .registries
         .remove_repository(&operator, host, repository)

@@ -6,7 +6,7 @@
 use fabric_core::{event_id, EventType};
 
 use crate::registries::RegistryHost;
-use crate::DOMAIN_ID;
+use crate::{AuditRecord, AuditStream, DOMAIN_ID};
 
 /// What was done to a registry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -60,15 +60,20 @@ pub(crate) fn registry_changed(
     host: Option<&RegistryHost>,
     operation: RegistryOperation,
     outcome: &str,
-) {
+) -> AuditRecord {
+    const EVENT: &str = "control_plane.audit.registry";
+    let host = host.map_or("", RegistryHost::as_str);
     tracing::info!(
-        event = "control_plane.audit.registry",
+        event = EVENT,
         event_id = event_id(DOMAIN_ID, EventType::Success, 14),
         operation = operation.as_str(),
         operator,
         resource = "registry",
-        host = host.map_or("", RegistryHost::as_str),
+        host,
         outcome,
         "operator changed an image registry"
     );
+    AuditRecord::new(AuditStream::Registries, EVENT, operation.as_str(), operator)
+        .with("host", host)
+        .with("outcome", outcome)
 }

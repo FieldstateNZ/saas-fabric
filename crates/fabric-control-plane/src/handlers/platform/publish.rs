@@ -49,7 +49,8 @@ pub(crate) async fn publish_runtime_state(
             at_unix_seconds,
             outcome,
         } => {
-            audit::publication_triggered(&operator, pass_outcome_word(&outcome));
+            let record = audit::publication_triggered(&operator, pass_outcome_word(&outcome));
+            state.service.audit().record(record).await;
 
             // Rendered from the outcome this call just produced, and the
             // moment `publish_once` itself recorded it at -- not a second

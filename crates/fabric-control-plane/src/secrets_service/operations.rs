@@ -52,14 +52,17 @@ impl SecretsService {
         let boundary = self.boundary(client).await?;
         let revealed = self.store.reveal(&boundary, path).await;
 
-        audit::client_secret(
-            operator,
-            client,
-            path,
-            "reveal_client_secret",
-            outcome(&revealed),
-            None,
-        );
+        self.clients
+            .audit()
+            .record(audit::client_secret(
+                operator,
+                client,
+                path,
+                "reveal_client_secret",
+                outcome(&revealed),
+                None,
+            ))
+            .await;
 
         Ok(revealed?)
     }
@@ -81,14 +84,17 @@ impl SecretsService {
         let boundary = self.boundary(client).await?;
         let written = self.store.write(&boundary, path, values, expected).await;
 
-        audit::client_secret(
-            operator,
-            client,
-            path,
-            "write_client_secret",
-            outcome(&written),
-            written.as_ref().ok().copied(),
-        );
+        self.clients
+            .audit()
+            .record(audit::client_secret(
+                operator,
+                client,
+                path,
+                "write_client_secret",
+                outcome(&written),
+                written.as_ref().ok().copied(),
+            ))
+            .await;
 
         Ok(written?)
     }
@@ -113,14 +119,17 @@ impl SecretsService {
             .await?;
         let removed = self.store.delete(&boundary, path).await;
 
-        audit::client_secret(
-            operator,
-            client,
-            path,
-            "delete_client_secret",
-            outcome(&removed),
-            None,
-        );
+        self.clients
+            .audit()
+            .record(audit::client_secret(
+                operator,
+                client,
+                path,
+                "delete_client_secret",
+                outcome(&removed),
+                None,
+            ))
+            .await;
 
         Ok(removed?)
     }

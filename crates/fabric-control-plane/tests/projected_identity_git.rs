@@ -19,36 +19,19 @@ mod support;
 
 use axum::body::Body;
 use axum::Router;
-use fabric_client_model::{ClientDocument, ClientId};
-use fabric_control_plane::{AuditStream, AuditTrail as _, ChangeContext, ClientRepository as _};
+use fabric_client_model::ClientId;
+use fabric_control_plane::{AuditStream, AuditTrail as _, ClientRepository as _};
 use http::{header, Response, StatusCode};
 use serde_json::{json, Value};
-use support::projected::{analytics_definition, catalogue_commands, newco_with_a_projected_client};
+use support::projected::{
+    analytics_definition, catalogue_commands, hand_edit_in_git, newco_with_a_projected_client,
+};
 use support::{as_operator, control_plane, entity_tag, send, TestControlPlane};
 
 const CALLBACK: &str = "https://newco.example.com/analytics/callback";
 
 fn newco() -> ClientId {
     ClientId::try_new("newco").unwrap()
-}
-
-/// Edits `newco`'s stored document as text, the way a commit to the
-/// configuration repository would, and returns the revision it produced.
-async fn hand_edit_in_git(plane: &TestControlPlane, edit: impl FnOnce(String) -> String) -> String {
-    let stored = plane.repository.get(&newco()).await.unwrap();
-    let text = edit(stored.document.render().unwrap());
-    let edited = ClientDocument::parse(&text).expect("the hand-edited text must still parse");
-    let change = ChangeContext {
-        requested_by: "someone-in-git".into(),
-        summary: "hand edit".into(),
-    };
-    plane
-        .repository
-        .update(&newco(), &edited, &stored.revision, &change)
-        .await
-        .unwrap()
-        .as_str()
-        .to_owned()
 }
 
 async fn save_product(router: &Router, revision: &str, hosts: &[&str], version: u64) -> Response<Body> {

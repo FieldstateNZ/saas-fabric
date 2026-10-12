@@ -9,7 +9,10 @@ use axum::Router;
 use http::{header, StatusCode};
 use serde_json::{json, Value};
 
-use super::{as_operator, entity_tag, json as body_json, send};
+use fabric_client_model::{ClientDocument, ClientId};
+use fabric_control_plane::{ChangeContext, ClientRepository as _};
+
+use super::{as_operator, entity_tag, json as body_json, send, TestControlPlane};
 
 /// The analytics definition, with the hostname template `{client}.example.com`.
 pub fn analytics_definition() -> Value {
@@ -76,4 +79,26 @@ pub async fn newco_with_a_projected_client(router: &Router) -> String {
     )
     .await;
     entity_tag(&identity)
+}
+
+/// Edits `newco`'s stored document as text, the way a commit to the
+/// configuration repository would: rendered, edited, and parsed by
+/// `ClientDocument::parse`, the parser every repository read goes through.
+/// Returns the revision it produced.
+pub async fn hand_edit_in_git(plane: &TestControlPlane, edit: impl FnOnce(String) -> String) -> String {
+    let newco = ClientId::try_new("newco").unwrap();
+    let stored = plane.repository.get(&newco).await.unwrap();
+    let text = edit(stored.document.render().unwrap());
+    let edited = ClientDocument::parse(&text).expect("the hand-edited text must still parse");
+    let change = ChangeContext {
+        requested_by: "someone-in-git".into(),
+        summary: "hand edit".into(),
+    };
+    plane
+        .repository
+        .update(&newco, &edited, &stored.revision, &change)
+        .await
+        .unwrap()
+        .as_str()
+        .to_owned()
 }

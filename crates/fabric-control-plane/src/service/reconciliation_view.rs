@@ -28,6 +28,7 @@ pub(super) fn resolve(
             observed_at_unix: Some(report.observed_at_unix),
             detail: report.detail.clone(),
             hand_edits: report.hand_edits.clone(),
+            withheld: report.withheld.clone(),
         },
 
         // Either nothing has been reconciled for this client at all, or what
@@ -37,6 +38,7 @@ pub(super) fn resolve(
             observed_at_unix: None,
             detail: None,
             hand_edits: Vec::new(),
+            withheld: Vec::new(),
         },
     }
 }

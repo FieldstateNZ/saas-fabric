@@ -2,7 +2,7 @@
 
 use fabric_client_model::{ClientId, ClientRevision, Host, RealmName};
 
-use crate::models::LifecycleResponse;
+use crate::models::{LifecycleResponse, ProjectionResponse};
 use crate::StoredClient;
 
 /// One client, as the list and detail endpoints render it.
@@ -32,6 +32,11 @@ pub(crate) struct ClientResponse {
 
     /// Whether this is saved intent, a usable client, or retired.
     pub(crate) lifecycle: LifecycleResponse,
+
+    /// Whether its stored projected identity clients are still what its own
+    /// product configuration projects (D01-19b). On the overview and the
+    /// list, so a divergence is seen before anyone opens the client.
+    pub(crate) projection: ProjectionResponse,
 }
 
 impl ClientResponse {
@@ -46,6 +51,7 @@ impl ClientResponse {
             realm: client.identity.realm.clone(),
             revision: stored.revision.clone(),
             lifecycle,
+            projection: stored.document.projection_check().into(),
         }
     }
 }

@@ -11,12 +11,16 @@
 //!   whatever the adapter's `describe` returns, which its own documentation
 //!   requires to be credential-free.
 
+mod withheld;
+
 use fabric_client_model::Client;
 use fabric_core::{event_id, EventType};
 
 use crate::plan::IdentityPlan;
 use crate::provider::{HandEdit, ProviderError};
 use crate::DOMAIN_ID;
+
+pub(crate) use withheld::clients_withheld;
 
 /// The provider already matched the desired state.
 ///

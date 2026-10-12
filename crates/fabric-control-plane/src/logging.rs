@@ -13,6 +13,10 @@
 //!
 //! Audit records — what a human changed — are deliberately not here. See
 //! [`audit`](crate::audit).
+//!
+//! In the 121–150 line band: `client_reconciled` is one exhaustive match
+//! choosing each status's level and event, which is checked by reading it
+//! whole.
 
 mod integration;
 
@@ -65,6 +69,13 @@ pub(crate) fn client_reconciled(client: &ClientId, status: ReconciliationStatus,
             client_id = %client,
             actions,
             "a client carries hand edits the product does not support; they were left in place"
+        ),
+        ReconciliationStatus::Withheld => tracing::warn!(
+            event = "control_plane.client_projection_withheld",
+            event_id = event_id(DOMAIN_ID, EventType::Warning, 9),
+            client_id = %client,
+            actions,
+            "a stored projected client is not its projection; it was withheld from convergence"
         ),
         ReconciliationStatus::Failed => tracing::error!(
             event = "control_plane.client_reconciliation_failed",

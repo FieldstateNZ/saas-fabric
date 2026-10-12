@@ -12,7 +12,7 @@ pub use store::ReconciliationStatusStore;
 /// Where a client's identity stands between what Git says and what the
 /// provider holds.
 ///
-/// # The five are not five flavours of the same thing
+/// # The six are not six flavours of the same thing
 ///
 /// | Status | Means | Who fixes it |
 /// |---|---|---|
@@ -21,6 +21,7 @@ pub use store::ReconciliationStatusStore;
 /// | `Failed` | The last pass could not converge it | Depends on the detail |
 /// | `Drifted` | The provider had stopped matching a desired state already converged | Nobody, but somebody should know |
 /// | `HandEdited` | The provider holds a hand edit the product does not support, left in place | An operator: remove the edit, or re-assert the projection |
+/// | `Withheld` | Declared clients were left out of the pass because their declaration is not trusted to converge | Whoever owns the declaration: make it trustworthy again |
 ///
 /// `Drifted` is the one that is easy to leave out and expensive to lack.
 /// Without it, an out-of-band change to a realm that reconciliation quietly
@@ -31,6 +32,13 @@ pub use store::ReconciliationStatusStore;
 /// silently overwrite (D01-19b): a client switched off, its authorization-code
 /// flow switched off, or a declared callback removed. Every product-owned
 /// field is still converged; the report's `hand_edits` names what was held.
+///
+/// `Withheld` is the desired-state side of the same rule: the caller left
+/// declared clients out of the pass (in the control plane, a stored
+/// projected entry that is not its projection), so the provider was neither
+/// written nor corrected for them. Everything else was converged; the
+/// report's `withheld` names what was left out. It outranks `HandEdited`,
+/// whose edits are still reported beside it.
 ///
 /// # `Pending` is why a successful write is not a success
 ///
@@ -58,6 +66,10 @@ pub enum ReconciliationStatus {
     /// reports and leaves in place until an operator removes it or
     /// re-asserts the projection.
     HandEdited,
+
+    /// Declared clients were withheld from the pass at the caller's
+    /// request, and the provider was not converged for them.
+    Withheld,
 }
 
 impl ReconciliationStatus {
@@ -74,6 +86,7 @@ impl ReconciliationStatus {
             Self::Failed => "failed",
             Self::Drifted => "drifted",
             Self::HandEdited => "handEdited",
+            Self::Withheld => "withheld",
         }
     }
 }

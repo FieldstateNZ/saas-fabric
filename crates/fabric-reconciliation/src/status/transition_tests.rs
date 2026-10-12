@@ -14,6 +14,7 @@ fn recorded(status: ReconciliationStatus, at_revision: &str) -> ReconciliationRe
         observed_at_unix: 0,
         detail: None,
         hand_edits: Vec::new(),
+        withheld: Vec::new(),
     }
 }
 
@@ -118,6 +119,59 @@ fn a_pass_that_held_a_hand_edit_is_hand_edited() {
 #[test]
 fn correcting_after_a_hand_edited_pass_is_drift() {
     let previous = recorded(ReconciliationStatus::HandEdited, "abc");
+
+    assert_eq!(
+        status_for(
+            Some(&previous),
+            &revision("abc"),
+            &ReconciliationOutcome::applied(1)
+        ),
+        ReconciliationStatus::Drifted
+    );
+}
+
+fn web() -> fabric_client_model::OidcClientId {
+    fabric_client_model::OidcClientId::try_new("web").unwrap()
+}
+
+#[test]
+fn a_pass_that_withheld_a_client_is_withheld_even_if_it_changed_nothing() {
+    let outcome = ReconciliationOutcome::converged().withholding(vec![web()]);
+
+    assert_eq!(
+        status_for(None, &revision("abc"), &outcome),
+        ReconciliationStatus::Withheld
+    );
+}
+
+#[test]
+fn withheld_outranks_a_held_hand_edit() {
+    let outcome = ReconciliationOutcome::converged()
+        .holding(vec![crate::HandEdit {
+            client: web(),
+            field: crate::HandEditedField::ClientDisabled,
+        }])
+        .withholding(vec![web()]);
+
+    assert_eq!(
+        status_for(None, &revision("abc"), &outcome),
+        ReconciliationStatus::Withheld
+    );
+}
+
+#[test]
+fn a_failed_pass_that_withheld_a_client_is_still_failed() {
+    let outcome = ReconciliationOutcome::failed(&ProviderError::NotPermitted).withholding(vec![web()]);
+
+    assert_eq!(
+        status_for(None, &revision("abc"), &outcome),
+        ReconciliationStatus::Failed
+    );
+}
+
+#[test]
+fn correcting_a_client_withheld_at_the_same_revision_is_drift() {
+    let previous = recorded(ReconciliationStatus::Withheld, "abc");
 
     assert_eq!(
         status_for(

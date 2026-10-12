@@ -111,7 +111,7 @@ async fn a_client_disabled_in_keycloak_is_held_and_never_written() {
     let reconciler = reconciler(&keycloak);
 
     for _ in 0..3 {
-        let outcome = reconciler.reconcile(&acme()).await;
+        let outcome = reconciler.reconcile(&acme(), &[]).await;
         assert!(outcome.changed_nothing());
         assert_eq!(outcome.hand_edits().len(), 1);
         assert_eq!(outcome.hand_edits()[0].field, HandEditedField::ClientDisabled);
@@ -128,7 +128,7 @@ async fn a_client_disabled_in_keycloak_is_held_and_never_written() {
 async fn a_correction_beside_a_held_disable_writes_the_client_disabled() {
     let keycloak = keycloak_holding(web_as_keycloak_holds_it(false, false)).await;
 
-    let outcome = reconciler(&keycloak).reconcile(&acme()).await;
+    let outcome = reconciler(&keycloak).reconcile(&acme(), &[]).await;
 
     assert_eq!(outcome.actions(), 1);
     let body = put_body(&keycloak);

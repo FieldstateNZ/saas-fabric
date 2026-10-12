@@ -1,10 +1,13 @@
 //! What one reconciliation pass concluded.
 //!
-//! The hand-edit half of the type's surface — what a pass held, overwrote,
-//! or attempted without confirmation (D01-19b) — is a second `impl` block in
-//! `outcome/hand_edits.rs`, the house split for one type's two audiences.
+//! The D01-19b half of the type's surface — what a pass held, overwrote,
+//! attempted without confirmation, or withheld — is in `outcome/hand_edits.rs`
+//! and `outcome/withheld.rs`, the house split for one type's two audiences.
 
 mod hand_edits;
+mod withheld;
+
+use fabric_client_model::OidcClientId;
 
 use crate::provider::{HandEdit, ProviderError};
 use crate::status::ReconciliationStatus;
@@ -40,6 +43,9 @@ pub struct ReconciliationOutcome {
     /// Unsupported hand edits on the client whose update failed: attempted,
     /// with an effect nobody can confirm.
     unconfirmed: Vec<HandEdit>,
+
+    /// Declared clients the caller withheld from the pass.
+    withheld: Vec<OidcClientId>,
 }
 
 impl ReconciliationOutcome {
@@ -54,6 +60,7 @@ impl ReconciliationOutcome {
             hand_edits: Vec::new(),
             overwritten: Vec::new(),
             unconfirmed: Vec::new(),
+            withheld: Vec::new(),
         }
     }
 
@@ -67,6 +74,7 @@ impl ReconciliationOutcome {
             hand_edits: Vec::new(),
             overwritten: Vec::new(),
             unconfirmed: Vec::new(),
+            withheld: Vec::new(),
         }
     }
 
@@ -84,6 +92,7 @@ impl ReconciliationOutcome {
             hand_edits: Vec::new(),
             overwritten: Vec::new(),
             unconfirmed: Vec::new(),
+            withheld: Vec::new(),
         }
     }
 

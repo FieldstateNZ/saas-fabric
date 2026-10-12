@@ -25,6 +25,7 @@ mod identity_response;
 mod lifecycle_request;
 mod lifecycle_response;
 mod operator_response;
+mod projection_response;
 mod reconciliation_response;
 
 pub(crate) use activity_response::ActivityResponse;
@@ -35,4 +36,5 @@ pub(crate) use identity_response::IdentityResponse;
 pub(crate) use lifecycle_request::{DeletionConfirmationRequest, TombstoneRequest};
 pub(crate) use lifecycle_response::LifecycleResponse;
 pub(crate) use operator_response::OperatorResponse;
+pub(crate) use projection_response::ProjectionResponse;
 pub(crate) use reconciliation_response::ReconciliationResponse;

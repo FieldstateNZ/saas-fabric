@@ -27,6 +27,12 @@ pub(super) fn status_for(
         return ReconciliationStatus::Failed;
     }
 
+    // Before hand edits and "changed nothing": a declared client this pass
+    // was not allowed to converge is not in effect, whatever else matched.
+    if !outcome.withheld().is_empty() {
+        return ReconciliationStatus::Withheld;
+    }
+
     // Before "changed nothing": a pass that held a hand edit changed nothing
     // *on purpose*, and calling that `applied` is the silence D01-19b
     // refuses.
@@ -38,12 +44,13 @@ pub(super) fn status_for(
         return ReconciliationStatus::Applied;
     }
 
-    // `HandEdited` counts as converged here: every product-owned field
-    // matched, so correcting one afterwards is drift like any other.
+    // `HandEdited` and `Withheld` count as converged here: everything the
+    // pass was allowed to converge matched, so correcting it afterwards is
+    // drift like any other.
     let corrected_a_converged_client = previous.is_some_and(|report| {
         matches!(
             report.status,
-            ReconciliationStatus::Applied | ReconciliationStatus::HandEdited
+            ReconciliationStatus::Applied | ReconciliationStatus::HandEdited | ReconciliationStatus::Withheld
         ) && report.revision == *revision
     });
 

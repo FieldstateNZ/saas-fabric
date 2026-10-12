@@ -17,6 +17,7 @@ fn report(status: ReconciliationStatus, at: &str) -> ReconciliationReport {
         observed_at_unix: 1_700_000_000,
         detail: Some("the identity provider is unavailable: refused".to_owned()),
         hand_edits: Vec::new(),
+        withheld: Vec::new(),
     }
 }
 

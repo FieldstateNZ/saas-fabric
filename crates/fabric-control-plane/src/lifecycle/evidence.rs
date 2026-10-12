@@ -46,12 +46,17 @@ pub(crate) fn provisioning(client: &Client, facts: &PlatformFacts) -> Evidence {
 /// `drifted` counts: the pass that reported it corrected the drift.
 /// `handEdited` does not: the provider holds something other than what was
 /// declared — a client switched off, a declared callback removed — and the
-/// product has deliberately not overwritten it (D01-19b).
+/// product has deliberately not overwritten it (D01-19b). Nor does
+/// `withheld`: a projected client whose stored entry is not its projection
+/// was not converged at all.
 pub(crate) fn identity(status: ReconciliationStatus) -> Evidence {
     match status {
         ReconciliationStatus::Applied | ReconciliationStatus::Drifted => Evidence::Met,
         ReconciliationStatus::HandEdited => {
             unmet("the identity provider holds hand edits the product does not support")
+        }
+        ReconciliationStatus::Withheld => {
+            unmet("a projected identity client was withheld: its stored entry is not its projection")
         }
         ReconciliationStatus::Pending => unmet("identity has not been applied at this revision yet"),
         ReconciliationStatus::Failed => unmet("identity could not be applied at this revision"),

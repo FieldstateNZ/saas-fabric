@@ -1,18 +1,22 @@
 //! Deciding what to change, doing it, and saying what happened.
 //!
-//! In the 121–150 line band: one type whose three entry points — plan,
-//! reconcile, re-assert — share one observe-plan-apply path, which is the
-//! point. A re-assertion that ran a different path from an ordinary pass
-//! could diverge from it in what it observes or how it reports.
+//! Its three entry points — plan, reconcile, re-assert — share one
+//! observe-plan-apply path (`run.rs`), which is the point. A re-assertion
+//! that ran a different path from an ordinary pass could diverge from it in
+//! what it observes or how it reports.
 
 mod apply;
 mod outcome;
 #[cfg(test)]
 mod reconciler_tests;
+mod run;
+mod withhold;
+#[cfg(test)]
+mod withhold_tests;
 
 use std::sync::Arc;
 
-use fabric_client_model::Client;
+use fabric_client_model::{Client, OidcClientId};
 
 use crate::logging;
 use crate::plan::{self, HandEditPolicy, IdentityPlan};
@@ -67,8 +71,21 @@ impl IdentityReconciler {
     /// empty plan and makes no changing calls at all — including when a hand
     /// edit is held, which is what stops a pass that overwrote it and a
     /// person who re-made it from taking turns forever.
-    pub async fn reconcile(&self, client: &Client) -> ReconciliationOutcome {
-        self.run(client, HandEditPolicy::Hold).await
+    ///
+    /// `withheld` names declared application clients the caller does not
+    /// trust to converge (D01-19b: a stored projected entry that is not its
+    /// projection). They are neither written nor corrected — converged onto
+    /// neither the declaration nor anything else — and the outcome names
+    /// those actually declared. Everything else converges as usual.
+    pub async fn reconcile(&self, client: &Client, withheld: &[OidcClientId]) -> ReconciliationOutcome {
+        let (declared, withheld) = withhold::split(client, withheld);
+        if !withheld.is_empty() {
+            logging::clients_withheld(client, &withheld);
+        }
+
+        self.run(&declared, HandEditPolicy::Hold)
+            .await
+            .withholding(withheld)
     }
 
     /// Re-asserts the projection: brings the provider in line with the
@@ -95,50 +112,5 @@ impl IdentityReconciler {
             .ok_or(ProviderError::NoAudienceConfigured)?;
 
         Ok(plan::plan(client, observed.as_ref(), audience, policy))
-    }
-
-    /// Observes, plans under `policy`, applies, and says what happened.
-    async fn run(&self, client: &Client, policy: HandEditPolicy) -> ReconciliationOutcome {
-        let plan = match self.plan_under(client, policy).await {
-            Ok(plan) => plan,
-            Err(error @ ProviderError::NoAudienceConfigured) => {
-                logging::planning_refused(client, &error);
-                return ReconciliationOutcome::failed(&error);
-            }
-            Err(error) => {
-                logging::observation_failed(client, &error);
-                return ReconciliationOutcome::failed(&error);
-            }
-        };
-
-        let found = plan.hand_edits().to_vec();
-        let (held, overwritten) = match policy {
-            HandEditPolicy::Hold => (found, Vec::new()),
-            HandEditPolicy::Overwrite => (Vec::new(), found),
-        };
-
-        if !held.is_empty() {
-            logging::hand_edits_held(client, &held);
-        }
-
-        if plan.is_converged() {
-            logging::already_converged(client);
-            return ReconciliationOutcome::converged().holding(held);
-        }
-
-        logging::applying(client, &plan, &overwritten);
-
-        match apply::apply(self.provider.as_ref(), &plan).await {
-            Ok(()) => ReconciliationOutcome::applied(plan.actions().len())
-                .holding(held)
-                .overwriting(overwritten),
-            Err(apply::Interrupted { completed, error }) => {
-                logging::apply_failed(client, &error);
-                let (confirmed, unconfirmed) = apply::overwrites_after(&plan, completed, &overwritten);
-                ReconciliationOutcome::failed_after(completed, &error)
-                    .overwriting(confirmed)
-                    .unconfirmed(unconfirmed)
-            }
-        }
     }
 }

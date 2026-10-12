@@ -41,8 +41,13 @@ GET /api/clients                       list clients
 GET /api/clients/{clientId}            one client's overview
 GET /api/clients/{clientId}/identity   its identity, and reconciliation state
 PUT /api/clients/{clientId}/identity   replace its identity  (If-Match required; a projected client is refused unless retired)
-POST /api/clients/{clientId}/identity/reassertion   overwrite held hand edits, as you; audited  (If-Match required)
+POST /api/clients/{clientId}/identity/reassertion   overwrite held hand edits, as you; audited  (If-Match required; refused onto a diverged stored projection)
 ```
+
+Every client read carries `projection`: whether the stored projected identity
+clients are still what the client's own product configuration projects
+(`consistent`, `diverged` or `unverifiable`, D01-19b). A sweep withholds a
+diverged entry and reports the client as `withheld`.
 
 Note what is not there: nothing that names a file, nothing that edits a document
 as text, and nothing that reaches an identity provider (§8).

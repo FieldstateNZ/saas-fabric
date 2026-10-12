@@ -51,18 +51,18 @@ Converges an identity provider onto a client's desired state. Depends on
   "What the comparison sorts a difference into".
 - `IdentityReconciler::new(Arc<dyn IdentityProvider>)` —
   `plan(&Client) -> Result<IdentityPlan, ProviderError>` (observe only, holding),
-  `reconcile(&Client) -> ReconciliationOutcome` (observe, plan, apply; holds
-  unsupported hand edits), `reassert(&Client) -> ReconciliationOutcome` (the same,
+  `reconcile(&Client, &[OidcClientId]) -> ReconciliationOutcome` (observe, plan,
+  apply; holds unsupported hand edits; leaves the named declared clients out), `reassert(&Client) -> ReconciliationOutcome` (the same,
   overwriting them — only an operator's audited request calls this).
 - `ReconciliationOutcome` — `status()` (only `Applied` or `Failed`), `actions()`,
-  `detail()`, `changed_nothing()`, `hand_edits()` (held), `overwritten()`
+  `detail()`, `changed_nothing()`, `hand_edits()` (held), `withheld()`, `overwritten()`
   (re-assert only). Constructors `converged()`, `applied(n)`,
-  `failed(&ProviderError)`, and builders `holding(..)`, `overwriting(..)`, are
+  `failed(&ProviderError)`, and builders `holding(..)`, `withholding(..)`, `overwriting(..)`, are
   `pub` so other crates' tests can build one; there is deliberately no
-  constructor for `Pending`, `Drifted` or `HandEdited`.
-- `ReconciliationStatus` — `Pending | Applied | Failed | Drifted | HandEdited`. `as_str()`,
+  constructor for `Pending`, `Drifted`, `HandEdited` or `Withheld`.
+- `ReconciliationStatus` — `Pending | Applied | Failed | Drifted | HandEdited | Withheld`. `as_str()`,
   `Display`, `Serialize` (camelCase: `handEdited`; the rest single words).
-- `ReconciliationReport { status, revision: ClientRevision, actions, observed_at_unix, detail, hand_edits }`.
+- `ReconciliationReport { status, revision: ClientRevision, actions, observed_at_unix, detail, hand_edits, withheld }`.
 - `ReconciliationStatusStore` — `report(&ClientId)`, `mark_pending(...)`,
   `record(...) -> ReconciliationStatus`. In-memory, `std::sync::Mutex` with
   poison recovery (no `unwrap`).
@@ -102,6 +102,12 @@ Converges an identity provider onto a client's desired state. Depends on
 10. **A held hand edit is never written by an ordinary pass** (D01-19b), and
     a write that corrects product-owned drift beside one carries it as the
     provider holds it. Only `reassert` overwrites.
+11. **A withheld client is left alone** (D01-19b). `reconcile(&Client,
+    withheld)` leaves those declared clients out of the pass: never created,
+    written or corrected. The outcome names those it actually left out, and
+    the status store calls the pass `Withheld`, after `Failed` and before
+    `HandEdited`. The control plane withholds a stored projected entry that
+    is not its projection.
 
 ## Design notes
 

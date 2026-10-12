@@ -1,5 +1,6 @@
 //! What a stored document's own projection says its projected clients
-//! should be, and where the stored entries no longer match (D01-19b).
+//! should be, and where the stored entries no longer match (D01-19b): read
+//! by a product save, by every client read, and by every convergence.
 //!
 //! The comparison is against the **same stored document**: its client id, its
 //! hosts and the release snapshot each assignment pinned. Never against a
@@ -37,30 +38,30 @@ impl ClientDocument {
             .collect())
     }
 
-    /// The first stored projected client that no longer matches
-    /// [`Self::projected_clients`], if any. Hand-declared clients are never
-    /// compared.
+    /// Every stored projected client that no longer matches
+    /// [`Self::projected_clients`], one per client, in the order the projection lists them.
+    /// Hand-declared clients are never compared.
     ///
     /// # Errors
     ///
     /// As [`Self::projected_clients`].
-    pub fn projection_divergence(&self) -> Result<Option<ProjectedClientDivergence>, DesiredStateError> {
+    pub fn projection_divergences(&self) -> Result<Vec<ProjectedClientDivergence>, DesiredStateError> {
         let stored = &self.client().identity.clients;
 
-        for expected in self.projected_clients()? {
-            let field = match stored.iter().find(|client| client.id == expected.id) {
-                None => Some(ProjectedClientField::Missing),
-                Some(actual) => difference(&expected, actual),
-            };
-            if let Some(field) = field {
-                return Ok(Some(ProjectedClientDivergence {
+        Ok(self
+            .projected_clients()?
+            .into_iter()
+            .filter_map(|expected| {
+                let field = match stored.iter().find(|client| client.id == expected.id) {
+                    None => Some(ProjectedClientField::Missing),
+                    Some(actual) => difference(&expected, actual),
+                };
+                field.map(|field| ProjectedClientDivergence {
                     client: expected.id,
                     field,
-                }));
-            }
-        }
-
-        Ok(None)
+                })
+            })
+            .collect())
     }
 }
 

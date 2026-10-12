@@ -1239,12 +1239,37 @@ ADR 0023's list and `docs/roadmap/m0-contract-decisions.md`.
   path (D01-14 is not built). One record lowered while another of the
   same tenant is raised in the same write is not detected. Not verified
   live.
-- **O5. Partly characterized.** `fabric-control-plane/tests/platform_publication_revert.rs`
-  drives reverts of `placements.yaml` and `data-sources.yaml` through the
-  router, the controller's pass and a real filesystem target. Each refusal
-  leaves every published file unchanged. Still owed: a revert of the
-  catalogue or of client documents, and their restoration with conditional
-  writes and audit evidence.
+- **O5. Characterized; no Git revert is claimed as a rollback.** Reverts
+  are driven through the router, the controller's pass and a real
+  filesystem target. None of it is verified live.
+  - `platform_publication_revert.rs`: reverts of `placements.yaml` and
+    `data-sources.yaml` are refused, and every published file is left
+    unchanged.
+  - `catalogue_revert.rs`: a revert of a release is not refused. The pass
+    publishes the older definition at the next catalogue revision, so the
+    document rolls forward, and the reverted release's resources leave
+    `catalog.json`. A revert that leaves no release makes the pass wait, and
+    every file is kept. A console tag read before the revert is refused.
+    Restoring through the console is a conditional, audited command. The
+    revert itself is not audited, and it drops its command from the
+    activity view. **Finding:** the console's next publication takes the
+    freed release number again for another definition, while a client
+    assigned the first release keeps its copy under the same number.
+  - `client_document_revert.rs`: a client revert reaches the published
+    documents only through the issuer registry, and none of it is audited.
+    A console tag read before it is refused. **Findings:** a reverted
+    tombstone reinstates the client, and its issuer is registered again in
+    a new generation once identity is applied at the reverted revision. A
+    reverted assignment removes an application, with its projected identity
+    client, which the console refuses to remove. A reverted creation keeps
+    the tenant binding published and leaves the issuer out (`noClient`).
+  - `fabric-client-git` `desired_state_repository.rs`: a revision is the
+    blob's hash. A revert to identical bytes therefore brings the earlier
+    revision back, and a write held at it since then is accepted.
+
+  So a Git revert of the catalogue or a client keeps no audit evidence of
+  itself and is not a supported restoration. The findings are open on
+  [#108](https://github.com/FieldstateNZ/saas-fabric/issues/108).
 - **O6. #112's remaining reader-visible and atomicity gaps**
   ([gap report](../roadmap/m2-publication-gap-report.md)):
   - G1b: `fabric-api` (#136) writes tenants and data sources only as one

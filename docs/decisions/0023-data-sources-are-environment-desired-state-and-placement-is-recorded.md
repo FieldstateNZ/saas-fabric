@@ -560,8 +560,7 @@ PR. The IDs match ADR 0018's list and `docs/roadmap/m0-contract-decisions.md`.
 O1 (the publisher guards resource revisions) and O2 (a lost manifest is held
 at the revision the publication record names) are listed in ADR 0018. Both
 are implemented in [#136](https://github.com/FieldstateNZ/saas-fabric/pull/136).
-O3 and O4 are implemented, and O5 is partly characterized, as described
-below.
+O3 and O4 are implemented, and O5 is characterized, as described below.
 #136 also narrows O6 on the reader side. Within one process, a request is
 resolved against one generation's tenants and data sources, held together
 across the binding, the exclusivity check and the execution target. What
@@ -586,13 +585,28 @@ remains of O6 is listed in ADR 0018. None of this is verified live.
   emptied with intent. No withdrawal path exists yet: retiring a client
   records intent only and leaves its placements in composition, so
   retirement cannot stall publication on these guards.
-- **O5. Partly characterized.** Reverts of `placements.yaml` and
-  `data-sources.yaml` are driven through the router, the controller's pass
-  and a real filesystem target
-  (`fabric-control-plane/tests/platform_publication_revert.rs`). Each is
-  refused and leaves the published files unchanged. The runtime is not
-  driven in those tests; it keeps the generation the files hold. A revert
-  of the catalogue or of client documents is still not characterized.
+- **O5. Characterized, not verified live.** Git reverts are driven through
+  the router, the controller's pass and a real filesystem target. The
+  runtime is not driven in these tests; it keeps the generation the files
+  hold.
+  - Reverts of `placements.yaml` and `data-sources.yaml` are refused, and
+    the published files are left unchanged
+    (`fabric-control-plane/tests/platform_publication_revert.rs`).
+  - A revert of the catalogue is not refused. The older definition is
+    published forward at the next catalogue revision. A revert that leaves
+    no release makes the pass wait and keeps every file
+    (`catalogue_revert.rs`).
+  - A revert of a client document reaches the published documents only
+    through the issuer registry (`client_document_revert.rs`).
+  - A console tag read before either revert is refused, and a console
+    restore is conditional and audited. The revert itself is never audited.
+    The Git adapter's revision is the blob's hash, so a revert to identical
+    bytes makes an earlier tag current again
+    (`fabric-client-git/tests/desired_state_repository.rs`).
+
+  ADR 0018 lists what this proves and the findings open on #108: a release
+  number issued twice, and a tombstone, an assignment or a creation undone
+  without audit.
 - **O7. The controller does not attempt placement on each pass.** Placement
   happens only on an explicit request (part 2).
 - **O8. The readiness gate reports three gates, from publisher evidence

@@ -312,6 +312,7 @@ The reasoning, the licence audit, and the consequences are recorded in
 | [0026](docs/decisions/0026-a-component-describes-itself-in-an-artifact-attached-to-its-image.md) | A component describes itself in an artifact attached to its image, and the catalogue selects it from registries an operator registers |
 | [0027](docs/decisions/0027-data-path-authorization-is-layered-and-fails-closed.md) | Data-path authorization is layered, chosen per tenant, and fails closed |
 | [0028](docs/decisions/0028-the-activity-feed-is-a-bounded-view-and-the-audit-trail-is-a-separate-durable-source.md) | The activity feed is a bounded view; the audit trail is a separate durable source |
+| [0029](docs/decisions/0029-edge-enforcement-is-an-activation-gate.md) | Edge enforcement is an activation gate |
 
 ## Running it
 

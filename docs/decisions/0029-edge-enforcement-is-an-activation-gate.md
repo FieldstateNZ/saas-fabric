@@ -3,11 +3,12 @@
 - **Status:** Proposed
 - **Date:** 2026-11-15
 - **Applies to:** the tenant runtime in `saas-fabric-platform`
-  (`applications/core/saas-fabric`): every route that forwards to its Data
+  (`applications/core/saas-fabric`): every path that forwards to its Data
   API, and the replica count of its Deployment
 - **Related:** [ADR 0019](0019-the-edge-proves-the-token-and-the-issuer-names-the-tenant.md)
   §1 and §G; [ADR 0022](0022-running-versions-come-from-deployment-evidence.md);
-  [ADR 0027](0027-data-path-authorization-is-layered-and-fails-closed.md)
+  [ADR 0023](0023-data-sources-are-environment-desired-state-and-placement-is-recorded.md)
+  §5 (D01-18); [ADR 0027](0027-data-path-authorization-is-layered-and-fails-closed.md)
   (Proposed); [#113](https://github.com/FieldstateNZ/saas-fabric/issues/113)
 
 ## Context
@@ -19,14 +20,13 @@ checked. The runtime runs the canonical trusted-ingress reader. It decodes
 the payload and checks the validity window. It does not verify the token
 itself.
 
-That edge is still absent. Today the Data API route in
-`saas-fabric-platform`,
-`applications/core/saas-fabric/base/httproute.yaml`, forwards `/v1/data`
-with no JWT `SecurityPolicy`. The runtime Deployment stays at zero
-replicas. A replica above zero, on that route or on any later route that
-forwards to the Data API, would serve tenant data to any caller who can
-reach it, including one presenting an unsigned token or a token from an
-issuer the route was never told to trust.
+That edge is still absent. In `saas-fabric-platform`,
+`applications/core/saas-fabric/base/httproute.yaml` matches
+`PathPrefix: /`. It is a catch-all, it carries no JWT `SecurityPolicy`, and
+it forwards the Data API together with `/health` and `/ready`. The runtime
+Deployment stays at zero replicas. A replica above zero on any path that
+forwards to the Data API would serve tenant data to any caller who can
+reach it.
 
 The end-to-end tenant request in
 [#113](https://github.com/FieldstateNZ/saas-fabric/issues/113) needs a
@@ -38,53 +38,106 @@ already-admitted caller may do. It is not required for this gate.
 
 ## Decision
 
-No tenant runtime replica may go above 0 until ADR 0019's edge enforcement
-is attached to every route that forwards to the Data API, and tested.
+Activation means raising the shared tenant runtime Deployment above 0
+replicas. It is the same act as
+[ADR 0023](0023-data-sources-are-environment-desired-state-and-placement-is-recorded.md)
+§5 (D01-18): one Deployment serves many tenants (ADR 0019 G1), and
+onboarding a tenant leaves that count untouched. This edge evidence is an
+additional precondition beside §5's `documents`, `identity` and
+`connectors` report. §5's `identity` gate is a published issuer registry
+and observes no edge application. This decision does not replace that
+report.
 
-**Attached.** A JWT `SecurityPolicy` targets every route that forwards to
-the Data API. Today that is `/v1/data` in `saas-fabric-platform`
-`applications/core/saas-fabric/base/httproute.yaml`, the route §G1 names.
-A route added later falls under the same rule the moment it forwards
-there. The policy checks the signature against the issuing realm's JWKS,
-exact `iss` membership, audience, a required `exp`, and a per-issuer
-algorithm allow-list. `/health` and `/ready` stay outside that path, as
-§G1 already requires.
+No replica of that shared runtime may go above 0 until ADR 0019's edge
+enforcement is attached to every path that forwards to the Data API, and
+tested.
+
+**Attached.** A JWT `SecurityPolicy` targets every path that forwards to
+the Data API. Today's object is the catch-all above, so attaching the
+policy to it as it stands would authenticate `/health` and `/ready`. The
+platform enforcement change gives the Data API its own path match — a
+`/v1/data` prefix, or a split of the catch-all — and attaches the policy
+there. `/health` and `/ready` stay unauthenticated, as §G1 requires. A
+path added later falls under the same rule the moment it forwards to the
+Data API.
+
+The policy checks the signature against the issuing realm's JWKS, exact
+`iss` membership of the registered issuer set, the deployment audience, a
+required `exp`, and a per-issuer algorithm allow-list.
+
+**Pinned for the test.**
+
+| Fact | Value |
+|---|---|
+| Issuer set | The exact issuer strings registered for the tenants this shared route serves (ADR 0019 G4). The record names the set. |
+| Audience | The one deployment audience string, `saas-fabric-data-api` (ADR 0019 G5). |
+| JWKS | For each registered issuer, the JWKS URI that issuer's gateway registration fetches (ADR 0019 G2). A valid token is signed by a key in that document. The record names the URI. |
+
+Wrong-issuer means an issuer outside that set (G4). A validly signed token
+from another tenant whose issuer is in the set passes the edge. Which
+tenant an issuer names is the runtime's binding (ADR 0019 §2).
 
 **Tested.** At zero replicas a request the gateway rejects never reaches
-the runtime, so the test is not a call against the runtime Deployment. It
-runs at the gateway against a stand-in backend, or on a disposable cluster
-that stands the gateway up while the tenant runtime stays at zero replicas.
+the runtime. The test runs at the gateway against a stand-in backend. A
+disposable cluster is the same test and still includes that stand-in. A
+`503` from an empty upstream is not a pass.
 
-The policy accepts a valid token from the correct issuer. A policy that
-rejects every token fails that case. The policy rejects an unsigned token,
-a wrong-issuer token, a wrong-audience token, an expired token, and a
-token whose algorithm is not allowed, including `alg: none`.
+Accepted means the gateway forwarded the request and the stand-in answered
+`2xx`. A missing `401` is not acceptance.
 
-The record is digest-pinned evidence in the sense of
-[ADR 0022](0022-running-versions-come-from-deployment-evidence.md). It names
-the Envoy Gateway version that enforced the policy, the `SecurityPolicy`
-revision that was attached, and the runtime image digest that will be
-scaled. The test requests stop at the gateway, so the digest in the record
-is the one the later scale-up will run.
+Every credential rejection is `401` with
+`WWW-Authenticate: Bearer error="invalid_token"`, no body that names the
+failed check, and never a `302` (ADR 0019 G8 and G12). The edge's clock
+leeway is at most 30 seconds (G7).
 
-The replica count stays 0 until both hold. Raising it is a deliberate
-operator action taken after that evidence exists. This decision does not
-perform that action.
+| Case | Outcome |
+|---|---|
+| Valid token: issuer in the set, `aud` `saas-fabric-data-api`, signature from that issuer's JWKS, `exp` inside the leeway, allowed algorithm | `2xx` from the stand-in |
+| Same, from a second registered tenant's issuer | `2xx` from the stand-in |
+| Unsigned | `401`, as above |
+| Wrong-issuer: issuer outside the registered set | `401`, as above |
+| Wrong audience | `401`, as above |
+| Expired, past the 30-second leeway | `401`, as above |
+| `alg: none` | `401`, as above |
+| HS256, or any other HMAC | `401`, as above |
+| Missing bearer | `401`, as above |
+| Missing `iss` | `401`, as above |
+| Missing `exp` | `401`, as above |
+| Unknown `kid` against a fresh successful JWKS snapshot | `401`, as above |
+| Unknown `kid` when the snapshot is not a fresh success | `503`, `Retry-After`, body does not describe the credential, never `401` (G8, G13) |
+| JWKS unreachable | `503`, as the row above |
+
+These cases are required for the gate. They are implemented in the
+platform enforcement change in `saas-fabric-platform`.
+
+The record names the Envoy Gateway version that enforced the policy, the
+`SecurityPolicy` revision that was attached, and the runtime image digest
+that will be scaled, together with the issuer set, audience and JWKS URIs
+above. The test requests stop at the gateway, so the digest in the record
+is the one the later scale-up will run
+([ADR 0022](0022-running-versions-come-from-deployment-evidence.md)).
+
+QA sign-off on the platform enforcement change accepts that record.
+Raising replicas stays the deliberate operator action in ADR 0023 §5
+(D01-18). The product owner authorises it, via the PM, under the existing
+deploy approval, and only after that sign-off. This decision does not
+raise replicas. Platform CI checks that the policy targets the Data API
+paths. It does not check that the Tested record exists; that half of the
+gate is the sign-off.
 
 ADR 0027 stays outside the gate. The first replica may be raised while
 layered data-path authorization is still Proposed.
 
 ## Consequences
 
-- The tenant runtime remains at zero replicas until a JWT
-  `SecurityPolicy` targets every route that forwards to the Data API, and
-  the acceptance and the rejections above are recorded with the Envoy
-  Gateway version, the `SecurityPolicy` revision, and the runtime image
-  digest that will be scaled.
+- The shared runtime stays at zero replicas until a JWT `SecurityPolicy`
+  targets every path that forwards to the Data API, probes stay
+  unauthenticated, and QA has accepted the Tested record for the cases
+  above.
 - Platform CI fails when any runtime replica count is above 0 while the
-  `SecurityPolicy` is not targeting the Data API route or routes. Detaching
-  the policy after scale-up fails that check, so the route cannot be
-  reopened quietly. The check is implemented in `saas-fabric-platform`.
+  `SecurityPolicy` is not targeting the Data API path or paths. Detaching
+  the policy after scale-up fails that check. The check is implemented in
+  `saas-fabric-platform`. It does not stand in for the QA sign-off.
 - [#113](https://github.com/FieldstateNZ/saas-fabric/issues/113) waits on
   that evidence before an end-to-end tenant request can be served.
 - ADR 0027 may be accepted, amended or left Proposed without moving this

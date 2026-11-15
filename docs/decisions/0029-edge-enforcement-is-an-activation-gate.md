@@ -50,7 +50,9 @@ report.
 
 No replica of that shared runtime may go above 0 until ADR 0019's edge
 enforcement is attached to every path that forwards to the Data API, and
-tested.
+tested. This gate does not replace
+[ADR 0019](0019-the-edge-proves-the-token-and-the-issuer-names-the-tenant.md).
+Every §G row still applies.
 
 **Attached.** A JWT `SecurityPolicy` targets every path that forwards to
 the Data API. Today's object is the catch-all above, so attaching the
@@ -106,6 +108,10 @@ leeway is at most 30 seconds (G7).
 | Unknown `kid` against a fresh successful JWKS snapshot | `401`, as above |
 | Unknown `kid` when the snapshot is not a fresh success | `503`, `Retry-After`, body does not describe the credential, never `401` (G8, G13) |
 | JWKS unreachable | `503`, as the row above |
+| Caller sends `X-Tenant-Id`, an `x-jwt-claim-*` header, `x-forwarded-user`, an `x-auth-request-*` header and the operator-plane identity header, with an otherwise valid token (G9) | `2xx` from the stand-in, and none of those headers is forwarded. The strip is by prefix, on every request, not by an enumerated list |
+| No claim projection (G9a) | `2xx` from the stand-in. The forwarded request carries `Authorization` and no header written from a verified claim: no `claim_to_headers` mapping, no `x-jwt-claim-*` emission, no header of the deployment's own naming. `Authorization` is the only identity-shaped header that crosses |
+| Valid token (G10) | `2xx` from the stand-in, and `Authorization` arrives byte-for-byte: no rewrite, no re-mint, no re-sign |
+| Direct request from a scratch pod in another namespace to the runtime pod IP, and the same request to its Service (G11) | Connection refused or reset at the network layer, not an HTTP status, for both. The record shows the two requests were blocked. A `NetworkPolicy` object being present is not that evidence. The record names the CNI or network-policy controller that enforced the block. k3s, for example, enforces `NetworkPolicy` only through its built-in kube-router controller, and some installs disable that controller |
 
 These cases are required for the gate. They are implemented in the
 platform enforcement change in `saas-fabric-platform`.

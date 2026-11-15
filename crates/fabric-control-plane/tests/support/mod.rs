@@ -644,14 +644,26 @@ pub struct TempDir {
 }
 
 impl TempDir {
+    /// A fresh directory whose name starts with `label`.
+    ///
+    /// The name mixes in a process-wide counter, not only the clock.
+    /// `cargo test` runs the tests in one binary in parallel, so two
+    /// `TempDir::new` calls can read the same nanosecond. The same `label`
+    /// then builds one path. `client_restore`'s shared publication setup
+    /// uses `"restore"`, so the pair that lands together writes one tenants
+    /// file: one is refused because another publication holds its lock, and
+    /// the other's `Drop` removes the directory the first is still writing.
     pub fn new(label: &str) -> Self {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
         let unique = format!(
-            "fabric-control-plane-{label}-{}-{}",
+            "fabric-control-plane-{label}-{}-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .expect("the clock must be after the epoch")
-                .as_nanos()
+                .as_nanos(),
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         );
         let path = std::env::temp_dir().join(unique);
         std::fs::create_dir_all(&path).expect("a temp directory must be creatable");
